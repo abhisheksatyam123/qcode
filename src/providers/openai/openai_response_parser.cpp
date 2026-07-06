@@ -10,16 +10,65 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     const nlohmann::json& response) {
   ai::logger::log_debug("Parsing OpenAI chat completion response");
 
+  nlohmann::json normalized_response = response;
+  
+  // Gemini/Antigravity response normalization
+  if (response.contains("candidates")) {
+    normalized_response = nlohmann::json::object();
+    normalized_response["id"] = response.value("requestId", "");
+    normalized_response["model"] = response.value("model", "");
+    normalized_response["created"] = 0;
+    
+    nlohmann::json choices = nlohmann::json::array();
+    auto& candidates = response["candidates"];
+    if (!candidates.empty()) {
+      auto& cand = candidates[0];
+      nlohmann::json choice = nlohmann::json::object();
+      choice["index"] = 0;
+      
+      nlohmann::json message = nlohmann::json::object();
+      message["role"] = "assistant";
+      
+      std::string text_content = "";
+      if (cand.contains("content") && cand["content"].contains("parts")) {
+        auto& parts = cand["content"]["parts"];
+        if (!parts.empty() && parts[0].contains("text")) {
+          text_content = parts[0]["text"].get<std::string>();
+        }
+      }
+      message["content"] = text_content;
+      
+      choice["message"] = message;
+      
+      std::string finish_reason_str = cand.value("finishReason", "stop");
+      if (finish_reason_str == "STOP") choice["finish_reason"] = "stop";
+      else if (finish_reason_str == "MAX_TOKENS") choice["finish_reason"] = "length";
+      else choice["finish_reason"] = "stop";
+      
+      choices.push_back(choice);
+    }
+    normalized_response["choices"] = choices;
+    
+    if (response.contains("usageMetadata")) {
+      auto& usage_meta = response["usageMetadata"];
+      nlohmann::json usage = nlohmann::json::object();
+      usage["prompt_tokens"] = usage_meta.value("promptTokenCount", 0);
+      usage["completion_tokens"] = usage_meta.value("candidatesTokenCount", 0);
+      usage["total_tokens"] = usage_meta.value("totalTokenCount", 0);
+      normalized_response["usage"] = usage;
+    }
+  }
+
   GenerateResult result;
 
   // Extract basic fields
-  result.id = response.value("id", "");
-  result.model = response.value("model", "");
-  result.created = response.value("created", 0);
+  result.id = normalized_response.value("id", "");
+  result.model = normalized_response.value("model", "");
+  result.created = normalized_response.value("created", 0);
 
   // Handle system_fingerprint which can be null or string
-  if (auto it = response.find("system_fingerprint");
-      it != response.end() && !it->is_null()) {
+  if (auto it = normalized_response.find("system_fingerprint");
+      it != normalized_response.end() && !it->is_null()) {
     result.system_fingerprint = it->get<std::string>();
   }
 
@@ -28,8 +77,8 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
                         result.model.value_or("unknown"));
 
   // Extract choices
-  if (response.contains("choices") && !response["choices"].empty()) {
-    auto& choice = response["choices"][0];
+  if (normalized_response.contains("choices") && !normalized_response["choices"].empty()) {
+    auto& choice = normalized_response["choices"][0];
 
     // Extract message content
     if (choice.contains("message")) {
@@ -111,8 +160,8 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
   }
 
   // Extract usage
-  if (response.contains("usage")) {
-    auto& usage = response["usage"];
+  if (normalized_response.contains("usage")) {
+    auto& usage = normalized_response["usage"];
     result.usage.prompt_tokens = usage.value("prompt_tokens", 0);
     result.usage.completion_tokens = usage.value("completion_tokens", 0);
     result.usage.total_tokens = usage.value("total_tokens", 0);
@@ -123,7 +172,7 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
   }
 
   // Store full metadata
-  result.provider_metadata = response.dump();
+  result.provider_metadata = normalized_response.dump();
 
   return result;
 }

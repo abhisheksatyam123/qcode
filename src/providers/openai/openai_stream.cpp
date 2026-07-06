@@ -209,8 +209,54 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       return;
     }
 
+
     try {
       auto json = nlohmann::json::parse(data);
+      
+      // Google Gemini / Antigravity SSE parsing
+      if (json.contains("candidates")) {
+        auto& candidates = json["candidates"];
+        if (!candidates.empty()) {
+          auto& cand = candidates[0];
+          if (cand.contains("content") && cand["content"].contains("parts")) {
+            auto& parts = cand["content"]["parts"];
+            if (!parts.empty() && parts[0].contains("text")) {
+              std::string content_str = parts[0]["text"].get<std::string>();
+              push_event(StreamEvent(content_str));
+            }
+          }
+          
+          if (cand.contains("finishReason")) {
+            std::string reason_str = cand["finishReason"].get<std::string>();
+            FinishReason finish_reason = kFinishReasonStop;
+            if (reason_str == "STOP") finish_reason = kFinishReasonStop;
+            else if (reason_str == "MAX_TOKENS") finish_reason = kFinishReasonLength;
+            
+            finish_event_pushed_ = true;
+            
+            if (json.contains("usageMetadata")) {
+              auto& usage_meta = json["usageMetadata"];
+              Usage usage;
+              usage.prompt_tokens = usage_meta.value("promptTokenCount", 0);
+              usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
+              usage.total_tokens = usage_meta.value("totalTokenCount", 0);
+              push_event(StreamEvent(kStreamEventTypeFinish, usage, finish_reason));
+            } else {
+              push_event(StreamEvent(kStreamEventTypeFinish));
+            }
+          }
+        }
+        return;
+      } else if (json.contains("usageMetadata")) {
+        auto& usage_meta = json["usageMetadata"];
+        Usage usage;
+        usage.prompt_tokens = usage_meta.value("promptTokenCount", 0);
+        usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
+        usage.total_tokens = usage_meta.value("totalTokenCount", 0);
+        push_event(StreamEvent(kStreamEventTypeFinish, usage, kFinishReasonStop));
+        return;
+      }
+
       auto& choices = json["choices"];
 
       if (!choices.empty() && choices[0].contains("delta")) {

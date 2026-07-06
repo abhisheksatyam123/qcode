@@ -1,9 +1,123 @@
 #include "openai_request_builder.h"
 
+#include <random>
+#include <mutex>
+#include <algorithm>
+#include <array>
+#include <functional>
+
 #include "ai/logger.h"
 #include "utils/message_utils.h"
 
 namespace ai {
+
+namespace {
+std::string new_uuid();
+std::string random_hex(size_t len);
+nlohmann::json convert_openai_to_gemini(const nlohmann::json& openai_req) {
+    nlohmann::json gemini_req = nlohmann::json::object();
+    
+    nlohmann::json contents = nlohmann::json::array();
+    std::string system_instruction = "";
+    
+    if (openai_req.contains("messages") && openai_req["messages"].is_array()) {
+        for (const auto& msg : openai_req["messages"]) {
+            std::string role = msg.value("role", "");
+            std::string text_content = msg.value("content", "");
+            
+            if (role == "system") {
+                system_instruction = text_content;
+            } else {
+                nlohmann::json content_obj = nlohmann::json::object();
+                content_obj["role"] = (role == "assistant") ? "model" : "user";
+                
+                nlohmann::json parts = nlohmann::json::array();
+                parts.push_back({{"text", text_content}});
+                content_obj["parts"] = parts;
+                
+                contents.push_back(content_obj);
+            }
+        }
+    }
+    
+    gemini_req["contents"] = contents;
+    
+    if (!system_instruction.empty()) {
+        gemini_req["systemInstruction"] = {
+            {"parts", {{{"text", system_instruction}}}}
+        };
+    }
+    
+    nlohmann::json gen_config = nlohmann::json::object();
+    if (openai_req.contains("temperature")) {
+        gen_config["temperature"] = openai_req["temperature"];
+    }
+    if (openai_req.contains("max_completion_tokens")) {
+        gen_config["maxOutputTokens"] = openai_req["max_completion_tokens"];
+    }
+    gemini_req["generationConfig"] = gen_config;
+    
+    return gemini_req;
+}
+
+nlohmann::json wrap_antigravity_envelope(const nlohmann::json& gemini_req, const std::string& model) {
+    nlohmann::json env = nlohmann::json::object();
+    env["project"] = "tuned-keel-d72qv";
+    
+    std::string req_uuid = new_uuid();
+    unsigned long long timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    
+    env["requestId"] = "agent/" + req_uuid + "/" + std::to_string(timestamp) + "/" + req_uuid + "/0";
+    env["request"] = gemini_req;
+    
+    std::string mapped_model = model;
+    if (model == "gemini-3-flash") {
+        mapped_model = "gemini-3-flash-agent";
+    }
+    env["model"] = mapped_model;
+    env["userAgent"] = "antigravity";
+    env["requestType"] = "agent";
+    
+    return env;
+}
+
+std::string new_uuid() {
+  static const char hex_chars[] = "0123456789abcdef";
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  static std::uniform_int_distribution<> dis(0, 15);
+  static std::uniform_int_distribution<> dis2(8, 11);
+  
+  std::string uuid = "";
+  for (int i = 0; i < 8; ++i) uuid += hex_chars[dis(gen)];
+  uuid += "-";
+  for (int i = 0; i < 4; ++i) uuid += hex_chars[dis(gen)];
+  uuid += "-4";
+  for (int i = 0; i < 3; ++i) uuid += hex_chars[dis(gen)];
+  uuid += "-";
+  uuid += hex_chars[dis2(gen)];
+  for (int i = 0; i < 3; ++i) uuid += hex_chars[dis(gen)];
+  uuid += "-";
+  for (int i = 0; i < 12; ++i) uuid += hex_chars[dis(gen)];
+  
+  return uuid;
+}
+
+std::string random_hex(size_t len) {
+  static const char hex_chars[] = "0123456789abcdef";
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  static std::uniform_int_distribution<> dis(0, 15);
+  std::string res = "";
+  for (size_t i = 0; i < len; ++i) {
+    res += hex_chars[dis(gen)];
+  }
+  return res;
+}
+}
+
 namespace openai {
 
 nlohmann::json OpenAIRequestBuilder::build_request_json(
@@ -171,6 +285,14 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     }
   }
 
+  
+  // Antigravity (Google Vertex) translation and envelope wrapping
+  bool is_antigravity = (options.model.rfind("gemini-", 0) == 0 || options.model.rfind("claude-", 0) == 0);
+  if (is_antigravity) {
+    auto gemini_req = convert_openai_to_gemini(request);
+    return wrap_antigravity_envelope(gemini_req, options.model);
+  }
+
   return request;
 }
 
@@ -200,16 +322,50 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
 httplib::Headers OpenAIRequestBuilder::build_headers(
     const providers::ProviderConfig& config) {
-  httplib::Headers headers = {
-      {config.auth_header_name, config.auth_header_prefix + config.api_key}};
+  httplib::Headers headers;
+
+  // Add auth header if api key is provided and not empty
+  if (!config.api_key.empty() && config.api_key != "unused") {
+    headers.emplace(config.auth_header_name, config.auth_header_prefix + config.api_key);
+  }
+
+  // OpenRouter specific headers
+  if (config.base_url.find("openrouter.ai") != std::string::npos) {
+    headers.emplace("HTTP-Referer", "https://opencode.ai");
+    headers.emplace("X-Title", "OpenCode");
+  }
+
+  // Qualcomm specific headers (qpilot / qgenie)
+  if (config.base_url.find("qualcomm.com") != std::string::npos) {
+    std::string cli_name = "qgenie_cli";
+    if (config.base_url.find("qpilot") != std::string::npos) {
+      cli_name = "qpilot_cli";
+    }
+    std::string turn_id = new_uuid();
+    std::string session_id = new_uuid();
+    std::string enc_key = random_hex(64);
+
+    headers.emplace("originator", "codex_cli_rs");
+    headers.emplace("version", "0.1.12");
+    headers.emplace("user-agent", "x86_64 / linux / terminal / " + cli_name + " / 0.1.12");
+    headers.emplace("session_id", session_id);
+    headers.emplace("x-codex-beta-features", "multi_agent");
+    headers.emplace("x-codex-turn-metadata", "{\"turn_id\":\"" + turn_id + "\",\"sandbox\":\"none\"}");
+    headers.emplace("x-encrypted-key", enc_key);
+  }
+
+  // Antigravity specific headers
+  if (config.base_url.find("googleapis.com") != std::string::npos) {
+    headers.emplace("User-Agent", "antigravity/1.107.0 linux/x64");
+    headers.emplace("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1");
+    headers.emplace("Client-Metadata", "{\"ideType\":\"ANTIGRAVITY\",\"platform\":\"LINUX\",\"pluginType\":\"GEMINI\"}");
+  }
 
   // Add any extra headers
   for (const auto& [key, value] : config.extra_headers) {
     headers.emplace(key, value);
   }
 
-  // Note: Content-Type is passed separately to httplib::Post() as content_type
-  // parameter
   return headers;
 }
 

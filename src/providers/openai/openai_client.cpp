@@ -10,6 +10,16 @@
 #include <memory>
 
 namespace ai {
+
+namespace {
+std::string get_completions_path(const std::string& base_url) {
+  if (base_url.find("qualcomm.com") != std::string::npos) {
+    return "/responses";
+  }
+  return "/v1/chat/completions";
+}
+}
+
 namespace openai {
 
 OpenAIClient::OpenAIClient(const std::string& api_key,
@@ -18,7 +28,7 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
           providers::ProviderConfig{
               .api_key = api_key,
               .base_url = base_url,
-              .completions_endpoint_path = "/v1/chat/completions",
+              .completions_endpoint_path = get_completions_path(base_url),
               .embeddings_endpoint_path = "/v1/embeddings",
               .auth_header_name = "Authorization",
               .auth_header_prefix = "Bearer ",
@@ -36,7 +46,7 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
           providers::ProviderConfig{
               .api_key = api_key,
               .base_url = base_url,
-              .completions_endpoint_path = "/v1/chat/completions",
+              .completions_endpoint_path = get_completions_path(base_url),
               .embeddings_endpoint_path = "/v1/embeddings",
               .auth_header_name = "Authorization",
               .auth_header_prefix = "Bearer ",

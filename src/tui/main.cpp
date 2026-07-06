@@ -14,6 +14,7 @@
 #include <array>
 #include <filesystem>
 #include <algorithm>
+#include <nlohmann/json.hpp>
 
 #include <ai/openai.h>
 #include <ai/anthropic.h>
@@ -24,6 +25,18 @@ using namespace ftxui;
 struct TodoTask {
     std::string text;
     bool completed = false;
+};
+
+struct ModelInfo {
+    std::string name;
+    std::string id;
+};
+
+struct ProviderInfo {
+    std::string name;
+    std::string id;
+    std::string api_url;
+    std::vector<ModelInfo> models;
 };
 
 std::string find_todo_file() {
@@ -91,6 +104,96 @@ std::string get_file_preview(const std::string& path) {
     return buffer.str();
 }
 
+std::string get_antigravity_token() {
+    char* api_key_env = std::getenv("ANTIGRAVITY_API_KEY");
+    if (api_key_env && std::string(api_key_env).length() > 0) {
+        return api_key_env;
+    }
+    
+    // Fallback to keyring via Python
+    std::string command = "python3 -c \"import keyring; print(keyring.get_password('gemini', 'antigravity'))\" 2>/dev/null";
+    std::array<char, 128> buffer;
+    std::string output;
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        return "";
+    }
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+        output += buffer.data();
+    }
+    pclose(pipe);
+    
+    try {
+        auto parsed = nlohmann::json::parse(output);
+        if (parsed.contains("token") && parsed["token"].contains("access_token")) {
+            return parsed["token"]["access_token"].get<std::string>();
+        }
+    } catch (...) {
+    }
+    return "";
+}
+
+std::vector<ProviderInfo> load_providers_from_config() {
+    std::vector<ProviderInfo> loaded;
+    std::string path = "/home/abhi/notes/etc/opencode.json";
+    
+    if (!std::filesystem::exists(path)) {
+        return {
+            {"OpenCode Zen", "opencode", "https://opencode.ai/zen/v1", {
+                {"Nemotron 3 Ultra", "nemotron-3-ultra-free"},
+                {"DeepSeek V4 Flash", "deepseek-v4-flash-free"},
+                {"North Mini Code", "north-mini-code-free"}
+            }}
+        };
+    }
+    
+    try {
+        std::ifstream file(path);
+        nlohmann::json config = nlohmann::json::parse(file);
+        if (config.contains("provider")) {
+            for (auto& [prov_id, prov_data] : config["provider"].items()) {
+                ProviderInfo prov;
+                prov.id = prov_id;
+                prov.name = prov_data.value("name", prov_id);
+                prov.api_url = prov_data.value("api", "");
+                
+                if (prov_data.contains("models")) {
+                    for (auto& [model_id, model_data] : prov_data["models"].items()) {
+                        ModelInfo model;
+                        model.id = model_id;
+                        model.name = model_data.value("name", model_id);
+                        prov.models.push_back(model);
+                    }
+                }
+                loaded.push_back(prov);
+            }
+        }
+    } catch (...) {
+    }
+    
+    bool has_qpilot = false;
+    bool has_qgenie = false;
+    for (const auto& p : loaded) {
+        if (p.id == "qpilot") has_qpilot = true;
+        if (p.id == "qgenie") has_qgenie = true;
+    }
+    
+    if (!has_qpilot) {
+        loaded.push_back({"QPilot", "qpilot", "https://qpilot-api.qualcomm.com", {
+            {"Claude 3.5 Sonnet", "claude-3-5-sonnet-20241022"},
+            {"GPT-4o", "gpt-4o"}
+        }});
+    }
+    if (!has_qgenie) {
+        loaded.push_back({"QGenie", "qgenie", "https://qgenie-api.qualcomm.com", {
+            {"Claude 3.5 Sonnet", "claude-3-5-sonnet-20241022"},
+            {"GPT-4o", "gpt-4o"}
+        }});
+    }
+    
+    return loaded;
+}
+
 // Helper thread-safe-ish state
 struct ChatState {
     std::shared_ptr<bool> is_generating = std::make_shared<bool>(false);
@@ -110,6 +213,7 @@ void run_llm_generation(
     std::string system_prompt,
     ai::Messages messages,
     bool enable_tools,
+    std::vector<ProviderInfo> providers_list,
     ScreenInteractive* screen,
     std::shared_ptr<bool> is_generating_flag,
     std::shared_ptr<std::vector<std::pair<std::string, std::string>>> chat_history_ptr,
@@ -121,35 +225,63 @@ void run_llm_generation(
 ) {
     try {
         ai::Client client;
-        if (provider == "OpenAI") {
-            char* api_key_env = std::getenv("OPENAI_API_KEY");
-            if (!api_key_env || std::string(api_key_env).empty()) {
+        std::string api_key = "unused";
+        std::string api_url = "";
+        std::string provider_id = "";
+        
+        for (const auto& p : providers_list) {
+            if (p.name == provider) {
+                api_url = p.api_url;
+                provider_id = p.id;
+                break;
+            }
+        }
+        
+        if (provider_id == "openrouter") {
+            char* key = std::getenv("OPENROUTER_API_KEY");
+            if (key) api_key = key;
+            else {
                 screen->Post([=]() {
-                    chat_history_ptr->back().second = "Error: OPENAI_API_KEY environment variable not set.";
+                    chat_history_ptr->back().second = "Error: OPENROUTER_API_KEY environment variable not set.";
                 });
                 screen->Post([=]() { *is_generating_flag = false; });
                 screen->Post(Event::Custom);
                 return;
             }
-            client = ai::openai::create_client(api_key_env);
-        } else if (provider == "Anthropic") {
-            char* api_key_env = std::getenv("ANTHROPIC_API_KEY");
-            if (!api_key_env || std::string(api_key_env).empty()) {
+            client = ai::openai::create_client(api_key, "https://openrouter.ai/api/v1");
+        } else if (provider_id == "qpilot" || provider_id == "qgenie") {
+            char* key = std::getenv("QPILOT_API_KEY");
+            if (key) api_key = key;
+            else {
                 screen->Post([=]() {
-                    chat_history_ptr->back().second = "Error: ANTHROPIC_API_KEY environment variable not set.";
+                    chat_history_ptr->back().second = "Error: QPILOT_API_KEY environment variable not set.";
                 });
                 screen->Post([=]() { *is_generating_flag = false; });
                 screen->Post(Event::Custom);
                 return;
             }
-            client = ai::anthropic::create_client(api_key_env);
+            std::string base_url = (provider_id == "qpilot") ? "https://qpilot-api.qualcomm.com" : "https://qgenie-api.qualcomm.com";
+            client = ai::openai::create_client(api_key, base_url);
+        } else if (provider_id == "antigravity") {
+            api_key = get_antigravity_token();
+            if (api_key.empty()) {
+                screen->Post([=]() {
+                    chat_history_ptr->back().second = "Error: Failed to obtain Antigravity access token (neither ANTIGRAVITY_API_KEY nor python keyring token found).";
+                });
+                screen->Post([=]() { *is_generating_flag = false; });
+                screen->Post(Event::Custom);
+                return;
+            }
+            std::string base_url = "https://daily-cloudcode-pa.googleapis.com/v1internal";
+            char* custom_endpoint = std::getenv("ANTIGRAVITY_ENDPOINT");
+            if (custom_endpoint && std::string(custom_endpoint).length() > 0) {
+                base_url = custom_endpoint;
+            }
+            client = ai::openai::create_client(api_key, base_url);
+        } else if (provider_id == "opencode") {
+            client = ai::openai::create_client("unused", api_url.empty() ? "https://opencode.ai/zen/v1" : api_url);
         } else {
-            screen->Post([=]() {
-                chat_history_ptr->back().second = "Error: Unknown provider: " + provider;
-            });
-            screen->Post([=]() { *is_generating_flag = false; });
-            screen->Post(Event::Custom);
-            return;
+            client = ai::openai::create_client("unused", api_url);
         }
 
         if (enable_tools) {
@@ -203,7 +335,6 @@ void run_llm_generation(
                     }
                     out_f << content;
                     
-                    // Add filename to modified files on main thread
                     screen->Post([=]() {
                         if (std::find(modified_files_ptr->begin(), modified_files_ptr->end(), path) == modified_files_ptr->end()) {
                             modified_files_ptr->push_back(path);
@@ -251,7 +382,6 @@ void run_llm_generation(
                     chat_history_ptr->push_back({"Assistant", result.text});
                     messages_history_ptr->push_back(ai::Message::assistant(result.text));
                     
-                    // Update stats
                     *total_prompt_tokens_ptr += result.usage.prompt_tokens;
                     *total_completion_tokens_ptr += result.usage.completion_tokens;
                     *total_tokens_ptr += result.usage.total_tokens;
@@ -397,13 +527,19 @@ int main() {
     bool enable_tools = false;
     std::string workspace_dir = std::filesystem::current_path().string();
 
-    std::vector<std::string> providers = {"OpenAI", "Anthropic"};
+    std::vector<ProviderInfo> providers_list = load_providers_from_config();
+    std::vector<std::string> providers;
+    for (const auto& p : providers_list) {
+        providers.push_back(p.name);
+    }
     int selected_provider = 0;
 
-    std::vector<std::string> openai_models = {"gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-4.1"};
-    std::vector<std::string> anthropic_models = {"claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5"};
-
-    std::vector<std::string> current_models = openai_models;
+    std::vector<std::string> current_models;
+    if (!providers_list.empty()) {
+        for (const auto& m : providers_list[0].models) {
+            current_models.push_back(m.name);
+        }
+    }
     int selected_model = 0;
 
     // Components
@@ -438,7 +574,7 @@ int main() {
         state.messages_history->push_back(ai::Message::user(prompt));
 
         std::string provider = providers[selected_provider];
-        std::string model = current_models[selected_model];
+        std::string model = providers_list[selected_provider].models[selected_model].id;
 
         if (worker_thread && worker_thread->joinable()) {
             worker_thread->join();
@@ -450,6 +586,7 @@ int main() {
             system_prompt,
             *state.messages_history,
             enable_tools,
+            providers_list,
             &screen,
             state.is_generating,
             state.chat_history,
@@ -643,7 +780,9 @@ int main() {
 
         double cost = 0.0;
         std::string provider = providers[selected_provider];
-        if (provider == "OpenAI") {
+        std::string provider_id = providers_list[selected_provider].id;
+        
+        if (provider_id == "openai" || provider_id == "opencode" || provider_id == "openrouter") {
             cost = (*state.total_prompt_tokens * 2.50 + *state.total_completion_tokens * 10.00) / 1000000.0;
         } else {
             cost = (*state.total_prompt_tokens * 3.00 + *state.total_completion_tokens * 15.00) / 1000000.0;
@@ -657,7 +796,7 @@ int main() {
                     text("⎔ CONTEXT WINDOW") | bold | color(Color::RGB(0xEE, 0x79, 0x48)),
                     hbox({
                         text("Model/Provider: ") | dim,
-                        text(providers[selected_provider] + " / " + current_models[selected_model]) | bold
+                        text(providers[selected_provider] + " / " + providers_list[selected_provider].models[selected_model].name) | bold
                     }),
                     hbox({
                         text("Usage: ") | dim,
@@ -699,7 +838,7 @@ int main() {
             hbox({
                 tab_toggle->Render(),
                 filler(),
-                text("Session: " + providers[selected_provider] + " (" + current_models[selected_model] + ")") 
+                text("Session: " + providers[selected_provider] + " (" + providers_list[selected_provider].models[selected_model].name + ")") 
                     | bold | color(Color::RGB(0xEE, 0x79, 0x48))
             }) | border | color(Color::RGB(0xEC, 0x5B, 0x2B))
         });
@@ -740,10 +879,9 @@ int main() {
         static int last_provider = -1;
         if (selected_provider != last_provider) {
             last_provider = selected_provider;
-            if (selected_provider == 0) {
-                current_models = openai_models;
-            } else {
-                current_models = anthropic_models;
+            current_models.clear();
+            for (const auto& m : providers_list[selected_provider].models) {
+                current_models.push_back(m.name);
             }
             selected_model = 0;
         }
