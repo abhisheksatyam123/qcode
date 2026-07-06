@@ -43,7 +43,7 @@ std::string find_todo_file() {
     std::vector<std::string> paths = {
         "./todo.md",
         "../todo.md",
-        "/home/abhi/notes/scratchpad/task/qcode/active/todo-port-tui/todo.md",
+        "/home/abhi/notes/scratchpad/task/qcode/active/todo-port-tui/todo.md"
     };
     for (const auto& path : paths) {
         if (std::filesystem::exists(path)) {
@@ -110,8 +110,7 @@ std::string get_antigravity_token() {
         return api_key_env;
     }
     
-    // Fallback to keyring via Python
-    std::string command = "python3 -c \"import keyring; print(keyring.get_password('gemini', 'antigravity'))\" 2>/dev/null";
+    std::string command = "python3 -c \"import keyring; print(keyring.get_password(\\\\'gemini\\\\', \\\\'antigravity\\\\'))\" 2>/dev/null";
     std::array<char, 128> buffer;
     std::string output;
     FILE* pipe = popen(command.c_str(), "r");
@@ -194,7 +193,6 @@ std::vector<ProviderInfo> load_providers_from_config() {
     return loaded;
 }
 
-// Helper thread-safe-ish state
 struct ChatState {
     std::shared_ptr<bool> is_generating = std::make_shared<bool>(false);
     std::shared_ptr<std::vector<std::pair<std::string, std::string>>> chat_history = 
@@ -206,7 +204,6 @@ struct ChatState {
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
 };
 
-// Thread worker function
 void run_llm_generation(
     std::string provider,
     std::string model,
@@ -515,6 +512,131 @@ Element render_settings_panel(Component provider_radio, Component model_radio, C
     }) | border | color(Color::RGB(0xEC, 0x5B, 0x2B));
 }
 
+bool handle_slash_command(
+    const std::string& input,
+    int& view_mode_selected,
+    int& tab_selected,
+    ChatState& state,
+    std::string& system_prompt,
+    bool& enable_tools,
+    std::vector<ProviderInfo>& providers_list,
+    int& selected_provider,
+    std::vector<std::string>& current_models,
+    int& selected_model,
+    Component& home_prompt_input,
+    Component& session_prompt_input
+) {
+    if (input.empty() || input[0] != 47) {
+        return false;
+    }
+
+    std::string cmd = input.substr(1);
+    cmd.erase(0, cmd.find_first_not_of(" \t\r\n"));
+    cmd.erase(cmd.find_last_not_of(" \t\r\n") + 1);
+
+    std::string cmd_name = cmd;
+    std::string cmd_args = "";
+    auto space_pos = cmd.find(" ");
+    if (space_pos != std::string::npos) {
+        cmd_name = cmd.substr(0, space_pos);
+        cmd_args = cmd.substr(space_pos + 1);
+        cmd_args.erase(0, cmd_args.find_first_not_of(" \t"));
+    }
+
+    std::transform(cmd_name.begin(), cmd_name.end(), cmd_name.begin(), ::tolower);
+
+    if (cmd_name == "chat") {
+        view_mode_selected = 1;
+        tab_selected = 0;
+        session_prompt_input->TakeFocus();
+        state.chat_history->push_back({"System", "Switched to Chat view."});
+        return true;
+    }
+    if (cmd_name == "files") {
+        view_mode_selected = 1;
+        tab_selected = 1;
+        state.chat_history->push_back({"System", "Switched to Files view."});
+        return true;
+    }
+    if (cmd_name == "stats") {
+        view_mode_selected = 1;
+        tab_selected = 2;
+        state.chat_history->push_back({"System", "Switched to Stats view."});
+        return true;
+    }
+    if (cmd_name == "clear") {
+        state.chat_history->clear();
+        state.messages_history->clear();
+        state.modified_files->clear();
+        *state.total_prompt_tokens = 0;
+        *state.total_completion_tokens = 0;
+        *state.total_tokens = 0;
+        view_mode_selected = 0;
+        home_prompt_input->TakeFocus();
+        return true;
+    }
+    if (cmd_name == "system") {
+        if (cmd_args.empty()) {
+            state.chat_history->push_back({"System", "Current system prompt: \"" + system_prompt + "\""});
+        } else {
+            system_prompt = cmd_args;
+            state.chat_history->push_back({"System", "System prompt updated to: \"" + system_prompt + "\""});
+        }
+        view_mode_selected = 1;
+        return true;
+    }
+    if (cmd_name == "tools") {
+        enable_tools = !enable_tools;
+        state.chat_history->push_back({"System", "Agent tools: " + std::string(enable_tools ? "ENABLED" : "DISABLED")});
+        view_mode_selected = 1;
+        return true;
+    }
+    if (cmd_name == "model") {
+        if (cmd_args.empty()) {
+            std::string msg = "Available models for " + providers_list[selected_provider].name + ":\n";
+            for (const auto& m : providers_list[selected_provider].models) {
+                msg += "  - " + m.id + " (" + m.name + ")\n";
+            }
+            state.chat_history->push_back({"System", msg});
+        } else {
+            bool found = false;
+            int idx = 0;
+            for (const auto& m : providers_list[selected_provider].models) {
+                if (m.id == cmd_args || m.name == cmd_args) {
+                    selected_model = idx;
+                    found = true;
+                    state.chat_history->push_back({"System", "Switched model to: " + m.name + " (" + m.id + ")"});
+                    break;
+                }
+                idx++;
+            }
+            if (!found) {
+                state.chat_history->push_back({"System", "Error: Model not found: " + cmd_args});
+            }
+        }
+        view_mode_selected = 1;
+        return true;
+    }
+    if (cmd_name == "help" || cmd_name == "?") {
+        std::string msg = "Available slash commands:\n"
+                          "  /chat              - Switch to Chat tab\n"
+                          "  /files             - Switch to Files tab\n"
+                          "  /stats             - Switch to Stats tab\n"
+                          "  /clear             - Clear chat history and go back to Home page\n"
+                          "  /system <prompt>   - Show or update custom system prompt\n"
+                          "  /tools             - Toggle local agent tools on/off\n"
+                          "  /model <model_id>  - Show or switch active model\n"
+                          "  /help              - Show this help menu";
+        state.chat_history->push_back({"System", msg});
+        view_mode_selected = 1;
+        return true;
+    }
+
+    state.chat_history->push_back({"System", "Unknown command: /" + cmd_name + ". Type /help for a list of commands."});
+    view_mode_selected = 1;
+    return true;
+}
+
 int main() {
     auto screen = ScreenInteractive::Fullscreen();
 
@@ -601,12 +723,20 @@ int main() {
     // Shared submit handlers for home and session prompt fields
     InputOption prompt_option_home;
     int view_mode_selected = 0; // 0 = Home, 1 = Session
+    int tab_selected = 0;
     
     Component home_prompt_input;
     Component session_prompt_input;
 
     prompt_option_home.on_enter = [&]() {
         if (prompt_input.empty() || *state.is_generating) return;
+        
+        // Intercept slash command
+        if (handle_slash_command(prompt_input, view_mode_selected, tab_selected, state, system_prompt, enable_tools, providers_list, selected_provider, current_models, selected_model, home_prompt_input, session_prompt_input)) {
+            prompt_input = "";
+            return;
+        }
+        
         view_mode_selected = 1; // Transition to Session view immediately!
         session_prompt_input->TakeFocus(); // Set focus to the session input field
         trigger_generation();
@@ -614,6 +744,14 @@ int main() {
 
     InputOption prompt_option_session;
     prompt_option_session.on_enter = [&]() {
+        if (prompt_input.empty() || *state.is_generating) return;
+        
+        // Intercept slash command
+        if (handle_slash_command(prompt_input, view_mode_selected, tab_selected, state, system_prompt, enable_tools, providers_list, selected_provider, current_models, selected_model, home_prompt_input, session_prompt_input)) {
+            prompt_input = "";
+            return;
+        }
+        
         trigger_generation();
     };
 
@@ -622,7 +760,6 @@ int main() {
 
     // Tab horizontal toggles inside Session view
     std::vector<std::string> tab_values = {"Chat", "Files", "Stats"};
-    int tab_selected = 0;
     auto tab_toggle = Toggle(&tab_values, &tab_selected);
 
     // Home View Layout (centered prompt, side-by-side todo and settings panels)
