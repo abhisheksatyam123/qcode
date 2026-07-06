@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <array>
 #include <filesystem>
+#include <algorithm>
 
 #include <ai/openai.h>
 #include <ai/anthropic.h>
@@ -77,6 +78,19 @@ std::vector<TodoTask> parse_todo_tasks() {
     return tasks;
 }
 
+std::string get_file_preview(const std::string& path) {
+    if (!std::filesystem::exists(path)) {
+        return "Error: File does not exist: " + path;
+    }
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return "Error: Could not open file: " + path;
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
 // Helper thread-safe-ish state
 struct ChatState {
     std::shared_ptr<bool> is_generating = std::make_shared<bool>(false);
@@ -86,6 +100,7 @@ struct ChatState {
     std::shared_ptr<int> total_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
+    std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
 };
 
 // Thread worker function
@@ -101,7 +116,8 @@ void run_llm_generation(
     std::shared_ptr<ai::Messages> messages_history_ptr,
     std::shared_ptr<int> total_prompt_tokens_ptr,
     std::shared_ptr<int> total_completion_tokens_ptr,
-    std::shared_ptr<int> total_tokens_ptr
+    std::shared_ptr<int> total_tokens_ptr,
+    std::shared_ptr<std::vector<std::string>> modified_files_ptr
 ) {
     try {
         ai::Client client;
@@ -178,7 +194,7 @@ void run_llm_generation(
                 "write_file",
                 "Write the specified content to a file at the given path (overwrites existing files).",
                 {{"path", "string"}, {"content", "string"}},
-                [](const ai::JsonValue& args, const ai::ToolExecutionContext& context) -> ai::JsonValue {
+                [=](const ai::JsonValue& args, const ai::ToolExecutionContext& context) -> ai::JsonValue {
                     std::string path = args["path"].get<std::string>();
                     std::string content = args["content"].get<std::string>();
                     std::ofstream out_f(path);
@@ -186,6 +202,14 @@ void run_llm_generation(
                         return ai::JsonValue{{"error", "Failed to open file for writing: " + path}};
                     }
                     out_f << content;
+                    
+                    // Add filename to modified files on main thread
+                    screen->Post([=]() {
+                        if (std::find(modified_files_ptr->begin(), modified_files_ptr->end(), path) == modified_files_ptr->end()) {
+                            modified_files_ptr->push_back(path);
+                        }
+                    });
+                    
                     return ai::JsonValue{{"status", "success"}};
                 }
             );
@@ -338,6 +362,29 @@ Element render_todo_panel() {
         | hcenter;
 }
 
+Element render_settings_panel(Component provider_radio, Component model_radio, Component tools_checkbox, Component system_input) {
+    return vbox({
+        text(" Settings") | bold | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+        separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+        hbox({
+            vbox({
+                text("PROVIDER:") | dim,
+                provider_radio->Render()
+            }) | flex,
+            separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+            vbox({
+                text("MODEL:") | dim,
+                model_radio->Render()
+            }) | flex,
+        }),
+        separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+        tools_checkbox->Render(),
+        separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+        text("SYSTEM PROMPT:") | dim,
+        system_input->Render() | border | color(Color::RGB(0xEC, 0x5B, 0x2B))
+    }) | border | color(Color::RGB(0xEC, 0x5B, 0x2B));
+}
+
 int main() {
     auto screen = ScreenInteractive::Fullscreen();
 
@@ -409,7 +456,8 @@ int main() {
             state.messages_history,
             state.total_prompt_tokens,
             state.total_completion_tokens,
-            state.total_tokens
+            state.total_tokens,
+            state.modified_files
         );
     };
 
@@ -417,7 +465,6 @@ int main() {
     InputOption prompt_option_home;
     int view_mode_selected = 0; // 0 = Home, 1 = Session
     
-    // We forward-declare component pointers so they can request focus inside callbacks
     Component home_prompt_input;
     Component session_prompt_input;
 
@@ -437,18 +484,35 @@ int main() {
     session_prompt_input = Input(&prompt_input, &placeholder, prompt_option_session);
 
     // Tab horizontal toggles inside Session view
-    std::vector<std::string> tab_values = {"Chat", "Stats", "Settings"};
+    std::vector<std::string> tab_values = {"Chat", "Files", "Stats"};
     int tab_selected = 0;
     auto tab_toggle = Toggle(&tab_values, &tab_selected);
 
-    // Home View layout
+    // Home View Layout (centered prompt, side-by-side todo and settings panels)
     auto home_view_container = Container::Vertical({
-        home_prompt_input
+        home_prompt_input,
+        provider_radio,
+        model_radio,
+        tools_checkbox,
+        system_input,
     });
 
     auto home_view_renderer = Renderer(home_view_container, [&] {
         auto logo_element = render_logo();
         auto todo_element = render_todo_panel();
+        auto settings_element = render_settings_panel(provider_radio, model_radio, tools_checkbox, system_input);
+
+        Element bottom_section;
+        auto tasks = parse_todo_tasks();
+        if (tasks.empty()) {
+            bottom_section = settings_element | size(WIDTH, EQUAL, 80) | hcenter;
+        } else {
+            bottom_section = hbox({
+                todo_element | flex,
+                separator() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+                settings_element | flex
+            }) | size(WIDTH, EQUAL, 95) | hcenter;
+        }
 
         return vbox({
             filler(),
@@ -458,7 +522,7 @@ int main() {
                 home_prompt_input->Render() | border | color(Color::RGB(0xEC, 0x5B, 0x2B))
             }) | size(WIDTH, EQUAL, 80) | hcenter,
             filler(),
-            todo_element,
+            bottom_section,
             filler(),
         }) | flex;
     });
@@ -512,7 +576,55 @@ int main() {
         }) | flex;
     });
 
-    // Session View Tab 2: Stats
+    // Session View Tab 2: Files View (Left modified files menu, right content preview)
+    int selected_file = 0;
+    Component files_menu = Menu(state.modified_files.get(), &selected_file);
+    auto files_view_container = Container::Vertical({
+        files_menu
+    });
+
+    auto files_view_renderer = Renderer(files_view_container, [&] {
+        if (state.modified_files->empty()) {
+            return vbox({
+                filler(),
+                text("No files modified in this session yet.") | dim | hcenter,
+                filler()
+            }) | flex;
+        }
+
+        if (selected_file >= (int)state.modified_files->size()) {
+            selected_file = 0;
+        }
+
+        std::string selected_path = (*state.modified_files)[selected_file];
+        std::string content = get_file_preview(selected_path);
+
+        auto file_list_panel = vbox({
+            text(" MODIFIED FILES ") | bold | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+            separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+            files_menu->Render() | frame
+        }) | size(WIDTH, EQUAL, 30);
+
+        auto file_preview_panel = vbox({
+            text(" PREVIEW: " + selected_path) | bold | color(Color::RGB(0xEE, 0x79, 0x48)),
+            separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+            text(""),
+            hbox({
+                text("  "),
+                paragraph(content) | vscroll_indicator | frame | flex,
+                text("  ")
+            }),
+            text("")
+        }) | flex;
+
+        return hbox({
+            file_list_panel,
+            separator() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
+            file_preview_panel
+        }) | border | color(Color::RGB(0xEC, 0x5B, 0x2B)) | flex;
+    });
+
+    // Session View Tab 3: Stats
     auto stats_view_renderer = Renderer([&] {
         int hard_limit = 200000;
         int used = *state.total_tokens;
@@ -570,35 +682,11 @@ int main() {
         }) | border | color(Color::RGB(0xEC, 0x5B, 0x2B)) | size(WIDTH, LESS_THAN, 80) | hcenter;
     });
 
-    // Session View Tab 3: Settings
-    auto settings_view_container = Container::Vertical({
-        provider_radio,
-        model_radio,
-        tools_checkbox,
-        system_input,
-    });
-
-    auto settings_view_renderer = Renderer(settings_view_container, [&] {
-        return vbox({
-            text(" PROVIDER ") | bold | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            provider_radio->Render() | border | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            text(" MODEL ") | bold | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            model_radio->Render() | border | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            text(" AGENT SETTINGS ") | bold | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            tools_checkbox->Render() | border | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            separatorLight() | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            text(" SYSTEM PROMPT ") | bold | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-            system_input->Render() | border | color(Color::RGB(0xEC, 0x5B, 0x2B)),
-        }) | size(WIDTH, LESS_THAN, 80) | hcenter;
-    });
-
     // Session View Top level
     auto tab_container = Container::Tab({
         chat_view_renderer,
-        stats_view_renderer,
-        settings_view_renderer
+        files_view_renderer,
+        stats_view_renderer
     }, &tab_selected);
 
     auto session_view_container = Container::Vertical({
@@ -634,9 +722,11 @@ int main() {
             if (!*state.is_generating) {
                 state.chat_history->clear();
                 state.messages_history->clear();
+                state.modified_files->clear();
                 *state.total_prompt_tokens = 0;
                 *state.total_completion_tokens = 0;
                 *state.total_tokens = 0;
+                selected_file = 0;
                 view_mode_selected = 0; // Back to home view
                 home_prompt_input->TakeFocus(); // Focus back to home input field
                 return true;
