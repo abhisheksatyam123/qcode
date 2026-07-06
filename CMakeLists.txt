@@ -224,6 +224,17 @@ foreach(target ${COMPONENT_TARGETS})
     )
 endforeach()
 
+# FTXUI
+include(FetchContent)
+FetchContent_Declare(ftxui
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
+    GIT_TAG v5.0.0
+)
+FetchContent_MakeAvailable(ftxui)
+
+# TUI
+add_subdirectory(src/tui)
+
 # Examples
 if(BUILD_EXAMPLES)
     add_subdirectory(examples)
