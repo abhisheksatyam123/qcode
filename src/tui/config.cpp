@@ -13,11 +13,8 @@
 namespace ai {
 namespace tui {
 
-// Use ordered_json to preserve insertion order from the JSON file
 using ordered_json = nlohmann::ordered_json;
 
-// The SDK appends "/v1/chat/completions" to the base URL for OpenAI-compatible
-// endpoints. Strip trailing "/v1" from config URLs to avoid double-encoding.
 static std::string normalize_api_url(std::string url) {
     while (url.size() >= 3 &&
            url.compare(url.size() - 3, 3, "/v1") == 0) {
@@ -31,22 +28,31 @@ std::string get_antigravity_token() {
     if (api_key_env && std::string(api_key_env).length() > 0)
         return api_key_env;
 
-    std::string command =
-        "python3 -c \"import keyring; "
-        "print(keyring.get_password(\\\\'gemini\\\\', "
-        "\\\\'antigravity\\\\'))\" 2>/dev/null";
-    std::array<char, 128> buffer;
-    std::string output;
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) return "";
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr)
-        output += buffer.data();
-    pclose(pipe);
-    try {
-        auto parsed = ordered_json::parse(output);
-        if (parsed.contains("token") && parsed["token"].contains("access_token"))
-            return parsed["token"]["access_token"].get<std::string>();
-    } catch (...) {}
+    for (const char* py : {"/home/abhi/miniconda3/bin/python", "python3"}) {
+        std::string cmd = std::string(py) +
+            " -c \"import keyring; print(keyring.get_password("
+            "'gemini', 'antigravity'))\" 2>/dev/null";
+        std::array<char, 1024> buf;
+        std::string output;
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) continue;
+        while (fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr)
+            output += buf.data();
+        int rc = pclose(pipe);
+        if (rc != 0 || output.empty() || output == "None\n") continue;
+
+        try {
+            auto parsed = ordered_json::parse(output);
+            if (parsed.contains("token") && parsed["token"].contains("access_token"))
+                return parsed["token"]["access_token"].get<std::string>();
+            if (parsed.contains("access_token"))
+                return parsed["access_token"].get<std::string>();
+        } catch (...) {}
+
+        auto nl = output.find('\n');
+        std::string trimmed = (nl != std::string::npos) ? output.substr(0, nl) : output;
+        if (!trimmed.empty()) return trimmed;
+    }
     return "";
 }
 
@@ -71,7 +77,6 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 ProviderInfo prov;
                 prov.id = prov_id;
                 prov.name = prov_data.value("name", prov_id);
-                // Strip trailing /v1 since the OpenAI client appends it
                 prov.api_url = normalize_api_url(prov_data.value("api", ""));
                 if (prov_data.contains("models")) {
                     for (auto& [model_id, model_data] : prov_data["models"].items()) {
