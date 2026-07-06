@@ -76,6 +76,7 @@ target_sources(ai-sdk-cpp-core
         src/types/stream_options.cpp
         src/types/stream_result.cpp
         src/types/message.cpp
+        src/transform/transform.cpp
         
         # HTTP and base provider infrastructure
         src/http/http_request_handler.cpp
@@ -84,6 +85,8 @@ target_sources(ai-sdk-cpp-core
         # Tool calling implementations
         src/tools/tool_executor.cpp
         src/tools/multi_step_coordinator.cpp
+        src/tools/bash_tool.cpp
+        src/tools/task_tool.cpp
 )
 
 # Provider-specific sources
