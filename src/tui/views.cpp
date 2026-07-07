@@ -1,4 +1,5 @@
 #include <ai/tui/views.h>
+#include <ai/tui/db.h>
 
 #include <filesystem>
 #include <fstream>
@@ -243,8 +244,40 @@ ftxui::Element render_view(
                 })
             }) | border | color(accent(theme));
 
-            // Dynamic inline slash command autocomplete matching opencode
-            if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
+            // Dynamic inline slash command / session autocomplete matching opencode
+            if (prompt_input.size() >= 9 && prompt_input.substr(0, 9) == "/session ") {
+                std::string filter_str = prompt_input.substr(9);
+                auto all_sessions = db::list_sessions();
+                std::vector<std::pair<std::string, std::string>> matches;
+                for (const auto& s : all_sessions) {
+                    if (s.first.find(filter_str) != std::string::npos ||
+                        s.second.find(filter_str) != std::string::npos) {
+                        matches.push_back(s);
+                    }
+                }
+                if (!matches.empty()) {
+                    Elements rows;
+                    rows.push_back(text(" Select Session to Load:") | bold | color(accent2(theme)));
+                    rows.push_back(separatorLight() | color(accent(theme)));
+                    for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
+                        bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
+                        std::string marker = active ? " \u25b6 " : "   ";
+                        auto row = hbox({
+                            text(marker + matches[i].first) | color(active ? accent2(theme) : Color::Default) | bold,
+                            text("  (" + matches[i].second + ")") | dim
+                        });
+                        if (active) {
+                            row = row | bgcolor(bg_popup()) | bold;
+                        }
+                        rows.push_back(row);
+                    }
+                    auto suggestions_panel = vbox(std::move(rows)) | border | color(accent(theme));
+                    prompt_box = vbox({
+                        suggestions_panel,
+                        prompt_box
+                    });
+                }
+            } else if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
                 std::string filter_str = prompt_input.substr(1);
                 std::vector<SlashCommand> matches;
                 for (const auto& cmd : slash_commands) {
