@@ -180,6 +180,28 @@ int main() {
                                               : static_cast<int>(command_matches.size()) - 1;
 
         if (has_autocomplete) {
+            // Tab or Return automatically autoselects first match
+            if (e == Event::Return || e == Event::Special("\t")) {
+                int active_idx = state.slash_suggestion_mode ? state.slash_suggestion_idx : 0;
+                
+                if (is_session_autocomplete) {
+                    if (active_idx >= 0 && active_idx < static_cast<int>(session_matches.size())) {
+                        std::string target_id = session_matches[active_idx].first;
+                        *state.session_id = target_id;
+                        ai::tui::db::reload_session_history(target_id, state);
+                        state.chat_history->push_back({"System", "Loaded persistent session: " + target_id});
+                        prompt_input = "";
+                    }
+                } else {
+                    if (active_idx >= 0 && active_idx < static_cast<int>(command_matches.size())) {
+                        prompt_input = "/" + command_matches[active_idx].name + " ";
+                    }
+                }
+                state.slash_suggestion_mode = false;
+                state.slash_suggestion_idx = 0;
+                return true;
+            }
+
             if (!state.slash_suggestion_mode) {
                 if (e == Event::ArrowUp) {
                     state.slash_suggestion_mode = true;
@@ -197,20 +219,6 @@ int main() {
                 }
                 if (e == Event::ArrowDown || e == Event::Character('j')) {
                     state.slash_suggestion_idx = (state.slash_suggestion_idx + 1) % (max_idx + 1);
-                    return true;
-                }
-                if (e == Event::Return || e == Event::Special("\t")) { // Tab or Return
-                    if (is_session_autocomplete) {
-                        std::string target_id = session_matches[state.slash_suggestion_idx].first;
-                        *state.session_id = target_id;
-                        ai::tui::db::reload_session_history(target_id, state);
-                        state.chat_history->push_back({"System", "Loaded persistent session: " + target_id});
-                        prompt_input = "";
-                    } else {
-                        prompt_input = "/" + command_matches[state.slash_suggestion_idx].name + " ";
-                    }
-                    state.slash_suggestion_mode = false;
-                    state.slash_suggestion_idx = 0;
                     return true;
                 }
                 if (e == Event::Escape) {
