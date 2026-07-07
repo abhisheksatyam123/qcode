@@ -7,6 +7,7 @@ add_executable(qcode-tui
     system_prompt.cpp
     tools.cpp
     views.cpp
+    message_render.cpp
 )
 
 target_link_libraries(qcode-tui PRIVATE

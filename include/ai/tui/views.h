@@ -55,3 +55,9 @@ ftxui::Element render_view(
 );
 } // namespace tui
 } // namespace ai
+
+namespace ai {
+namespace tui {
+ftxui::Elements render_markdown(const std::string& input_text);
+}
+}

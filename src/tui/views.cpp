@@ -1,3 +1,4 @@
+#include <ai/tui/message_render.h>
 #include <ai/tui/views.h>
 #include <ai/tui/db.h>
 #include <ai/logger.h>
@@ -146,7 +147,7 @@ static std::vector<std::string> split_lines(const std::string& s) {
 }
 
 // ── Basic markdown rendering (code blocks, inline code, bold, lists) ──
-static ftxui::Elements render_markdown(const std::string& input_text) {
+ftxui::Elements render_markdown(const std::string& input_text) {
     using namespace ftxui;
     Elements result;
 
@@ -378,194 +379,10 @@ ftxui::Element render_view(
         } else {
             // Chat history list
             Elements msgs;
-            for (int i = 0; i < static_cast<int>(state.chat_history->size()); i++) {
-                auto& entry = (*state.chat_history)[i];
-                Color c = entry.first == "User" ? user_green()
-                        : entry.first == "System" ? dim_gray() : accent2(theme);
-                
-                Element bubble;
-                if (entry.first == "System") {
-                    /* ── Centered dimmed info banner ── */
-                    bubble = hbox({
-                        filler(),
-                        vbox({
-                            paragraph("  ℹ " + entry.second) | dim | hcenter,
-                        }) | flex,
-                        filler(),
-                    });
-                } else if (entry.first == "ToolCall") {
-                    /* ── OpenCode-style ToolCall rendering ── */
-                    auto nl = entry.second.find(static_cast<char>(10));
-                    std::string tc_header = (nl != std::string::npos)
-                        ? entry.second.substr(0, nl) : entry.second;
-                    std::string tc_body = (nl != std::string::npos && nl + 1 < entry.second.size())
-                        ? entry.second.substr(nl + 1) : "";
-                    
-                    // Strip box-drawing symbols from old DB entries if any are left
-                    if (tc_header.starts_with("┌ ")) tc_header = tc_header.substr(2);
-                    if (tc_header.starts_with("┌ Tool Call · ")) {
-                        auto suffix = tc_header.substr(14);
-                        tc_header = "Tool Call · " + suffix;
-                    } else if (tc_header.starts_with("Tool Call · ")) {
-                        // Keep as is
-                    }
-
-                    while (!tc_body.empty() && tc_body.front() == ' ') tc_body.erase(0, 1);
-                    /* Trim trailing whitespace */
-                    while (!tc_body.empty() && (tc_body.back() == '\n' || tc_body.back() == ' ')) tc_body.pop_back();
-
-                    Color tc_color = Color::RGB(180, 220, 120);
-                    Elements tc_lines;
-                    tc_lines.push_back(text("  🔧 " + tc_header) | bold | color(tc_color));
-                    if (!tc_body.empty()) {
-                        std::istringstream tc_ss(tc_body);
-                        std::string tc_line;
-                        while (std::getline(tc_ss, tc_line)) {
-                            // Strip old box drawing characters
-                            if (tc_line.starts_with("│ ")) tc_line = tc_line.substr(2);
-                            else if (tc_line == "│") tc_line = "";
-                            
-                            tc_lines.push_back(text("    " + tc_line) | color(tc_color) | dim);
-                        }
-                    }
-                    bubble = hbox({
-                        separatorLight() | color(tc_color),
-                        vbox(std::move(tc_lines)) | flex
-                    });
-                } else if (entry.first == "ToolResult") {
-                    /* ── OpenCode-style ToolResult rendering ── */
-                    auto nl = entry.second.find(static_cast<char>(10));
-                    std::string tr_status = (nl != std::string::npos)
-                        ? entry.second.substr(0, nl) : entry.second;
-                    std::string tr_output = (nl != std::string::npos && nl + 1 < entry.second.size())
-                        ? entry.second.substr(nl + 1) : "";
-                    
-                    // Strip box-drawing symbols from old DB entries if any are left
-                    if (tr_status.starts_with("└─ ")) tr_status = tr_status.substr(3);
-                    if (tr_status.starts_with("└ ")) tr_status = tr_status.substr(2);
-
-                    while (!tr_output.empty() && tr_output.front() == ' ') tr_output.erase(0, 1);
-                    while (!tr_output.empty() && (tr_output.back() == '\n' || tr_output.back() == ' ')) tr_output.pop_back();
-
-                    bool tr_success = tr_status.find("Failed") == std::string::npos;
-                    Color tr_color = tr_success ? Color::Green : Color::Red;
-                    std::string icon = tr_success ? "✔ " : "❌ ";
-
-                    Elements tr_lines;
-                    tr_lines.push_back(text("  " + icon + tr_status) | bold | color(tr_color));
-                    if (!tr_output.empty()) {
-                        std::istringstream tr_ss(tr_output);
-                        std::string tr_line;
-                        while (std::getline(tr_ss, tr_line)) {
-                            // Strip old box drawing characters
-                            if (tr_line.starts_with("│ ")) tr_line = tr_line.substr(2);
-                            else if (tr_line == "│") tr_line = "";
-                            
-                            tr_lines.push_back(text("    " + tr_line) | dim);
-                        }
-                    }
-                    bubble = hbox({
-                        separatorLight() | color(tr_color),
-                        vbox(std::move(tr_lines)) | flex
-                    });
-                } else if (entry.first == "User") {
-                    /* ── User: left-aligned, green accent, "You" header ── */
-                    Elements user_parsed = render_markdown(entry.second);
-                    user_parsed.insert(user_parsed.begin(),
-                        text("  You") | bold | color(user_green()));
-                    bubble = hbox({
-                        separatorLight() | color(user_green()),
-                        vbox(std::move(user_parsed)) | flex,
-                    });
-                } else {
-                    /* ── Assistant message with thinking token support ── */
-                    auto& msg_text = entry.second;
-                    Elements assistant_elems;
-                    
-                    // Unified header with model name matching OpenCode style
-                    assistant_elems.push_back(
-                        hbox({
-                            text("  Assistant") | bold | color(accent2(theme)),
-                            text(" · " + providers_list[selected_provider].models[selected_model].name) | dim | color(accent(theme))
-                        })
-                    );
-
-                    /* Parse <thinking>...</thinking> blocks */
-                    LOG_DEBUG("Views: parsing assistant msg size={}", entry.second.size());
-                    std::string remain = entry.second;
-                    bool has_thinking = false;
-                    std::string text_buf;
-
-                    while (!remain.empty()) {
-                        auto pos = remain.find("<thinking>");
-                        if (pos == std::string::npos) {
-                            text_buf += remain;
-                            break;
-                        }
-                        text_buf += remain.substr(0, pos);
-                        remain.erase(0, pos + 10);  // skip <thinking>
-                        has_thinking = true;
-                        LOG_DEBUG("Views: found <thinking> block at pos {}", pos);
-
-                        auto close_pos = remain.find("</thinking>");
-                        if (close_pos == std::string::npos) {
-                            text_buf += remain;
-                            break;
-                        }
-                        std::string think_content = remain.substr(0, close_pos);
-                        remain.erase(0, close_pos + 12);  // skip </thinking>
-
-                        // Flush accumulated text buffer (text before thinking)
-                        if (!text_buf.empty()) {
-                            Elements flushed = render_markdown("  " + text_buf);
-                            for (auto& el : flushed)
-                                assistant_elems.push_back(std::move(el));
-                            text_buf.clear();
-                        }
-
-                        // Render thinking content dimmed (OpenCode reasoning-part style)
-                        if (!think_content.empty()) {
-                            // Trim leading/trailing newlines
-                            while (!think_content.empty() && (think_content.front() == '\n' || think_content.front() == ' '))
-                                think_content.erase(0, 1);
-                            while (!think_content.empty() && (think_content.back() == '\n' || think_content.back() == ' '))
-                                think_content.pop_back();
-                            if (!think_content.empty()) {
-                                LOG_DEBUG("Views: rendering thinking block ({} chars)", think_content.size());
-                                // Match OpenCode: dimmed markdown, no header
-                                Elements thought_el = render_markdown("    " + think_content);
-                                for (auto& el : thought_el)
-                                    assistant_elems.push_back(el | dim | color(Color::RGB(0x99, 0x99, 0x99)));
-                            }
-                        }
-                    }
-
-                    // Append remaining text after thinking
-                    if (!text_buf.empty()) {
-                        Elements remaining = render_markdown("  " + text_buf);
-                        for (auto& el : remaining)
-                            assistant_elems.push_back(std::move(el));
-                    }
-
-                    bubble = hbox({
-                        separatorLight() | color(accent2(theme)),
-                        vbox(std::move(assistant_elems)) | flex
-                    });
-                }
-                if (state.selection_mode) {
-                    if (state.selected_message == i) {
-                        bubble = bubble | bgcolor(Color::RGB(0x33, 0x33, 0x33)) | bold | focus;
-                    }
-                } else {
-                    if (i == static_cast<int>(state.chat_history->size()) - 1) {
-                        bubble = bubble | focus;
-                    }
-                }
-
-                msgs.push_back(bubble);
+            for (const auto& msg : *state.messages_history) {
+                msgs.push_back(render_message(msg, state, providers_list, selected_provider, selected_model, *state.theme));
                 msgs.push_back(text(""));
             }
-
             // Animated spinner during generation
             static const std::array<const char*, 10> spinner_frames = {
                 "⠋", "⠙", "⠹", "⠸", "⠼",
