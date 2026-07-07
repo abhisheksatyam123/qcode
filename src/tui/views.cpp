@@ -125,6 +125,12 @@ ftxui::Element build_model_popup(
     int selected_model,
     const std::string& theme
 );
+ftxui::Element build_session_popup(
+    const std::vector<std::pair<std::string, std::string>>& entries,
+    int select_idx,
+    const std::string& active_session_id,
+    const std::string& theme
+);
 
 ftxui::Element render_view(
     const ChatState& state,
@@ -139,6 +145,9 @@ ftxui::Element render_view(
     bool show_model_select,
     int model_select_idx,
     const std::vector<ModelEntry>& model_entries,
+    bool show_session_select,
+    int session_select_idx,
+    const std::vector<std::pair<std::string, std::string>>& session_entries,
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
     const ftxui::Component& input
@@ -434,6 +443,12 @@ ftxui::Element render_view(
             clear_under(build_model_popup(model_entries, model_select_idx, selected_provider, selected_model, theme)) | center
         });
     }
+    if (show_session_select) {
+        return dbox({
+            main_layout,
+            clear_under(build_session_popup(session_entries, session_select_idx, *state.session_id, theme)) | center
+        });
+    }
 
     return main_layout;
 }
@@ -464,6 +479,40 @@ ftxui::Element build_model_popup(
         std::string line_text = marker + e.model_name;
         if (e.model_id != e.model_name)
             line_text += "  " + e.model_id;
+
+        auto line = text(line_text);
+        if (i == select_idx)
+            line = line | bgcolor(bg_popup()) | bold;
+        else if (active)
+            line = line | color(accent2(theme));
+        lines.push_back(line);
+    }
+
+    lines.push_back(separatorLight());
+    lines.push_back(text(" \u2191\u2193 navigate  Enter select  Esc cancel") | dim);
+
+    return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
+           size(WIDTH, EQUAL, 72) | hcenter;
+}
+
+// ── Session selector popup ──
+ftxui::Element build_session_popup(
+    const std::vector<std::pair<std::string, std::string>>& entries,
+    int select_idx,
+    const std::string& active_session_id,
+    const std::string& theme
+) {
+    Elements lines;
+    lines.push_back(text(" Select Session") | bold | color(accent2(theme)));
+    lines.push_back(separatorLight());
+
+    for (int i = 0; i < static_cast<int>(entries.size()); i++) {
+        auto& e = entries[i];
+        bool active = (e.first == active_session_id);
+        std::string marker = (i == select_idx) ? " \u25b6 " : (active ? " \u25cf " : "   ");
+        std::string line_text = marker + e.second;
+        if (e.first != e.second)
+            line_text += "  (" + e.first.substr(0, 8) + "...)";
 
         auto line = text(line_text);
         if (i == select_idx)

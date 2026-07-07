@@ -60,6 +60,11 @@ int main() {
     int model_select_idx = 0;
     auto model_entries = ai::tui::build_model_entries(providers_list);
 
+    // ── Session selector popup ──
+    bool show_session_select = false;
+    int session_select_idx = 0;
+    std::vector<std::pair<std::string, std::string>> session_entries;
+
     // ── Slash command popup ──
     bool show_slash = false;
     int slash_idx = 0;
@@ -114,27 +119,71 @@ int main() {
             return true;
         }
 
+        if (show_session_select) {
+            if (e == Event::ArrowDown || e == Event::Character('j')) {
+                session_select_idx = (session_select_idx + 1) %
+                                   static_cast<int>(session_entries.size());
+                return true;
+            }
+            if (e == Event::ArrowUp || e == Event::Character('k')) {
+                session_select_idx = (session_select_idx - 1 +
+                                    static_cast<int>(session_entries.size())) %
+                                   static_cast<int>(session_entries.size());
+                return true;
+            }
+            if (e == Event::Return) {
+                auto& entry = session_entries[static_cast<size_t>(session_select_idx)];
+                *state.session_id = entry.first;
+                ai::tui::db::reload_session_history(*state.session_id, state);
+                state.chat_history->push_back({"System", "Loaded persistent session: " + entry.first});
+                show_session_select = false;
+                return true;
+            }
+            if (e == Event::Escape || e == Event::Backspace) {
+                show_session_select = false;
+                return true;
+            }
+            return true; // Consume other keys in session select mode
+        }
+
         // ── Dynamic Inline Autocomplete Interceptor ──
-        std::vector<ai::tui::SlashCommand> matches;
+        std::vector<std::pair<std::string, std::string>> session_matches;
+        std::vector<ai::tui::SlashCommand> command_matches;
+        bool is_session_autocomplete = false;
         bool has_autocomplete = false;
-        if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
+
+        if (prompt_input.size() >= 9 && prompt_input.substr(0, 9) == "/session ") {
+            is_session_autocomplete = true;
+            std::string filter_str = prompt_input.substr(9);
+            auto all_sessions = ai::tui::db::list_sessions();
+            for (const auto& s : all_sessions) {
+                if (s.first.find(filter_str) != std::string::npos || 
+                    s.second.find(filter_str) != std::string::npos) {
+                    session_matches.push_back(s);
+                }
+            }
+            has_autocomplete = !session_matches.empty();
+        } else if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
             std::string filter_str = prompt_input.substr(1);
             for (const auto& cmd : slash_commands) {
                 if (cmd.name.find(filter_str) != std::string::npos) {
-                    matches.push_back(cmd);
+                    command_matches.push_back(cmd);
                 }
             }
-            has_autocomplete = !matches.empty();
+            has_autocomplete = !command_matches.empty();
         } else {
             state.slash_suggestion_mode = false;
             state.slash_suggestion_idx = 0;
         }
 
+        int max_idx = is_session_autocomplete ? static_cast<int>(session_matches.size()) - 1 
+                                              : static_cast<int>(command_matches.size()) - 1;
+
         if (has_autocomplete) {
             if (!state.slash_suggestion_mode) {
                 if (e == Event::ArrowUp) {
                     state.slash_suggestion_mode = true;
-                    state.slash_suggestion_idx = static_cast<int>(matches.size()) - 1;
+                    state.slash_suggestion_idx = max_idx;
                     return true;
                 }
             } else {
@@ -142,16 +191,24 @@ int main() {
                     if (state.slash_suggestion_idx > 0) {
                         state.slash_suggestion_idx--;
                     } else {
-                        state.slash_suggestion_idx = static_cast<int>(matches.size()) - 1;
+                        state.slash_suggestion_idx = max_idx;
                     }
                     return true;
                 }
                 if (e == Event::ArrowDown || e == Event::Character('j')) {
-                    state.slash_suggestion_idx = (state.slash_suggestion_idx + 1) % static_cast<int>(matches.size());
+                    state.slash_suggestion_idx = (state.slash_suggestion_idx + 1) % (max_idx + 1);
                     return true;
                 }
                 if (e == Event::Return || e == Event::Special("\t")) { // Tab or Return
-                    prompt_input = "/" + matches[state.slash_suggestion_idx].name + " ";
+                    if (is_session_autocomplete) {
+                        std::string target_id = session_matches[state.slash_suggestion_idx].first;
+                        *state.session_id = target_id;
+                        ai::tui::db::reload_session_history(target_id, state);
+                        state.chat_history->push_back({"System", "Loaded persistent session: " + target_id});
+                        prompt_input = "";
+                    } else {
+                        prompt_input = "/" + command_matches[state.slash_suggestion_idx].name + " ";
+                    }
                     state.slash_suggestion_mode = false;
                     state.slash_suggestion_idx = 0;
                     return true;
@@ -219,6 +276,35 @@ int main() {
         // Slash commands
         if (prompt_input[0] == '/') {
             std::string raw = prompt_input;
+            
+            // Trim whitespace
+            std::string cmd = raw.substr(1);
+            cmd.erase(cmd.begin(), std::find_if(cmd.begin(), cmd.end(), [](unsigned char ch) {
+                return !std::isspace(ch);
+            }));
+            cmd.erase(std::find_if(cmd.rbegin(), cmd.rend(), [](unsigned char ch) {
+                return !std::isspace(ch);
+            }).base(), cmd.end());
+
+            // Open SQLite session selection popup if user runs /session or /sessions without arguments
+            if (cmd == "session" || cmd == "sessions" || cmd == "list") {
+                prompt_input = "";
+                session_entries = ai::tui::db::list_sessions();
+                if (!session_entries.empty()) {
+                    show_session_select = true;
+                    session_select_idx = 0;
+                    for (int i = 0; i < static_cast<int>(session_entries.size()); i++) {
+                        if (session_entries[i].first == *state.session_id) {
+                            session_select_idx = i;
+                            break;
+                        }
+                    }
+                } else {
+                    state.chat_history->push_back({"System", "No saved sessions found."});
+                }
+                return;
+            }
+
             prompt_input = "";
             ai::tui::handle_slash_command(raw, prompt_input, providers_list,
                                           selected_provider, selected_model,
@@ -249,7 +335,7 @@ int main() {
     };
 
     input |= CatchEvent([&](Event e) {
-        if (e == Event::Return && !show_slash && !show_model_select && !prompt_input.empty() && !state.slash_suggestion_mode) {
+        if (e == Event::Return && !show_slash && !show_model_select && !show_session_select && !prompt_input.empty() && !state.slash_suggestion_mode) {
             submit();
             return true;
         }
@@ -297,6 +383,7 @@ int main() {
             enable_tools, prompt_input,
             show_slash, slash_idx, slash_commands,
             show_model_select, model_select_idx, model_entries,
+            show_session_select, session_select_idx, session_entries,
             tab_toggle, files_menu, input);
     });
 

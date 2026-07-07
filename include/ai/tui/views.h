@@ -6,6 +6,7 @@
 
 #include <string>
 #include <vector>
+#include <utility>
 
 #include <ai/tui/commands.h>
 #include <ai/tui/state.h>
@@ -40,7 +41,7 @@ ftxui::Element render_view(
     int selected_provider,
     int selected_model,
     bool enable_tools,
-    const std::string& prompt_input, // <-- Added!
+    const std::string& prompt_input,
     // Slash popup state
     bool show_slash,
     int slash_idx,
@@ -49,6 +50,10 @@ ftxui::Element render_view(
     bool show_model_select,
     int model_select_idx,
     const std::vector<ModelEntry>& model_entries,
+    // Session selector popup state
+    bool show_session_select,
+    int session_select_idx,
+    const std::vector<std::pair<std::string, std::string>>& session_entries,
     // Interactive components
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
