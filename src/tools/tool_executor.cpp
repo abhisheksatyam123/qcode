@@ -77,6 +77,21 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
   if (!parallel) {
     // Execute sequentially
     for (const auto& tool_call : tool_calls) {
+      // Check confirmation if callback is set
+      if (options && options->on_tool_call_confirm.has_value()) {
+        bool confirmed = options->on_tool_call_confirm.value()(tool_call);
+        if (!confirmed) {
+          ToolResult rejected_res(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                                 std::string("Tool execution rejected by user"));
+          // Still notify finish callback
+          if (options && options->on_tool_call_finish.has_value()) {
+            options->on_tool_call_finish.value()(rejected_res);
+          }
+          results.push_back(rejected_res);
+          continue;
+        }
+      }
+
       // Call the on_tool_call_start callback if provided
       if (options && options->on_tool_call_start.has_value()) {
         options->on_tool_call_start.value()(tool_call);

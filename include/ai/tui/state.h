@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <mutex>
+#include <condition_variable>
 
 #include <ai/types/message.h>
 
@@ -43,6 +45,14 @@ struct ChatState {
     // Selection & Clipboard
     int selected_message = -1; // Index in chat_history, or -1 if none
     bool selection_mode = false; // When true, arrow keys navigate messages instead of input
+
+    // Tool Confirmation Sync
+    std::shared_ptr<bool> show_confirm_dialog = std::make_shared<bool>(false);
+    std::shared_ptr<std::string> confirm_dialog_message = std::make_shared<std::string>();
+    std::shared_ptr<bool> confirm_decision = std::make_shared<bool>(false);
+    std::shared_ptr<std::mutex> confirm_mutex = std::make_shared<std::mutex>();
+    std::shared_ptr<std::condition_variable> confirm_cv = std::make_shared<std::condition_variable>();
+    std::shared_ptr<bool> confirm_ready = std::make_shared<bool>(false);
 };
 
 // Helper to scan for modified files using git status

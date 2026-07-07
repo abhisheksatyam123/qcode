@@ -45,6 +45,7 @@ ftxui::Element build_slash_popup(
     const std::vector<SlashCommand>& commands,
     int slash_idx
 );
+ftxui::Element build_confirm_popup(const std::string& message);
 
 ftxui::Element render_view(
     const ChatState& state,
@@ -236,6 +237,12 @@ ftxui::Element render_view(
     }) | flex;
 
     // Overlay popups if active
+    if (*state.show_confirm_dialog) {
+        return vbox({
+            build_confirm_popup(*state.confirm_dialog_message),
+            main_layout,
+        });
+    }
     if (show_model_select) {
         return vbox({
             build_model_popup(model_entries, model_select_idx, selected_provider, selected_model),
@@ -321,6 +328,36 @@ ftxui::Element build_slash_popup(
 
     lines.push_back(separatorLight());
     lines.push_back(text(" \u2191\u2193 navigate  Enter select  Esc cancel") | dim);
+
+    return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
+           size(WIDTH, EQUAL, 60) | hcenter;
+}
+
+} // namespace tui
+} // namespace ai
+
+namespace ai {
+namespace tui {
+
+ftxui::Element build_confirm_popup(const std::string& message) {
+    using namespace ftxui;
+    Elements lines;
+    lines.push_back(text(" Permission Requested") | bold | color(Color::Yellow));
+    lines.push_back(separatorLight() | color(Color::Yellow));
+    
+    // Support multi-line message wrapping
+    std::stringstream ss(message);
+    std::string line_str;
+    while (std::getline(ss, line_str, '\n')) {
+        lines.push_back(paragraph(line_str));
+    }
+    
+    lines.push_back(separatorLight() | color(Color::Yellow));
+    lines.push_back(hbox({
+        text("  [Y] Approve  ") | bold | bgcolor(Color::Green) | color(Color::Black),
+        text("    "),
+        text("  [N] Deny  ") | bold | bgcolor(Color::Red) | color(Color::Black),
+    }) | hcenter);
 
     return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
            size(WIDTH, EQUAL, 60) | hcenter;

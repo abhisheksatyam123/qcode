@@ -62,6 +62,31 @@ int main() {
 
     // ── Slash popup / Model select keyboard event handling ──
     input |= CatchEvent([&](Event e) {
+        // ── Tool Confirmation Dialog active ──
+        if (*state.show_confirm_dialog) {
+            if (e == Event::Character('y') || e == Event::Character('Y')) {
+                {
+                    std::lock_guard<std::mutex> lock(*state.confirm_mutex);
+                    *state.confirm_decision = true;
+                    *state.confirm_ready = true;
+                    *state.show_confirm_dialog = false;
+                }
+                state.confirm_cv->notify_all();
+                return true;
+            }
+            if (e == Event::Character('n') || e == Event::Character('N') || e == Event::Escape) {
+                {
+                    std::lock_guard<std::mutex> lock(*state.confirm_mutex);
+                    *state.confirm_decision = false;
+                    *state.confirm_ready = true;
+                    *state.show_confirm_dialog = false;
+                }
+                state.confirm_cv->notify_all();
+                return true;
+            }
+            return true; // block other inputs
+        }
+
         if (show_model_select) {
             if (e == Event::ArrowDown || e == Event::Character('j')) {
                 model_select_idx = (model_select_idx + 1) %
@@ -226,10 +251,7 @@ int main() {
                 providers_list[selected_provider].name,
                 providers_list[selected_provider].models[selected_model].id,
                 system_prompt, *state.messages_history, enable_tools,
-                providers_list, &screen, state.is_generating,
-                state.chat_history, state.messages_history,
-                state.total_prompt_tokens, state.total_completion_tokens,
-                state.total_tokens, state.modified_files);
+                providers_list, &screen, state);
             // Refresh modified files list on completion
             ai::tui::update_modified_files(state);
             screen.Post(Event::Custom);

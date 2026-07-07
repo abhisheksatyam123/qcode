@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <string>
 #include <utility>
+#include <mutex>
+#include <condition_variable>
 
 #include <ai/types/client.h>
 #include <ai/logger.h>
@@ -21,13 +23,7 @@ void run_llm_generation(
     bool enable_tools,
     std::vector<ProviderInfo> providers_list,
     ftxui::ScreenInteractive* screen,
-    std::shared_ptr<bool> is_generating_flag,
-    std::shared_ptr<std::vector<std::pair<std::string, std::string>>> chat_history_ptr,
-    std::shared_ptr<ai::Messages> messages_history_ptr,
-    std::shared_ptr<int> total_prompt_tokens_ptr,
-    std::shared_ptr<int> total_completion_tokens_ptr,
-    std::shared_ptr<int> total_tokens_ptr,
-    std::shared_ptr<std::vector<std::string>> /*modified_files_ptr*/
+    ChatState state
 ) {
     try {
         ai::Client client;
@@ -45,7 +41,7 @@ void run_llm_generation(
             char* key = std::getenv("OPENROUTER_API_KEY");
             if (!key) {
                 screen->Post(
-                    [chat_history_ptr, is_generating_flag, screen]() {
+                    [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating, screen]() {
                         chat_history_ptr->back().second =
                             "Error: OPENROUTER_API_KEY not set.";
                         *is_generating_flag = false;
@@ -60,7 +56,7 @@ void run_llm_generation(
             char* key = std::getenv("QPILOT_API_KEY");
             if (!key) {
                 screen->Post(
-                    [chat_history_ptr, is_generating_flag, screen]() {
+                    [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating, screen]() {
                         chat_history_ptr->back().second =
                             "Error: QPILOT_API_KEY not set.";
                         *is_generating_flag = false;
@@ -77,7 +73,7 @@ void run_llm_generation(
             api_key = get_antigravity_token();
             if (api_key.empty()) {
                 screen->Post(
-                    [chat_history_ptr, is_generating_flag, screen]() {
+                    [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating, screen]() {
                         chat_history_ptr->back().second =
                             "Error: Antigravity token failed.";
                         *is_generating_flag = false;
@@ -98,9 +94,7 @@ void run_llm_generation(
                              provider_id, model, enable_tools);
 
         if (enable_tools) {
-            // Use Tools module to build definitions
-            ai::ToolSet tools = Tools::build_definitions(
-                ToolConfig{true, true});
+            ai::ToolSet tools = Tools::build_definitions(ToolConfig{true, true});
 
             ai::GenerateOptions options;
             options.model = model;
@@ -109,10 +103,40 @@ void run_llm_generation(
             options.tools = tools;
             options.max_steps = 10;
 
-            options.on_tool_call_start = [=](const ai::ToolCall& call) {
+            // Intercept and confirm tool call execution with user (approve/deny dialog)
+            options.on_tool_call_confirm = [state, screen](const ai::ToolCall& call) -> bool {
+                std::unique_lock<std::mutex> lock(*state.confirm_mutex);
+                *state.confirm_ready = false;
+                
+                // Build a user-friendly confirm message
+                std::string cmd_str = "";
+                if (call.arguments.contains("command")) {
+                    cmd_str = call.arguments["command"].get<std::string>();
+                } else if (call.arguments.contains("op")) {
+                    cmd_str = call.arguments["op"].get<std::string>();
+                    if (call.arguments.contains("prompt")) {
+                        cmd_str += ": " + call.arguments["prompt"].get<std::string>();
+                    }
+                } else {
+                    cmd_str = call.arguments.dump();
+                }
+                
+                *state.confirm_dialog_message = "Allow '" + call.tool_name + "' to execute:\n" + cmd_str;
+                *state.show_confirm_dialog = true;
+                
+                // Redraw UI
+                screen->Post(ftxui::Event::Custom);
+                
+                // Block generation thread until user makes a decision in TUI
+                state.confirm_cv->wait(lock, [state]() { return *state.confirm_ready; });
+                
+                return *state.confirm_decision;
+            };
+
+            options.on_tool_call_start = [state, screen](const ai::ToolCall& call) {
                 screen->Post(
-                    [=]() {
-                        chat_history_ptr->push_back(
+                    [state, screen, &call]() {
+                        state.chat_history->push_back(
                             {"System",
                              Tools::format_tool_call(
                                  call.tool_name, call.arguments.dump())});
@@ -120,9 +144,9 @@ void run_llm_generation(
                     });
             };
 
-            options.on_tool_call_finish = [=](const ai::ToolResult& res) {
-                screen->Post([=]() {
-                    chat_history_ptr->push_back(
+            options.on_tool_call_finish = [state, screen](const ai::ToolResult& res) {
+                screen->Post([state, screen, &res]() {
+                    state.chat_history->push_back(
                         {"System",
                          Tools::format_tool_result(
                              res.tool_name, res.is_success(),
@@ -134,22 +158,20 @@ void run_llm_generation(
 
             auto gen_result = client.generate_text(options);
             screen->Post(
-                [is_generating_flag, chat_history_ptr, messages_history_ptr,
-                 total_prompt_tokens_ptr, total_completion_tokens_ptr,
-                 total_tokens_ptr, gen_result, screen]() {
-                    *is_generating_flag = false;
+                [state, gen_result, screen]() {
+                    *state.is_generating = false;
                     if (gen_result.is_success()) {
-                        chat_history_ptr->push_back(
+                        state.chat_history->push_back(
                             {"Assistant", gen_result.text});
-                        messages_history_ptr->push_back(
+                        state.messages_history->push_back(
                             ai::Message::assistant(gen_result.text));
-                        *total_prompt_tokens_ptr +=
+                        *state.total_prompt_tokens +=
                             gen_result.usage.prompt_tokens;
-                        *total_completion_tokens_ptr +=
+                        *state.total_completion_tokens +=
                             gen_result.usage.completion_tokens;
-                        *total_tokens_ptr += gen_result.usage.total_tokens;
+                        *state.total_tokens += gen_result.usage.total_tokens;
                     } else
-                        chat_history_ptr->push_back(
+                        state.chat_history->push_back(
                             {"System",
                              "Error: " + gen_result.error_message()});
                     screen->Post(ftxui::Event::Custom);
@@ -164,7 +186,7 @@ void run_llm_generation(
 
             if (stream.has_error()) {
                 screen->Post(
-                    [chat_history_ptr, is_generating_flag,
+                    [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating,
                      screen, err_msg = stream.error_message()]() {
                         chat_history_ptr->back().second =
                             "Error: " + err_msg;
@@ -177,14 +199,14 @@ void run_llm_generation(
             for (const auto& event : stream) {
                 if (event.is_text_delta()) {
                     screen->Post(
-                        [chat_history_ptr, screen,
+                        [chat_history_ptr = state.chat_history, screen,
                          text = event.text_delta]() {
                             chat_history_ptr->back().second += text;
                             screen->Post(ftxui::Event::Custom);
                         });
                 } else if (event.is_error()) {
                     screen->Post(
-                        [chat_history_ptr, screen]() {
+                        [chat_history_ptr = state.chat_history, screen]() {
                             chat_history_ptr->back().second +=
                                 "\n[Error]";
                             screen->Post(ftxui::Event::Custom);
@@ -193,8 +215,9 @@ void run_llm_generation(
                 } else if (event.is_finish() && event.usage.has_value()) {
                     auto u = event.usage.value();
                     screen->Post(
-                        [total_prompt_tokens_ptr,
-                         total_completion_tokens_ptr, total_tokens_ptr,
+                        [total_prompt_tokens_ptr = state.total_prompt_tokens,
+                         total_completion_tokens_ptr = state.total_completion_tokens,
+                         total_tokens_ptr = state.total_tokens,
                          u]() {
                             *total_prompt_tokens_ptr += u.prompt_tokens;
                             *total_completion_tokens_ptr +=
@@ -204,8 +227,8 @@ void run_llm_generation(
                 }
             }
             screen->Post(
-                [is_generating_flag, messages_history_ptr,
-                 chat_history_ptr, screen]() {
+                [is_generating_flag = state.is_generating, messages_history_ptr = state.messages_history,
+                 chat_history_ptr = state.chat_history, screen]() {
                     *is_generating_flag = false;
                     messages_history_ptr->push_back(
                         ai::Message::assistant(
@@ -216,7 +239,7 @@ void run_llm_generation(
     } catch (const std::exception& e) {
         std::string err_msg = e.what();
         screen->Post(
-            [chat_history_ptr, is_generating_flag, screen,
+            [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating, screen,
              err_msg]() {
                 chat_history_ptr->back().second =
                     "Exception: " + err_msg;

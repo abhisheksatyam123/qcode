@@ -138,9 +138,64 @@ static std::string resolve_cwd(const std::string& workdir) {
 }
 
 static bool is_safe_command(const std::string& command, std::string& warning) {
-  (void)command;
-  (void)warning;
-  // Basic safety checks can be extended
+  // Heredoc validation
+  size_t pos = 0;
+  while ((pos = command.find("<<", pos)) != std::string::npos) {
+    pos += 2;
+    // Skip whitespace
+    while (pos < command.length() && std::isspace(command[pos])) {
+      pos++;
+    }
+    if (pos >= command.length()) break;
+    
+    // Extract label
+    std::string label;
+    char quote = 0;
+    if (command[pos] == '\'' || command[pos] == '"') {
+      quote = command[pos];
+      pos++;
+    }
+    
+    while (pos < command.length()) {
+      char c = command[pos];
+      if (quote) {
+        if (c == quote) {
+          pos++;
+          break;
+        }
+        label += c;
+      } else {
+        if (std::isalnum(c) || c == '_' || c == '-') {
+          label += c;
+        } else {
+          break;
+        }
+      }
+      pos++;
+    }
+    
+    if (label.empty()) continue;
+    
+    // Check if label appears on its own line in the rest of the command
+    bool found = false;
+    size_t search_pos = pos;
+    while ((search_pos = command.find(label, search_pos)) != std::string::npos) {
+      bool start_ok = (search_pos == 0 || command[search_pos - 1] == '\n' || command[search_pos - 1] == '\r');
+      size_t end_pos = search_pos + label.length();
+      bool end_ok = (end_pos == command.length() || command[end_pos] == '\n' || command[end_pos] == '\r');
+      if (start_ok && end_ok) {
+        found = true;
+        break;
+      }
+      search_pos += label.length();
+    }
+    
+    if (!found) {
+      warning = "Syntax Error: Heredoc marker '" + label + "' is not terminated. "
+                "Make sure you close the heredoc on its own line.";
+      return false;
+    }
+  }
   return true;
 }
 
@@ -252,6 +307,14 @@ JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionCo
   if (desc.empty()) {
     JsonValue err;
     err["error"] = "description is required for bash background (5-10 word purpose).";
+    return err;
+  }
+
+  // Safety checks
+  std::string warning;
+  if (!is_safe_command(command, warning)) {
+    JsonValue err;
+    err["error"] = warning;
     return err;
   }
 

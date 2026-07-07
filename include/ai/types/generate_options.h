@@ -36,6 +36,7 @@ struct GenerateOptions {
   std::optional<std::function<void(const GenerateStep&)>> on_step_finish;
   std::optional<std::function<void(const ToolCall&)>> on_tool_call_start;
   std::optional<std::function<void(const ToolResult&)>> on_tool_call_finish;
+  std::optional<std::function<bool(const ToolCall&)>> on_tool_call_confirm;
 
   GenerateOptions(std::string model_name, std::string user_prompt)
       : model(std::move(model_name)), prompt(std::move(user_prompt)) {}
