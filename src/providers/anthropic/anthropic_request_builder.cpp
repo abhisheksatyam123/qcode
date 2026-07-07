@@ -107,7 +107,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
   // Add tools if specified
   if (options.has_tools()) {
-    ai::logger::log_debug("Adding {} tools to Anthropic request",
+    LOG_DEBUG("Adding {} tools to Anthropic request",
                           options.tools.size());
 
     nlohmann::json tools_array = nlohmann::json::array();
@@ -148,7 +148,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
           break;
       }
 
-      ai::logger::log_debug("Added {} tools with choice: {}",
+      LOG_DEBUG("Added {} tools with choice: {}",
                             tools_array.size(),
                             options.tool_choice.to_string());
     }

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <ai/logger.h>
 #include <chrono>
 #include <future>
 #include <random>
@@ -12,6 +13,7 @@ namespace ai {
 ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
                                       const ToolSet& tools,
                                       const Messages& messages) {
+  LOG_DEBUG("ToolExecutor: execute_tool tool={}", tool_call.tool_name);
   // Validate tool call
   if (!tool_call.is_valid()) {
     return ToolResult(
@@ -22,6 +24,7 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   // Check if tool exists
   auto tool_it = tools.find(tool_call.tool_name);
   if (tool_it == tools.end()) {
+    LOG_WARN("ToolExecutor: tool '{}' not found", tool_call.tool_name);
     return ToolResult(
         tool_call.id, tool_call.tool_name, tool_call.arguments,
         std::string("Tool not found: '" + tool_call.tool_name + "'"));
@@ -112,9 +115,20 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
     futures.reserve(tool_calls.size());
 
     for (const auto& tool_call : tool_calls) {
+      // Fire on_tool_call_start callback
+      if (options && options->on_tool_call_start.has_value()) {
+        options->on_tool_call_start.value()(tool_call);
+      }
+
+      // Capture by VALUE to avoid dangling ref (tool_call is a loop variable)
       futures.emplace_back(
-          std::async(std::launch::async, [&tool_call, &tools, &messages]() {
-            return execute_tool(tool_call, tools, messages);
+          std::async(std::launch::async, [tool_call, &tools, &messages, options]() {
+            ToolResult result = execute_tool(tool_call, tools, messages);
+            // Fire on_tool_call_finish callback from the async thread
+            if (options && options->on_tool_call_finish.has_value()) {
+              options->on_tool_call_finish.value()(result);
+            }
+            return result;
           }));
     }
 

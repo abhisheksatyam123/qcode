@@ -1,6 +1,7 @@
 #include <ai/tui/system_prompt.h>
 
 #include <sstream>
+#include <ai/logger.h>
 
 namespace ai {
 namespace tui {
@@ -36,6 +37,7 @@ std::string SystemPrompt::build(const std::string& identity,
 }
 
 std::string SystemPrompt::build_default(const ToolConfig& tool_cfg) {
+  LOG_DEBUG("SystemPrompt: build_default bash={} task={}", tool_cfg.enable_bash, tool_cfg.enable_task);
   return build(default_identity(), tool_cfg);
 }
 

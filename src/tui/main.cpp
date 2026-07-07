@@ -18,12 +18,16 @@
 #include <ai/tui/state.h>
 #include <ai/tui/system_prompt.h>
 #include <ai/tui/views.h>
+#include <atomic>
+#include <chrono>
 
 using namespace ftxui;
 
 int main() {
     ai::install_file_logger("/tmp/qcode.log", ai::logger::LogLevel::kLogLevelDebug);
-    ai::logger::log_info("QCode starting...");
+    LOG_INFO("QCode starting...");
+    auto app_running = std::make_shared<std::atomic<bool>>(true);
+    auto background_threads = std::make_shared<std::vector<std::thread>>();
 
     auto screen = ScreenInteractive::Fullscreen();
 
@@ -123,6 +127,7 @@ int main() {
 
         // Normal message
         *state.is_generating = true;
+        state.auto_scroll = true;
         std::string p = prompt_input;
         prompt_input = "";
         state.chat_history->push_back({"User", p});
@@ -131,16 +136,41 @@ int main() {
         // Save User Message to SQLite
         ai::tui::db::save_message(*state.session_id, "User", p);
 
-        std::thread([&, p] {
+        // ── Spinner animation thread ──
+        LOG_DEBUG("Main: spinner thread starting");
+        auto spinner_active = std::make_shared<std::atomic<bool>>(true);
+        auto spinner_thread = std::thread([&state, &screen, spinner_active, app_running]() {
+            while (spinner_active->load() && app_running->load()) {
+                *state.generation_frame = (*state.generation_frame + 1) % 100;
+                screen.Post(Event::Custom);
+                std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            }
+        });
+        background_threads->push_back(std::move(spinner_thread));
+
+        // Copy everything needed into the thread to avoid dangling references on exit
+        auto providers_copy = providers_list;
+        int sel_prov = selected_provider;
+        int sel_mod = selected_model;
+        std::string sys_prompt = system_prompt;
+        bool tools_enabled = enable_tools;
+        auto llm_thread = std::thread([&state, &screen, spinner_active, p, providers_copy, app_running,
+                     sel_prov, sel_mod, sys_prompt, tools_enabled]() {
             ai::tui::run_llm_generation(
-                providers_list[selected_provider].name,
-                providers_list[selected_provider].models[selected_model].id,
-                system_prompt, *state.messages_history, enable_tools,
-                providers_list, &screen, state);
-            // Refresh modified files list on completion
-            ai::tui::update_modified_files(state);
-            screen.Post(Event::Custom);
-        }).detach();
+                providers_copy[sel_prov].name,
+                providers_copy[sel_prov].models[sel_mod].id,
+                sys_prompt, *state.messages_history, tools_enabled,
+                providers_copy, &screen, state);
+            // Only update UI if app is still running
+            if (app_running->load()) {
+                // Refresh modified files list on completion
+                ai::tui::update_modified_files(state);
+                screen.Post(Event::Custom);
+            }
+            LOG_DEBUG("Main: spinner thread stopping");
+            *spinner_active = false;
+        });
+        background_threads->push_back(std::move(llm_thread));
     };
 
     // ── Combined Keyboard Event Handling & Auto-complete ──
@@ -417,12 +447,13 @@ int main() {
         }
         
         // Scroll handling
-        if (e == Event::PageUp) { *state.scroll_offset = std::max(0, *state.scroll_offset - 10); return true; }
-        if (e == Event::PageDown) { *state.scroll_offset += 10; return true; }
+        if (e == Event::PageUp) { state.auto_scroll = false; int old = *state.scroll_offset; *state.scroll_offset = std::max(0, *state.scroll_offset - 10); LOG_DEBUG("Scroll: PageUp offset={}->{} auto=false", old, *state.scroll_offset); return true; }
+        if (e == Event::PageDown) { int old = *state.scroll_offset; *state.scroll_offset += 10; LOG_DEBUG("Scroll: PageDown offset={}->{} auto={}", old, *state.scroll_offset, state.auto_scroll); return true; }
+        if (e == Event::End) { state.auto_scroll = true; *state.scroll_offset = 1000000; LOG_DEBUG("Scroll: End offset->{} auto=true", *state.scroll_offset); return true; }
         // Mouse scroll handling
         if (e.is_mouse()) {
-            if (e.mouse().button == Mouse::WheelUp) { *state.scroll_offset = std::max(0, *state.scroll_offset - 5); return true; }
-            if (e.mouse().button == Mouse::WheelDown) { *state.scroll_offset += 5; return true; }
+            if (e.mouse().button == Mouse::WheelUp) { state.auto_scroll = false; int old = *state.scroll_offset; *state.scroll_offset = std::max(0, *state.scroll_offset - 5); LOG_DEBUG("Scroll: WheelUp offset={}->{} auto=false", old, *state.scroll_offset); return true; }
+            if (e.mouse().button == Mouse::WheelDown) { int old = *state.scroll_offset; *state.scroll_offset += 5; LOG_DEBUG("Scroll: WheelDown offset={}->{} auto={}", old, *state.scroll_offset, state.auto_scroll); return true; }
         }
         // Tab hotkeys (Alt+1, Alt+2, Alt+3)
         if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
@@ -443,4 +474,15 @@ int main() {
     });
 
     screen.Loop(renderer);
+
+    // ── Cleanup: signal all threads to stop and wait for them ──
+    LOG_DEBUG("Main: app exiting, signalling threads...");
+    *app_running = false;
+    // Join any still-running background threads
+    for (auto& t : *background_threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+    LOG_DEBUG("Main: exit complete");
 }

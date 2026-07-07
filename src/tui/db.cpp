@@ -45,10 +45,11 @@ void init_database() {
     sqlite3* db = nullptr;
     int rc = sqlite3_open(path.c_str(), &db);
     if (rc != SQLITE_OK) {
-        ai::logger::log_info("SQLite: failed to open database at {}", path);
+        LOG_INFO("SQLite: failed to open database at {}", path);
         if (db) sqlite3_close(db);
         return;
     }
+    LOG_INFO("SQLite: database opened successfully");
 
     char* err_msg = nullptr;
     const char* schema_sessions = 
@@ -61,9 +62,10 @@ void init_database() {
         ");";
     rc = sqlite3_exec(db, schema_sessions, nullptr, nullptr, &err_msg);
     if (rc != SQLITE_OK) {
-        ai::logger::log_info("SQLite: create sessions table error: {}", err_msg ? err_msg : "unknown");
+        LOG_INFO("SQLite: create sessions table error: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
     }
+    LOG_INFO("SQLite: database opened successfully");
 
     const char* schema_messages =
         "CREATE TABLE IF NOT EXISTS messages ("
@@ -76,9 +78,10 @@ void init_database() {
         ");";
     rc = sqlite3_exec(db, schema_messages, nullptr, nullptr, &err_msg);
     if (rc != SQLITE_OK) {
-        ai::logger::log_info("SQLite: create messages table error: {}", err_msg ? err_msg : "unknown");
+        LOG_INFO("SQLite: create messages table error: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
     }
+    LOG_INFO("SQLite: database opened successfully");
 
     sqlite3_close(db);
 }

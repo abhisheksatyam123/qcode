@@ -1,10 +1,16 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <ctime>
 #include <format>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <source_location>
+#include <sstream>
 #include <string_view>
+#include <thread>
 
 namespace ai::logger {
 
@@ -15,19 +21,41 @@ enum class LogLevel {
   kLogLevelError = 3
 };
 
+// ── Helpers ──
+
+/// Short hex thread-id string (e.g. "7f8a1b2c")
+inline std::string thread_id_string() {
+  std::ostringstream ss;
+  ss << std::hex << std::this_thread::get_id();
+  return ss.str();
+}
+
+/// Short file-name from full path (e.g. "src/tui/chat.cpp")
+inline std::string_view short_file_name(std::string_view path) {
+  auto pos = path.find_last_of("/\\");
+  if (pos == std::string_view::npos) return path;
+  auto pos2 = path.rfind('/', pos - 1);
+  if (pos2 == std::string_view::npos) return path;
+  return path.substr(pos2 + 1);
+}
+
+// ── Logger base ──
+
 class Logger {
  public:
   virtual ~Logger() = default;
 
-  // Core logging method
-  virtual void log(LogLevel level, std::string_view message) = 0;
+  // Core logging method with full source location
+  virtual void log(LogLevel level, std::string_view message,
+                   std::source_location loc) = 0;
 
-  // Convenience methods for each log level
+  // Convenience methods (call log() directly; macros capture source_location at call site)
   template <typename... Args>
   void debug(std::format_string<Args...> fmt, Args&&... args) {
     if (is_enabled(LogLevel::kLogLevelDebug)) {
       log(LogLevel::kLogLevelDebug,
-          std::format(fmt, std::forward<Args>(args)...));
+          std::format(fmt, std::forward<Args>(args)...),
+          std::source_location::current());
     }
   }
 
@@ -35,7 +63,8 @@ class Logger {
   void info(std::format_string<Args...> fmt, Args&&... args) {
     if (is_enabled(LogLevel::kLogLevelInfo)) {
       log(LogLevel::kLogLevelInfo,
-          std::format(fmt, std::forward<Args>(args)...));
+          std::format(fmt, std::forward<Args>(args)...),
+          std::source_location::current());
     }
   }
 
@@ -43,7 +72,8 @@ class Logger {
   void warn(std::format_string<Args...> fmt, Args&&... args) {
     if (is_enabled(LogLevel::kLogLevelWarn)) {
       log(LogLevel::kLogLevelWarn,
-          std::format(fmt, std::forward<Args>(args)...));
+          std::format(fmt, std::forward<Args>(args)...),
+          std::source_location::current());
     }
   }
 
@@ -51,33 +81,51 @@ class Logger {
   void error(std::format_string<Args...> fmt, Args&&... args) {
     if (is_enabled(LogLevel::kLogLevelError)) {
       log(LogLevel::kLogLevelError,
-          std::format(fmt, std::forward<Args>(args)...));
+          std::format(fmt, std::forward<Args>(args)...),
+          std::source_location::current());
     }
   }
 
-  // Check if a log level is enabled
   virtual bool is_enabled(LogLevel level) const = 0;
 };
 
-// Null logger implementation - does nothing
+// ── NullLogger ──
+
 class NullLogger final : public Logger {
  public:
-  void log(LogLevel, std::string_view) override {}
+  void log(LogLevel, std::string_view,
+           std::source_location) override {}
   bool is_enabled(LogLevel) const override { return false; }
 };
+
+// ── ConsoleLogger ──
 
 class ConsoleLogger final : public Logger {
  public:
   explicit ConsoleLogger(LogLevel min_level = LogLevel::kLogLevelInfo)
       : min_level_(min_level) {}
 
-  void log(LogLevel level, std::string_view message) override {
-    if (!is_enabled(level)) {
-      return;
-    }
+  void log(LogLevel level, std::string_view message,
+           std::source_location loc) override {
+    if (!is_enabled(level)) return;
+
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  now.time_since_epoch()) %
+              1000;
+
+    char time_buf[32];
+    std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S",
+                  std::localtime(&time_t_now));
 
     auto& stream = (level == LogLevel::kLogLevelError) ? std::cerr : std::cout;
-    stream << std::format("[{}] {}\n", level_to_string(level), message);
+    stream << "[" << time_buf << "." << std::setfill('0') << std::setw(3)
+           << ms.count() << "]"
+           << " [" << level_to_string(level) << "]"
+           << " [" << short_file_name(loc.file_name()) << ":" << loc.line() << "]"
+           << " [" << thread_id_string() << "]"
+           << " " << message << std::endl;
     stream.flush();
   }
 
@@ -90,20 +138,18 @@ class ConsoleLogger final : public Logger {
  private:
   static constexpr std::string_view level_to_string(LogLevel level) {
     switch (level) {
-      case LogLevel::kLogLevelDebug:
-        return "DEBUG";
-      case LogLevel::kLogLevelInfo:
-        return "INFO";
-      case LogLevel::kLogLevelWarn:
-        return "WARN";
-      case LogLevel::kLogLevelError:
-        return "ERROR";
+      case LogLevel::kLogLevelDebug: return "DEBUG";
+      case LogLevel::kLogLevelInfo:  return "INFO";
+      case LogLevel::kLogLevelWarn:  return "WARN";
+      case LogLevel::kLogLevelError: return "ERROR";
     }
     return "UNKNOWN";
   }
 
   LogLevel min_level_;
 };
+
+// ── Global logger management ──
 
 namespace detail {
 
@@ -124,6 +170,55 @@ inline Logger& logger() {
   auto ptr = std::atomic_load(&detail::logger_instance());
   return *ptr;
 }
+
+}  // namespace ai::logger
+
+// ── Macros that capture source_location at the call site ──
+// These call logger().log() directly, capturing the TRUE caller location.
+// They expand to a single statement (no dangling else).
+
+#define LOG_DEBUG(...)                                                       \
+  do {                                                                       \
+    ::ai::logger::Logger& _lg = ::ai::logger::logger();                      \
+    if (_lg.is_enabled(::ai::logger::LogLevel::kLogLevelDebug)) {            \
+      ::std::source_location _loc = ::std::source_location::current();       \
+      _lg.log(::ai::logger::LogLevel::kLogLevelDebug,                        \
+              std::format(__VA_ARGS__), _loc);                                \
+    }                                                                        \
+  } while (0)
+
+#define LOG_INFO(...)                                                        \
+  do {                                                                       \
+    ::ai::logger::Logger& _lg = ::ai::logger::logger();                      \
+    if (_lg.is_enabled(::ai::logger::LogLevel::kLogLevelInfo)) {             \
+      ::std::source_location _loc = ::std::source_location::current();       \
+      _lg.log(::ai::logger::LogLevel::kLogLevelInfo,                         \
+              std::format(__VA_ARGS__), _loc);                                \
+    }                                                                        \
+  } while (0)
+
+#define LOG_WARN(...)                                                        \
+  do {                                                                       \
+    ::ai::logger::Logger& _lg = ::ai::logger::logger();                      \
+    if (_lg.is_enabled(::ai::logger::LogLevel::kLogLevelWarn)) {             \
+      ::std::source_location _loc = ::std::source_location::current();       \
+      _lg.log(::ai::logger::LogLevel::kLogLevelWarn,                         \
+              std::format(__VA_ARGS__), _loc);                                \
+    }                                                                        \
+  } while (0)
+
+#define LOG_ERROR(...)                                                       \
+  do {                                                                       \
+    ::ai::logger::Logger& _lg = ::ai::logger::logger();                      \
+    if (_lg.is_enabled(::ai::logger::LogLevel::kLogLevelError)) {            \
+      ::std::source_location _loc = ::std::source_location::current();       \
+      _lg.log(::ai::logger::LogLevel::kLogLevelError,                        \
+              std::format(__VA_ARGS__), _loc);                                \
+    }                                                                        \
+  } while (0)
+
+// Also keep inline function wrappers for convenience (without source_location capture)
+namespace ai::logger {
 
 template <typename... Args>
 inline void log_debug(std::format_string<Args...> fmt, Args&&... args) {

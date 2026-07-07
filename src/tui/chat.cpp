@@ -2,7 +2,9 @@
 #include <ai/tui/config.h>
 #include <ai/tui/tools.h>
 #include <ai/tui/db.h>
+#include <atomic>
 
+#include <chrono>
 #include <cstdlib>
 #include <string>
 #include <utility>
@@ -89,7 +91,7 @@ void run_llm_generation(
                 api_url.empty() ? "https://opencode.ai/zen/v1" : api_url);
         }
 
-        ai::logger::log_info("LLM gen: provider={}, model={}, tools={}",
+        LOG_INFO("LLM gen: provider={}, model={}, tools={}",
                              provider_id, model, enable_tools);
 
         if (enable_tools) {
@@ -102,24 +104,85 @@ void run_llm_generation(
             options.tools = tools;
             options.max_steps = 10;
 
-            // Fix dangling reference captures by capturing call and res by value!
-            options.on_tool_call_start = [state, screen](const ai::ToolCall& call) {
-                screen->Post(
-                    [state, screen, call]() {
-                        std::string tool_call_str = Tools::format_tool_call(call.tool_name, call.arguments.dump());
-                        state.chat_history->push_back({"ToolCall", tool_call_str});
-                        ai::tui::db::save_message(*state.session_id, "ToolCall", tool_call_str);
+            // ── Tool observability: timing + step counter + streaming ──
+            auto tool_starts = std::make_shared<std::map<std::string, std::chrono::steady_clock::time_point>>();
+            auto step_counter = std::make_shared<std::atomic<int>>(0);
+            int max_steps = options.max_steps;
+
+            // Track progressive assistant text across steps
+            auto assistant_text = std::make_shared<std::string>();
+            auto assistant_msg_idx = std::make_shared<int>(-1);
+
+            options.on_step_finish = [state, screen, assistant_text, assistant_msg_idx](const ai::GenerateStep& step) {
+                if (!step.text.empty()) {
+                LOG_DEBUG("Chat: step_finish text_size={}", step.text.size());
+                    *assistant_text += step.text;
+                    screen->Post([state, screen, assistant_text, assistant_msg_idx, text = *assistant_text]() {
+                        if (*assistant_msg_idx < 0) {
+                            // First time: push an Assistant entry
+                            state.chat_history->push_back({"Assistant", text});
+                            *assistant_msg_idx = static_cast<int>(state.chat_history->size()) - 1;
+                        } else if (*assistant_msg_idx < static_cast<int>(state.chat_history->size())) {
+                            // Update existing Assistant entry
+                            (*state.chat_history)[*assistant_msg_idx].second = text;
+                        }
                         screen->Post(ftxui::Event::Custom);
                     });
+                }
             };
 
-            options.on_tool_call_finish = [state, screen](const ai::ToolResult& res) {
-                screen->Post([state, screen, res]() {
+            options.on_tool_call_start = [state, screen, tool_starts, step_counter, max_steps](const ai::ToolCall& call) {
+                LOG_DEBUG("Chat: tool_call_start tool={}", call.tool_name);
+                (*tool_starts)[call.id] = std::chrono::steady_clock::now();
+                (*step_counter)++;
+                int step = *step_counter;
+                screen->Post([state, screen, call, step, max_steps]() {
+                    std::string tool_call_str = Tools::format_tool_call(
+                        call.tool_name, call.arguments.dump(), step, max_steps);
+                    state.chat_history->push_back({"ToolCall", tool_call_str});
+                    state.chat_history->push_back(
+                        {"ToolResult", "  \u23f3 Running " + call.tool_name + "..."});
+                    ai::tui::db::save_message(*state.session_id, "ToolCall", tool_call_str);
+                    screen->Post(ftxui::Event::Custom);
+                });
+            };
+
+            options.on_tool_call_finish = [state, screen, tool_starts](const ai::ToolResult& res) {
+                screen->Post([state, screen, res, tool_starts]() {
+                    auto end_time = std::chrono::steady_clock::now();
+                    // Look up this tool's start time from the map
+                    double duration_s = 0.0;
+                    auto start_it = tool_starts->find(res.tool_call_id);
+                    if (start_it != tool_starts->end()) {
+                        duration_s = std::chrono::duration<double>(
+                            end_time - start_it->second).count();
+                    }
+                    LOG_DEBUG("Chat: tool_call_finish tool={} success={} duration={:.2f}s", res.tool_name, res.is_success(), duration_s);
+
+                    // Find and remove the specific "Running..." entry for this tool
+                    // by searching backwards for the right tool_name
+                    for (int ci = static_cast<int>(state.chat_history->size()) - 1; ci >= 0; ci--) {
+                        auto& entry = (*state.chat_history)[ci];
+                        if (entry.first == "ToolResult" &&
+                            entry.second.find("Running") != std::string::npos &&
+                            entry.second.find(res.tool_name) != std::string::npos) {
+                            state.chat_history->erase(state.chat_history->begin() + ci);
+                            break;
+                        }
+                    }
+
                     std::string tool_res_str = Tools::format_tool_result(
-                             res.tool_name, res.is_success(),
-                             res.is_success() ? res.result.dump()
-                                              : res.error_message());
+                        res.tool_name, res.is_success(),
+                        res.is_success() ? res.result.dump()
+                                         : res.error_message(),
+                        500, duration_s);
+
                     state.chat_history->push_back({"ToolResult", tool_res_str});
+
+                    // Update tool observability stats
+                    (*state.tool_call_count)++;
+                    *state.total_tool_time_ms += duration_s * 1000.0;
+
                     ai::tui::db::save_message(*state.session_id, "ToolResult", tool_res_str);
                     screen->Post(ftxui::Event::Custom);
                 });
@@ -127,37 +190,50 @@ void run_llm_generation(
 
             auto gen_result = client.generate_text(options);
             screen->Post(
-                [state, gen_result, screen]() {
+                [state, gen_result, assistant_text, assistant_msg_idx, screen]() {
                     *state.is_generating = false;
                     if (gen_result.is_success()) {
-                        state.chat_history->push_back(
-                            {"Assistant", gen_result.text});
-                        
-                        // Save assistant response to SQLite
-                        ai::tui::db::save_message(*state.session_id, "Assistant", gen_result.text);
-
-                        // Maintain the complete conversation history including assistant tool calls + tool results
-                        if (!gen_result.response_messages.empty()) {
-                            state.messages_history->insert(
-                                state.messages_history->end(),
-                                gen_result.response_messages.begin(),
-                                gen_result.response_messages.end()
-                            );
-                        } else {
-                            state.messages_history->push_back(
-                                ai::Message::assistant(gen_result.text));
+                        // If we already streamed step text, update the final entry
+                        // otherwise push a new Assistant message
+                        std::string final_text = gen_result.text;
+                        if (!assistant_text->empty()) {
+                            final_text = *assistant_text;
+                            // Update existing entry if not already done
+                            if (*assistant_msg_idx >= 0 &&
+                                *assistant_msg_idx < static_cast<int>(state.chat_history->size())) {
+                                (*state.chat_history)[*assistant_msg_idx].second = final_text;
+                                // Save to DB
+                                ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+                                screen->Post(ftxui::Event::Custom);
+                                return;
+                            }
                         }
-
-                        *state.total_prompt_tokens +=
-                            gen_result.usage.prompt_tokens;
-                        *state.total_completion_tokens +=
-                            gen_result.usage.completion_tokens;
-                        *state.total_tokens += gen_result.usage.total_tokens;
+                        state.chat_history->push_back(
+                            {"Assistant", final_text});
+                        ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
                     } else {
                         std::string err_str = "Error: " + gen_result.error_message();
                         state.chat_history->push_back({"System", err_str});
                         ai::tui::db::save_message(*state.session_id, "System", err_str);
                     }
+
+                    // Maintain the complete conversation history including assistant tool calls + tool results
+                    if (gen_result.is_success() && !gen_result.response_messages.empty()) {
+                        state.messages_history->insert(
+                            state.messages_history->end(),
+                            gen_result.response_messages.begin(),
+                            gen_result.response_messages.end()
+                        );
+                    } else if (gen_result.is_success()) {
+                        state.messages_history->push_back(
+                            ai::Message::assistant(gen_result.text));
+                    }
+
+                    *state.total_prompt_tokens +=
+                        gen_result.usage.prompt_tokens;
+                    *state.total_completion_tokens +=
+                        gen_result.usage.completion_tokens;
+                    *state.total_tokens += gen_result.usage.total_tokens;
                     screen->Post(ftxui::Event::Custom);
                 });
         } else {
@@ -173,8 +249,10 @@ void run_llm_generation(
             gen_options.messages = messages;
             ai::StreamOptions stream_options(std::move(gen_options));
             auto stream = client.stream_text(stream_options);
+            LOG_DEBUG("Chat: stream_text opened successfully");
 
             if (stream.has_error()) {
+                LOG_ERROR("Chat: stream error: {}", stream.error_message());
                 screen->Post(
                     [state, screen, err_msg = stream.error_message()]() {
                         state.chat_history->back().second = "Error: " + err_msg;
@@ -185,15 +263,39 @@ void run_llm_generation(
                 return;
             }
 
-            for (const auto& event : stream) {
-                if (event.is_text_delta()) {
+            // Throttled streaming: batch deltas at ~30fps max
+            std::string text_buffer;
+            auto last_flush = std::chrono::steady_clock::now();
+            constexpr auto FLUSH_INTERVAL = std::chrono::milliseconds(33);
+
+            auto flush_text = [&]() {
+                LOG_DEBUG("Chat: flush_text called, buffer={}", text_buffer.size());
+                if (!text_buffer.empty()) {
+                    std::string batch = std::move(text_buffer);
+                    text_buffer.clear();
                     screen->Post(
                         [chat_history_ptr = state.chat_history, screen,
-                         text = event.text_delta]() {
-                            chat_history_ptr->back().second += text;
+                         batch = std::move(batch)]() {
+                            chat_history_ptr->back().second += batch;
                             screen->Post(ftxui::Event::Custom);
                         });
+                }
+            };
+
+            for (const auto& event : stream) {
+                if (event.is_text_delta()) {
+                    text_buffer += event.text_delta;
+                    if (text_buffer.size() % 50 == 0) {
+                        LOG_DEBUG("Chat: streaming buffer_size={}", text_buffer.size());
+                    }
+                    auto now = std::chrono::steady_clock::now();
+                    if (now - last_flush >= FLUSH_INTERVAL) {
+                        flush_text();
+                        last_flush = now;
+                    }
                 } else if (event.is_error()) {
+                    LOG_ERROR("Chat: stream error during generation");
+                    flush_text();
                     screen->Post(
                         [state, screen]() {
                             state.chat_history->back().second += "\n[Error]";
@@ -202,6 +304,8 @@ void run_llm_generation(
                         });
                     break;
                 } else if (event.is_finish() && event.usage.has_value()) {
+                    LOG_DEBUG("Chat: stream finished, flushing final text");
+                    flush_text();
                     auto u = event.usage.value();
                     screen->Post(
                         [total_prompt_tokens_ptr = state.total_prompt_tokens,
@@ -215,6 +319,8 @@ void run_llm_generation(
                         });
                 }
             }
+            LOG_DEBUG("Chat: final flush after stream loop");
+            flush_text(); // flush any remaining text
             screen->Post(
                 [state, screen]() {
                     *state.is_generating = false;

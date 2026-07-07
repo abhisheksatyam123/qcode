@@ -9,7 +9,7 @@ namespace http {
 
 HttpRequestHandler::HttpRequestHandler(const HttpConfig& config)
     : config_(config) {
-  ai::logger::log_debug(
+  LOG_DEBUG(
       "HttpRequestHandler initialized - host: {}, use_ssl: {}", config_.host,
       config_.use_ssl);
 }
@@ -64,7 +64,7 @@ GenerateResult HttpRequestHandler::post(const std::string& path,
   try {
     return retry_policy.execute_with_retry(execute_request, is_retryable);
   } catch (const retry::RetryError& e) {
-    ai::logger::log_error("Request failed after retries: {}", e.what());
+    LOG_ERROR("Request failed after retries: {}", e.what());
     GenerateResult error_result(e.what());
     error_result.is_retryable = false;  // Already retried
     return error_result;
@@ -79,13 +79,13 @@ GenerateResult HttpRequestHandler::execute_single_request(
   auto handler = [](const httplib::Result& res,
                     const std::string& protocol) -> GenerateResult {
     if (!res) {
-      ai::logger::log_error("{} request failed - no response", protocol);
+      LOG_ERROR("{} request failed - no response", protocol);
       GenerateResult result("Network error: Failed to connect to API");
       result.is_retryable = true;  // Network errors are retryable
       return result;
     }
 
-    ai::logger::log_debug("Got response: status={}, body_size={}", res->status,
+    LOG_DEBUG("Got response: status={}, body_size={}", res->status,
                           res->body.size());
 
     if (res->status == 200) {
@@ -116,7 +116,7 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
     // Combine base_path with the endpoint path
     std::string full_path = config_.base_path + path;
 
-    ai::logger::log_debug("Making {} request to {}:{}{}",
+    LOG_DEBUG("Making {} request to {}:{}{}",
                           config_.use_ssl ? "HTTPS" : "HTTP", config_.host,
                           full_path,
                           " with body size: " + std::to_string(body.size()));
@@ -138,10 +138,10 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
       return handler(res, "HTTP");
     }
   } catch (const std::exception& e) {
-    ai::logger::log_error("Exception in make_request: {}", e.what());
+    LOG_ERROR("Exception in make_request: {}", e.what());
     return GenerateResult(std::string("Request failed: ") + e.what());
   } catch (...) {
-    ai::logger::log_error("Unknown exception in make_request");
+    LOG_ERROR("Unknown exception in make_request");
     return GenerateResult("Request failed: Unknown error");
   }
 }

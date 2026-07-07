@@ -82,9 +82,9 @@ std::string get_antigravity_token() {
 std::vector<ProviderInfo> load_providers_from_config() {
     std::vector<ProviderInfo> loaded;
     std::string path = "/home/abhi/notes/etc/opencode.json";
-    ai::logger::log_debug("load_providers: path={}", path);
+    LOG_DEBUG("load_providers: path={}", path);
     if (!std::filesystem::exists(path)) {
-        ai::logger::log_warn("Config not found, using defaults");
+        LOG_WARN("Config not found, using defaults");
         return {
             {"OpenCode Zen", "opencode", "https://opencode.ai/zen/v1",
              {{"Nemotron 3 Ultra", "nemotron-3-ultra-free"},
@@ -108,13 +108,13 @@ std::vector<ProviderInfo> load_providers_from_config() {
                     }
                 }
                 loaded.push_back(prov);
-                ai::logger::log_info("Loaded provider: {} ({}), {} models, api={}",
+                LOG_INFO("Loaded provider: {} ({}), {} models, api={}",
                                      prov.name, prov.id, prov.models.size(),
                                      prov.api_url.empty() ? "(hardcoded)" : prov.api_url);
             }
         }
     } catch (const std::exception& e) {
-        ai::logger::log_error("Config parse error: {}", e.what());
+        LOG_ERROR("Config parse error: {}", e.what());
     }
     return loaded;
 }

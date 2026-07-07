@@ -1,7 +1,10 @@
 #include <ai/tui/tools.h>
 
 #include <sstream>
+#include <ai/logger.h>
 #include <nlohmann/json.hpp>
+
+#include <iomanip>
 
 #include <ai/tools/bash_tool.h>
 #include <ai/tools/task_tool.h>
@@ -42,6 +45,7 @@ task.lifecycle/model = { op: "kill"|"pause"|"resume"|"resurrect"|"model",
 }
 
 std::string Tools::build_tool_section(const ToolConfig& cfg) {
+  LOG_DEBUG("Tools: build_tool_section bash={} task={}", cfg.enable_bash, cfg.enable_task);
   std::ostringstream ss;
   ss << "### Core Tool Contract\n\n";
   ss << "This base prompt is the only system-prompt location for tool-use policy.\n\n";
@@ -78,6 +82,7 @@ std::string Tools::build_tool_section(const ToolConfig& cfg) {
 }
 
 ai::ToolSet Tools::build_definitions(const ToolConfig& cfg) {
+  LOG_DEBUG("Tools: build_definitions bash={} task={}", cfg.enable_bash, cfg.enable_task);
   ai::ToolSet tools;
   if (cfg.enable_bash)
     tools["bash"] = ai::BashTool::definition();
@@ -86,65 +91,223 @@ ai::ToolSet Tools::build_definitions(const ToolConfig& cfg) {
   return tools;
 }
 
+// ── Pretty-print a JSON value with indentation ──
+static std::string pretty_json(const nlohmann::json& j) {
+  if (j.is_string()) return j.get<std::string>();
+  return j.dump(2);
+}
+
+
 std::string Tools::format_tool_call(const std::string& tool_name,
-                                    const std::string& args) {
-  std::string formatted = "▾ Observability \u00b7 " + tool_name + "\n";
-  if (tool_name == "bash") {
-    try {
-      auto json = nlohmann::json::parse(args);
-      if (json.contains("command")) {
-        formatted += "  $ " + json["command"].get<std::string>();
-      } else {
-        formatted += "  Input: " + args;
-      }
-    } catch (...) {
-      formatted += "  Input: " + args;
-    }
-  } else if (tool_name == "task") {
-    try {
-      auto json = nlohmann::json::parse(args);
-      if (json.contains("description")) {
-        formatted += "  ↳ Spawn Task: " + json["description"].get<std::string>();
-      } else {
-        formatted += "  Input: " + args;
-      }
-    } catch (...) {
-      formatted += "  Input: " + args;
-    }
-  } else {
-    formatted += "  Input: " + args;
+                                    const std::string& args,
+                                    int step_number,
+                                    int max_steps) {
+  std::string formatted;
+  
+  // Header
+  formatted = "\u250c Tool Call \u00b7 " + tool_name;
+  if (max_steps > 0) {
+    formatted += " (step " + std::to_string(step_number) + "/" + std::to_string(max_steps) + ")";
   }
+  formatted += "\n";
+
+  try {
+    auto json = nlohmann::json::parse(args);
+    
+    if (tool_name == "bash") {
+      // Show command prominently
+      if (json.contains("command")) {
+        formatted += "\u2502 $\n";
+        formatted += "\u2502   " + json["command"].get<std::string>() + "\n";
+        formatted += "\u2502\n";
+      }
+      // Show all other fields as structured input
+      formatted += "\u2502 Input:\n";
+      for (auto it = json.begin(); it != json.end(); ++it) {
+        if (it.key() == "command") continue; // already shown
+        std::string val;
+        if (it.value().is_string()) val = it.value().get<std::string>();
+        else val = it.value().dump();
+        formatted += "\u2502   " + it.key() + ": " + val + "\n";
+      }
+      // If only command was present and nothing else, we still have Input
+      if (json.size() <= 1) {
+        formatted += "\u2502   (no additional parameters)\n";
+      }
+    } else if (tool_name == "task") {
+      // Show description or prompt prominently
+      if (json.contains("description")) {
+        formatted += "\u2502 Task: " + json["description"].get<std::string>() + "\n";
+      }
+      if (json.contains("prompt")) {
+        formatted += "\u2502 Prompt: " + json["prompt"].get<std::string>() + "\n";
+      }
+      if (json.contains("task")) {
+        formatted += "\u2502 Task: " + json["task"].get<std::string>() + "\n";
+      }
+      // Show all other fields
+      formatted += "\u2502 Input:\n";
+      for (auto it = json.begin(); it != json.end(); ++it) {
+        if (it.key() == "description" || it.key() == "prompt" || it.key() == "task") continue;
+        std::string val;
+        if (it.value().is_string()) val = it.value().get<std::string>();
+        else val = it.value().dump();
+        formatted += "\u2502   " + it.key() + ": " + val + "\n";
+      }
+      if (json.size() <= 1) {
+        formatted += "\u2502   (no additional parameters)\n";
+      }
+    } else {
+      // Generic tool: show all args
+      formatted += "\u2502 Input: " + pretty_json(json) + "\n";
+    }
+  } catch (...) {
+    // If JSON parsing fails, show raw string
+    formatted += "\u2502 Input (raw): " + args + "\n";
+  }
+  
+  // Trim trailing newline
+  while (!formatted.empty() && formatted.back() == '\n')
+    formatted.pop_back();
+  
   return formatted;
 }
 
 std::string Tools::format_tool_result(const std::string& tool_name,
                                       bool success,
                                       const std::string& result_or_error,
-                                      int truncate_at) {
-  std::string s = result_or_error;
-  if (static_cast<int>(s.length()) > truncate_at)
-    s = s.substr(0, truncate_at) + "...";
-  
+                                      int truncate_at,
+                                      double duration_seconds) {
+  // Parse JSON FIRST, before any truncation
+  nlohmann::json parsed;
+  bool parsed_ok = false;
+  try {
+    parsed = nlohmann::json::parse(result_or_error);
+    parsed_ok = true;
+  } catch (...) {
+    parsed_ok = false;
+  }
+
   std::string formatted;
+  
+  // Status header
   if (success) {
-    formatted = "  \u2514\u2500 Completed successfully";
-    if (tool_name == "bash") {
-      try {
-        auto json = nlohmann::json::parse(s);
-        if (json.contains("output") && !json["output"].get<std::string>().empty()) {
-          formatted += "\n  " + json["output"].get<std::string>();
-        } else if (json.contains("exit")) {
-          formatted += " (exit: " + std::to_string(json["exit"].get<int>()) + ")";
-        }
-      } catch (...) {
-        formatted += "\n  " + s;
+    formatted = "\u2514\u2500 Completed successfully";
+    if (duration_seconds >= 0.0) {
+      char buf[32];
+      if (duration_seconds < 1.0) {
+        std::snprintf(buf, sizeof(buf), " (%.0fms)", duration_seconds * 1000.0);
+      } else if (duration_seconds < 60.0) {
+        std::snprintf(buf, sizeof(buf), " (%.1fs)", duration_seconds);
+      } else {
+        std::snprintf(buf, sizeof(buf), " (%.1fm)", duration_seconds / 60.0);
       }
-    } else {
-      formatted += "\n  " + s;
+      formatted += buf;
     }
   } else {
-    formatted = "  \u2514\u2500 Failed: " + s;
+    formatted = "\u2514\u2500 Failed";
+    if (duration_seconds >= 0.0) {
+      char buf[32];
+      std::snprintf(buf, sizeof(buf), " (%.1fs)", duration_seconds);
+      formatted += buf;
+    }
   }
+  formatted += "\n";
+
+  // Output content
+  if (tool_name == "bash" && success && parsed_ok) {
+    // Bash success result: {title, output, metadata: {exit, description, backgrounded}}
+    if (parsed.contains("output")) {
+      std::string output = parsed["output"].get<std::string>();
+      // Apply truncation AFTER parse, on the output field
+      if (truncate_at > 0 && static_cast<int>(output.length()) > truncate_at)
+        output = output.substr(0, truncate_at) + "...";
+      
+      if (!output.empty()) {
+        // Indent output lines
+        std::istringstream ss(output);
+        std::string line;
+        while (std::getline(ss, line)) {
+          formatted += "\u2502 " + line + "\n";
+        }
+      }
+    }
+    // Show metadata (exit code etc)
+    if (parsed.contains("metadata") && parsed["metadata"].is_object()) {
+      auto& meta = parsed["metadata"];
+      if (meta.contains("exit")) {
+        formatted += "\u2502 (exit: " + std::to_string(meta["exit"].get<int>()) + ")";
+        if (meta.contains("backgrounded") && meta["backgrounded"].get<bool>()) {
+          formatted += " [background]";
+        }
+        formatted += "\n";
+      }
+    }
+    // Show title if present and output was empty
+    if (parsed.contains("title") && (!parsed.contains("output") || parsed["output"].get<std::string>().empty())) {
+      formatted += "\u2502 " + parsed["title"].get<std::string>() + "\n";
+    }
+  } else if (tool_name == "bash" && !success && parsed_ok) {
+    // Bash failure result: {error: "..."} or has error field
+    // Check if parsed has "error" key (bash returns {error: "..."} for validation errors)
+    if (parsed.contains("error")) {
+      std::string err = parsed["error"].get<std::string>();
+      if (truncate_at > 0 && static_cast<int>(err.length()) > truncate_at)
+        err = err.substr(0, truncate_at) + "...";
+      formatted += "\u2502 " + err + "\n";
+    } else {
+      // Fallback
+      std::string s = result_or_error;
+      if (truncate_at > 0 && static_cast<int>(s.length()) > truncate_at)
+        s = s.substr(0, truncate_at) + "...";
+      formatted += "\u2502 " + s + "\n";
+    }
+  } else if (tool_name == "task" && parsed_ok) {
+    // Task result
+    if (success) {
+      if (parsed.contains("result")) {
+        std::string r = parsed["result"].dump(2);
+        if (truncate_at > 0 && static_cast<int>(r.length()) > truncate_at)
+          r = r.substr(0, truncate_at) + "...";
+        formatted += "\u2502 " + r + "\n";
+      } else if (parsed.contains("output")) {
+        std::string output = parsed["output"].get<std::string>();
+        if (truncate_at > 0 && static_cast<int>(output.length()) > truncate_at)
+          output = output.substr(0, truncate_at) + "...";
+        formatted += "\u2502 " + output + "\n";
+      } else if (parsed.contains("summary")) {
+        formatted += "\u2502 " + parsed["summary"].get<std::string>() + "\n";
+      } else {
+        std::string r = parsed.dump(2);
+        if (truncate_at > 0 && static_cast<int>(r.length()) > truncate_at)
+          r = r.substr(0, truncate_at) + "...";
+        formatted += "\u2502 " + r + "\n";
+      }
+    } else {
+      if (parsed.contains("error")) {
+        formatted += "\u2502 " + parsed["error"].get<std::string>() + "\n";
+      } else {
+        std::string s = result_or_error;
+        if (truncate_at > 0 && static_cast<int>(s.length()) > truncate_at)
+          s = s.substr(0, truncate_at) + "...";
+        formatted += "\u2502 " + s + "\n";
+      }
+    }
+  } else {
+    // Generic / unknown tool or unparseable JSON
+    std::string s = result_or_error;
+    if (parsed_ok) {
+      s = parsed.dump(2);
+    }
+    if (truncate_at > 0 && static_cast<int>(s.length()) > truncate_at)
+      s = s.substr(0, truncate_at) + "...";
+    formatted += "\u2502 " + s + "\n";
+  }
+  
+  // Trim trailing newline
+  while (!formatted.empty() && formatted.back() == '\n')
+    formatted.pop_back();
+  
   return formatted;
 }
 

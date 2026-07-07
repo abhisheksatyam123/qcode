@@ -40,13 +40,16 @@ class Tools {
 
   // Format a single tool call for display
   static std::string format_tool_call(const std::string& tool_name,
-                                      const std::string& args);
+                                      const std::string& args,
+                                      int step_number = 0,
+                                      int max_steps = 0);
 
   // Format a single tool result for display
   static std::string format_tool_result(const std::string& tool_name,
                                         bool success,
                                         const std::string& result_or_error,
-                                        int truncate_at = 500);
+                                        int truncate_at = 500,
+                                        double duration_seconds = -1.0);
 };
 
 } // namespace tui

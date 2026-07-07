@@ -25,19 +25,19 @@ AnthropicClient::AnthropicClient(const std::string& api_key,
               .extra_headers = {{"anthropic-version", "2023-06-01"}}},
           std::make_unique<AnthropicRequestBuilder>(),
           std::make_unique<AnthropicResponseParser>()) {
-  ai::logger::log_debug("Anthropic client initialized with base_url: {}",
+  LOG_DEBUG("Anthropic client initialized with base_url: {}",
                         base_url);
 }
 
 StreamResult AnthropicClient::stream_text(const StreamOptions& options) {
-  ai::logger::log_debug(
+  LOG_DEBUG(
       "Starting text streaming - model: {}, prompt length: {}", options.model,
       options.prompt.length());
 
   // Build request with stream: true
   auto request_json = request_builder_->build_request_json(options);
   request_json["stream"] = true;
-  ai::logger::log_debug("Stream request JSON built with stream=true");
+  LOG_DEBUG("Stream request JSON built with stream=true");
 
   // Create headers
   auto headers = request_builder_->build_headers(config_);
@@ -48,7 +48,7 @@ StreamResult AnthropicClient::stream_text(const StreamOptions& options) {
   impl->start_stream(config_.base_url + config_.completions_endpoint_path,
                      headers, request_json);
 
-  ai::logger::log_info("Text streaming started - model: {}", options.model);
+  LOG_INFO("Text streaming started - model: {}", options.model);
 
   // Return StreamResult with implementation
   return StreamResult(std::move(impl));

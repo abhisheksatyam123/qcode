@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <memory>
 #include <optional>
+#include <ai/logger.h>
 
 namespace ai {
 namespace anthropic {
@@ -33,16 +34,19 @@ std::string get_base_url_or_default(const std::string& base_url) {
 }  // namespace
 
 Client create_client() {
+  LOG_DEBUG("AnthropicFactory: create_client (default)");
   return Client(std::make_unique<AnthropicClient>(get_api_key_or_default(""),
                                                   kDefaultBaseUrl));
 }
 
 Client create_client(const std::string& api_key) {
+  LOG_DEBUG("AnthropicFactory: create_client (with api_key)");
   return Client(std::make_unique<AnthropicClient>(
       get_api_key_or_default(api_key), kDefaultBaseUrl));
 }
 
 Client create_client(const std::string& api_key, const std::string& base_url) {
+  LOG_DEBUG("AnthropicFactory: create_client (with api_key, base_url={})", base_url);
   return Client(std::make_unique<AnthropicClient>(
       get_api_key_or_default(api_key), get_base_url_or_default(base_url)));
 }

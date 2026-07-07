@@ -8,7 +8,7 @@ namespace openai {
 
 GenerateResult OpenAIResponseParser::parse_success_completion_response(
     const nlohmann::json& response) {
-  ai::logger::log_debug("Parsing OpenAI chat completion response");
+  LOG_DEBUG("Parsing OpenAI chat completion response");
 
   nlohmann::json normalized_response = response;
   
@@ -77,7 +77,7 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     result.system_fingerprint = it->get<std::string>();
   }
 
-  ai::logger::log_debug("Response ID: {}, Model: {}",
+  LOG_DEBUG("Response ID: {}, Model: {}",
                         result.id.value_or("none"),
                         result.model.value_or("unknown"));
 
@@ -94,12 +94,12 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
       } else {
         result.text = "";
       }
-      ai::logger::log_debug("Extracted message content - length: {}",
+      LOG_DEBUG("Extracted message content - length: {}",
                             result.text.length());
 
       // Parse tool calls if present
       if (message.contains("tool_calls") && message["tool_calls"].is_array()) {
-        ai::logger::log_debug("Found {} tool calls in response",
+        LOG_DEBUG("Found {} tool calls in response",
                               message["tool_calls"].size());
 
         for (const auto& tool_call_json : message["tool_calls"]) {
@@ -134,10 +134,10 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
               ToolCall tool_call(call_id, function_name, arguments);
               result.tool_calls.push_back(tool_call);
 
-              ai::logger::log_debug("Parsed tool call: {} with args: {}",
+              LOG_DEBUG("Parsed tool call: {} with args: {}",
                                     function_name, arguments_str);
             } catch (const std::exception& e) {
-              ai::logger::log_error("Failed to parse tool call arguments: {}",
+              LOG_ERROR("Failed to parse tool call arguments: {}",
                                     e.what());
             }
           }
@@ -155,11 +155,11 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
         !choice["finish_reason"].is_null()) {
       auto finish_reason_str = choice["finish_reason"].get<std::string>();
       result.finish_reason = parse_finish_reason(finish_reason_str);
-      ai::logger::log_debug("Finish reason: {}", finish_reason_str);
+      LOG_DEBUG("Finish reason: {}", finish_reason_str);
     } else {
       result.finish_reason =
           kFinishReasonStop;  // Default to stop if null or missing
-      ai::logger::log_debug(
+      LOG_DEBUG(
           "Finish reason was null or missing, defaulting to stop");
     }
   }
@@ -170,7 +170,7 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     result.usage.prompt_tokens = usage.value("prompt_tokens", 0);
     result.usage.completion_tokens = usage.value("completion_tokens", 0);
     result.usage.total_tokens = usage.value("total_tokens", 0);
-    ai::logger::log_debug("Token usage - prompt: {}, completion: {}, total: {}",
+    LOG_DEBUG("Token usage - prompt: {}, completion: {}, total: {}",
                           result.usage.prompt_tokens,
                           result.usage.completion_tokens,
                           result.usage.total_tokens);
@@ -190,7 +190,7 @@ GenerateResult OpenAIResponseParser::parse_error_completion_response(
 
 EmbeddingResult OpenAIResponseParser::parse_success_embedding_response(
     const nlohmann::json& response) {
-  ai::logger::log_debug("Parsing OpenAI embeddings response");
+  LOG_DEBUG("Parsing OpenAI embeddings response");
 
   EmbeddingResult result;
 
@@ -208,7 +208,7 @@ EmbeddingResult OpenAIResponseParser::parse_success_embedding_response(
     result.usage.prompt_tokens = usage.value("prompt_tokens", 0);
     result.usage.completion_tokens = usage.value("completion_tokens", 0);
     result.usage.total_tokens = usage.value("total_tokens", 0);
-    ai::logger::log_debug("Token usage - prompt: {}, completion: {}, total: {}",
+    LOG_DEBUG("Token usage - prompt: {}, completion: {}, total: {}",
                           result.usage.prompt_tokens,
                           result.usage.completion_tokens,
                           result.usage.total_tokens);

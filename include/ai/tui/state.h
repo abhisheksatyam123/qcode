@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <utility>
@@ -36,6 +37,8 @@ struct ChatState {
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
     std::shared_ptr<int> scroll_offset = std::make_shared<int>(0);
+    bool auto_scroll = true;
+    std::shared_ptr<std::atomic<int>> generation_frame = std::make_shared<std::atomic<int>>(0);
 
     // Tab navigation
     int tab_selected = 0; // 0 = Chat, 1 = Files, 2 = Stats
@@ -54,6 +57,10 @@ struct ChatState {
     // Slash command autocomplete suggestions state
     bool slash_suggestion_mode = false;
     int slash_suggestion_idx = 0;
+
+    // Tool observability stats
+    std::shared_ptr<int> tool_call_count = std::make_shared<int>(0);
+    std::shared_ptr<double> total_tool_time_ms = std::make_shared<double>(0.0);
 };
 
 // Helper to scan for modified files using git status

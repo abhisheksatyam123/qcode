@@ -1,6 +1,7 @@
 #include "ai/tools/task_tool.h"
 
 #include <algorithm>
+#include <ai/logger.h>
 #include <chrono>
 #include <ctime>
 #include <random>
@@ -163,6 +164,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
 }
 
 JsonValue TaskTool::exec_result(const JsonValue& args) {
+  LOG_DEBUG("TaskTool: exec_result");
   std::string bg_id = args.value("background_task_id", "");
   if (bg_id.empty()) {
     JsonValue err;

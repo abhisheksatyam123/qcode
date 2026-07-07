@@ -38,7 +38,7 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
               .extra_headers = {}},
           std::make_unique<OpenAIRequestBuilder>(),
           std::make_unique<OpenAIResponseParser>()) {
-  ai::logger::log_debug("OpenAI client initialized with base_url: {}",
+  LOG_DEBUG("OpenAI client initialized with base_url: {}",
                         base_url);
 }
 
@@ -57,20 +57,20 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
               .retry_config = retry_config},
           std::make_unique<OpenAIRequestBuilder>(),
           std::make_unique<OpenAIResponseParser>()) {
-  ai::logger::log_debug(
+  LOG_DEBUG(
       "OpenAI client initialized with base_url: {} and custom retry config",
       base_url);
 }
 
 StreamResult OpenAIClient::stream_text(const StreamOptions& options) {
-  ai::logger::log_debug(
+  LOG_DEBUG(
       "Starting text streaming - model: {}, prompt length: {}", options.model,
       options.prompt.length());
 
   // Build request with stream: true
   auto request_json = request_builder_->build_request_json(options);
   request_json["stream"] = true;
-  ai::logger::log_debug("Stream request JSON built with stream=true");
+  LOG_DEBUG("Stream request JSON built with stream=true");
 
   // Create headers
   auto headers = request_builder_->build_headers(config_);
@@ -85,7 +85,7 @@ StreamResult OpenAIClient::stream_text(const StreamOptions& options) {
   impl->start_stream(config_.base_url + stream_path,
                      headers, request_json);
 
-  ai::logger::log_info("Text streaming started - model: {}", options.model);
+  LOG_INFO("Text streaming started - model: {}", options.model);
 
   // Return StreamResult with implementation
   return StreamResult(std::move(impl));

@@ -1,5 +1,6 @@
 #include <csignal>
 #include "ai/tools/bash_tool.h"
+#include <ai/logger.h>
 
 #include <algorithm>
 #include <array>
@@ -252,6 +253,7 @@ std::string BashTool::run_shell(const std::string& command, const std::string& c
 }
 
 JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& context) {
+  LOG_DEBUG("BashTool: exec_run timeout={}", args.value("timeout", 30000));
   (void)context;
   std::string command = args.value("command", "");
   if (command.empty()) {

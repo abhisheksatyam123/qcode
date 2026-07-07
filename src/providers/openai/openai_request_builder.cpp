@@ -236,7 +236,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
   // Add tools if specified
   if (options.has_tools()) {
-    ai::logger::log_debug("Adding {} tools to request", options.tools.size());
+    LOG_DEBUG("Adding {} tools to request", options.tools.size());
 
     nlohmann::json tools_array = nlohmann::json::array();
     auto active_tool_names = options.get_active_tool_names();
@@ -279,7 +279,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
           break;
       }
 
-      ai::logger::log_debug("Added {} tools with choice: {}",
+      LOG_DEBUG("Added {} tools with choice: {}",
                             tools_array.size(),
                             options.tool_choice.to_string());
     }

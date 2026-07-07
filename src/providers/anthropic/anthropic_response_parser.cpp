@@ -8,7 +8,7 @@ namespace anthropic {
 
 GenerateResult AnthropicResponseParser::parse_success_completion_response(
     const nlohmann::json& response) {
-  ai::logger::log_debug("Parsing Anthropic messages response");
+  LOG_DEBUG("Parsing Anthropic messages response");
 
   GenerateResult result;
 
@@ -16,7 +16,7 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
   result.id = response.value("id", "");
   result.model = response.value("model", "");
 
-  ai::logger::log_debug("Response ID: {}, Model: {}",
+  LOG_DEBUG("Response ID: {}, Model: {}",
                         result.id.value_or("none"),
                         result.model.value_or("unknown"));
 
@@ -41,7 +41,7 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
             ToolCall tool_call(call_id, function_name, arguments);
             result.tool_calls.push_back(tool_call);
 
-            ai::logger::log_debug(
+            LOG_DEBUG(
                 "Parsed Anthropic tool call: {} with args: {}", function_name,
                 arguments.dump());
           }
@@ -50,7 +50,7 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
     }
 
     result.text = full_text;
-    ai::logger::log_debug(
+    LOG_DEBUG(
         "Extracted message content - length: {}, tool calls: {}",
         result.text.length(), result.tool_calls.size());
 
@@ -64,7 +64,7 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
   if (response.contains("stop_reason")) {
     std::string stop_reason = response["stop_reason"];
     result.finish_reason = parse_stop_reason(stop_reason);
-    ai::logger::log_debug("Stop reason: {}", stop_reason);
+    LOG_DEBUG("Stop reason: {}", stop_reason);
   }
 
   // Extract usage
@@ -74,7 +74,7 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
     result.usage.completion_tokens = usage.value("output_tokens", 0);
     result.usage.total_tokens =
         result.usage.prompt_tokens + result.usage.completion_tokens;
-    ai::logger::log_debug("Token usage - input: {}, output: {}, total: {}",
+    LOG_DEBUG("Token usage - input: {}, output: {}, total: {}",
                           result.usage.prompt_tokens,
                           result.usage.completion_tokens,
                           result.usage.total_tokens);
@@ -94,7 +94,7 @@ GenerateResult AnthropicResponseParser::parse_error_completion_response(
 
 EmbeddingResult AnthropicResponseParser::parse_success_embedding_response(
     const nlohmann::json& response) {
-  ai::logger::log_debug("Parsing Anthropic embeddings response");
+  LOG_DEBUG("Parsing Anthropic embeddings response");
 
   EmbeddingResult result;
 
@@ -112,7 +112,7 @@ EmbeddingResult AnthropicResponseParser::parse_success_embedding_response(
     result.usage.prompt_tokens = usage.value("prompt_tokens", 0);
     result.usage.completion_tokens = usage.value("completion_tokens", 0);
     result.usage.total_tokens = usage.value("total_tokens", 0);
-    ai::logger::log_debug("Token usage - prompt: {}, completion: {}, total: {}",
+    LOG_DEBUG("Token usage - prompt: {}, completion: {}, total: {}",
                           result.usage.prompt_tokens,
                           result.usage.completion_tokens,
                           result.usage.total_tokens);

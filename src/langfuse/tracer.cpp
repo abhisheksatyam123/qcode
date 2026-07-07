@@ -199,7 +199,7 @@ std::shared_ptr<Trace> Tracer::start_trace(const std::string& name,
 
 bool Tracer::send_batch(const JsonValue& events) {
   if (!is_valid()) {
-    ai::logger::log_warn(
+    LOG_WARN(
         "Langfuse tracer not configured (missing host/public_key/secret_key); "
         "dropping {} events",
         events.is_array() ? events.size() : 0);
@@ -217,16 +217,16 @@ bool Tracer::send_batch(const JsonValue& events) {
       s.client.Post(path.c_str(), s.headers, serialized, "application/json");
 
   if (!res) {
-    ai::logger::log_error("Langfuse ingestion failed: {}",
+    LOG_ERROR("Langfuse ingestion failed: {}",
                           httplib::to_string(res.error()));
     return false;
   }
   if (res->status >= 200 && res->status < 300) {
-    ai::logger::log_debug("Langfuse ingestion accepted ({}): {}", res->status,
+    LOG_DEBUG("Langfuse ingestion accepted ({}): {}", res->status,
                           res->body);
     return true;
   }
-  ai::logger::log_error("Langfuse ingestion non-2xx ({}): {}", res->status,
+  LOG_ERROR("Langfuse ingestion non-2xx ({}): {}", res->status,
                         res->body);
   return false;
 }

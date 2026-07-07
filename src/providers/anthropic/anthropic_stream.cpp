@@ -21,14 +21,14 @@ AnthropicStreamImpl::~AnthropicStreamImpl() {
 void AnthropicStreamImpl::start_stream(const std::string& url,
                                        const httplib::Headers& headers,
                                        const nlohmann::json& request_body) {
-  ai::logger::log_debug("Starting Anthropic stream to URL: {}", url);
+  LOG_DEBUG("Starting Anthropic stream to URL: {}", url);
 
   // Start streaming in a separate thread
   stream_thread_ = std::thread([this, url, headers, request_body]() {
     try {
       run_stream(url, headers, request_body);
     } catch (const std::exception& e) {
-      ai::logger::log_error("Stream thread exception: {}", e.what());
+      LOG_ERROR("Stream thread exception: {}", e.what());
       StreamEvent error_event(kStreamEventTypeError,
                               std::string("Stream error: ") + e.what());
       push_event(error_event);
@@ -44,14 +44,14 @@ StreamEvent AnthropicStreamImpl::get_next_event() {
   while (!event_queue_.try_dequeue(event)) {
     if (stream_complete_ && event_queue_.size_approx() == 0) {
       // Stream is complete and queue is empty
-      ai::logger::log_debug(
+      LOG_DEBUG(
           "Stream complete and queue empty, returning empty event");
       return StreamEvent("");
     }
 
     // Check for timeout
     if (std::chrono::steady_clock::now() - start_time > kEventTimeout) {
-      ai::logger::log_error(
+      LOG_ERROR(
           "Timeout waiting for next stream event after {} seconds",
           kEventTimeout.count());
       return StreamEvent(kStreamEventTypeError,
@@ -61,7 +61,7 @@ StreamEvent AnthropicStreamImpl::get_next_event() {
     std::this_thread::sleep_for(kSleepInterval);
   }
 
-  ai::logger::log_debug("Dequeued event type: {}",
+  LOG_DEBUG("Dequeued event type: {}",
                         static_cast<int>(event.type));
   return event;
 }
@@ -71,7 +71,7 @@ bool AnthropicStreamImpl::has_more_events() const {
 }
 
 void AnthropicStreamImpl::stop_stream() {
-  ai::logger::log_debug("Stopping Anthropic stream");
+  LOG_DEBUG("Stopping Anthropic stream");
   stop_requested_ = true;
   if (stream_thread_.joinable()) {
     stream_thread_.join();
@@ -81,7 +81,7 @@ void AnthropicStreamImpl::stop_stream() {
 void AnthropicStreamImpl::run_stream(const std::string& url,
                                      const httplib::Headers& headers,
                                      const nlohmann::json& request_body) {
-  ai::logger::log_debug("Performing stream request");
+  LOG_DEBUG("Performing stream request");
 
   // Parse URL to extract host and path
   std::string host, path;
@@ -102,7 +102,7 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
     path = "/v1/messages";
   }
 
-  ai::logger::log_debug("Stream host: {}, path: {}, SSL: {}", host, path,
+  LOG_DEBUG("Stream host: {}, path: {}, SSL: {}", host, path,
                         use_ssl);
 
   try {
@@ -137,7 +137,7 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
       }
     }
   } catch (const std::exception& e) {
-    ai::logger::log_error("Stream request exception: {}", e.what());
+    LOG_ERROR("Stream request exception: {}", e.what());
     handle_stream_error(0, std::string("Request failed: ") + e.what());
   }
 
@@ -145,7 +145,7 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
 }
 
 void AnthropicStreamImpl::parse_sse_response(const std::string& response) {
-  ai::logger::log_debug("Processing SSE response, size: {}", response.size());
+  LOG_DEBUG("Processing SSE response, size: {}", response.size());
 
   std::istringstream stream(response);
   std::string line;
@@ -163,12 +163,12 @@ void AnthropicStreamImpl::parse_sse_response(const std::string& response) {
     }
   }
 
-  ai::logger::log_debug("SSE processing complete");
+  LOG_DEBUG("SSE processing complete");
 }
 
 void AnthropicStreamImpl::process_sse_event(const std::string& data) {
   if (data == "[DONE]") {
-    ai::logger::log_debug("Received SSE [DONE] event");
+    LOG_DEBUG("Received SSE [DONE] event");
     return;
   }
 
@@ -176,7 +176,7 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
     auto json_event = nlohmann::json::parse(data);
     std::string event_type = json_event.value("type", "");
 
-    ai::logger::log_debug("Processing SSE event type: {}", event_type);
+    LOG_DEBUG("Processing SSE event type: {}", event_type);
 
     if (event_type == "message_start") {
       // Start of message - could extract metadata here
@@ -193,7 +193,7 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
         StreamEvent event(text);
         push_event(event);
 
-        ai::logger::log_debug("Enqueued text delta: '{}'", text);
+        LOG_DEBUG("Enqueued text delta: '{}'", text);
       }
     } else if (event_type == "content_block_stop") {
       // End of content block
@@ -206,10 +206,10 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
       StreamEvent event(kStreamEventTypeFinish, Usage{}, kFinishReasonStop);
       push_event(event);
 
-      ai::logger::log_debug("Enqueued finish event");
+      LOG_DEBUG("Enqueued finish event");
     }
   } catch (const std::exception& e) {
-    ai::logger::log_error("Failed to parse SSE event: {}", e.what());
+    LOG_ERROR("Failed to parse SSE event: {}", e.what());
   }
 }
 
@@ -232,7 +232,7 @@ StreamEvent AnthropicStreamImpl::create_error_event(
 
 void AnthropicStreamImpl::handle_stream_error(int status_code,
                                               const std::string& error_body) {
-  ai::logger::log_error("Stream error - status: {}, body: {}", status_code,
+  LOG_ERROR("Stream error - status: {}, body: {}", status_code,
                         error_body);
 
   StreamEvent error_event(

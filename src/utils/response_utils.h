@@ -17,7 +17,7 @@ inline GenerateResult parse_standard_error_response(
     const std::string& provider_name,
     int status_code,
     const std::string& body) {
-  ai::logger::log_debug("Parsing error response - status: {}, body: {}",
+  LOG_DEBUG("Parsing error response - status: {}, body: {}",
                         status_code, body);
 
   GenerateResult result;
@@ -33,7 +33,7 @@ inline GenerateResult parse_standard_error_response(
       std::string full_error = provider_name + " API error (" +
                                std::to_string(status_code) + "): " + message +
                                (type.empty() ? "" : " [" + type + "]");
-      ai::logger::log_error("{} API error parsed: {}", provider_name,
+      LOG_ERROR("{} API error parsed: {}", provider_name,
                             full_error);
 
       result.error = full_error;
@@ -41,12 +41,12 @@ inline GenerateResult parse_standard_error_response(
     }
   } catch (...) {
     // If JSON parsing fails, return raw error
-    ai::logger::log_debug("Failed to parse error response as JSON");
+    LOG_DEBUG("Failed to parse error response as JSON");
   }
 
   std::string raw_error =
       "HTTP " + std::to_string(status_code) + " error: " + body;
-  ai::logger::log_error("{} API raw error: {}", provider_name, raw_error);
+  LOG_ERROR("{} API raw error: {}", provider_name, raw_error);
 
   result.error = raw_error;
   return result;

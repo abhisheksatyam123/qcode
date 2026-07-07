@@ -1,5 +1,6 @@
 #include <ai/tui/views.h>
 #include <ai/tui/db.h>
+#include <ai/logger.h>
 
 #include <filesystem>
 #include <fstream>
@@ -93,9 +94,9 @@ ftxui::Element render_logo() {
     auto blue  = Color::RGB(72, 124, 255);
     return vbox({
         hbox({ text("        ") | color(cyan), text("                         ") | color(blue) }),
-        hbox({ text("\u2588\u2580\u2580\u2588    ") | color(cyan), text("  \u2580\u2580\u2580\u2580 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2584 \u2588\u2580\u2580 ") | color(blue) | bold }),
-        hbox({ text("\u2588  \u2588 \u2580\u2580 ") | color(cyan), text("  \u2588    \u2588  \u2588 \u2588  \u2588 \u2580\u2580 ") | color(blue) | bold }),
-        hbox({ text("\u2580\u2580\u2580\u2588\u2580   ") | color(cyan), text("  \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580  \u2580\u2580\u2580 ") | color(blue) | bold }),
+        hbox({ text("█▀▀█    ") | color(cyan), text("  ▀▀▀▀ █▀▀█ █▀▀▄ █▀▀ ") | color(blue) | bold }),
+        hbox({ text("█  █ ▀▀ ") | color(cyan), text("  █    █  █ █  █ ▀▀ ") | color(blue) | bold }),
+        hbox({ text("▀▀▀█▀   ") | color(cyan), text("  ▀▀▀▀ ▀▀▀▀ ▀▀▀  ▀▀▀ ") | color(blue) | bold }),
     }) | hcenter;
 }
 
@@ -171,6 +172,7 @@ ftxui::Element render_view(
         if (empty) {
             // Home screen
             auto prompt_bar = hbox({
+                text(" > ") | color(accent2(theme)) | bold,
                 input->Render() | flex,
                 text(" " + providers_list[selected_provider].models[selected_model].name + " ") | bold | color(accent2(theme)),
                 text(" " + providers_list[selected_provider].name + " ") | dim,
@@ -195,7 +197,7 @@ ftxui::Element render_view(
                 Element bubble;
                 if (entry.first == "System") {
                     bubble = hbox({
-                        text("  \u2139  ") | bold | color(c),
+                        text("  ℹ  ") | bold | color(c),
                         paragraph(entry.second) | flex | dim,
                     });
                 } else if (entry.first == "ToolCall") {
@@ -268,15 +270,81 @@ ftxui::Element render_view(
                         })
                     });
                 } else {
-                    /* ── OpenCode-style Assistant message ── */
+                    /* ── Assistant message with thinking token support ── */
+                    auto& msg_text = entry.second;
+                    Elements assistant_elems;
+                    assistant_elems.push_back(
+                        text("  Assistant") | bold | color(accent2(theme)));
+
+                    /* Parse <thinking>...</thinking> blocks */
+                    LOG_DEBUG("Views: parsing assistant msg size={}", entry.second.size());
+                    std::string remain = entry.second;
+                    bool has_thinking = false;
+                    std::string text_buf;
+
+                    while (!remain.empty()) {
+                        auto pos = remain.find("<thinking>");
+                        if (pos == std::string::npos) {
+                            text_buf += remain;
+                            break;
+                        }
+                        text_buf += remain.substr(0, pos);
+                        remain.erase(0, pos + 10);  // skip <thinking>
+                        has_thinking = true;
+                        LOG_DEBUG("Views: found <thinking> block at pos {}", pos);
+
+                        auto close_pos = remain.find("</thinking>");
+                        if (close_pos == std::string::npos) {
+                            text_buf += remain;
+                            break;
+                        }
+                        std::string think_content = remain.substr(0, close_pos);
+                        remain.erase(0, close_pos + 12);  // skip </thinking>
+
+                        // Flush accumulated text buffer (text before thinking)
+                        if (!text_buf.empty()) {
+                            assistant_elems.push_back(
+                                paragraph("  " + text_buf) | flex);
+                            text_buf.clear();
+                        }
+
+                        // Render thinking section: dimmed + distinct header
+                        if (!think_content.empty()) {
+                            // Trim leading/trailing newlines
+                            while (!think_content.empty() && (think_content.front() == '\n' || think_content.front() == ' '))
+                                think_content.erase(0, 1);
+                            while (!think_content.empty() && (think_content.back() == '\n' || think_content.back() == ' '))
+                                think_content.pop_back();
+                            if (!think_content.empty()) {
+                                LOG_DEBUG("Views: rendering thinking block ({} chars)", think_content.size());
+                                assistant_elems.push_back(
+                                    text("  ❧ Thinking...") | bold | color(Color::RGB(0x99, 0x99, 0x99)));
+                                assistant_elems.push_back(
+                                    paragraph("    " + think_content) | dim | color(Color::RGB(0x99, 0x99, 0x99)));
+                            }
+                        }
+                    }
+
+                    // Append remaining text after thinking
+                    if (!text_buf.empty()) {
+                        assistant_elems.push_back(
+                            paragraph("  " + text_buf) | flex);
+                    }
+
+                    // If no thinking tags found, fall back to single text block
+                    if (!has_thinking) {
+                        LOG_DEBUG("Views: no thinking blocks, plain text fallback");
+                        assistant_elems.push_back(
+                            paragraph("  " + entry.second) | flex);
+                    }
+
+                    assistant_elems.push_back(text(""));
+                    assistant_elems.push_back(
+                        text("  ▣ Assistant · " + providers_list[selected_provider].models[selected_model].name) | dim | color(accent2(theme)));
+
                     bubble = hbox({
                         separatorLight() | color(accent2(theme)),
-                        vbox({
-                            text("  Assistant") | bold | color(accent2(theme)),
-                            paragraph("  " + entry.second) | flex,
-                            text(""),
-                            text("  ▣ Assistant · " + providers_list[selected_provider].models[selected_model].name) | dim | color(accent2(theme)),
-                        })
+                        vbox(std::move(assistant_elems)) | flex
                     });
                 }
                 if (state.selection_mode) {
@@ -293,20 +361,32 @@ ftxui::Element render_view(
                 msgs.push_back(text(""));
             }
 
-            auto status = *state.is_generating ? "\u25cf Generating..." : "";
+            // Animated spinner during generation
+            static const std::array<const char*, 10> spinner_frames = {
+                "⠋", "⠙", "⠹", "⠸", "⠼",
+                "⠴", "⠦", "⠧", "⠏", "⠋"
+            };
+            std::string status;
+            if (*state.is_generating) {
+                int frame = *state.generation_frame % spinner_frames.size();
+                status = std::string(spinner_frames[frame]) + " Generating...";
+            } else {
+                status = "";
+            }
             if (state.selection_mode) {
-                status = "\u2191\u2193 navigate  y/Enter copy  Esc exit visual selection";
+                status = "↑↓ navigate  y/Enter copy  Esc exit visual selection";
             }
 
             auto prompt_box = vbox({
                 hbox({
+                    text(" > ") | color(accent2(theme)) | bold,
                     input->Render() | flex,
                 }) | size(HEIGHT, GREATER_THAN, 1),
                 separatorLight() | color(accent(theme)),
                 hbox({
                     text(" " + providers_list[selected_provider].models[selected_model].name + " ") | bold | color(accent2(theme)),
                     text(" " + providers_list[selected_provider].name + " ") | dim,
-                    text(enable_tools ? " \u2699 (tools)" : "") | dim,
+                    text(enable_tools ? " ⚙ (tools)" : "") | dim,
                     filler(),
                     text(status) | color(*state.is_generating ? Color::Green : dim_gray()),
                 })
@@ -329,7 +409,7 @@ ftxui::Element render_view(
                     rows.push_back(separatorLight() | color(accent(theme)));
                     for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
                         bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
-                        std::string marker = active ? " \u25b6 " : "   ";
+                        std::string marker = active ? " ▶ " : "   ";
                         auto row = hbox({
                             text(marker + matches[i].first) | color(active ? accent2(theme) : Color::Default) | bold,
                             text("  (" + matches[i].second + ")") | dim
@@ -359,7 +439,7 @@ ftxui::Element render_view(
                     rows.push_back(separatorLight() | color(accent(theme)));
                     for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
                         bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
-                        std::string marker = active ? " \u25b6 " : "   ";
+                        std::string marker = active ? " ▶ " : "   ";
                         auto row = hbox({
                             text(marker + "/" + matches[i].name) | color(active ? accent2(theme) : Color::Default) | bold,
                             text("  " + matches[i].description) | dim
@@ -377,8 +457,9 @@ ftxui::Element render_view(
                 }
             }
 
+            LOG_DEBUG("Views: chat tab render, auto_scroll={}, scroll_offset={}", state.auto_scroll, *scroll_offset);
             body = vbox({
-                vbox(std::move(msgs)) | vscroll_indicator | focusPosition(0, *scroll_offset) | yframe | yflex,
+                vbox(std::move(msgs)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPosition(0, *scroll_offset)) | yframe | yflex,
                 prompt_box,
             }) | flex;
         }
@@ -428,10 +509,11 @@ ftxui::Element render_view(
                 file_blocks.push_back(text(""));
             }
             
+            LOG_DEBUG("Views: files tab render, auto_scroll={}, scroll_offset={}", state.auto_scroll, *scroll_offset);
             body = vbox({
                 text(" MODIFIED FILES ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
-                vbox(std::move(file_blocks)) | vscroll_indicator | focusPosition(0, *scroll_offset) | yframe | yflex,
+                vbox(std::move(file_blocks)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPosition(0, *scroll_offset)) | yframe | yflex,
             }) | flex;
         }
     }
@@ -534,7 +616,7 @@ ftxui::Element build_model_popup(
         }
 
         bool active = (e.provider_idx == selected_provider && e.model_idx == selected_model);
-        std::string marker = (i == select_idx) ? " \u25b6 " : (active ? " \u25cf " : "   ");
+        std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
         std::string line_text = marker + e.model_name;
         if (e.model_id != e.model_name)
             line_text += "  " + e.model_id;
@@ -548,7 +630,7 @@ ftxui::Element build_model_popup(
     }
 
     lines.push_back(separatorLight());
-    lines.push_back(text(" \u2191\u2193 navigate  Enter select  Esc cancel") | dim);
+    lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
 
     return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
            size(WIDTH, EQUAL, 72) | hcenter;
@@ -568,7 +650,7 @@ ftxui::Element build_session_popup(
     for (int i = 0; i < static_cast<int>(entries.size()); i++) {
         auto& e = entries[i];
         bool active = (e.first == active_session_id);
-        std::string marker = (i == select_idx) ? " \u25b6 " : (active ? " \u25cf " : "   ");
+        std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
         std::string line_text = marker + e.second;
         if (e.first != e.second)
             line_text += "  (" + e.first.substr(0, 8) + "...)";
@@ -582,7 +664,7 @@ ftxui::Element build_session_popup(
     }
 
     lines.push_back(separatorLight());
-    lines.push_back(text(" \u2191\u2193 navigate  Enter select  Esc cancel") | dim);
+    lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
 
     return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
            size(WIDTH, EQUAL, 72) | hcenter;

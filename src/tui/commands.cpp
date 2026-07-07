@@ -1,5 +1,6 @@
 #include <ai/tui/commands.h>
 #include <ai/tui/db.h>
+#include <ai/logger.h>
 
 #include <algorithm>
 #include <cctype>
@@ -39,6 +40,7 @@ bool handle_slash_command(
     ChatState& state
 ) {
     std::string cmd = raw_cmd.substr(1);
+    LOG_DEBUG("Commands: handle_slash_command cmd={}", cmd);
     std::string args;
     auto sp = cmd.find(" ");
     if (sp != std::string::npos) {
@@ -47,6 +49,7 @@ bool handle_slash_command(
     }
     std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
 
+    LOG_DEBUG("Commands: /model list requested");
     if (cmd == "model" || cmd == "models") {
         auto entries = build_model_entries(providers_list);
         std::ostringstream m;
@@ -70,6 +73,7 @@ bool handle_slash_command(
     }
 
     if (cmd == "theme" || cmd == "themes") {
+        LOG_DEBUG("Commands: /theme args='{}'", args);
         if (args.empty()) {
             std::string cur = state.theme ? *state.theme : "orange";
             state.chat_history->push_back({"System", "Available themes:\n  /theme orange (Classic)\n  /theme green (Forest Green)\n  /theme blue (Deep Blue)\n  /theme purple (Cyberpunk Purple)\n  /theme monochrome (Monochrome)\n\nCurrent theme: " + cur});
@@ -96,6 +100,7 @@ bool handle_slash_command(
     }
 
     if (cmd == "tools") {
+        LOG_DEBUG("Commands: /tools args='{}'", args);
         if (args.empty()) {
             enable_tools = !enable_tools;
             std::string status = enable_tools ? "ENABLED (observability mode)" : "DISABLED (real-time streaming mode)";

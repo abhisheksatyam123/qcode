@@ -45,13 +45,13 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
                          response_messages.end());
     step_options.messages = step_messages;
 
-    ai::logger::log_debug("Executing step {} of {}, messages={}", step + 1,
+    LOG_DEBUG("Executing step {} of {}, messages={}", step + 1,
                           initial_options.max_steps,
                           step_options.messages.size());
 
     GenerateResult step_result = generate_func(step_options);
 
-    ai::logger::log_debug(
+    LOG_DEBUG(
         "Step {} result - text: '{}', tool_calls: {}, finish_reason: {}",
         step + 1, step_result.text, step_result.tool_calls.size(),
         static_cast<int>(step_result.finish_reason));
@@ -151,7 +151,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
   if (final_result.steps.size() ==
           static_cast<size_t>(initial_options.max_steps) &&
       final_result.finish_reason != kFinishReasonStop) {
-    ai::logger::log_debug("Reached max steps limit ({}) without completion",
+    LOG_DEBUG("Reached max steps limit ({}) without completion",
                           initial_options.max_steps);
   }
 
