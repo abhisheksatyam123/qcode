@@ -102,7 +102,7 @@ void run_llm_generation(
             options.system = system_prompt;
             options.messages = messages;
             options.tools = tools;
-            options.max_steps = 10;
+            options.max_steps = 99999999;
 
             // ── Tool observability: timing + step counter + streaming ──
             auto tool_starts = std::make_shared<std::map<std::string, std::chrono::steady_clock::time_point>>();
@@ -131,12 +131,18 @@ void run_llm_generation(
                 }
             };
 
-            options.on_tool_call_start = [state, screen, tool_starts, step_counter, max_steps](const ai::ToolCall& call) {
+            options.on_tool_call_start = [state, screen, tool_starts, step_counter, max_steps, assistant_text, assistant_msg_idx](const ai::ToolCall& call) {
                 LOG_DEBUG("Chat: tool_call_start tool={}", call.tool_name);
                 (*tool_starts)[call.id] = std::chrono::steady_clock::now();
                 (*step_counter)++;
                 int step = *step_counter;
-                screen->Post([state, screen, call, step, max_steps]() {
+                screen->Post([state, screen, call, step, max_steps, assistant_text, assistant_msg_idx]() {
+                    // Push a live Assistant placeholder if none exists yet
+                    if (*assistant_msg_idx < 0 && assistant_text->empty()) {
+                        *assistant_text = "  \u23f3 Working...";
+                        state.chat_history->push_back({"Assistant", *assistant_text});
+                        *assistant_msg_idx = static_cast<int>(state.chat_history->size()) - 1;
+                    }
                     std::string tool_call_str = Tools::format_tool_call(
                         call.tool_name, call.arguments.dump(), step, max_steps);
                     state.chat_history->push_back({"ToolCall", tool_call_str});
@@ -147,8 +153,12 @@ void run_llm_generation(
                 });
             };
 
-            options.on_tool_call_finish = [state, screen, tool_starts](const ai::ToolResult& res) {
-                screen->Post([state, screen, res, tool_starts]() {
+            options.on_tool_call_finish = [state, screen, tool_starts, assistant_text](const ai::ToolResult& res) {
+                screen->Post([state, screen, res, tool_starts, assistant_text]() {
+                    // Clear "Working..." placeholder once first tool result arrives
+                    if (assistant_text && *assistant_text == "  \u23f3 Working...") {
+                        *assistant_text = "";
+                    }
                     auto end_time = std::chrono::steady_clock::now();
                     // Look up this tool's start time from the map
                     double duration_s = 0.0;
@@ -208,6 +218,9 @@ void run_llm_generation(
                                 return;
                             }
                         }
+                        if (final_text.empty()) {
+                            final_text = "  \u2705 Done";
+                        }
                         state.chat_history->push_back(
                             {"Assistant", final_text});
                         ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
@@ -237,11 +250,8 @@ void run_llm_generation(
                     screen->Post(ftxui::Event::Custom);
                 });
         } else {
-            // Push Assistant placeholder for streaming safely from within the UI loop
-            screen->Post([state, screen]() {
-                state.chat_history->push_back({"Assistant", ""});
-                screen->Post(ftxui::Event::Custom);
-            });
+            // Push Assistant placeholder synchronously BEFORE stream starts
+            state.chat_history->push_back({"Assistant", ""});
 
             ai::GenerateOptions gen_options;
             gen_options.model = model;
@@ -276,7 +286,11 @@ void run_llm_generation(
                     screen->Post(
                         [chat_history_ptr = state.chat_history, screen,
                          batch = std::move(batch)]() {
-                            chat_history_ptr->back().second += batch;
+                            if (chat_history_ptr->empty()) {
+                                chat_history_ptr->push_back({"Assistant", batch});
+                            } else {
+                                chat_history_ptr->back().second += batch;
+                            }
                             screen->Post(ftxui::Event::Custom);
                         });
                 }

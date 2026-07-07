@@ -133,6 +133,187 @@ ftxui::Element build_session_popup(
     const std::string& theme
 );
 
+
+// ── Basic markdown rendering (code blocks, bold, inline code, lists) ──
+static std::vector<std::string> split_lines(const std::string& s) {
+    std::vector<std::string> lines;
+    std::istringstream ss(s);
+    std::string line;
+    while (std::getline(ss, line)) {
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+// ── Basic markdown rendering (code blocks, inline code, bold, lists) ──
+static ftxui::Elements render_markdown(const std::string& input_text) {
+    using namespace ftxui;
+    Elements result;
+
+    if (input_text.empty()) return result;
+
+    std::string remain = input_text;
+    
+    // Process code blocks first (```...```)
+    while (!remain.empty()) {
+        auto code_start = remain.find("```");
+        if (code_start == std::string::npos) {
+            // No more code blocks, process remaining as inline text
+            break;
+        }
+        
+        // Text before code block
+        if (code_start > 0) {
+            std::string before = remain.substr(0, code_start);
+            if (!before.empty()) {
+                result.push_back(paragraph(before) | flex);
+            }
+        }
+        
+        remain.erase(0, code_start + 3);
+        
+        // Skip optional language tag line
+        auto code_end = remain.find("```");
+        if (code_end == std::string::npos) {
+            // Unclosed code block — treat rest as code
+            result.push_back(text("") | size(HEIGHT, EQUAL, 1));
+            for (auto& line : split_lines(remain)) {
+                result.push_back(
+                    text("  " + line) | bgcolor(Color::RGB(0x1E, 0x1E, 0x2E)) | color(Color::RGB(0xBB, 0xBB, 0xBB))
+                );
+            }
+            result.push_back(text(""));
+            remain.clear();
+            break;
+        }
+        
+        std::string code_content = remain.substr(0, code_end);
+        if (!code_content.empty() && code_content.front() == '\n') code_content.erase(0, 1);
+        
+        result.push_back(text("") | size(HEIGHT, EQUAL, 1));
+        
+        std::istringstream code_ss(code_content);
+        std::string code_line;
+        while (std::getline(code_ss, code_line)) {
+            result.push_back(
+                text("  " + code_line) | bgcolor(Color::RGB(0x1E, 0x1E, 0x2E)) | color(Color::RGB(0xBB, 0xBB, 0xBB))
+            );
+        }
+        result.push_back(text(""));
+        
+        remain.erase(0, code_end + 3);
+    }
+    
+    // Process remaining text line by line for inline markdown
+    if (!remain.empty()) {
+        auto lines = split_lines(remain);
+        for (const auto& line : lines) {
+            if (line.empty()) {
+                result.push_back(text(""));
+                continue;
+            }
+            
+            // Check for list markers
+            bool is_list = false;
+            std::string prefix;
+            if (line.size() >= 2 && (line[0] == '-' || line[0] == '*') && line[1] == ' ') {
+                is_list = true;
+                prefix = "  \u2022 ";  // bullet
+            } else if (line.size() >= 3 && std::isdigit(line[0]) && line[1] == '.' && line[2] == ' ') {
+                is_list = true;
+                prefix = "  " + line.substr(0, 2) + " ";
+            }
+            
+            std::string line_prefix = is_list ? prefix : "";
+            
+            // Parse inline formatting (**bold**, `inline code`)
+            // Split into segments by format markers
+            Elements inline_elems;
+            if (!line_prefix.empty()) {
+                inline_elems.push_back(text(line_prefix) | dim);
+            }
+            
+            // Parse segments
+            // We handle **bold** and `code` markers
+            struct Segment {
+                std::string text;
+                bool is_bold;
+                bool is_code;
+            };
+            std::vector<Segment> segments;
+            std::string parsing_text = is_list 
+                ? line.substr(2)  // skip "- " or "* " or "1."
+                : line;
+            // For numbered lists, skip the number part too
+            if (is_list && std::isdigit(line[0])) {
+                auto dot_pos = line.find('.');
+                if (dot_pos != std::string::npos && dot_pos + 2 <= line.size()) {
+                    parsing_text = line.substr(dot_pos + 2);
+                }
+            }
+            
+            std::string buf;
+            bool in_bold = false;
+            bool in_code = false;
+            size_t j = 0;
+            while (j < parsing_text.size()) {
+                if (!in_code && !in_bold && parsing_text.substr(j, 2) == "**") {
+                    if (!buf.empty()) {
+                        segments.push_back({buf, false, false});
+                        buf.clear();
+                    }
+                    in_bold = true;
+                    j += 2;
+                } else if (in_bold && parsing_text.substr(j, 2) == "**") {
+                    if (!buf.empty()) {
+                        segments.push_back({buf, true, false});
+                        buf.clear();
+                    }
+                    in_bold = false;
+                    j += 2;
+                } else if (!in_bold && parsing_text[j] == '`') {
+                    if (!buf.empty()) {
+                        segments.push_back({buf, false, false});
+                        buf.clear();
+                    }
+                    in_code = true;
+                    j++;
+                } else if (in_code && parsing_text[j] == '`') {
+                    if (!buf.empty()) {
+                        segments.push_back({buf, false, true});
+                        buf.clear();
+                    }
+                    in_code = false;
+                    j++;
+                } else {
+                    buf += parsing_text[j];
+                    j++;
+                }
+            }
+            if (!buf.empty()) {
+                segments.push_back({buf, false, false});
+            }
+            
+            // Build inline elements from segments
+            for (const auto& seg : segments) {
+                if (seg.is_code) {
+                    inline_elems.push_back(
+                        text(seg.text) | bgcolor(Color::RGB(0x2D, 0x2D, 0x3D)) | color(Color::RGB(0xEE, 0x99, 0x77))
+                    );
+                } else if (seg.is_bold) {
+                    inline_elems.push_back(text(seg.text) | bold);
+                } else {
+                    inline_elems.push_back(text(seg.text));
+                }
+            }
+            
+            result.push_back(hbox(std::move(inline_elems)));
+        }
+    }
+    
+    return result;
+}
+
 ftxui::Element render_view(
     const ChatState& state,
     const std::vector<ProviderInfo>& providers_list,
@@ -196,9 +377,13 @@ ftxui::Element render_view(
                 
                 Element bubble;
                 if (entry.first == "System") {
+                    /* ── Centered dimmed info banner ── */
                     bubble = hbox({
-                        text("  ℹ  ") | bold | color(c),
-                        paragraph(entry.second) | flex | dim,
+                        filler(),
+                        vbox({
+                            paragraph("  ℹ " + entry.second) | dim | hcenter,
+                        }) | flex,
+                        filler(),
                     });
                 } else if (entry.first == "ToolCall") {
                     /* ── OpenCode-style ToolCall rendering ──
@@ -261,13 +446,17 @@ ftxui::Element render_view(
                         vbox(std::move(tr_lines)) | flex
                     });
                 } else if (entry.first == "User") {
-                    /* ── OpenCode-style User message ── */
-                    bubble = hbox({
+                    /* ── User: right-aligned, green accent, "You" header ── */
+                    Elements user_parsed = render_markdown(entry.second);
+                    user_parsed.insert(user_parsed.begin(),
+                        text("  You") | bold | color(user_green()));
+                    auto user_content = hbox({
                         separatorLight() | color(user_green()),
-                        vbox({
-                            text("  User") | bold | color(user_green()),
-                            paragraph("  " + entry.second) | flex,
-                        })
+                        vbox(std::move(user_parsed)),
+                    });
+                    bubble = hbox({
+                        filler(),
+                        user_content,
                     });
                 } else {
                     /* ── Assistant message with thinking token support ── */
@@ -303,8 +492,9 @@ ftxui::Element render_view(
 
                         // Flush accumulated text buffer (text before thinking)
                         if (!text_buf.empty()) {
-                            assistant_elems.push_back(
-                                paragraph("  " + text_buf) | flex);
+                            Elements flushed = render_markdown("  " + text_buf);
+                            for (auto& el : flushed)
+                                assistant_elems.push_back(std::move(el));
                             text_buf.clear();
                         }
 
@@ -327,15 +517,17 @@ ftxui::Element render_view(
 
                     // Append remaining text after thinking
                     if (!text_buf.empty()) {
-                        assistant_elems.push_back(
-                            paragraph("  " + text_buf) | flex);
+                        Elements remaining = render_markdown("  " + text_buf);
+                        for (auto& el : remaining)
+                            assistant_elems.push_back(std::move(el));
                     }
 
-                    // If no thinking tags found, fall back to single text block
+                    // If no thinking tags found, fall back to markdown rendering
                     if (!has_thinking) {
-                        LOG_DEBUG("Views: no thinking blocks, plain text fallback");
-                        assistant_elems.push_back(
-                            paragraph("  " + entry.second) | flex);
+                        LOG_DEBUG("Views: no thinking blocks, markdown fallback");
+                        Elements fallback = render_markdown("  " + entry.second);
+                        for (auto& el : fallback)
+                            assistant_elems.push_back(std::move(el));
                     }
 
                     assistant_elems.push_back(text(""));
