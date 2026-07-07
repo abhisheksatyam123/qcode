@@ -5,14 +5,15 @@
 #include <sstream>
 #include <array>
 #include <cstdio>
+#include <unordered_map>
 
 namespace ai {
 namespace tui {
 
 using namespace ftxui;
 
-// Helper to get git diff of the selected file
-static std::string get_file_diff(const std::string& path) {
+// Raw helper to get git diff of the selected file
+static std::string get_file_diff_raw(const std::string& path) {
     if (path.empty()) return "";
     
     std::string diff_output;
@@ -55,6 +56,35 @@ static std::string get_file_diff(const std::string& path) {
     }
 
     return diff_output;
+}
+
+// Cached helper using file modification timestamp to optimize rendering performance
+static std::string get_file_diff(const std::string& path) {
+    static std::unordered_map<std::string, std::string> diff_cache;
+    static std::unordered_map<std::string, std::filesystem::file_time_type> time_cache;
+
+    if (path.empty()) return "";
+
+    try {
+        bool needs_update = (diff_cache.find(path) == diff_cache.end());
+        if (std::filesystem::exists(path)) {
+            auto current_time = std::filesystem::last_write_time(path);
+            if (!needs_update && time_cache[path] != current_time) {
+                needs_update = true;
+            }
+            if (needs_update) {
+                time_cache[path] = current_time;
+            }
+        }
+
+        if (needs_update) {
+            diff_cache[path] = get_file_diff_raw(path);
+        }
+    } catch (...) {
+        return get_file_diff_raw(path);
+    }
+
+    return diff_cache[path];
 }
 
 ftxui::Element render_logo() {
@@ -234,7 +264,7 @@ ftxui::Element render_view(
         } else {
             Elements file_blocks;
             for (const auto& filepath : *state.modified_files) {
-                // Get diff content
+                // Get cached diff content (optimized)
                 std::string content = get_file_diff(filepath);
                 
                 // Count additions/deletions
@@ -335,17 +365,17 @@ ftxui::Element render_view(
         body,
     }) | flex;
 
-    // Overlay popups if active
+    // Overlay popups using dbox (stacked overlay layout) to match fluidity of opencode
     if (show_model_select) {
-        return vbox({
-            build_model_popup(model_entries, model_select_idx, selected_provider, selected_model, theme),
+        return dbox({
             main_layout,
+            clear_under(build_model_popup(model_entries, model_select_idx, selected_provider, selected_model, theme)) | center
         });
     }
     if (show_slash) {
-        return vbox({
-            build_slash_popup(slash_commands, slash_idx, theme),
+        return dbox({
             main_layout,
+            clear_under(build_slash_popup(slash_commands, slash_idx, theme)) | center
         });
     }
 
