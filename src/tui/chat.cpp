@@ -107,8 +107,8 @@ void run_llm_generation(
                 screen->Post(
                     [state, screen, call]() {
                         std::string tool_call_str = Tools::format_tool_call(call.tool_name, call.arguments.dump());
-                        state.chat_history->push_back({"System", tool_call_str});
-                        ai::tui::db::save_message(*state.session_id, "System", tool_call_str);
+                        state.chat_history->push_back({"ToolCall", tool_call_str});
+                        ai::tui::db::save_message(*state.session_id, "ToolCall", tool_call_str);
                         screen->Post(ftxui::Event::Custom);
                     });
             };
@@ -119,8 +119,8 @@ void run_llm_generation(
                              res.tool_name, res.is_success(),
                              res.is_success() ? res.result.dump()
                                               : res.error_message());
-                    state.chat_history->push_back({"System", tool_res_str});
-                    ai::tui::db::save_message(*state.session_id, "System", tool_res_str);
+                    state.chat_history->push_back({"ToolResult", tool_res_str});
+                    ai::tui::db::save_message(*state.session_id, "ToolResult", tool_res_str);
                     screen->Post(ftxui::Event::Custom);
                 });
             };

@@ -198,8 +198,68 @@ ftxui::Element render_view(
                         text("  \u2139  ") | bold | color(c),
                         paragraph(entry.second) | flex | dim,
                     });
+                } else if (entry.first == "ToolCall") {
+                    /* ── OpenCode-style ToolCall rendering ──
+                     * format_tool_call() produces: "▾ Observability · toolname\n  $ command"
+                     * We split on the first newline to get header vs body.
+                     */
+                    auto nl = entry.second.find(static_cast<char>(10));
+                    std::string tc_header = (nl != std::string::npos)
+                        ? entry.second.substr(0, nl) : entry.second;
+                    std::string tc_body = (nl != std::string::npos && nl + 1 < entry.second.size())
+                        ? entry.second.substr(nl + 1) : "";
+                    while (!tc_body.empty() && tc_body.front() == ' ') tc_body.erase(0, 1);
+                    /* Trim trailing whitespace */
+                    while (!tc_body.empty() && (tc_body.back() == '\n' || tc_body.back() == ' ')) tc_body.pop_back();
+
+                    Color tc_color = Color::RGB(180, 220, 120);
+                    Elements tc_lines;
+                    tc_lines.push_back(text("  " + tc_header) | bold | color(tc_color));
+                    if (!tc_body.empty()) {
+                        std::istringstream tc_ss(tc_body);
+                        std::string tc_line;
+                        while (std::getline(tc_ss, tc_line)) {
+                            while (!tc_line.empty() && tc_line.front() == ' ') tc_line.erase(0, 1);
+                            tc_lines.push_back(text("    " + tc_line) | color(tc_color) | dim);
+                        }
+                    }
+                    bubble = hbox({
+                        separatorLight() | color(tc_color),
+                        vbox(std::move(tc_lines)) | flex
+                    });
+                } else if (entry.first == "ToolResult") {
+                    /* ── OpenCode-style ToolResult rendering ──
+                     * format_tool_result() produces: "  └─ Completed successfully\n  output"
+                     * or on failure: "  └─ Failed: error message"
+                     * Split on first newline, render status line + output lines.
+                     */
+                    auto nl = entry.second.find(static_cast<char>(10));
+                    std::string tr_status = (nl != std::string::npos)
+                        ? entry.second.substr(0, nl) : entry.second;
+                    std::string tr_output = (nl != std::string::npos && nl + 1 < entry.second.size())
+                        ? entry.second.substr(nl + 1) : "";
+                    while (!tr_output.empty() && tr_output.front() == ' ') tr_output.erase(0, 1);
+                    while (!tr_output.empty() && (tr_output.back() == '\n' || tr_output.back() == ' ')) tr_output.pop_back();
+
+                    bool tr_success = tr_status.find("Failed") == std::string::npos;
+                    Color tr_color = tr_success ? Color::Green : Color::Red;
+
+                    Elements tr_lines;
+                    tr_lines.push_back(text("  " + tr_status) | bold | color(tr_color));
+                    if (!tr_output.empty()) {
+                        std::istringstream tr_ss(tr_output);
+                        std::string tr_line;
+                        while (std::getline(tr_ss, tr_line)) {
+                            while (!tr_line.empty() && tr_line.front() == ' ') tr_line.erase(0, 1);
+                            tr_lines.push_back(text("    " + tr_line) | dim);
+                        }
+                    }
+                    bubble = hbox({
+                        separatorLight() | color(tr_color),
+                        vbox(std::move(tr_lines)) | flex
+                    });
                 } else if (entry.first == "User") {
-                    // Exact opencode User Message formatting: left border
+                    /* ── OpenCode-style User message ── */
                     bubble = hbox({
                         separatorLight() | color(user_green()),
                         vbox({
@@ -208,19 +268,17 @@ ftxui::Element render_view(
                         })
                     });
                 } else {
-                    // Exact opencode Assistant Message formatting: left border + status footer
+                    /* ── OpenCode-style Assistant message ── */
                     bubble = hbox({
                         separatorLight() | color(accent2(theme)),
                         vbox({
                             text("  Assistant") | bold | color(accent2(theme)),
                             paragraph("  " + entry.second) | flex,
                             text(""),
-                            text("  \u25a3 Assistant \u00b7 " + providers_list[selected_provider].models[selected_model].name) | dim | color(accent2(theme)),
+                            text("  ▣ Assistant · " + providers_list[selected_provider].models[selected_model].name) | dim | color(accent2(theme)),
                         })
                     });
                 }
-
-                // Selection highlight & focus scroll targeting
                 if (state.selection_mode) {
                     if (state.selected_message == i) {
                         bubble = bubble | bgcolor(Color::RGB(0x33, 0x33, 0x33)) | bold | focus;

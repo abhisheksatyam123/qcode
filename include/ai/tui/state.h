@@ -35,6 +35,7 @@ struct ChatState {
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
+    std::shared_ptr<int> scroll_offset = std::make_shared<int>(0);
 
     // Tab navigation
     int tab_selected = 0; // 0 = Chat, 1 = Files, 2 = Stats
