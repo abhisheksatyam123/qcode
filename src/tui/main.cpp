@@ -192,14 +192,58 @@ int main() {
                         state.chat_history->push_back({"System", "Loaded persistent session: " + target_id});
                         prompt_input = "";
                     }
+                    state.slash_suggestion_mode = false;
+                    state.slash_suggestion_idx = 0;
+                    return true;
                 } else {
                     if (active_idx >= 0 && active_idx < static_cast<int>(command_matches.size())) {
-                        prompt_input = "/" + command_matches[active_idx].name + " ";
+                        std::string cmd_name = command_matches[active_idx].name;
+                        
+                        if (e == Event::Return) {
+                            // Immediately execute the command on Return!
+                            prompt_input = "";
+                            state.slash_suggestion_mode = false;
+                            state.slash_suggestion_idx = 0;
+                            
+                            if (cmd_name == "session" || cmd_name == "list") {
+                                session_entries = ai::tui::db::list_sessions();
+                                if (!session_entries.empty()) {
+                                    show_session_select = true;
+                                    session_select_idx = 0;
+                                    for (int i = 0; i < static_cast<int>(session_entries.size()); i++) {
+                                        if (session_entries[i].first == *state.session_id) {
+                                            session_select_idx = i;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    state.chat_history->push_back({"System", "No saved sessions found."});
+                                }
+                            } else if (cmd_name == "model") {
+                                show_model_select = true;
+                                model_select_idx = 0;
+                                for (int i = 0; i < static_cast<int>(model_entries.size()); i++) {
+                                    if (model_entries[i].provider_idx == selected_provider &&
+                                        model_entries[i].model_idx == selected_model) {
+                                        model_select_idx = i;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                std::string raw = "/" + cmd_name;
+                                ai::tui::handle_slash_command(raw, prompt_input, providers_list,
+                                                              selected_provider, selected_model,
+                                                              enable_tools, system_prompt, state);
+                            }
+                        } else {
+                            // Just fill the buffer on Tab key
+                            prompt_input = "/" + cmd_name + " ";
+                            state.slash_suggestion_mode = false;
+                            state.slash_suggestion_idx = 0;
+                        }
                     }
+                    return true;
                 }
-                state.slash_suggestion_mode = false;
-                state.slash_suggestion_idx = 0;
-                return true;
             }
 
             if (!state.slash_suggestion_mode) {
