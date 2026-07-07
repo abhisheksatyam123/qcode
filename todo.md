@@ -1,32 +1,45 @@
 ## Systems
 
-### Visual Parity Roadmap: OpenCode TUI (Phase 2)
+### Visual Parity Roadmap: OpenCode TUI Architecture
 
-1. **Structured Tool Rendering**:
-   - Implemented `BlockTool` for consistent tool-call/result rendering.
-   - Refactored `render_message` to use `BlockTool` and modular `ai::MessageContent` parts.
-2. **Visual Consistency**: 
-   - Tool calls and results now have distinct visual blocks, status indicators, and colored borders consistent with OpenCode's styling.
+1. **Rendering Engine**: Component-based `render_message` (using `MessageContent` parts).
+2. **Visual Blocks**: `BlockTool` component provides standard OpenCode-style tool rendering (headers, status-colored borders, spinner integration).
+3. **Multiline Input & Toolbar**: OpenCode-style boxed panel with integrated model/tool status and newline shortcut helpers.
+4. **Layout**: Unified left-aligned message timeline.
 
 ## Tasks
 
 ### Completed (Done)
-- [x] Fix duplicate text rendering bug in views.cpp
-- [x] Render reasoning tokens as dimmed markdown (no header) matching OpenCode reasoning-part
-- [x] Refactor chat.cpp to resolve thread-safety issues and race conditions
 - [x] Align TUI chat history to left-aligned conversation timeline
-- [x] Render tool calls and results with custom icons (🔧, ✔, ❌) and color-coded status timelines
-- [x] Implement OpenCode-style output truncation budget and file backup logic in bash tool
-- [x] Implement visual selection clipboard resolution to copy full untruncated command logs from file
-- [x] Create multi-line boxed input panel with status toolbar (model badge, tools toggle status, and shortcuts)
-- [x] Add Alt+Enter keyboard newline insertion mapping in TUI
-- [x] Implement streaming for the final assistant response when tools are enabled
+- [x] Create multi-line boxed input panel with status toolbar
+- [x] Implement streaming for the final assistant response
 - [x] Transition message history rendering to part-based `render_message` structure
-- [x] Create `BlockTool` component wrapper for tool rendering.
+- [x] Create `BlockTool` component wrapper for tool rendering
 
-### Active
-- [ ] Implement `BashToolRender` with status indicators and specific output rendering (stdout/stderr).
-- [ ] Implement `TaskToolRender` with operation-specific visual labels.
-- [ ] Refine system prompt rendering to OpenCode compact style.
-- [ ] Match OpenCode's syntax-highlighting style (`syntaxStyle`) for markdown and code parts.
-- [ ] Build and verify all visual components.
+### Phase 3: Visual & Functional Perfection (Active)
+
+#### 1. Component-Specific Rendering (Tooling)
+- [ ] Implement `BashToolRender` using `BlockTool`:
+    - [ ] Display command string with `$` prefix.
+    - [ ] Render stdout/stderr output with scrollable/truncated view.
+    - [ ] Show exit code and status (running/success/failed).
+- [ ] Implement `TaskToolRender` using `BlockTool`:
+    - [ ] Handle subagent task lifecycle (status, sub-steps).
+    - [ ] Display task-specific operation name and input summary.
+
+#### 2. Visual Polish & System Prompt
+- [ ] Implement System Prompt renderer:
+    - [ ] Compact, dimmed box style matching OpenCode system banners.
+    - [ ] Left-aligned timeline integration.
+- [ ] Refine syntax highlighting:
+    - [ ] Apply consistent `syntaxStyle` for all markdown/code content blocks.
+    - [ ] Ensure theme tokens (e.g., `textMuted`, `accent`) are perfectly aligned with OpenCode's theme variables.
+
+#### 3. State & Interaction
+- [ ] Implement `ToolCallObservability` state management:
+    - [ ] Logic for collapsible/expandable output panes.
+    - [ ] Integration with real-time tool state updates (running/completed).
+- [ ] Final visual audit:
+    - [ ] Fine-tune padding, margins, and borders for "pixel-perfect" match to OpenCode.
+    - [ ] Verify spinner state transitions in `BlockTool`.
+

@@ -8,6 +8,7 @@ add_executable(qcode-tui
     tools.cpp
     views.cpp
     message_render.cpp
+    tool_renderers.cpp
 )
 
 target_link_libraries(qcode-tui PRIVATE

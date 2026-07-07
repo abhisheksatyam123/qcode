@@ -1,3 +1,4 @@
+#include <ai/tui/tool_renderers.h>
 #include <ai/tui/message_render.h>
 #include <ai/tui/views.h>
 
