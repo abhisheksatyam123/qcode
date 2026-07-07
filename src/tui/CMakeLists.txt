@@ -3,6 +3,7 @@ add_executable(qcode-tui
     chat.cpp
     commands.cpp
     config.cpp
+    db.cpp
     system_prompt.cpp
     tools.cpp
     views.cpp
@@ -13,6 +14,7 @@ target_link_libraries(qcode-tui PRIVATE
     ftxui::screen
     ftxui::dom
     ftxui::component
+    sqlite3
 )
 
 target_include_directories(qcode-tui PRIVATE

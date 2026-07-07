@@ -31,8 +31,13 @@ struct SlashCommand {
 // Only slash commands that exist in opencode and apply to qcode.
 inline std::vector<SlashCommand> builtin_slash_commands() {
     return {
-        {"model",  "Switch model",  "Select a model from any provider",  "Model"},
-        {"help",   "Help",          "Show available commands",           "Help"},
+        {"model",    "Switch model",  "Select a model from any provider",  "Model"},
+        {"theme",    "Switch theme",  "Select a UI theme color",           "Theme"},
+        {"tools",    "Toggle tools",  "Toggle tool usage / streaming mode", "Settings"},
+        {"new",      "New session",   "Start a new clean chat session",    "Session"},
+        {"sessions", "List sessions", "List all persistent sessions",      "Session"},
+        {"session",  "Load session",  "Switch to another saved session",   "Session"},
+        {"help",     "Help",          "Show available commands",           "Help"},
     };
 }
 

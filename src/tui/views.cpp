@@ -3,24 +3,58 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <array>
+#include <cstdio>
 
 namespace ai {
 namespace tui {
 
 using namespace ftxui;
 
-// Helper to get file preview (ported from main.cpp)
-static std::string get_file_preview(const std::string& path) {
-    if (!std::filesystem::exists(path)) {
-        return "File does not exist: " + path;
+// Helper to get git diff of the selected file
+static std::string get_file_diff(const std::string& path) {
+    if (path.empty()) return "";
+    
+    std::string diff_output;
+    std::array<char, 512> buffer;
+    
+    // Check if the file is tracked
+    std::string check_cmd = "git ls-files --error-unmatch \"" + path + "\" 2>/dev/null";
+    FILE* check_pipe = popen(check_cmd.c_str(), "r");
+    bool is_tracked = false;
+    if (check_pipe) {
+        is_tracked = (pclose(check_pipe) == 0);
     }
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        return "Could not open file: " + path;
+
+    std::string cmd;
+    if (is_tracked) {
+        // Tracked file: show diff against HEAD (unstaged + staged changes)
+        cmd = "git diff HEAD -- \"" + path + "\" 2>/dev/null";
+    } else {
+        // Untracked file: show diff as a new file (all lines added)
+        cmd = "git diff --no-index /dev/null \"" + path + "\" 2>/dev/null";
     }
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+            diff_output += buffer.data();
+        }
+        pclose(pipe);
+    }
+
+    // Fallback if diff is empty (e.g., untracked new file outside git index entirely)
+    if (diff_output.empty() && std::filesystem::exists(path)) {
+        std::ifstream file(path);
+        if (file.is_open()) {
+            std::string line;
+            while (std::getline(file, line)) {
+                diff_output += "+" + line + "\n";
+            }
+        }
+    }
+
+    return diff_output;
 }
 
 ftxui::Element render_logo() {
@@ -29,23 +63,42 @@ ftxui::Element render_logo() {
     return vbox({
         hbox({ text("        ") | color(cyan), text("                         ") | color(blue) }),
         hbox({ text("\u2588\u2580\u2580\u2588    ") | color(cyan), text("  \u2580\u2580\u2580\u2580 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2584 \u2588\u2580\u2580 ") | color(blue) | bold }),
-        hbox({ text("\u2588  \u2588 \u2580\u2580 ") | color(cyan), text("  \u2588    \u2588  \u2588 \u2588  \u2588 \u2588\u2580\u2580 ") | color(blue) | bold }),
+        hbox({ text("\u2588  \u2588 \u2580\u2580 ") | color(cyan), text("  \u2588    \u2588  \u2588 \u2588  \u2588 \u2580\u2580 ") | color(blue) | bold }),
         hbox({ text("\u2580\u2580\u2580\u2588\u2580   ") | color(cyan), text("  \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580  \u2580\u2580\u2580 ") | color(blue) | bold }),
     }) | hcenter;
 }
 
-// Forward declarations of popups
+// Helper to render code/diff content line by line to preserve formatting and highlight changes
+static ftxui::Element render_diff_content(const std::string& content) {
+    using namespace ftxui;
+    Elements lines;
+    std::stringstream ss(content);
+    std::string line;
+    while (std::getline(ss, line)) {
+        Color c = Color::Default;
+        if (!line.empty()) {
+            if (line[0] == '+') c = Color::Green;
+            else if (line[0] == '-') c = Color::Red;
+            else if (line[0] == '@') c = Color::Cyan;
+        }
+        lines.push_back(text(line) | color(c));
+    }
+    return vbox(std::move(lines));
+}
+
+// Forward declarations of popups with theme support
 ftxui::Element build_model_popup(
     const std::vector<ModelEntry>& entries,
     int select_idx,
     int selected_provider,
-    int selected_model
+    int selected_model,
+    const std::string& theme
 );
 ftxui::Element build_slash_popup(
     const std::vector<SlashCommand>& commands,
-    int slash_idx
+    int slash_idx,
+    const std::string& theme
 );
-ftxui::Element build_confirm_popup(const std::string& message);
 
 ftxui::Element render_view(
     const ChatState& state,
@@ -63,12 +116,14 @@ ftxui::Element render_view(
     const ftxui::Component& files_menu,
     const ftxui::Component& input
 ) {
+    std::string theme = state.theme ? *state.theme : "orange";
+
     // ── Outer Layout — header (tab selection) + body + footer ──
     auto header = hbox({
-        text(" QCODE ") | bold | bgcolor(accent()) | color(Color::White),
+        text(" QCODE ") | bold | bgcolor(accent(theme)) | color(Color::White),
         text("  "),
         tab_toggle->Render() | flex,
-    }) | borderLight | color(accent());
+    }) | borderLight | color(accent(theme));
 
     Element body;
 
@@ -80,9 +135,9 @@ ftxui::Element render_view(
             // Home screen
             auto prompt_bar = hbox({
                 input->Render() | flex,
-                text(" " + providers_list[selected_provider].models[selected_model].name + " ") | bold | color(accent2()),
+                text(" " + providers_list[selected_provider].models[selected_model].name + " ") | bold | color(accent2(theme)),
                 text(" " + providers_list[selected_provider].name + " ") | dim,
-            }) | border | color(accent());
+            }) | border | color(accent(theme));
 
             body = vbox({
                 filler() | flex,
@@ -98,16 +153,45 @@ ftxui::Element render_view(
             for (int i = 0; i < static_cast<int>(state.chat_history->size()); i++) {
                 auto& entry = (*state.chat_history)[i];
                 Color c = entry.first == "User" ? user_green()
-                        : entry.first == "System" ? dim_gray() : accent2();
+                        : entry.first == "System" ? dim_gray() : accent2(theme);
                 
-                auto bubble = hbox({
-                    text(" " + entry.first + " ") | bold | color(c),
-                    paragraph(" " + entry.second) | flex,
-                });
+                Element bubble;
+                if (entry.first == "System") {
+                    bubble = hbox({
+                        text("  \u2139  ") | bold | color(c),
+                        paragraph(entry.second) | flex | dim,
+                    });
+                } else if (entry.first == "User") {
+                    // Exact opencode User Message formatting: left border
+                    bubble = hbox({
+                        separatorLight() | color(user_green()),
+                        vbox({
+                            text("  User") | bold | color(user_green()),
+                            paragraph("  " + entry.second) | flex,
+                        })
+                    });
+                } else {
+                    // Exact opencode Assistant Message formatting: left border + status footer
+                    bubble = hbox({
+                        separatorLight() | color(accent2(theme)),
+                        vbox({
+                            text("  Assistant") | bold | color(accent2(theme)),
+                            paragraph("  " + entry.second) | flex,
+                            text(""),
+                            text("  \u25a3 Assistant \u00b7 " + providers_list[selected_provider].models[selected_model].name) | dim | color(accent2(theme)),
+                        })
+                    });
+                }
 
-                // Selection highlight
-                if (state.selection_mode && state.selected_message == i) {
-                    bubble = bubble | bgcolor(Color::RGB(0x33, 0x33, 0x33)) | bold;
+                // Selection highlight & focus scroll targeting
+                if (state.selection_mode) {
+                    if (state.selected_message == i) {
+                        bubble = bubble | bgcolor(Color::RGB(0x33, 0x33, 0x33)) | bold | focus;
+                    }
+                } else {
+                    if (i == static_cast<int>(state.chat_history->size()) - 1) {
+                        bubble = bubble | focus;
+                    }
                 }
 
                 msgs.push_back(bubble);
@@ -119,19 +203,23 @@ ftxui::Element render_view(
                 status = "\u2191\u2193 navigate  y/Enter copy  Esc exit visual selection";
             }
 
-            auto bottom = hbox({
-                text(" " + providers_list[selected_provider].models[selected_model].name + " ") | bold | color(accent2()),
-                text(" " + providers_list[selected_provider].name + " ") | dim,
-                separatorLight() | color(accent()),
-                text(status) | color(*state.is_generating ? Color::Green : dim_gray()),
-                text("") | flex,
-                input->Render() | flex,
-                text(enable_tools ? "\u2699" : "") | dim,
-            }) | border | color(accent());
+            auto prompt_box = vbox({
+                hbox({
+                    input->Render() | flex,
+                }) | size(HEIGHT, GREATER_THAN, 1),
+                separatorLight() | color(accent(theme)),
+                hbox({
+                    text(" " + providers_list[selected_provider].models[selected_model].name + " ") | bold | color(accent2(theme)),
+                    text(" " + providers_list[selected_provider].name + " ") | dim,
+                    text(enable_tools ? " \u2699 (tools)" : "") | dim,
+                    filler(),
+                    text(status) | color(*state.is_generating ? Color::Green : dim_gray()),
+                })
+            }) | border | color(accent(theme));
 
             body = vbox({
-                vbox(std::move(msgs)) | vscroll_indicator | yflex | focus,
-                bottom,
+                vbox(std::move(msgs)) | vscroll_indicator | frame | yflex,
+                prompt_box,
             }) | flex;
         }
     }
@@ -144,36 +232,47 @@ ftxui::Element render_view(
                 filler() | flex,
             }) | flex;
         } else {
-            std::string selected_path = "";
-            if (state.selected_file >= 0 && state.selected_file < static_cast<int>(state.modified_files->size())) {
-                selected_path = (*state.modified_files)[state.selected_file];
+            Elements file_blocks;
+            for (const auto& filepath : *state.modified_files) {
+                // Get diff content
+                std::string content = get_file_diff(filepath);
+                
+                // Count additions/deletions
+                int additions = 0;
+                int deletions = 0;
+                std::stringstream ss(content);
+                std::string line;
+                while (std::getline(ss, line)) {
+                    if (!line.empty()) {
+                        if (line[0] == '+' && (line.size() < 2 || line[1] != '+')) additions++;
+                        else if (line[0] == '-' && (line.size() < 2 || line[1] != '-')) deletions++;
+                    }
+                }
+                
+                auto file_header = hbox({
+                    text(" " + filepath) | bold | color(accent2(theme)),
+                    filler(),
+                    text("+" + std::to_string(additions)) | color(Color::Green),
+                    text(" "),
+                    text("-" + std::to_string(deletions)) | color(Color::Red),
+                });
+                
+                auto file_block = vbox({
+                    file_header,
+                    separatorLight() | color(accent(theme)),
+                    hbox({ text("  "), render_diff_content(content) | flex }),
+                    text(""),
+                }) | borderLight | color(accent(theme));
+                
+                file_blocks.push_back(file_block);
+                file_blocks.push_back(text(""));
             }
-
-            std::string content = get_file_preview(selected_path);
-
-            auto file_list_panel = vbox({
-                text(" MODIFIED FILES ") | bold | color(accent2()),
-                separatorLight() | color(accent()),
-                files_menu->Render() | frame
-            }) | size(WIDTH, EQUAL, 30);
-
-            auto file_preview_panel = vbox({
-                text(" PREVIEW: " + selected_path) | bold | color(accent2()),
-                separatorLight() | color(accent()),
+            
+            body = vbox({
+                text(" MODIFIED FILES ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
-                hbox({
-                    text("  "),
-                    paragraph(content) | vscroll_indicator | frame | flex,
-                    text("  ")
-                }),
-                text("")
+                vbox(std::move(file_blocks)) | vscroll_indicator | frame | yflex,
             }) | flex;
-
-            body = hbox({
-                file_list_panel,
-                separator() | color(accent()),
-                file_preview_panel
-            }) | border | color(accent()) | flex;
         }
     }
     // ── Tab 2: Stats ──
@@ -203,7 +302,7 @@ ftxui::Element render_view(
             hbox({
                 text("  "),
                 vbox({
-                    text("⎔ CONTEXT WINDOW") | bold | color(accent2()),
+                    text("⎔ CONTEXT WINDOW") | bold | color(accent2(theme)),
                     hbox({
                         text("Model/Provider: ") | dim,
                         text(providers_list[selected_provider].name + " / " + providers_list[selected_provider].models[selected_model].name) | bold
@@ -214,12 +313,12 @@ ftxui::Element render_view(
                     }),
                     hbox({
                         text("[") | dim,
-                        text(filled_bar) | color(used_pct >= 90 ? Color::Red : (used_pct >= 70 ? Color::Yellow : accent2())),
+                        text(filled_bar) | color(used_pct >= 90 ? Color::Red : (used_pct >= 70 ? Color::Yellow : accent2(theme))),
                         text(empty_bar) | dim,
                         text("]") | dim
                     }),
-                    separatorLight() | color(accent()),
-                    text("⎔ SESSION STATS") | bold | color(accent2()),
+                    separatorLight() | color(accent(theme)),
+                    text("⎔ SESSION STATS") | bold | color(accent2(theme)),
                     hbox({ text("Prompt Tokens: ") | dim, text(std::to_string(*state.total_prompt_tokens)) }),
                     hbox({ text("Completion Tokens: ") | dim, text(std::to_string(*state.total_completion_tokens)) }),
                     hbox({ text("Total Tokens: ") | dim, text(std::to_string(*state.total_tokens)) }),
@@ -228,7 +327,7 @@ ftxui::Element render_view(
                 text("  ")
             }),
             text("")
-        }) | border | color(accent()) | size(WIDTH, LESS_THAN, 80) | hcenter | flex;
+        }) | border | color(accent(theme)) | size(WIDTH, LESS_THAN, 80) | hcenter | flex;
     }
 
     auto main_layout = vbox({
@@ -237,21 +336,15 @@ ftxui::Element render_view(
     }) | flex;
 
     // Overlay popups if active
-    if (*state.show_confirm_dialog) {
-        return vbox({
-            build_confirm_popup(*state.confirm_dialog_message),
-            main_layout,
-        });
-    }
     if (show_model_select) {
         return vbox({
-            build_model_popup(model_entries, model_select_idx, selected_provider, selected_model),
+            build_model_popup(model_entries, model_select_idx, selected_provider, selected_model, theme),
             main_layout,
         });
     }
     if (show_slash) {
         return vbox({
-            build_slash_popup(slash_commands, slash_idx),
+            build_slash_popup(slash_commands, slash_idx, theme),
             main_layout,
         });
     }
@@ -264,10 +357,11 @@ ftxui::Element build_model_popup(
     const std::vector<ModelEntry>& entries,
     int select_idx,
     int selected_provider,
-    int selected_model
+    int selected_model,
+    const std::string& theme
 ) {
     Elements lines;
-    lines.push_back(text(" Select Model") | bold | color(accent2()));
+    lines.push_back(text(" Select Model") | bold | color(accent2(theme)));
     lines.push_back(separatorLight());
 
     std::string last_cat;
@@ -275,7 +369,7 @@ ftxui::Element build_model_popup(
         auto& e = entries[i];
         if (e.category != last_cat) {
             if (!last_cat.empty()) lines.push_back(text(""));
-            lines.push_back(text(" " + e.category) | bold | color(accent2()));
+            lines.push_back(text(" " + e.category) | bold | color(accent2(theme)));
             last_cat = e.category;
         }
 
@@ -289,7 +383,7 @@ ftxui::Element build_model_popup(
         if (i == select_idx)
             line = line | bgcolor(bg_popup()) | bold;
         else if (active)
-            line = line | color(accent2());
+            line = line | color(accent2(theme));
         lines.push_back(line);
     }
 
@@ -303,10 +397,11 @@ ftxui::Element build_model_popup(
 // ── Slash command popup ──
 ftxui::Element build_slash_popup(
     const std::vector<SlashCommand>& commands,
-    int slash_idx
+    int slash_idx,
+    const std::string& theme
 ) {
     Elements lines;
-    lines.push_back(text(" Commands") | bold | color(accent2()));
+    lines.push_back(text(" Commands") | bold | color(accent2(theme)));
     lines.push_back(separatorLight());
 
     std::string last_cat;
@@ -314,7 +409,7 @@ ftxui::Element build_slash_popup(
         auto& cmd = commands[i];
         if (cmd.category != last_cat) {
             if (!last_cat.empty()) lines.push_back(text(""));
-            lines.push_back(text(" " + cmd.category) | bold | color(accent2()));
+            lines.push_back(text(" " + cmd.category) | bold | color(accent2(theme)));
             last_cat = cmd.category;
         }
         std::string line_text = std::string(i == slash_idx ? " \u25b6 " : "   ") + "/" + cmd.name;
@@ -328,36 +423,6 @@ ftxui::Element build_slash_popup(
 
     lines.push_back(separatorLight());
     lines.push_back(text(" \u2191\u2193 navigate  Enter select  Esc cancel") | dim);
-
-    return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
-           size(WIDTH, EQUAL, 60) | hcenter;
-}
-
-} // namespace tui
-} // namespace ai
-
-namespace ai {
-namespace tui {
-
-ftxui::Element build_confirm_popup(const std::string& message) {
-    using namespace ftxui;
-    Elements lines;
-    lines.push_back(text(" Permission Requested") | bold | color(Color::Yellow));
-    lines.push_back(separatorLight() | color(Color::Yellow));
-    
-    // Support multi-line message wrapping
-    std::stringstream ss(message);
-    std::string line_str;
-    while (std::getline(ss, line_str, '\n')) {
-        lines.push_back(paragraph(line_str));
-    }
-    
-    lines.push_back(separatorLight() | color(Color::Yellow));
-    lines.push_back(hbox({
-        text("  [Y] Approve  ") | bold | bgcolor(Color::Green) | color(Color::Black),
-        text("    "),
-        text("  [N] Deny  ") | bold | bgcolor(Color::Red) | color(Color::Black),
-    }) | hcenter);
 
     return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
            size(WIDTH, EQUAL, 60) | hcenter;

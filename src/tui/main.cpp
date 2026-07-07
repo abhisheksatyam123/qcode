@@ -1,21 +1,22 @@
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/color.hpp>
 
 #include <algorithm>
-#include <memory>
+#include <cctype>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <ai/file_logger.h>
-#include <ai/logger.h>
 #include <ai/tui/chat.h>
 #include <ai/tui/commands.h>
 #include <ai/tui/config.h>
+#include <ai/tui/db.h>
 #include <ai/tui/state.h>
 #include <ai/tui/system_prompt.h>
-#include <ai/tui/tools.h>
 #include <ai/tui/views.h>
 
 using namespace ftxui;
@@ -26,7 +27,6 @@ int main() {
 
     auto screen = ScreenInteractive::Fullscreen();
 
-    // ── State ──
     ai::tui::ChatState state;
     std::string prompt_input;
 
@@ -38,6 +38,19 @@ int main() {
     auto providers_list = ai::tui::load_providers_from_config();
     int selected_provider = 0;
     int selected_model = 0;
+
+    // ── SQLite Persistence Initialization ──
+    ai::tui::db::init_database();
+    std::string last_session = ai::tui::db::get_last_active_session();
+    if (last_session.empty() && !providers_list.empty()) {
+        std::string prov = providers_list[selected_provider].name;
+        std::string mod = providers_list[selected_provider].models[selected_model].name;
+        last_session = ai::tui::db::create_new_session(prov, mod);
+    }
+    *state.session_id = last_session;
+    if (!state.session_id->empty()) {
+        ai::tui::db::reload_session_history(*state.session_id, state);
+    }
 
     // Populate modified files at start
     ai::tui::update_modified_files(state);
@@ -60,33 +73,8 @@ int main() {
 
     Component input = Input(&prompt_input, "Type a message or / for commands...");
 
-    // ── Slash popup / Model select keyboard event handling ──
+    // ── Keyboard event handling ──
     input |= CatchEvent([&](Event e) {
-        // ── Tool Confirmation Dialog active ──
-        if (*state.show_confirm_dialog) {
-            if (e == Event::Character('y') || e == Event::Character('Y')) {
-                {
-                    std::lock_guard<std::mutex> lock(*state.confirm_mutex);
-                    *state.confirm_decision = true;
-                    *state.confirm_ready = true;
-                    *state.show_confirm_dialog = false;
-                }
-                state.confirm_cv->notify_all();
-                return true;
-            }
-            if (e == Event::Character('n') || e == Event::Character('N') || e == Event::Escape) {
-                {
-                    std::lock_guard<std::mutex> lock(*state.confirm_mutex);
-                    *state.confirm_decision = false;
-                    *state.confirm_ready = true;
-                    *state.show_confirm_dialog = false;
-                }
-                state.confirm_cv->notify_all();
-                return true;
-            }
-            return true; // block other inputs
-        }
-
         if (show_model_select) {
             if (e == Event::ArrowDown || e == Event::Character('j')) {
                 model_select_idx = (model_select_idx + 1) %
@@ -208,6 +196,7 @@ int main() {
                     auto& msg = (*state.chat_history)[state.selected_message];
                     ai::tui::copy_to_clipboard(msg.second);
                     state.chat_history->push_back({"System", "Yanked message to clipboard!"});
+                    ai::tui::db::save_message(*state.session_id, "System", "Yanked message to clipboard!");
                 }
                 state.selection_mode = false;
                 state.selected_message = -1;
@@ -243,8 +232,10 @@ int main() {
         std::string p = prompt_input;
         prompt_input = "";
         state.chat_history->push_back({"User", p});
-        state.chat_history->push_back({"Assistant", ""});
         state.messages_history->push_back(ai::Message::user(p));
+
+        // Save User Message to SQLite
+        ai::tui::db::save_message(*state.session_id, "User", p);
 
         std::thread([&, p] {
             ai::tui::run_llm_generation(

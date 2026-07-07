@@ -1,12 +1,11 @@
 #include <ai/tui/chat.h>
 #include <ai/tui/config.h>
 #include <ai/tui/tools.h>
+#include <ai/tui/db.h>
 
 #include <cstdlib>
 #include <string>
 #include <utility>
-#include <mutex>
-#include <condition_variable>
 
 #include <ai/types/client.h>
 #include <ai/logger.h>
@@ -41,10 +40,10 @@ void run_llm_generation(
             char* key = std::getenv("OPENROUTER_API_KEY");
             if (!key) {
                 screen->Post(
-                    [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating, screen]() {
-                        chat_history_ptr->back().second =
-                            "Error: OPENROUTER_API_KEY not set.";
-                        *is_generating_flag = false;
+                    [state, screen]() {
+                        state.chat_history->push_back({"System", "Error: OPENROUTER_API_KEY not set."});
+                        *state.is_generating = false;
+                        ai::tui::db::save_message(*state.session_id, "System", "Error: OPENROUTER_API_KEY not set.");
                         screen->Post(ftxui::Event::Custom);
                     });
                 return;
@@ -56,10 +55,10 @@ void run_llm_generation(
             char* key = std::getenv("QPILOT_API_KEY");
             if (!key) {
                 screen->Post(
-                    [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating, screen]() {
-                        chat_history_ptr->back().second =
-                            "Error: QPILOT_API_KEY not set.";
-                        *is_generating_flag = false;
+                    [state, screen]() {
+                        state.chat_history->push_back({"System", "Error: QPILOT_API_KEY not set."});
+                        *state.is_generating = false;
+                        ai::tui::db::save_message(*state.session_id, "System", "Error: QPILOT_API_KEY not set.");
                         screen->Post(ftxui::Event::Custom);
                     });
                 return;
@@ -73,10 +72,10 @@ void run_llm_generation(
             api_key = get_antigravity_token();
             if (api_key.empty()) {
                 screen->Post(
-                    [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating, screen]() {
-                        chat_history_ptr->back().second =
-                            "Error: Antigravity token failed.";
-                        *is_generating_flag = false;
+                    [state, screen]() {
+                        state.chat_history->push_back({"System", "Error: Antigravity token failed."});
+                        *state.is_generating = false;
+                        ai::tui::db::save_message(*state.session_id, "System", "Error: Antigravity token failed.");
                         screen->Post(ftxui::Event::Custom);
                     });
                 return;
@@ -103,55 +102,25 @@ void run_llm_generation(
             options.tools = tools;
             options.max_steps = 10;
 
-            // Intercept and confirm tool call execution with user (approve/deny dialog)
-            options.on_tool_call_confirm = [state, screen](const ai::ToolCall& call) -> bool {
-                std::unique_lock<std::mutex> lock(*state.confirm_mutex);
-                *state.confirm_ready = false;
-                
-                // Build a user-friendly confirm message
-                std::string cmd_str = "";
-                if (call.arguments.contains("command")) {
-                    cmd_str = call.arguments["command"].get<std::string>();
-                } else if (call.arguments.contains("op")) {
-                    cmd_str = call.arguments["op"].get<std::string>();
-                    if (call.arguments.contains("prompt")) {
-                        cmd_str += ": " + call.arguments["prompt"].get<std::string>();
-                    }
-                } else {
-                    cmd_str = call.arguments.dump();
-                }
-                
-                *state.confirm_dialog_message = "Allow '" + call.tool_name + "' to execute:\n" + cmd_str;
-                *state.show_confirm_dialog = true;
-                
-                // Redraw UI
-                screen->Post(ftxui::Event::Custom);
-                
-                // Block generation thread until user makes a decision in TUI
-                state.confirm_cv->wait(lock, [state]() { return *state.confirm_ready; });
-                
-                return *state.confirm_decision;
-            };
-
+            // Fix dangling reference captures by capturing call and res by value!
             options.on_tool_call_start = [state, screen](const ai::ToolCall& call) {
                 screen->Post(
-                    [state, screen, &call]() {
-                        state.chat_history->push_back(
-                            {"System",
-                             Tools::format_tool_call(
-                                 call.tool_name, call.arguments.dump())});
+                    [state, screen, call]() {
+                        std::string tool_call_str = Tools::format_tool_call(call.tool_name, call.arguments.dump());
+                        state.chat_history->push_back({"System", tool_call_str});
+                        ai::tui::db::save_message(*state.session_id, "System", tool_call_str);
                         screen->Post(ftxui::Event::Custom);
                     });
             };
 
             options.on_tool_call_finish = [state, screen](const ai::ToolResult& res) {
-                screen->Post([state, screen, &res]() {
-                    state.chat_history->push_back(
-                        {"System",
-                         Tools::format_tool_result(
+                screen->Post([state, screen, res]() {
+                    std::string tool_res_str = Tools::format_tool_result(
                              res.tool_name, res.is_success(),
                              res.is_success() ? res.result.dump()
-                                              : res.error_message())});
+                                              : res.error_message());
+                    state.chat_history->push_back({"System", tool_res_str});
+                    ai::tui::db::save_message(*state.session_id, "System", tool_res_str);
                     screen->Post(ftxui::Event::Custom);
                 });
             };
@@ -163,20 +132,41 @@ void run_llm_generation(
                     if (gen_result.is_success()) {
                         state.chat_history->push_back(
                             {"Assistant", gen_result.text});
-                        state.messages_history->push_back(
-                            ai::Message::assistant(gen_result.text));
+                        
+                        // Save assistant response to SQLite
+                        ai::tui::db::save_message(*state.session_id, "Assistant", gen_result.text);
+
+                        // Maintain the complete conversation history including assistant tool calls + tool results
+                        if (!gen_result.response_messages.empty()) {
+                            state.messages_history->insert(
+                                state.messages_history->end(),
+                                gen_result.response_messages.begin(),
+                                gen_result.response_messages.end()
+                            );
+                        } else {
+                            state.messages_history->push_back(
+                                ai::Message::assistant(gen_result.text));
+                        }
+
                         *state.total_prompt_tokens +=
                             gen_result.usage.prompt_tokens;
                         *state.total_completion_tokens +=
                             gen_result.usage.completion_tokens;
                         *state.total_tokens += gen_result.usage.total_tokens;
-                    } else
-                        state.chat_history->push_back(
-                            {"System",
-                             "Error: " + gen_result.error_message()});
+                    } else {
+                        std::string err_str = "Error: " + gen_result.error_message();
+                        state.chat_history->push_back({"System", err_str});
+                        ai::tui::db::save_message(*state.session_id, "System", err_str);
+                    }
                     screen->Post(ftxui::Event::Custom);
                 });
         } else {
+            // Push Assistant placeholder for streaming safely from within the UI loop
+            screen->Post([state, screen]() {
+                state.chat_history->push_back({"Assistant", ""});
+                screen->Post(ftxui::Event::Custom);
+            });
+
             ai::GenerateOptions gen_options;
             gen_options.model = model;
             gen_options.system = system_prompt;
@@ -186,11 +176,10 @@ void run_llm_generation(
 
             if (stream.has_error()) {
                 screen->Post(
-                    [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating,
-                     screen, err_msg = stream.error_message()]() {
-                        chat_history_ptr->back().second =
-                            "Error: " + err_msg;
-                        *is_generating_flag = false;
+                    [state, screen, err_msg = stream.error_message()]() {
+                        state.chat_history->back().second = "Error: " + err_msg;
+                        *state.is_generating = false;
+                        ai::tui::db::save_message(*state.session_id, "System", "Error: " + err_msg);
                         screen->Post(ftxui::Event::Custom);
                     });
                 return;
@@ -206,9 +195,9 @@ void run_llm_generation(
                         });
                 } else if (event.is_error()) {
                     screen->Post(
-                        [chat_history_ptr = state.chat_history, screen]() {
-                            chat_history_ptr->back().second +=
-                                "\n[Error]";
+                        [state, screen]() {
+                            state.chat_history->back().second += "\n[Error]";
+                            ai::tui::db::save_message(*state.session_id, "System", "Error during streaming");
                             screen->Post(ftxui::Event::Custom);
                         });
                     break;
@@ -227,23 +216,24 @@ void run_llm_generation(
                 }
             }
             screen->Post(
-                [is_generating_flag = state.is_generating, messages_history_ptr = state.messages_history,
-                 chat_history_ptr = state.chat_history, screen]() {
-                    *is_generating_flag = false;
-                    messages_history_ptr->push_back(
-                        ai::Message::assistant(
-                            chat_history_ptr->back().second));
+                [state, screen]() {
+                    *state.is_generating = false;
+                    std::string assistant_text = state.chat_history->back().second;
+                    state.messages_history->push_back(
+                        ai::Message::assistant(assistant_text));
+                    
+                    // Save assistant streaming response to SQLite
+                    ai::tui::db::save_message(*state.session_id, "Assistant", assistant_text);
                     screen->Post(ftxui::Event::Custom);
                 });
         }
     } catch (const std::exception& e) {
         std::string err_msg = e.what();
         screen->Post(
-            [chat_history_ptr = state.chat_history, is_generating_flag = state.is_generating, screen,
-             err_msg]() {
-                chat_history_ptr->back().second =
-                    "Exception: " + err_msg;
-                *is_generating_flag = false;
+            [state, screen, err_msg]() {
+                state.chat_history->push_back({"System", "Exception: " + err_msg});
+                *state.is_generating = false;
+                ai::tui::db::save_message(*state.session_id, "System", "Exception: " + err_msg);
                 screen->Post(ftxui::Event::Custom);
             });
     }

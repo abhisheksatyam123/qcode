@@ -28,3 +28,5 @@ if(BUILD_TESTS)
     add_subdirectory(googletest-cmake)
     add_subdirectory(clickhouse-cmake)
 endif()
+
+add_subdirectory(sqlite)

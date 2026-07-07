@@ -1,6 +1,7 @@
 #include <ai/tui/tools.h>
 
 #include <sstream>
+#include <nlohmann/json.hpp>
 
 #include <ai/tools/bash_tool.h>
 #include <ai/tools/task_tool.h>
@@ -87,7 +88,33 @@ ai::ToolSet Tools::build_definitions(const ToolConfig& cfg) {
 
 std::string Tools::format_tool_call(const std::string& tool_name,
                                     const std::string& args) {
-  return "\xF0\x9F\x94\xA7 " + tool_name + ": " + args;
+  std::string formatted = "▾ Observability \u00b7 " + tool_name + "\n";
+  if (tool_name == "bash") {
+    try {
+      auto json = nlohmann::json::parse(args);
+      if (json.contains("command")) {
+        formatted += "  $ " + json["command"].get<std::string>();
+      } else {
+        formatted += "  Input: " + args;
+      }
+    } catch (...) {
+      formatted += "  Input: " + args;
+    }
+  } else if (tool_name == "task") {
+    try {
+      auto json = nlohmann::json::parse(args);
+      if (json.contains("description")) {
+        formatted += "  ↳ Spawn Task: " + json["description"].get<std::string>();
+      } else {
+        formatted += "  Input: " + args;
+      }
+    } catch (...) {
+      formatted += "  Input: " + args;
+    }
+  } else {
+    formatted += "  Input: " + args;
+  }
+  return formatted;
 }
 
 std::string Tools::format_tool_result(const std::string& tool_name,
@@ -97,10 +124,28 @@ std::string Tools::format_tool_result(const std::string& tool_name,
   std::string s = result_or_error;
   if (static_cast<int>(s.length()) > truncate_at)
     s = s.substr(0, truncate_at) + "...";
-  if (success)
-    return "\xE2\x9C\x85 " + tool_name + ": " + s;
-  else
-    return "\xE2\x9D\x8C " + tool_name + ": " + s;
+  
+  std::string formatted;
+  if (success) {
+    formatted = "  \u2514\u2500 Completed successfully";
+    if (tool_name == "bash") {
+      try {
+        auto json = nlohmann::json::parse(s);
+        if (json.contains("output") && !json["output"].get<std::string>().empty()) {
+          formatted += "\n  " + json["output"].get<std::string>();
+        } else if (json.contains("exit")) {
+          formatted += " (exit: " + std::to_string(json["exit"].get<int>()) + ")";
+        }
+      } catch (...) {
+        formatted += "\n  " + s;
+      }
+    } else {
+      formatted += "\n  " + s;
+    }
+  } else {
+    formatted = "  \u2514\u2500 Failed: " + s;
+  }
+  return formatted;
 }
 
 } // namespace tui
