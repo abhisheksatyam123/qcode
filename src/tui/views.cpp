@@ -391,7 +391,7 @@ ftxui::Element render_view(
             std::string status;
             if (*state.is_generating) {
                 int frame = *state.generation_frame % spinner_frames.size();
-                status = std::string(spinner_frames[frame]) + " Generating...";
+                status = "  " + std::string(spinner_frames[frame]) + " Generating...";
             } else {
                 status = "";
             }
@@ -483,6 +483,8 @@ ftxui::Element render_view(
             LOG_DEBUG("Views: chat tab render, auto_scroll={}, scroll_offset={}", state.auto_scroll, *scroll_offset);
             body = vbox({
                 vbox(std::move(msgs)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPosition(0, *scroll_offset)) | yframe | yflex,
+                hbox({text("  ") | dim, text(status) | dim}),
+                text(status) | dim | ftxui::border,
                 prompt_box,
             }) | flex;
         }

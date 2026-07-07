@@ -1,10 +1,12 @@
 ## Systems
 
-### Status Update: Message Rendering Refactor
+### Visual Parity Roadmap: OpenCode TUI (Phase 2)
 
-1. **Refactored Rendering Engine**: Transitioned the chat history display logic in `src/tui/views.cpp` to use `render_message`, which iterates through `ai::MessageContent` (Text, ToolCall, ToolResult) rather than relying on flat string-based message entries.
-2. **Modular Component System**: Created a dedicated `src/tui/message_render.cpp` and header file to handle message-part rendering.
-3. **Visual Alignment**: The initial infrastructure for OpenCode-style message part rendering is in place, and the code now builds successfully using the new rendering pipeline.
+1. **Structured Tool Rendering**:
+   - Implemented `BlockTool` for consistent tool-call/result rendering.
+   - Refactored `render_message` to use `BlockTool` and modular `ai::MessageContent` parts.
+2. **Visual Consistency**: 
+   - Tool calls and results now have distinct visual blocks, status indicators, and colored borders consistent with OpenCode's styling.
 
 ## Tasks
 
@@ -20,9 +22,11 @@
 - [x] Add Alt+Enter keyboard newline insertion mapping in TUI
 - [x] Implement streaming for the final assistant response when tools are enabled
 - [x] Transition message history rendering to part-based `render_message` structure
+- [x] Create `BlockTool` component wrapper for tool rendering.
 
 ### Active
-- [ ] Implement `BlockTool` component wrapper for tool rendering.
-- [ ] Implement `BashToolRender` with status indicators and output styling.
-- [ ] Implement `TaskToolRender`.
+- [ ] Implement `BashToolRender` with status indicators and specific output rendering (stdout/stderr).
+- [ ] Implement `TaskToolRender` with operation-specific visual labels.
 - [ ] Refine system prompt rendering to OpenCode compact style.
+- [ ] Match OpenCode's syntax-highlighting style (`syntaxStyle`) for markdown and code parts.
+- [ ] Build and verify all visual components.
