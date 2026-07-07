@@ -40,6 +40,7 @@ ftxui::Element render_view(
     int selected_provider,
     int selected_model,
     bool enable_tools,
+    const std::string& prompt_input, // <-- Added!
     // Slash popup state
     bool show_slash,
     int slash_idx,

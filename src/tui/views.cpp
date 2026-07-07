@@ -124,11 +124,6 @@ ftxui::Element build_model_popup(
     int selected_model,
     const std::string& theme
 );
-ftxui::Element build_slash_popup(
-    const std::vector<SlashCommand>& commands,
-    int slash_idx,
-    const std::string& theme
-);
 
 ftxui::Element render_view(
     const ChatState& state,
@@ -136,6 +131,7 @@ ftxui::Element render_view(
     int selected_provider,
     int selected_model,
     bool enable_tools,
+    const std::string& prompt_input,
     bool show_slash,
     int slash_idx,
     const std::vector<SlashCommand>& slash_commands,
@@ -246,6 +242,39 @@ ftxui::Element render_view(
                     text(status) | color(*state.is_generating ? Color::Green : dim_gray()),
                 })
             }) | border | color(accent(theme));
+
+            // Dynamic inline slash command autocomplete matching opencode
+            if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
+                std::string filter_str = prompt_input.substr(1);
+                std::vector<SlashCommand> matches;
+                for (const auto& cmd : slash_commands) {
+                    if (cmd.name.find(filter_str) != std::string::npos) {
+                        matches.push_back(cmd);
+                    }
+                }
+                if (!matches.empty()) {
+                    Elements rows;
+                    rows.push_back(text(" Autocomplete Commands:") | bold | color(accent2(theme)));
+                    rows.push_back(separatorLight() | color(accent(theme)));
+                    for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
+                        bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
+                        std::string marker = active ? " \u25b6 " : "   ";
+                        auto row = hbox({
+                            text(marker + "/" + matches[i].name) | color(active ? accent2(theme) : Color::Default) | bold,
+                            text("  " + matches[i].description) | dim
+                        });
+                        if (active) {
+                            row = row | bgcolor(bg_popup()) | bold;
+                        }
+                        rows.push_back(row);
+                    }
+                    auto suggestions_panel = vbox(std::move(rows)) | border | color(accent(theme));
+                    prompt_box = vbox({
+                        suggestions_panel,
+                        prompt_box
+                    });
+                }
+            }
 
             body = vbox({
                 vbox(std::move(msgs)) | vscroll_indicator | frame | yflex,
@@ -372,12 +401,6 @@ ftxui::Element render_view(
             clear_under(build_model_popup(model_entries, model_select_idx, selected_provider, selected_model, theme)) | center
         });
     }
-    if (show_slash) {
-        return dbox({
-            main_layout,
-            clear_under(build_slash_popup(slash_commands, slash_idx, theme)) | center
-        });
-    }
 
     return main_layout;
 }
@@ -422,40 +445,6 @@ ftxui::Element build_model_popup(
 
     return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
            size(WIDTH, EQUAL, 72) | hcenter;
-}
-
-// ── Slash command popup ──
-ftxui::Element build_slash_popup(
-    const std::vector<SlashCommand>& commands,
-    int slash_idx,
-    const std::string& theme
-) {
-    Elements lines;
-    lines.push_back(text(" Commands") | bold | color(accent2(theme)));
-    lines.push_back(separatorLight());
-
-    std::string last_cat;
-    for (int i = 0; i < static_cast<int>(commands.size()); i++) {
-        auto& cmd = commands[i];
-        if (cmd.category != last_cat) {
-            if (!last_cat.empty()) lines.push_back(text(""));
-            lines.push_back(text(" " + cmd.category) | bold | color(accent2(theme)));
-            last_cat = cmd.category;
-        }
-        std::string line_text = std::string(i == slash_idx ? " \u25b6 " : "   ") + "/" + cmd.name;
-        line_text += std::string(12, ' ').substr(0, std::max(0, 12 - (int)cmd.name.size()));
-        line_text += cmd.description;
-
-        auto line = text(line_text);
-        line = (i == slash_idx) ? (line | bgcolor(bg_popup()) | bold) : (line | dim);
-        lines.push_back(line);
-    }
-
-    lines.push_back(separatorLight());
-    lines.push_back(text(" \u2191\u2193 navigate  Enter select  Esc cancel") | dim);
-
-    return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
-           size(WIDTH, EQUAL, 60) | hcenter;
 }
 
 } // namespace tui

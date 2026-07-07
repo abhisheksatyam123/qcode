@@ -114,59 +114,58 @@ int main() {
             return true;
         }
 
-        if (show_slash) {
-            if (e == Event::ArrowDown || e == Event::Character('j')) {
-                slash_idx = (slash_idx + 1) %
-                            static_cast<int>(slash_commands.size());
-                return true;
-            }
-            if (e == Event::ArrowUp || e == Event::Character('k')) {
-                slash_idx = (slash_idx - 1 + static_cast<int>(slash_commands.size())) %
-                            static_cast<int>(slash_commands.size());
-                return true;
-            }
-            if (e == Event::Return) {
-                show_slash = false;
-                auto& cmd = slash_commands[static_cast<size_t>(slash_idx)];
-                if (cmd.name == "model") {
-                    show_model_select = true;
-                    model_select_idx = 0;
-                    for (int i = 0; i < static_cast<int>(model_entries.size()); i++) {
-                        if (model_entries[i].provider_idx == selected_provider &&
-                            model_entries[i].model_idx == selected_model) {
-                            model_select_idx = i;
-                            break;
-                        }
-                    }
-                } else {
-                    prompt_input = "/" + cmd.name + " ";
+        // ── Dynamic Inline Autocomplete Interceptor ──
+        std::vector<ai::tui::SlashCommand> matches;
+        bool has_autocomplete = false;
+        if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
+            std::string filter_str = prompt_input.substr(1);
+            for (const auto& cmd : slash_commands) {
+                if (cmd.name.find(filter_str) != std::string::npos) {
+                    matches.push_back(cmd);
                 }
-                return true;
             }
-            if (e == Event::Escape || e == Event::Backspace) {
-                show_slash = false;
-                return true;
-            }
-            if (e.is_character()) {
-                char ch = std::tolower(e.character()[0]);
-                for (int i = 1; i <= static_cast<int>(slash_commands.size()); i++) {
-                    int idx = (slash_idx + i) % static_cast<int>(slash_commands.size());
-                    if (!slash_commands[idx].name.empty() &&
-                        std::tolower(slash_commands[idx].name[0]) == ch) {
-                        slash_idx = idx;
-                        return true;
-                    }
-                }
-                return true;
-            }
-            return true;
+            has_autocomplete = !matches.empty();
+        } else {
+            state.slash_suggestion_mode = false;
+            state.slash_suggestion_idx = 0;
         }
 
-        // Open slash popup when typing "/" at start of empty input
-        if (e.is_character() && e.character() == "/" && prompt_input.empty()) {
-            show_slash = true;
-            slash_idx = 0;
-            return true;
+        if (has_autocomplete) {
+            if (!state.slash_suggestion_mode) {
+                if (e == Event::ArrowUp) {
+                    state.slash_suggestion_mode = true;
+                    state.slash_suggestion_idx = static_cast<int>(matches.size()) - 1;
+                    return true;
+                }
+            } else {
+                if (e == Event::ArrowUp || e == Event::Character('k')) {
+                    if (state.slash_suggestion_idx > 0) {
+                        state.slash_suggestion_idx--;
+                    } else {
+                        state.slash_suggestion_idx = static_cast<int>(matches.size()) - 1;
+                    }
+                    return true;
+                }
+                if (e == Event::ArrowDown || e == Event::Character('j')) {
+                    state.slash_suggestion_idx = (state.slash_suggestion_idx + 1) % static_cast<int>(matches.size());
+                    return true;
+                }
+                if (e == Event::Return || e == Event::Special("\t")) { // Tab or Return
+                    prompt_input = "/" + matches[state.slash_suggestion_idx].name + " ";
+                    state.slash_suggestion_mode = false;
+                    state.slash_suggestion_idx = 0;
+                    return true;
+                }
+                if (e == Event::Escape) {
+                    state.slash_suggestion_mode = false;
+                    state.slash_suggestion_idx = 0;
+                    return true;
+                }
+                if (e == Event::Backspace && prompt_input.size() <= 1) {
+                    state.slash_suggestion_mode = false;
+                    state.slash_suggestion_idx = 0;
+                }
+            }
         }
 
         // ── Visual Message Selection Mode (for Copy) ──
@@ -250,7 +249,7 @@ int main() {
     };
 
     input |= CatchEvent([&](Event e) {
-        if (e == Event::Return && !show_slash && !show_model_select && !prompt_input.empty()) {
+        if (e == Event::Return && !show_slash && !show_model_select && !prompt_input.empty() && !state.slash_suggestion_mode) {
             submit();
             return true;
         }
@@ -295,7 +294,7 @@ int main() {
     auto renderer = Renderer(main_container, [&] {
         return ai::tui::render_view(
             state, providers_list, selected_provider, selected_model,
-            enable_tools,
+            enable_tools, prompt_input,
             show_slash, slash_idx, slash_commands,
             show_model_select, model_select_idx, model_entries,
             tab_toggle, files_menu, input);

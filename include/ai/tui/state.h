@@ -49,6 +49,10 @@ struct ChatState {
 
     // Active persistent session ID (UUID)
     std::shared_ptr<std::string> session_id = std::make_shared<std::string>();
+
+    // Slash command autocomplete suggestions state
+    bool slash_suggestion_mode = false;
+    int slash_suggestion_idx = 0;
 };
 
 // Helper to scan for modified files using git status
