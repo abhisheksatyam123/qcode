@@ -1,3 +1,5 @@
+#include <fstream>
+#include <sstream>
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -80,7 +82,9 @@ int main() {
 
     Component files_menu = Menu(state.modified_files.get(), &state.selected_file);
 
-    Component input = Input(&prompt_input, "Type a message or / for commands...");
+    InputOption input_opts = InputOption::Default();
+    input_opts.multiline = true;
+    Component input = Input(&prompt_input, "Type a message or / for commands...", input_opts);
 
     // ── Submit handler ──
     auto submit = [&] {
@@ -370,6 +374,12 @@ int main() {
             }
         }
 
+        // ── Alt+Enter inserts newline ──
+        if (e == Event::Special("\x1b\n") || e == Event::Special("\x1b\r") || e == Event::Special("\x1b\x0a")) {
+            prompt_input += "\n";
+            return true;
+        }
+
         // ── Normal Message Submission ──
         if (e == Event::Return && !prompt_input.empty()) {
             submit();
@@ -400,7 +410,25 @@ int main() {
                 if (state.selected_message >= 0 && 
                     state.selected_message < static_cast<int>(state.chat_history->size())) {
                     auto& msg = (*state.chat_history)[state.selected_message];
-                    ai::tui::copy_to_clipboard(msg.second);
+                    std::string text_to_copy = msg.second;
+                    
+                    // Auto-resolve truncation file path if present to copy the complete output
+                    size_t tag_pos = text_to_copy.find("Full output saved to ");
+                    if (tag_pos != std::string::npos) {
+                        size_t path_start = tag_pos + 21; // length of "Full output saved to "
+                        size_t path_end = text_to_copy.find("]", path_start);
+                        if (path_end != std::string::npos) {
+                            std::string filepath = text_to_copy.substr(path_start, path_end - path_start);
+                            std::ifstream infile(filepath, std::ios::in | std::ios::binary);
+                            if (infile.is_open()) {
+                                std::string full_content((std::istreambuf_iterator<char>(infile)),
+                                                         std::istreambuf_iterator<char>());
+                                text_to_copy = full_content;
+                            }
+                        }
+                    }
+                    
+                    ai::tui::copy_to_clipboard(text_to_copy);
                     state.chat_history->push_back({"System", "Yanked message to clipboard!"});
                     ai::tui::db::save_message(*state.session_id, "System", "Yanked message to clipboard!");
                 }

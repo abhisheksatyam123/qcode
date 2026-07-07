@@ -1,38 +1,44 @@
-## Tasks
-- [x] Tool calls: left colored bar + icon header + dimmed command body
-- [x] Tool results: status bar with duration + output, color-coded (green/red)
-- [x] Update tools.cpp formatting to produce structured output
-- [x] User messages: right-styled with green accent and "You" header
-- [x] System messages: centered dimmed info banner
-- [x] Basic markdown rendering: code blocks (```bg), inline code (`bg+bold), bold (**bold**), lists (-,*,1.)
-- [x] **max_steps 10→25**: model had no room to finish tool workflows
-- [x] **Streaming bugfixes** (chat.cpp):
-  - Non-tools path: placeholder pushed async via `screen->Post` — stream could start before it existed, causing UB on `.back()`. Fixed: push synchronously + defensive empty-vector check in `flush_text`.
-  - Tools path: no visible feedback during tool-only steps — user saw blank screen. Fixed: push "⏳ Working..." placeholder on first tool call start.
-  - Empty assistant message when model only made tool calls. Fixed: show "✅ Done" instead of blank.
-- [ ] File attachment display support (needs data model)
-- [ ] Assistant messages: model badge per-message (currently uses global selected model)
-
 ## Systems
-### Files
-- `src/tui/views.cpp` — Message rendering + `render_markdown()` helper
-- `src/tui/tools.cpp` — `format_tool_call()` / `format_tool_result()`
-- `src/tui/chat.cpp` — Generation driver, tool callbacks, message store
-- `include/ai/tui/views.h` — Color palette + `render_view()` decl
-- `include/ai/tui/state.h` — `ChatState`: chat_history as `vector<pair<role, text>>`
 
-### Streaming Fixes Applied (chat.cpp)
+### High-Level Summary of Achieved OpenCode Alignment
 
-**max_steps**: `10 → 25` — prevents tool-heavy convos from hitting the limit before producing a final answer.
+1. **TUI Message Layout**:
+   * User and Assistant messages are left-aligned in a unified timeline with distinctive accent-colored separators.
+   * Thinking tokens render as dimmed markdown inline (OpenCode reasoning style) with no labels.
+   * Redundant model headers and footers are merged into a single clean inline tag: `Assistant · <model_name>`.
 
-**Non-tools streaming race** (line 237):
-- BEFORE: placeholder push was `screen->Post(lambda)` → async. Stream started immediately on background thread. `flush_text` did `chat_history->back().second += batch` but the vector had no `.back()` yet → UB.
-- AFTER: `state.chat_history->push_back({"Assistant", ""})` synchronous before stream starts. `flush_text` checks `chat_history->empty()` defensively.
+2. **Rich Tool Call & Result Timeline**:
+   * Tool calls render with a wrench icon `🔧` and argument preview.
+   * Tool results render with a green checkmark `✔` or a red cross `❌` indicating success/failure.
+   * Auto-sanitizes older database records to strip legacy box-drawing characters on the fly.
 
-**Tools path visibility** (lines 134-145):
-- BEFORE: no Assistant entry until `on_step_finish` fires with non-empty text. If model only makes tool calls for 10+ steps, user sees nothing.
-- AFTER: `on_tool_call_start` checks `assistant_msg_idx < 0 && assistant_text->empty()` and pushes "  ⏳ Working..." immediately. Cleared by `on_tool_call_finish` when first tool result arrives.
+3. **Boxed Chat Input Panel**:
+   * Top area provides multiline editing with the prompt chevron `❯`.
+   * Bottom status toolbar renders the active model badge, a green/gray tools status indicator (`🔧 Tools: ON` vs `⚙ Tools: OFF`), and keyboard instruction helper.
+   * Keyboard shortcut `Alt+Enter` inserts newlines, while standard `Enter` sends the message.
 
-**Empty final text** (line 221):
-- BEFORE: if `gen_result.text` is empty, an empty Assistant message was pushed.
-- AFTER: empty text replaced with "  ✅ Done".
+4. **Output Truncation & Selection Clipboard Resolution**:
+   * Large outputs (default > 4,096 characters) are saved to `/home/abhi/notes/state/data/tool-output/` and replaced with an OpenCode truncation banner.
+   * Yanking/copying a truncated message in selection mode (`Ctrl+P` -> `y`) reads the full file and copies the untruncated content.
+
+5. **Streaming Support with Tools Enabled**:
+   * Refactored `run_tools_generation` in `src/tui/chat.cpp` to execute step-by-step LLM generations manually.
+   * If a step is the final answer (no subsequent tool execution is needed), the TUI switches to `client.stream_text` with tools disabled. This streams the final text response token-by-token directly to the user interface, solving the blocking/freezing TUI issue when tools are enabled.
+
+## Tasks
+
+### Completed (Done)
+- [x] Fix duplicate text rendering bug in views.cpp
+- [x] Render reasoning tokens as dimmed markdown (no header) matching OpenCode reasoning-part
+- [x] Refactor chat.cpp to resolve thread-safety issues and race conditions
+- [x] Align TUI chat history to left-aligned conversation timeline
+- [x] Render tool calls and results with custom icons (🔧, ✔, ❌) and color-coded status timelines
+- [x] Implement OpenCode-style output truncation budget and file backup logic in bash tool
+- [x] Implement visual selection clipboard resolution to copy full untruncated command logs from file
+- [x] Create multi-line boxed input panel with status toolbar (model badge, tools toggle status, and shortcuts)
+- [x] Add Alt+Enter keyboard newline insertion mapping in TUI
+- [x] Implement streaming for the final assistant response when tools are enabled
+- [x] Build and compile all targets successfully
+
+### Active (New)
+- [ ] *Pending next instructions from the user*

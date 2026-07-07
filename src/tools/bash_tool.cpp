@@ -1,3 +1,4 @@
+#include <random>
 #include <csignal>
 #include "ai/tools/bash_tool.h"
 #include <ai/logger.h>
@@ -200,36 +201,87 @@ static bool is_safe_command(const std::string& command, std::string& warning) {
   return true;
 }
 
-static std::string truncate_string(const std::string& str, int max_chars) {
-  if (max_chars <= 0 || static_cast<int>(str.size()) <= max_chars) return str;
-  return str.substr(0, max_chars) + "\n\n...(truncated)";
-}
 
-static std::string truncate_lines(const std::string& str, int max_lines) {
-  if (max_lines <= 0) return str;
-  int lines = 0;
-  for (size_t i = 0; i < str.size(); i++) {
-    if (str[i] == '\n') {
-      lines++;
-      if (lines >= max_lines) {
-        return str.substr(0, i) + "\n...(truncated)";
-      }
-    }
+
+static std::string generate_unique_tool_file_name() {
+  auto now = std::chrono::system_clock::now().time_since_epoch();
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+  
+  std::random_device rd;
+  std::mt19937 generator(rd());
+  std::uniform_int_distribution<int> distribution(0, 61);
+  
+  static const char charset[] =
+      "0123456789"
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      "abcdefghijklmnopqrstuvwxyz";
+  std::string suffix;
+  suffix.reserve(12);
+  for (int i = 0; i < 12; ++i) {
+    suffix += charset[distribution(generator)];
   }
-  return str;
+  
+  return "tool_" + std::to_string(ms) + suffix;
 }
 
 std::string BashTool::apply_output_budget(const std::string& output,
                                            std::optional<int> max_chars,
                                            std::optional<int> max_lines) {
-  std::string result = output;
-  if (max_lines.has_value()) result = truncate_lines(result, max_lines.value());
-  if (max_chars.has_value()) result = truncate_string(result, max_chars.value());
-  constexpr int DEFAULT_MAX_CHARS = 16384;
-  if (!max_chars.has_value() && !max_lines.has_value()) {
-    result = truncate_string(result, DEFAULT_MAX_CHARS);
+  // Match opencode's default MAX_CHARS = 4096
+  int limit = max_chars.value_or(4096);
+  
+  bool needs_truncation = false;
+  size_t truncate_index = output.size();
+  
+  if (static_cast<int>(output.size()) > limit) {
+    needs_truncation = true;
+    truncate_index = limit;
   }
-  return result;
+  
+  if (max_lines.has_value() && max_lines.value() > 0) {
+    int line_count = 0;
+    for (size_t i = 0; i < output.size(); ++i) {
+      if (output[i] == '\n') {
+        line_count++;
+        if (line_count >= max_lines.value()) {
+          if (i < truncate_index) {
+            needs_truncation = true;
+            truncate_index = i;
+          }
+          break;
+        }
+      }
+    }
+  }
+  
+  if (!needs_truncation) {
+    return output;
+  }
+  
+  // Perform truncation: write full output to truncation directory
+  std::string dir_path = "/home/abhi/notes/state/data/tool-output";
+  std::error_code ec;
+  std::filesystem::create_directories(dir_path, ec);
+  
+  std::string file_id = generate_unique_tool_file_name();
+  std::string file_path = dir_path + "/" + file_id;
+  
+  std::ofstream out_file(file_path, std::ios::out | std::ios::binary);
+  if (out_file.is_open()) {
+    out_file.write(output.data(), output.size());
+    out_file.close();
+  } else {
+    LOG_ERROR("BashTool: failed to write full output to {}", file_path);
+  }
+  
+  std::string prefix = output.substr(0, truncate_index);
+  
+  std::string msg = prefix + "\n\n" +
+      "[Output truncated at " + std::to_string(truncate_index) + " characters (total " + std::to_string(output.size()) + "). Full output saved to " + file_path + "]\n" +
+      "Inspect the saved output with targeted range reads (for example: nl -ba " + file_path + " | sed -n '<start>,<end>p') or a one-pass rg/python summarizer; avoid raw full-file dumps. " +
+      "If you truly need more inline text, request the smallest useful output budget (for bash, max_output_chars); large values can bloat context.";
+      
+  return msg;
 }
 
 std::string BashTool::run_shell(const std::string& command, const std::string& cwd,
