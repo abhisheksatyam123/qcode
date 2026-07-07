@@ -104,7 +104,6 @@ bool handle_slash_command(
         }
         std::string val = args;
         std::transform(val.begin(), val.end(), val.begin(), ::tolower);
-        // Trim
         val.erase(val.begin(), std::find_if(val.begin(), val.end(), [](unsigned char ch) {
             return !std::isspace(ch);
         }));
@@ -132,16 +131,6 @@ bool handle_slash_command(
         state.chat_history->clear();
         state.messages_history->clear();
         state.chat_history->push_back({"System", "Started new persistent session: " + new_id});
-        return true;
-    }
-
-    if (cmd == "sessions" || cmd == "list") {
-        auto list = db::list_sessions();
-        std::string out = "Saved Sessions:\n";
-        for (auto& s : list) {
-            out += "  " + s.first + "  (" + s.second + ")\n";
-        }
-        state.chat_history->push_back({"System", out});
         return true;
     }
 

@@ -35,8 +35,7 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"theme",    "Switch theme",  "Select a UI theme color",           "Theme"},
         {"tools",    "Toggle tools",  "Toggle tool usage / streaming mode", "Settings"},
         {"new",      "New session",   "Start a new clean chat session",    "Session"},
-        {"sessions", "List sessions", "List all persistent sessions",      "Session"},
-        {"session",  "Load session",  "Switch to another saved session",   "Session"},
+        {"session",  "Select session", "Manage and load saved sessions",   "Session"},
         {"help",     "Help",          "Show available commands",           "Help"},
     };
 }

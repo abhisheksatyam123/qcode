@@ -286,8 +286,8 @@ int main() {
                 return !std::isspace(ch);
             }).base(), cmd.end());
 
-            // Open SQLite session selection popup if user runs /session or /sessions without arguments
-            if (cmd == "session" || cmd == "sessions" || cmd == "list") {
+            // Open SQLite session selection popup if user runs /session or /list without arguments
+            if (cmd == "session" || cmd == "list") {
                 prompt_input = "";
                 session_entries = ai::tui::db::list_sessions();
                 if (!session_entries.empty()) {
