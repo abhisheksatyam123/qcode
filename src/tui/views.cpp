@@ -150,6 +150,7 @@ ftxui::Element render_view(
     const std::vector<std::pair<std::string, std::string>>& session_entries,
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
+    const std::shared_ptr<int>& scroll_offset,
     const ftxui::Component& input
 ) {
     std::string theme = state.theme ? *state.theme : "orange";
@@ -319,7 +320,7 @@ ftxui::Element render_view(
             }
 
             body = vbox({
-                vbox(std::move(msgs)) | vscroll_indicator | frame | yflex,
+                vbox(std::move(msgs)) | vscroll_indicator | focusPosition(0, *scroll_offset) | yframe | yflex,
                 prompt_box,
             }) | flex;
         }
@@ -372,7 +373,7 @@ ftxui::Element render_view(
             body = vbox({
                 text(" MODIFIED FILES ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
-                vbox(std::move(file_blocks)) | vscroll_indicator | frame | yflex,
+                vbox(std::move(file_blocks)) | vscroll_indicator | focusPosition(0, *scroll_offset) | yframe | yflex,
             }) | flex;
         }
     }

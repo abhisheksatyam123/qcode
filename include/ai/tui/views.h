@@ -1,19 +1,14 @@
 #pragma once
-
 #include <ftxui/component/component.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/color.hpp>
-
 #include <string>
 #include <vector>
 #include <utility>
-
 #include <ai/tui/commands.h>
 #include <ai/tui/state.h>
-
 namespace ai {
 namespace tui {
-
 // Colour palette with theme options
 inline ftxui::Color accent(const std::string& theme = "orange") {
     if (theme == "green") return ftxui::Color::RGB(0x22, 0xBB, 0x88);
@@ -32,9 +27,7 @@ inline ftxui::Color accent2(const std::string& theme = "orange") {
 inline ftxui::Color user_green() { return ftxui::Color::RGB(0x22, 0xBB, 0x88); }
 inline ftxui::Color dim_gray()   { return ftxui::Color::GrayDark; }
 inline ftxui::Color bg_popup()   { return ftxui::Color::RGB(0x22, 0x22, 0x22); }
-
 ftxui::Element render_logo();
-
 ftxui::Element render_view(
     const ChatState& state,
     const std::vector<ProviderInfo>& providers_list,
@@ -57,8 +50,8 @@ ftxui::Element render_view(
     // Interactive components
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
+    const std::shared_ptr<int>& scroll_offset,
     const ftxui::Component& input
 );
-
 } // namespace tui
 } // namespace ai

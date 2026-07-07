@@ -416,6 +416,14 @@ int main() {
             return true;
         }
         
+        // Scroll handling
+        if (e == Event::PageUp) { *state.scroll_offset = std::max(0, *state.scroll_offset - 10); return true; }
+        if (e == Event::PageDown) { *state.scroll_offset += 10; return true; }
+        // Mouse scroll handling
+        if (e.is_mouse()) {
+            if (e.mouse().button == Mouse::WheelUp) { *state.scroll_offset = std::max(0, *state.scroll_offset - 5); return true; }
+            if (e.mouse().button == Mouse::WheelDown) { *state.scroll_offset += 5; return true; }
+        }
         // Tab hotkeys (Alt+1, Alt+2, Alt+3)
         if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
         if (e == Event::Special("\x1b\x32")) { state.tab_selected = 1; return true; }
@@ -431,7 +439,7 @@ int main() {
             show_slash, slash_idx, slash_commands,
             show_model_select, model_select_idx, model_entries,
             show_session_select, session_select_idx, session_entries,
-            tab_toggle, files_menu, input);
+            tab_toggle, files_menu, state.scroll_offset, input);
     });
 
     screen.Loop(renderer);
