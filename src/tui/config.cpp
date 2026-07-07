@@ -121,3 +121,50 @@ std::vector<ProviderInfo> load_providers_from_config() {
 
 } // namespace tui
 } // namespace ai
+
+namespace ai {
+namespace tui {
+
+void update_modified_files(ChatState& state) {
+    state.modified_files->clear();
+    std::string command = "git status --porcelain 2>/dev/null";
+    std::array<char, 128> buffer;
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) return;
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        std::string line(buffer.data());
+        // Git status porcelain output format: "XY path/to/file"
+        if (line.length() > 3) {
+            std::string path = line.substr(3);
+            // Trim newline
+            auto nl = path.find('\n');
+            if (nl != std::string::npos) {
+                path = path.substr(0, nl);
+            }
+            state.modified_files->push_back(path);
+        }
+    }
+    pclose(pipe);
+}
+
+} // namespace tui
+} // namespace ai
+
+namespace ai {
+namespace tui {
+
+void copy_to_clipboard(const std::string& text) {
+    // Try xclip
+    FILE* pipe = popen("xclip -selection clipboard 2>/dev/null", "w");
+    if (!pipe) {
+        // Try xsel
+        pipe = popen("xsel --clipboard --input 2>/dev/null", "w");
+    }
+    if (pipe) {
+        fwrite(text.c_str(), 1, text.length(), pipe);
+        pclose(pipe);
+    }
+}
+
+} // namespace tui
+} // namespace ai

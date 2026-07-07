@@ -35,7 +35,21 @@ struct ChatState {
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
+
+    // Tab navigation
+    int tab_selected = 0; // 0 = Chat, 1 = Files, 2 = Stats
+    int selected_file = 0; // Selected index in modified_files
+
+    // Selection & Clipboard
+    int selected_message = -1; // Index in chat_history, or -1 if none
+    bool selection_mode = false; // When true, arrow keys navigate messages instead of input
 };
+
+// Helper to scan for modified files using git status
+void update_modified_files(ChatState& state);
+
+// Helper to copy text to system clipboard
+void copy_to_clipboard(const std::string& text);
 
 } // namespace tui
 } // namespace ai

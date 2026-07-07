@@ -36,7 +36,9 @@ ftxui::Element render_view(
     bool show_model_select,
     int model_select_idx,
     const std::vector<ModelEntry>& model_entries,
-    // Input
+    // Interactive components
+    const ftxui::Component& tab_toggle,
+    const ftxui::Component& files_menu,
     const ftxui::Component& input
 );
 

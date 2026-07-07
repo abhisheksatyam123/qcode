@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <ai/file_logger.h>
 #include <ai/logger.h>
@@ -28,6 +29,7 @@ int main() {
     // ── State ──
     ai::tui::ChatState state;
     std::string prompt_input;
+
     ai::tui::ToolConfig tool_cfg{true, true};
     std::string system_prompt = ai::tui::SystemPrompt::build_default(tool_cfg);
     bool enable_tools = true;
@@ -36,6 +38,9 @@ int main() {
     auto providers_list = ai::tui::load_providers_from_config();
     int selected_provider = 0;
     int selected_model = 0;
+
+    // Populate modified files at start
+    ai::tui::update_modified_files(state);
 
     // ── Model selector popup ──
     bool show_model_select = false;
@@ -47,11 +52,16 @@ int main() {
     int slash_idx = 0;
     auto slash_commands = ai::tui::builtin_slash_commands();
 
-    // ── Input ──
+    // ── TUI Components ──
+    std::vector<std::string> tab_values = {"Chat", "Files", "Stats"};
+    Component tab_toggle = Toggle(&tab_values, &state.tab_selected);
+
+    Component files_menu = Menu(state.modified_files.get(), &state.selected_file);
+
     Component input = Input(&prompt_input, "Type a message or / for commands...");
 
+    // ── Slash popup / Model select keyboard event handling ──
     input |= CatchEvent([&](Event e) {
-        // ── Model selector popup is active ──
         if (show_model_select) {
             if (e == Event::ArrowDown || e == Event::Character('j')) {
                 model_select_idx = (model_select_idx + 1) %
@@ -75,7 +85,6 @@ int main() {
                 show_model_select = false;
                 return true;
             }
-            // Typing while model selector is open — jump to next match
             if (e.is_character()) {
                 char ch = std::tolower(e.character()[0]);
                 for (int i = 1; i <= static_cast<int>(model_entries.size()); i++) {
@@ -89,10 +98,9 @@ int main() {
                 }
                 return true;
             }
-            return true;  // consume all input while popup is open
+            return true;
         }
 
-        // ── Slash command popup is active ──
         if (show_slash) {
             if (e == Event::ArrowDown || e == Event::Character('j')) {
                 slash_idx = (slash_idx + 1) %
@@ -108,10 +116,8 @@ int main() {
                 show_slash = false;
                 auto& cmd = slash_commands[static_cast<size_t>(slash_idx)];
                 if (cmd.name == "model") {
-                    // Opening /model from slash popup → open model selector
                     show_model_select = true;
                     model_select_idx = 0;
-                    // Highlight current model in the list
                     for (int i = 0; i < static_cast<int>(model_entries.size()); i++) {
                         if (model_entries[i].provider_idx == selected_provider &&
                             model_entries[i].model_idx == selected_model) {
@@ -120,7 +126,6 @@ int main() {
                         }
                     }
                 } else {
-                    // Other commands: fill input with "/cmd "
                     prompt_input = "/" + cmd.name + " ";
                 }
                 return true;
@@ -129,7 +134,6 @@ int main() {
                 show_slash = false;
                 return true;
             }
-            // Character jump in slash popup
             if (e.is_character()) {
                 char ch = std::tolower(e.character()[0]);
                 for (int i = 1; i <= static_cast<int>(slash_commands.size()); i++) {
@@ -145,11 +149,51 @@ int main() {
             return true;
         }
 
-        // ── Open slash popup when typing "/" at start of empty input ──
+        // Open slash popup when typing "/" at start of empty input
         if (e.is_character() && e.character() == "/" && prompt_input.empty()) {
             show_slash = true;
             slash_idx = 0;
             return true;
+        }
+
+        // ── Visual Message Selection Mode (for Copy) ──
+        // Toggle selection mode via Ctrl+P
+        if (e == Event::Special("\x10")) { // Ctrl+P
+            if (!state.chat_history->empty()) {
+                state.selection_mode = !state.selection_mode;
+                state.selected_message = state.selection_mode ? 
+                    static_cast<int>(state.chat_history->size()) - 1 : -1;
+            }
+            return true;
+        }
+
+        if (state.selection_mode) {
+            if (e == Event::ArrowUp || e == Event::Character('k')) {
+                if (state.selected_message > 0) state.selected_message--;
+                return true;
+            }
+            if (e == Event::ArrowDown || e == Event::Character('j')) {
+                if (state.selected_message < static_cast<int>(state.chat_history->size()) - 1)
+                    state.selected_message++;
+                return true;
+            }
+            if (e == Event::Return || e == Event::Character('y')) {
+                if (state.selected_message >= 0 && 
+                    state.selected_message < static_cast<int>(state.chat_history->size())) {
+                    auto& msg = (*state.chat_history)[state.selected_message];
+                    ai::tui::copy_to_clipboard(msg.second);
+                    state.chat_history->push_back({"System", "Yanked message to clipboard!"});
+                }
+                state.selection_mode = false;
+                state.selected_message = -1;
+                return true;
+            }
+            if (e == Event::Escape) {
+                state.selection_mode = false;
+                state.selected_message = -1;
+                return true;
+            }
+            return true; // Consume keys in selection mode
         }
 
         return false;
@@ -186,6 +230,9 @@ int main() {
                 state.chat_history, state.messages_history,
                 state.total_prompt_tokens, state.total_completion_tokens,
                 state.total_tokens, state.modified_files);
+            // Refresh modified files list on completion
+            ai::tui::update_modified_files(state);
+            screen.Post(Event::Custom);
         }).detach();
     };
 
@@ -197,15 +244,48 @@ int main() {
         return false;
     });
 
-    // ── Layout ──
-    auto container = Container::Vertical({input});
-    auto renderer = Renderer(container, [&] {
+    // ── Layout Tree & Focus navigation ──
+    auto main_container = Container::Vertical({
+        tab_toggle,
+        files_menu,
+        input
+    });
+
+    // Handle cycling focus or keyboard tabs
+    main_container |= CatchEvent([&](Event e) {
+        // Tab navigation: Cycle active focus between tab toggle, files menu, or input
+        if (e == Event::Tab) {
+            if (state.tab_selected == 1) { // Files tab
+                if (tab_toggle->Focused()) {
+                    files_menu->TakeFocus();
+                } else {
+                    tab_toggle->TakeFocus();
+                }
+            } else if (state.tab_selected == 0) { // Chat tab
+                if (tab_toggle->Focused()) {
+                    input->TakeFocus();
+                } else {
+                    tab_toggle->TakeFocus();
+                }
+            }
+            return true;
+        }
+        
+        // Tab hotkeys (Alt+1, Alt+2, Alt+3)
+        if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
+        if (e == Event::Special("\x1b\x32")) { state.tab_selected = 1; return true; }
+        if (e == Event::Special("\x1b\x33")) { state.tab_selected = 2; return true; }
+        
+        return false;
+    });
+
+    auto renderer = Renderer(main_container, [&] {
         return ai::tui::render_view(
             state, providers_list, selected_provider, selected_model,
             enable_tools,
             show_slash, slash_idx, slash_commands,
             show_model_select, model_select_idx, model_entries,
-            input);
+            tab_toggle, files_menu, input);
     });
 
     screen.Loop(renderer);
