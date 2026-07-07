@@ -29,9 +29,32 @@ std::string get_antigravity_token() {
         return api_key_env;
 
     for (const char* py : {"/home/abhi/miniconda3/bin/python", "python3"}) {
+        // Run self-healing Python keyring lookup & OAuth refresh
         std::string cmd = std::string(py) +
-            " -c \"import keyring; print(keyring.get_password("
-            "'gemini', 'antigravity'))\" 2>/dev/null";
+            " -c \"import keyring, json, urllib.request, urllib.parse, datetime\n"
+            "try:\n"
+            "    raw = keyring.get_password('gemini', 'antigravity')\n"
+            "    if raw:\n"
+            "        d = json.loads(raw); tok = d.get('token', {}); rt = tok.get('refresh_token'); exp = tok.get('expiry', ''); expired = True\n"
+            "        if exp:\n"
+            "            try:\n"
+            "                t_str = exp.split('+')[0].split('.')[0]\n"
+            "                if datetime.datetime.strptime(t_str, '%Y-%m-%dT%H:%M:%S') > datetime.datetime.now() + datetime.timedelta(minutes=5): expired = False\n"
+            "            except: pass\n"
+            "        if expired and rt:\n"
+            "            data = urllib.parse.urlencode({'grant_type': 'refresh_token', 'refresh_token': rt, 'client_id': '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com', 'client_secret': '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'}).encode('utf-8')\n"
+            "            req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data)\n"
+            "            with urllib.request.urlopen(req) as resp: res = json.loads(resp.read().decode('utf-8'))\n"
+            "            tok['access_token'] = res['access_token']\n"
+            "            new_exp = datetime.datetime.now() + datetime.timedelta(seconds=res.get('expires_in', 3600))\n"
+            "            tok['expiry'] = new_exp.strftime('%Y-%m-%dT%H:%M:%S') + '+05:30'\n"
+            "            d['token'] = tok; keyring.set_password('gemini', 'antigravity', json.dumps(d))\n"
+            "            print(res['access_token'])\n"
+            "        else:\n"
+            "            print(tok.get('access_token', ''))\n"
+            "except Exception as e:\n"
+            "    print(raw if 'raw' in locals() and raw else '')\" 2>/dev/null";
+
         std::array<char, 1024> buf;
         std::string output;
         FILE* pipe = popen(cmd.c_str(), "r");

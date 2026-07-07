@@ -13,14 +13,19 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
   nlohmann::json normalized_response = response;
   
   // Gemini/Antigravity response normalization
-  if (response.contains("candidates")) {
+  nlohmann::json gemini_data = response;
+  if (response.contains("response") && response["response"].is_object()) {
+    gemini_data = response["response"];
+  }
+  
+  if (gemini_data.contains("candidates")) {
     normalized_response = nlohmann::json::object();
-    normalized_response["id"] = response.value("requestId", "");
-    normalized_response["model"] = response.value("model", "");
+    normalized_response["id"] = gemini_data.value("responseId", response.value("requestId", ""));
+    normalized_response["model"] = gemini_data.value("modelVersion", response.value("model", ""));
     normalized_response["created"] = 0;
     
     nlohmann::json choices = nlohmann::json::array();
-    auto& candidates = response["candidates"];
+    auto& candidates = gemini_data["candidates"];
     if (!candidates.empty()) {
       auto& cand = candidates[0];
       nlohmann::json choice = nlohmann::json::object();
@@ -49,8 +54,8 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     }
     normalized_response["choices"] = choices;
     
-    if (response.contains("usageMetadata")) {
-      auto& usage_meta = response["usageMetadata"];
+    if (gemini_data.contains("usageMetadata")) {
+      auto& usage_meta = gemini_data["usageMetadata"];
       nlohmann::json usage = nlohmann::json::object();
       usage["prompt_tokens"] = usage_meta.value("promptTokenCount", 0);
       usage["completion_tokens"] = usage_meta.value("candidatesTokenCount", 0);

@@ -16,6 +16,9 @@ std::string get_completions_path(const std::string& base_url) {
   if (base_url.find("qualcomm.com") != std::string::npos) {
     return "/responses";
   }
+  if (base_url.find("googleapis.com") != std::string::npos) {
+    return ":generateContent";
+  }
   return "/v1/chat/completions";
 }
 }
@@ -75,7 +78,11 @@ StreamResult OpenAIClient::stream_text(const StreamOptions& options) {
 
   // Create stream implementation
   auto impl = std::make_unique<OpenAIStreamImpl>();
-  impl->start_stream(config_.base_url + config_.completions_endpoint_path,
+  std::string stream_path = config_.completions_endpoint_path;
+  if (config_.base_url.find("googleapis.com") != std::string::npos) {
+    stream_path = ":streamGenerateContent?alt=sse";
+  }
+  impl->start_stream(config_.base_url + stream_path,
                      headers, request_json);
 
   ai::logger::log_info("Text streaming started - model: {}", options.model);
