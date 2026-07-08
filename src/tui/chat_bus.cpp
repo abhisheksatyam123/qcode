@@ -237,13 +237,7 @@ static void run_tools_generation_bus(ai::Client& client,
 
     ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
 
-    if (!gen_result.response_messages.empty()) {
-      state.messages_history->insert(state.messages_history->end(),
-                                     gen_result.response_messages.begin(),
-                                     gen_result.response_messages.end());
-    } else {
-      state.messages_history->push_back(ai::Message::assistant(gen_result.text));
-    }
+
   } else {
     std::string err_str = "Error: " + gen_result.error_message();
     bus.publish<ErrorOccurred>({

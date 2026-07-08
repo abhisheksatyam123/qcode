@@ -340,7 +340,6 @@ ftxui::Element render_view(
 
     // ── Header strip: tabs + model badge + token count + status ──
     std::string hdr_model = providers_list[selected_provider].models[selected_model].name;
-    std::string hdr_prov = providers_list[selected_provider].name;
     std::string hdr_tokens = std::to_string(*state.total_tokens) + " tok";
     
     // Status (compact, no spinner — spinner is rendered in the header below)

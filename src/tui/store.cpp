@@ -1,5 +1,8 @@
 #include <ai/tui/store.h>
+#include <ai/tui/db.h>
 #include <algorithm>
+#include <ai/types/message.h>
+#include <ai/logger.h>
 
 namespace ai {
 namespace tui {
@@ -14,7 +17,6 @@ void AppStore::add_toast(const std::string& message, const std::string& variant,
             .variant = variant,
             .expires_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration_ms)
         });
-        // Keep max 5 toasts
         if (toasts_.size() > 5) {
             toasts_.erase(toasts_.begin());
         }
@@ -35,10 +37,18 @@ void AppStore::expire_toasts() {
 
 void AppStore::append_chat_message(const std::string& role, const std::string& text) {
     state_.chat_history->emplace_back(role, text);
+    // Also add to messages_history for proper rendering
+    if (role == "User") {
+        state_.messages_history->push_back(ai::Message::user(text));
+    } else if (role == "Assistant") {
+        state_.messages_history->push_back(ai::Message::assistant(text));
+    }
+    // System messages are not added to messages_history (they're informational)
     notify();
 }
 
 void AppStore::update_last_assistant_message(const std::string& text) {
+    // Update chat_history
     if (!state_.chat_history->empty()) {
         auto& [role, content] = state_.chat_history->back();
         if (role == "Assistant") {
@@ -48,6 +58,32 @@ void AppStore::update_last_assistant_message(const std::string& text) {
         }
     } else {
         state_.chat_history->emplace_back("Assistant", text);
+    }
+
+    // Update messages_history: replace last Assistant entry or append
+    if (!state_.messages_history->empty()) {
+        auto& last = state_.messages_history->back();
+        if (last.role == ai::kMessageRoleAssistant) {
+            // Replace text of the last assistant message
+            // ai::Message stores text and parts - update the text
+            // We need to construct a new message since parts may be complex
+            // For streaming text updates, replace last text part
+            bool found_text = false;
+            for (auto& part : last.content) {
+                if (auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                    tp->text = text;
+                    found_text = true;
+                    break;
+                }
+            }
+            if (!found_text) {
+                last.content.push_back(ai::TextContentPart{text});
+            }
+        } else {
+            state_.messages_history->push_back(ai::Message::assistant(text));
+        }
+    } else {
+        state_.messages_history->push_back(ai::Message::assistant(text));
     }
     notify();
 }
@@ -64,20 +100,22 @@ void AppStore::set_session_id(const std::string& id) {
 
 void AppStore::set_status(const std::string& s) {
     status_ = s;
+    if (s == "idle" || s == "error") {
+        *state_.is_generating = false;
+    }
     notify();
 }
 
 void AppStore::set_error(const std::string& msg) {
     last_error_ = msg;
     status_ = "error";
-    // Auto-show a toast for errors
+    *state_.is_generating = false;
     add_toast(msg, "error", 8000);
     notify();
 }
 
 void AppStore::advance_frame() {
     (*state_.generation_frame)++;
-    // Also expire toasts on each frame advance
     expire_toasts();
     notify();
 }
@@ -97,18 +135,49 @@ void AppStore::wire() {
     subs_.push_back(bus_.subscribe<MessageDelta>([this](const MessageDelta::Payload& p) {
         if (p.done) {
             set_generating(false);
+            // Final update: ensure the last assistant message has the complete text
+            update_last_assistant_message(p.text);
+            // Save to DB
+            ai::tui::db::save_message(*state_.session_id, "Assistant", p.text);
         } else {
             update_last_assistant_message(p.text);
         }
     }));
 
+    subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
+        // Add a tool call entry to chat_history for display
+        std::string tool_str = "  \u23f3 " + p.tool_name + "...";
+        state_.chat_history->emplace_back("ToolCall", tool_str);
+        // Also add to messages_history for proper rendering
+        // Create a tool call part
+        ai::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
+        ai::Message tool_msg = ai::Message::assistant_with_tools("", {tc_part});
+        state_.messages_history->push_back(std::move(tool_msg));
+        notify();
+    }));
+
+    subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
+        // Remove the ephemeral "Running..." entry from chat_history
+        for (int ci = static_cast<int>(state_.chat_history->size()) - 1; ci >= 0; --ci) {
+            auto& entry = (*state_.chat_history)[ci];
+            if (entry.first == "ToolCall" && entry.second.find(p.tool_name) != std::string::npos) {
+                state_.chat_history->erase(state_.chat_history->begin() + ci);
+                break;
+            }
+        }
+        std::string result_str = p.is_error
+            ? "  \u2716 " + p.tool_name + " failed (" + p.result.dump() + ")"
+            : "  \u2714 " + p.tool_name + " (" + std::to_string((int)p.duration_ms) + "ms)";
+        state_.chat_history->emplace_back("ToolResult", result_str);
+        // Add tool result to messages_history
+        ai::ToolResultContentPart tr_part{p.tool_call_id, p.result, p.is_error};
+        ai::Message result_msg = ai::Message::tool_results({tr_part});
+        state_.messages_history->push_back(std::move(result_msg));
+        notify();
+    }));
+
     subs_.push_back(bus_.subscribe<SessionStatusChanged>([this](const SessionStatusChanged::Payload& p) {
         set_status(p.status);
-        if (p.status == "idle") {
-            add_toast("Generation complete", "success", 3000);
-        } else if (p.status == "generating") {
-            add_toast("Generating...", "info", 2000);
-        }
     }));
 
     subs_.push_back(bus_.subscribe<ErrorOccurred>([this](const ErrorOccurred::Payload& p) {

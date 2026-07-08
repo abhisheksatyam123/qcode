@@ -61,15 +61,7 @@ int main() {
     });
     background_threads->push_back(std::move(spinner_thread));
 
-    // Tick the bus drain periodically (spinner does this implicitly via advance_frame → notify)
-    // We also drain on a timer for responsiveness
-    std::thread drain_thread([bus, app_running]() {
-        while (app_running->load()) {
-            bus->drain();
-            std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60 Hz
-        }
-    });
-    background_threads->push_back(std::move(drain_thread));
+
 
     // ═══════════════════════════════════════════════════════════
     //  2. Provider & Config setup
@@ -174,7 +166,6 @@ int main() {
         std::string p = prompt_input;
         prompt_input = "";
         store.append_chat_message("User", p);
-        state.messages_history->push_back(ai::Message::user(p));
         ai::tui::db::save_message(store.session_id(), "User", p);
 
         // Run generation via bus (no screen->Post!)
@@ -459,6 +450,10 @@ int main() {
     });
 
     auto renderer = Renderer(main_container, [&] {
+        // Drain bus events on the UI thread — this is where store mutations happen
+        // (all bus event handlers run synchronously during drain)
+        bus->drain();
+        
         // Expire old toasts
         store.expire_toasts();
         
