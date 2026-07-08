@@ -36,7 +36,7 @@ struct ChatState {
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
-    std::shared_ptr<int> scroll_offset = std::make_shared<int>(0);
+    std::shared_ptr<float> scroll_ratio = std::make_shared<float>(1.0f);
     bool auto_scroll = true;
     std::shared_ptr<std::atomic<int>> generation_frame = std::make_shared<std::atomic<int>>(0);
 
@@ -46,6 +46,7 @@ struct ChatState {
 
     // Selection & Clipboard
     int selected_message = -1; // Index in chat_history, or -1 if none
+    int terminal_height = 40; // Approximate terminal height, updated during render
     bool selection_mode = false; // When true, arrow keys navigate messages instead of input
 
     // Color Theme Option (orange, green, blue, purple, monochrome)

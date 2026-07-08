@@ -333,7 +333,7 @@ ftxui::Element render_view(
     const std::vector<std::pair<std::string, std::string>>& session_entries,
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
-    const std::shared_ptr<int>& scroll_offset,
+    const std::shared_ptr<float>& scroll_ratio,
     const ftxui::Component& input
 ) {
     std::string theme = state.theme ? *state.theme : "orange";
@@ -396,7 +396,11 @@ ftxui::Element render_view(
             Elements msgs;
             for (const auto& msg : *state.messages_history) {
                 msgs.push_back(render_message(msg, state, providers_list, selected_provider, selected_model, *state.theme));
-                msgs.push_back(text(""));
+                msgs.push_back(
+                separatorLight() | color(
+                    msg.role == kMessageRoleAssistant ? accent(theme) :
+                    msg.role == kMessageRoleUser ? user_green() :
+                    dim_gray()));
             }
             // Animated spinner during generation
             // Status displayed in header strip, not here
@@ -472,9 +476,9 @@ ftxui::Element render_view(
                 }
             }
 
-            LOG_DEBUG("Views: chat tab render, auto_scroll={}, scroll_offset={}", state.auto_scroll, *scroll_offset);
+            LOG_DEBUG("Views: chat tab render, auto_scroll={}, scroll_ratio={}", state.auto_scroll, *scroll_ratio);
             body = vbox({
-                vbox(std::move(msgs)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPosition(0, *scroll_offset)) | yframe | yflex,
+                vbox(std::move(msgs)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPositionRelative(0.f, std::min(1.f, *scroll_ratio))) | yframe | flex,
                 // status removed — shown in header strip instead
                 prompt_box,
             }) | flex;
@@ -525,11 +529,11 @@ ftxui::Element render_view(
                 file_blocks.push_back(text(""));
             }
             
-            LOG_DEBUG("Views: files tab render, auto_scroll={}, scroll_offset={}", state.auto_scroll, *scroll_offset);
+            LOG_DEBUG("Views: files tab render, auto_scroll={}, scroll_ratio={}", state.auto_scroll, *scroll_ratio);
             body = vbox({
                 text(" MODIFIED FILES ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
-                vbox(std::move(file_blocks)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPosition(0, *scroll_offset)) | yframe | yflex,
+                vbox(std::move(file_blocks)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPositionRelative(0.f, std::min(1.f, *scroll_ratio))) | yframe | flex,
             }) | flex;
         }
     }

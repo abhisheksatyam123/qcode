@@ -58,7 +58,9 @@ int main() {
         ai::logger::set_thread_name("spinner");
         while (app_running->load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(120));
-            store.advance_frame();
+            if (store.is_generating()) {
+                store.advance_frame();
+            }
         }
     });
     background_threads->push_back(std::move(spinner_thread));
@@ -126,6 +128,7 @@ int main() {
     auto submit = [&] {
         if (prompt_input.empty() || store.is_generating()) return;
 
+        LOG_DEBUG("Main: submit prompt_len={}", prompt_input.size());
         // Slash commands
         if (prompt_input[0] == '/') {
             std::string raw = prompt_input;
@@ -430,13 +433,58 @@ int main() {
             }
             return true;
         }
-        if (e == Event::PageUp) { state.auto_scroll = false; *state.scroll_offset = std::max(0, *state.scroll_offset - 10); return true; }
-        if (e == Event::PageDown) { *state.scroll_offset += 10; return true; }
-        if (e == Event::End) { state.auto_scroll = true; *state.scroll_offset = 1000000; return true; }
-        if (e == Event::Home) { state.auto_scroll = false; *state.scroll_offset = 0; return true; }
+        if (e == Event::PageUp) { state.auto_scroll = false; *state.scroll_ratio = std::max(0.0f, *state.scroll_ratio - 0.1f); return true; }
+        if (e == Event::PageDown) { *state.scroll_ratio = std::min(1.0f, *state.scroll_ratio + 0.1f); return true; }
+        if (e == Event::End) { state.auto_scroll = true; *state.scroll_ratio = 1.0f; return true; }
+        if (e == Event::Home) { state.auto_scroll = false; *state.scroll_ratio = 0.0f; return true; }
         if (e.is_mouse()) {
-            if (e.mouse().button == Mouse::WheelUp) { state.auto_scroll = false; *state.scroll_offset = std::max(0, *state.scroll_offset - 5); return true; }
-            if (e.mouse().button == Mouse::WheelDown) { *state.scroll_offset += 5; return true; }
+            if (e.mouse().button == Mouse::WheelUp) { state.auto_scroll = false; *state.scroll_ratio = std::max(0.0f, *state.scroll_ratio - 0.05f); return true; }
+            if (e.mouse().button == Mouse::WheelDown) { *state.scroll_ratio = std::min(1.0f, *state.scroll_ratio + 0.05f); return true; }
+            // Left click on chat message area → select and auto-copy
+            if (e.mouse().button == Mouse::Left && e.mouse().motion == Mouse::Pressed) {
+                if (state.tab_selected == 0 && !state.chat_history->empty()) {
+                    const int HEADER_H = 3;
+                    const int PROMPT_H = 3;
+                    int mouse_y = e.mouse().y;
+                    // Check if click is in the message area
+                    if (mouse_y >= HEADER_H && mouse_y < state.terminal_height - PROMPT_H) {
+                        int msg_area_h = state.terminal_height - HEADER_H - PROMPT_H;
+                        if (msg_area_h > 0) {
+                            int msg_count = (int)state.chat_history->size();
+                            // Estimate which message was clicked based on vertical position
+                            double ratio = (double)(mouse_y - HEADER_H) / (double)msg_area_h;
+                            ratio = std::max(0.0, std::min(1.0, ratio));
+                            int clicked_idx = (int)(ratio * msg_count);
+                            clicked_idx = std::max(0, std::min(clicked_idx, msg_count - 1));
+                            state.selection_mode = true;
+                            state.selected_message = clicked_idx;
+                            // Auto-copy the message text
+                            auto& msg = (*state.chat_history)[clicked_idx];
+                            std::string text_to_copy = msg.second;
+                            // Auto-resolve truncation file path
+                            size_t tag_pos = text_to_copy.find("Full output saved to ");
+                            if (tag_pos != std::string::npos) {
+                                size_t path_start = tag_pos + 21;
+                                size_t path_end = text_to_copy.find("]", path_start);
+                                if (path_end != std::string::npos) {
+                                    std::string filepath = text_to_copy.substr(path_start, path_end - path_start);
+                                    std::ifstream infile(filepath, std::ios::in | std::ios::binary);
+                                    if (infile.is_open()) {
+                                        std::string full_content((std::istreambuf_iterator<char>(infile)),
+                                                                 std::istreambuf_iterator<char>());
+                                        text_to_copy = full_content;
+                                    }
+                                }
+                            }
+                            ai::tui::copy_to_clipboard(text_to_copy);
+                            store.append_chat_message("System", "Copied message to clipboard!");
+                            ai::tui::db::save_message(store.session_id(), "System", "Copied message to clipboard!");
+                            return true;
+                        }
+                    }
+                }
+            }
+
         }
         if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
         if (e == Event::Special("\x1b\x32")) { state.tab_selected = 1; return true; }
@@ -453,6 +501,9 @@ int main() {
     });
 
     auto renderer = Renderer(main_container, [&] {
+        // Track terminal height for mouse selection calculations
+        auto screen_box = ftxui::Terminal::Size();
+        state.terminal_height = screen_box.dimy;
         // Drain bus events on the UI thread — this is where store mutations happen
         // (all bus event handlers run synchronously during drain)
         bus->drain();
@@ -468,7 +519,7 @@ int main() {
             show_slash, slash_idx, slash_commands,
             show_model_select, model_select_idx, model_entries,
             show_session_select, session_select_idx, session_entries,
-            tab_toggle, files_menu, state.scroll_offset, input);
+            tab_toggle, files_menu, state.scroll_ratio, input);
         
         // Everything is in the header strip now — no separate footer
         auto layout = main_view;
