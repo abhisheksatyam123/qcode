@@ -162,6 +162,19 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
       LOG_DEBUG(
           "Finish reason was null or missing, defaulting to stop");
     }
+  } else {
+    std::string err = "Response has no valid choices";
+    if (normalized_response.contains("error")) {
+      auto& err_obj = normalized_response["error"];
+      if (err_obj.is_string()) {
+        err += ": " + err_obj.get<std::string>();
+      } else if (err_obj.is_object() && err_obj.contains("message")) {
+        err += ": " + err_obj["message"].get<std::string>();
+      }
+    }
+    LOG_ERROR("Response missing choices: {}", normalized_response.dump());
+    result.error = err;
+    result.finish_reason = kFinishReasonError;
   }
 
   // Extract usage

@@ -58,6 +58,8 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
     if (!result.text.empty()) {
       result.response_messages.push_back(Message::assistant(result.text));
     }
+  } else {
+    LOG_DEBUG("Response has no content array");
   }
 
   // Extract stop reason

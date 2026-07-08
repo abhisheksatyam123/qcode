@@ -71,6 +71,9 @@ GenerateResult BaseProviderClient::generate_text_single_step(
 
     if (!result.is_success()) {
       // Parse error response using provider-specific parser
+      LOG_ERROR("text_generation_single_step: HTTP request failed - finish_reason={} error=\"{}\" text_len={} provider_metadata=\"{}\"",
+              result.finishReasonToString(), result.error_message(),
+              result.text.size(), result.provider_metadata.value_or(""));
       if (result.provider_metadata.has_value()) {
         int status_code = std::stoi(result.provider_metadata.value());
         return response_parser_->parse_error_completion_response(

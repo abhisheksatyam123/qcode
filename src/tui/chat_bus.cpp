@@ -37,6 +37,7 @@ static void run_tools_generation_bus(ai::Client& client,
   // ── Step finished: emit MessageDelta ──
   options.on_step_finish =
       [&bus, state_ptr = &state, assistant_text](const ai::GenerateStep& step) {
+        LOG_DEBUG("chat_bus: on_step_finish text_len={}", step.text.size());
         if (step.text.empty()) return;
         if (*assistant_text == "  \u23f3 Working...") {
           *assistant_text = step.text;
@@ -53,6 +54,7 @@ static void run_tools_generation_bus(ai::Client& client,
   // ── Tool call started: emit ToolCallStarted ──
   options.on_tool_call_start =
       [&bus, state_ptr = &state, tool_starts, step_counter, max_steps](const ai::ToolCall& call) {
+        LOG_DEBUG("chat_bus: on_tool_call_start tool={} step={}/{}", call.tool_name, (int)*step_counter, max_steps);
         auto now = std::chrono::steady_clock::now();
         (*tool_starts)[call.id] = now;
         (*step_counter)++;
@@ -74,6 +76,15 @@ static void run_tools_generation_bus(ai::Client& client,
   options.on_tool_call_finish =
       [&bus, state_ptr = &state, assistant_text, tool_starts](const ai::ToolResult& res) {
         double duration_s = 0.0;
+        {
+          auto start_it_tmp = tool_starts->find(res.tool_call_id);
+          if (start_it_tmp != tool_starts->end()) {
+            double d = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_it_tmp->second).count();
+            LOG_DEBUG("chat_bus: on_tool_call_finish tool={} success={} duration={:.1f}s", res.tool_name, res.is_success(), d);
+          } else {
+            LOG_DEBUG("chat_bus: on_tool_call_finish tool={} success={} duration=unknown", res.tool_name, res.is_success());
+          }
+        }
         auto start_it = tool_starts->find(res.tool_call_id);
         if (start_it != tool_starts->end()) {
           duration_s = std::chrono::duration<double>(
@@ -119,6 +130,9 @@ static void run_tools_generation_bus(ai::Client& client,
 
   int step = 0;
   bool finished = false;
+  // Track whether the previous step had tool calls so we know when the model
+  // is done using tools and wants to produce a final text-only response.
+  bool prev_step_had_tool_calls = false;
 
   LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", options.max_steps);
   while (step < options.max_steps && !finished) {
@@ -128,7 +142,10 @@ static void run_tools_generation_bus(ai::Client& client,
     LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, step_messages.size());
     step_opts.max_steps = 1;
 
-    bool is_final_step = (step > 0);
+    // Only enter the final (tools-cleared) streaming path when the model
+    // stopped requesting tool calls after previously using them — i.e. the
+    // model wants to give its final text answer after all tool work is done.
+    bool is_final_step = (step > 0 && !prev_step_had_tool_calls);
 
     if (is_final_step) {
       ai::StreamOptions stream_opts(step_opts);
@@ -175,6 +192,7 @@ static void run_tools_generation_bus(ai::Client& client,
       LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);
       ai::GenerateResult step_res = client.generate_text(step_opts);
       if (!step_res.is_success()) {
+        LOG_ERROR("run_tools_generation_bus: step={} generate_text failed: finish_reason={} error=\"{}\" provider_metadata_size={}", step, step_res.finishReasonToString(), step_res.error_message(), step_res.provider_metadata.value_or("").size());
         gen_result.error = step_res.error;
         break;
       }
@@ -226,6 +244,9 @@ static void run_tools_generation_bus(ai::Client& client,
         }
         finished = true;
       }
+
+      // Update tracking for the next iteration's is_final_step decision
+      prev_step_had_tool_calls = step_res.has_tool_calls();
     }
     step++;
   }
@@ -390,6 +411,8 @@ void run_generation_with_bus(
         break;
       }
     }
+
+    LOG_DEBUG("chat_bus: resolved provider={} api_url={}", provider_id, api_url);
 
     if (provider_id == "openrouter") {
       char* key = std::getenv("OPENROUTER_API_KEY");
