@@ -33,6 +33,7 @@ using namespace ai::tui::contract;
 
 int main() {
     ai::install_file_logger("/tmp/qcode.log", ai::logger::LogLevel::kLogLevelDebug);
+    ai::logger::set_thread_name("main");
     LOG_INFO("QCode starting (bus architecture)...");
 
     auto app_running = std::make_shared<std::atomic<bool>>(true);
@@ -54,6 +55,7 @@ int main() {
 
     // ── Spinner: advance frame periodically ──
     std::thread spinner_thread([&store, app_running]() {
+        ai::logger::set_thread_name("spinner");
         while (app_running->load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(120));
             store.advance_frame();
@@ -179,6 +181,7 @@ int main() {
 
         std::thread llm_thread([bus_ptr, state_ptr, p, providers_copy, app_running,
                                 sel_prov, sel_mod, sys_prompt, tools_enabled]() {
+            ai::logger::set_thread_name("llm");
             ai::tui::run_generation_with_bus(
                 providers_copy[sel_prov].name,
                 providers_copy[sel_prov].models[sel_mod].id,

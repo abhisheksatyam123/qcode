@@ -133,6 +133,7 @@ void AppStore::wire() {
     using namespace contract;
 
     subs_.push_back(bus_.subscribe<MessageDelta>([this](const MessageDelta::Payload& p) {
+        LOG_DEBUG("Store: MessageDelta done={} text_len={}", p.done, p.text.size());
         if (p.done) {
             set_generating(false);
             // Final update: ensure the last assistant message has the complete text
@@ -145,6 +146,7 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
+        LOG_DEBUG("Store: ToolCallStarted tool={}", p.tool_name);
         // Add a tool call entry to chat_history for display
         std::string tool_str = "  \u23f3 " + p.tool_name + "...";
         state_.chat_history->emplace_back("ToolCall", tool_str);
@@ -157,6 +159,7 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
+        LOG_DEBUG("Store: ToolCallCompleted tool={} is_error={} duration_ms={}", p.tool_name, p.is_error, (int)p.duration_ms);
         // Remove the ephemeral "Running..." entry from chat_history
         for (int ci = static_cast<int>(state_.chat_history->size()) - 1; ci >= 0; --ci) {
             auto& entry = (*state_.chat_history)[ci];
@@ -177,15 +180,18 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<SessionStatusChanged>([this](const SessionStatusChanged::Payload& p) {
+        LOG_DEBUG("Store: SessionStatusChanged status={}", p.status);
         set_status(p.status);
     }));
 
     subs_.push_back(bus_.subscribe<ErrorOccurred>([this](const ErrorOccurred::Payload& p) {
+        LOG_ERROR("Store: ErrorOccurred severity={} message={}", p.severity, p.message);
         set_error(p.message);
         append_chat_message("System", "Error: " + p.message);
     }));
 
     subs_.push_back(bus_.subscribe<TokenUsageUpdated>([this](const TokenUsageUpdated::Payload& p) {
+        LOG_DEBUG("Store: TokenUsageUpdated prompt={} completion={} total={}", p.prompt_tokens, p.completion_tokens, p.total_tokens);
         *state_.total_prompt_tokens = p.prompt_tokens;
         *state_.total_completion_tokens = p.completion_tokens;
         *state_.total_tokens = p.total_tokens;

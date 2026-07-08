@@ -305,8 +305,10 @@ static void run_tools_generation(ai::Client& client,
       } else {
         final_text = gen_result.text;
       }
+      // Don't hardcode assistant text — if the LLM produced nothing,
+      // the tool call/result messages already in the history suffice.
       if (final_text.empty()) {
-        final_text = "  \u2705 Done";
+        // Skip — no text to show; SessionStatusChanged signals completion.
       }
 
       // Update the single Assistant entry we created during streaming,

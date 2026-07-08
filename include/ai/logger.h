@@ -23,8 +23,15 @@ enum class LogLevel {
 
 // ── Helpers ──
 
-/// Short hex thread-id string (e.g. "7f8a1b2c")
-inline std::string thread_id_string() {
+/// Thread-local name (set by each thread for human-readable logs).
+inline thread_local std::string t_thread_name;
+
+/// Set a human-readable name for the current thread.
+inline void set_thread_name(std::string name) { t_thread_name = std::move(name); }
+
+/// Returns the thread name if set, otherwise falls back to hex thread-id.
+inline std::string thread_name_string() {
+  if (!t_thread_name.empty()) return t_thread_name;
   std::ostringstream ss;
   ss << std::hex << std::this_thread::get_id();
   return ss.str();
@@ -124,7 +131,7 @@ class ConsoleLogger final : public Logger {
            << ms.count() << "]"
            << " [" << level_to_string(level) << "]"
            << " [" << short_file_name(loc.file_name()) << ":" << loc.line() << "]"
-           << " [" << thread_id_string() << "]"
+           << " [" << thread_name_string() << "]"
            << " " << message << std::endl;
     stream.flush();
   }

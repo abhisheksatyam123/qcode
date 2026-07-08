@@ -120,9 +120,11 @@ static void run_tools_generation_bus(ai::Client& client,
   int step = 0;
   bool finished = false;
 
+  LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", options.max_steps);
   while (step < options.max_steps && !finished) {
     step_messages.erase(std::next(step_messages.begin(), initial_count), step_messages.end());
     step_messages.insert(step_messages.end(), response_messages.begin(), response_messages.end());
+    LOG_DEBUG("run_tools_generation_bus: step={} is_final_step={} messages={}", step, is_final_step, step_messages.size());
     step_opts.messages = step_messages;
     step_opts.max_steps = 1;
 
@@ -132,9 +134,10 @@ static void run_tools_generation_bus(ai::Client& client,
       ai::StreamOptions stream_opts(step_opts);
       stream_opts.tools.clear();
 
+      LOG_DEBUG("run_tools_generation_bus: step={} streaming with tools_cleared=true", step);
       auto stream = client.stream_text(stream_opts);
       if (stream.has_error()) {
-        LOG_ERROR("run_tools_generation_bus stream error: {}", stream.error_message());
+        LOG_ERROR("run_tools_generation_bus: step={} stream error: {}", step, stream.error_message());
         is_final_step = false;
       } else {
         std::string final_step_text;
@@ -160,6 +163,7 @@ static void run_tools_generation_bus(ai::Client& client,
             }
           }
         }
+        LOG_DEBUG("run_tools_generation_bus: step={} stream finished text_len={}", step, final_step_text.size());
         gen_result.text += final_step_text;
         response_messages.push_back(ai::Message::assistant(final_step_text));
         finished = true;
@@ -168,6 +172,7 @@ static void run_tools_generation_bus(ai::Client& client,
     }
 
     if (!is_final_step) {
+      LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);
       ai::GenerateResult step_res = client.generate_text(step_opts);
       if (!step_res.is_success()) {
         gen_result.error = step_res.error;
@@ -184,6 +189,7 @@ static void run_tools_generation_bus(ai::Client& client,
       gen_result.created = step_res.created;
       gen_result.system_fingerprint = step_res.system_fingerprint;
 
+      LOG_DEBUG("run_tools_generation_bus: step={} has_tool_calls={} text_len={}", step, step_res.has_tool_calls(), step_res.text.size());
       if (step_res.has_tool_calls()) {
         std::vector<ai::ToolCallContentPart> tool_parts;
         for (const auto& call : step_res.tool_calls) {
@@ -209,13 +215,23 @@ static void run_tools_generation_bus(ai::Client& client,
           options.on_step_finish.value()(step_data);
         }
       } else {
+        LOG_DEBUG("run_tools_generation_bus: step={} no tool calls, finishing", step);
         response_messages.push_back(ai::Message::assistant(step_res.text));
+        if (options.on_step_finish) {
+          ai::GenerateStep step_data;
+          step_data.text = step_res.text;
+          step_data.finish_reason = step_res.finish_reason;
+          step_data.usage = step_res.usage;
+          options.on_step_finish.value()(step_data);
+        }
         finished = true;
       }
     }
     step++;
   }
 
+  LOG_DEBUG("run_tools_generation_bus: loop complete steps={} total_text_len={} tool_calls={}", 
+           step, gen_result.text.size(), gen_result.tool_calls.size());
   gen_result.response_messages = response_messages;
 
   bus.publish<SessionStatusChanged>({
@@ -227,15 +243,21 @@ static void run_tools_generation_bus(ai::Client& client,
     std::string final_text;
     if (!assistant_text->empty()) final_text = *assistant_text;
     else final_text = gen_result.text;
-    if (final_text.empty()) final_text = "  \u2705 Done";
 
-    bus.publish<MessageDelta>({
-        .session_id = *state.session_id,
-        .text = final_text,
-        .done = true
-    });
-
-    ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+    LOG_DEBUG("run_tools_generation_bus: final assistant_text empty={} gen_result.text empty={}",
+             assistant_text->empty(), gen_result.text.empty());
+    if (!final_text.empty()) {
+      LOG_DEBUG("run_tools_generation_bus: publishing final MessageDelta text_len={}", final_text.size());
+      bus.publish<MessageDelta>({
+          .session_id = *state.session_id,
+          .text = final_text,
+          .done = true
+      });
+      ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+    }
+    // If the LLM produced no text, don't fabricate a message.
+    // Tool call/result messages are already in the history,
+    // and SessionStatusChanged(idle) above signals completion.
 
 
   } else {
@@ -264,7 +286,7 @@ static void run_stream_generation_bus(ai::Client& client,
                                        ChatState& state) {
   ai::StreamOptions stream_options(std::move(gen_options));
   auto stream = client.stream_text(stream_options);
-  LOG_DEBUG("ChatBus: stream_text opened successfully");
+  LOG_DEBUG("run_stream_generation_bus: streaming model={} system={}", stream_options.model, stream_options.system.size());
 
   if (stream.has_error()) {
     LOG_ERROR("ChatBus: stream error: {}", stream.error_message());
@@ -295,13 +317,14 @@ static void run_stream_generation_bus(ai::Client& client,
   for (const auto& event : stream) {
     if (event.is_text_delta()) {
       text_buffer += event.text_delta;
+      LOG_DEBUG("run_stream_generation_bus: text_delta buffer_size={}", text_buffer.size());
       auto now = std::chrono::steady_clock::now();
       if (now - last_flush >= FLUSH_INTERVAL) {
         flush_text();
         last_flush = now;
       }
     } else if (event.is_error()) {
-      LOG_ERROR("ChatBus: stream error during generation");
+      LOG_ERROR("run_stream_generation_bus: stream error");
       flush_text();
       bus.publish<ErrorOccurred>({
           .session_id = *state.session_id,
@@ -310,7 +333,7 @@ static void run_stream_generation_bus(ai::Client& client,
       });
       break;
     } else if (event.is_finish() && event.usage.has_value()) {
-      LOG_DEBUG("ChatBus: stream finished");
+      LOG_DEBUG("run_stream_generation_bus: stream finished text_len={}", text_buffer.size());
       flush_text();
       bus.publish<TokenUsageUpdated>({
           .prompt_tokens = event.usage->prompt_tokens,
@@ -320,13 +343,14 @@ static void run_stream_generation_bus(ai::Client& client,
     }
   }
 
-  ai::tui::db::save_message(*state.session_id, "Assistant", text_buffer);
-
+  LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={}", text_buffer.size());
   bus.publish<MessageDelta>({
       .session_id = *state.session_id,
-      .text = "",
+      .text = text_buffer,
       .done = true
   });
+
+  ai::tui::db::save_message(*state.session_id, "Assistant", text_buffer);
   bus.publish<SessionStatusChanged>({
       .session_id = *state.session_id,
       .status = "idle"
