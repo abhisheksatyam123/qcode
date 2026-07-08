@@ -478,7 +478,7 @@ void run_llm_generation(
       }
       api_key = key;
       client = ai::openai::create_client(api_key,
-                                         "https://openrouter.ai/api/v1");
+                                         "https://openrouter.ai/api");
     }
     // ---- qpilot / qgenie ----
     else if (provider_id == "qpilot" || provider_id == "qgenie") {

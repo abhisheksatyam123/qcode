@@ -445,7 +445,7 @@ void run_generation_with_bus(
         return;
       }
       api_key = key;
-      client = ai::openai::create_client(api_key, "https://openrouter.ai/api/v1");
+      client = ai::openai::create_client(api_key, "https://openrouter.ai/api");
     } else if (provider_id == "qpilot" || provider_id == "qgenie") {
       char* key = std::getenv("QPILOT_API_KEY");
       if (!key) {
