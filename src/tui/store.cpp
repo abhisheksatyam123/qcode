@@ -37,6 +37,7 @@ void AppStore::expire_toasts() {
 
 void AppStore::append_chat_message(const std::string& role, const std::string& text) {
     state_.chat_history->emplace_back(role, text);
+    LOG_DEBUG("Store: append_chat_message role={} text_len={} history_size={}", role, text.size(), state_.chat_history->size());
     // Also add to messages_history for proper rendering
     if (role == "User") {
         state_.messages_history->push_back(ai::Message::user(text));
@@ -48,6 +49,7 @@ void AppStore::append_chat_message(const std::string& role, const std::string& t
 }
 
 void AppStore::update_last_assistant_message(const std::string& text) {
+    LOG_DEBUG("Store: update_last_assistant_message text_len={} chat_history_size={}", text.size(), state_.chat_history->size());
     // Update chat_history
     if (!state_.chat_history->empty()) {
         auto& [role, content] = state_.chat_history->back();
@@ -85,10 +87,12 @@ void AppStore::update_last_assistant_message(const std::string& text) {
     } else {
         state_.messages_history->push_back(ai::Message::assistant(text));
     }
+    LOG_DEBUG("Store: update_last_assistant_message complete messages_history_size={}", state_.messages_history->size());
     notify();
 }
 
 void AppStore::set_generating(bool v) {
+    LOG_DEBUG("Store: set_generating v={}", v);
     *state_.is_generating = v;
     notify();
 }
@@ -99,6 +103,7 @@ void AppStore::set_session_id(const std::string& id) {
 }
 
 void AppStore::set_status(const std::string& s) {
+    LOG_DEBUG("Store: set_status s={}", s);
     status_ = s;
     if (s == "idle" || s == "error") {
         *state_.is_generating = false;
@@ -107,6 +112,7 @@ void AppStore::set_status(const std::string& s) {
 }
 
 void AppStore::set_error(const std::string& msg) {
+    LOG_ERROR("Store: set_error msg={}", msg);
     last_error_ = msg;
     status_ = "error";
     *state_.is_generating = false;
@@ -147,6 +153,7 @@ void AppStore::wire() {
 
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
         LOG_DEBUG("Store: ToolCallStarted tool={}", p.tool_name);
+        LOG_DEBUG("Store: ToolCallStarted tool_call_id={} args={}", p.tool_call_id, p.arguments.dump());
         // Add a tool call entry to chat_history for display
         std::string tool_str = "  \u23f3 " + p.tool_name + "...";
         state_.chat_history->emplace_back("ToolCall", tool_str);
@@ -160,6 +167,7 @@ void AppStore::wire() {
 
     subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
         LOG_DEBUG("Store: ToolCallCompleted tool={} is_error={} duration_ms={}", p.tool_name, p.is_error, (int)p.duration_ms);
+        LOG_DEBUG("Store: ToolCallCompleted result_preview={}", p.result.dump().substr(0, 200));
         // Remove the ephemeral "Running..." entry from chat_history
         for (int ci = static_cast<int>(state_.chat_history->size()) - 1; ci >= 0; --ci) {
             auto& entry = (*state_.chat_history)[ci];
@@ -173,7 +181,7 @@ void AppStore::wire() {
             : "  \u2714 " + p.tool_name + " (" + std::to_string((int)p.duration_ms) + "ms)";
         state_.chat_history->emplace_back("ToolResult", result_str);
         // Add tool result to messages_history
-        ai::ToolResultContentPart tr_part{p.tool_call_id, p.result, p.is_error};
+        ai::ToolResultContentPart tr_part{p.tool_call_id, p.result, p.is_error, p.duration_ms};
         ai::Message result_msg = ai::Message::tool_results({tr_part});
         state_.messages_history->push_back(std::move(result_msg));
         notify();

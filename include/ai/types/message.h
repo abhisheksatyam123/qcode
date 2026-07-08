@@ -32,9 +32,12 @@ struct ToolResultContentPart {
   std::string tool_call_id;
   JsonValue result;
   bool is_error = false;
+  double duration_ms = 0.0;
 
-  ToolResultContentPart(std::string id, JsonValue r, bool err = false)
-      : tool_call_id(std::move(id)), result(std::move(r)), is_error(err) {}
+  ToolResultContentPart(std::string id, JsonValue r, bool err = false,
+                         double dur = 0.0)
+      : tool_call_id(std::move(id)), result(std::move(r)), is_error(err),
+        duration_ms(dur) {}
 };
 
 // Content part variant
