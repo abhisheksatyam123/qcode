@@ -101,6 +101,14 @@ GenerateResult BaseProviderClient::generate_text_single_step(
     auto parsed_result =
         response_parser_->parse_success_completion_response(json_response);
 
+    if (!parsed_result.is_success()) {
+      LOG_ERROR("text_generation_single_step: parser returned error - finish_reason={} error=\"{}\" metadata=\"{}\"",
+                parsed_result.finishReasonToString(),
+                parsed_result.error_message(),
+                parsed_result.provider_metadata.value_or(""));
+      return parsed_result;
+    }
+
     if (parsed_result.has_tool_calls()) {
       LOG_DEBUG("Model made {} tool calls",
                             parsed_result.tool_calls.size());
