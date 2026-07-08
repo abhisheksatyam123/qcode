@@ -338,11 +338,37 @@ ftxui::Element render_view(
 ) {
     std::string theme = state.theme ? *state.theme : "orange";
 
-    // ── Outer Layout — header (tab selection) + body + footer ──
+    // ── Header strip: tabs + model badge + token count + status ──
+    std::string hdr_model = providers_list[selected_provider].models[selected_model].name;
+    std::string hdr_prov = providers_list[selected_provider].name;
+    std::string hdr_tokens = std::to_string(*state.total_tokens) + " tok";
+    
+    // Status (compact, no spinner — spinner is rendered in the header below)
+    std::string hdr_status;
+    if (*state.is_generating) {
+        static const std::array<const char*, 10> sp = {
+            "⠋", "⠙", "⠹", "⠸", "⠼",
+            "⠴", "⠦", "⠧", "⠏", "⠋"
+        };
+        int frame = *state.generation_frame % sp.size();
+        hdr_status = std::string(sp[frame]) + " gen...";
+    } else if (state.selection_mode) {
+        hdr_status = "SELECT";
+    }
+    
     auto header = hbox({
         text(" QCODE ") | bold | bgcolor(accent(theme)) | color(Color::White),
         text("  "),
-        tab_toggle->Render() | flex,
+        tab_toggle->Render(),
+        filler(),
+        // Right side: compact model, tokens, status
+        text(" " + hdr_model + " ") | color(accent2(theme)) | bold,
+        separatorLight(),
+        text(" " + hdr_tokens + " ") | dim,
+        (hdr_status.empty() ? emptyElement() : hbox({
+            separatorLight(),
+            text(" " + hdr_status + " ") | color(accent2(theme)) | bold,
+        })),
     }) | borderLight | color(accent(theme));
 
     Element body;
@@ -353,19 +379,9 @@ ftxui::Element render_view(
 
         if (empty) {
             // Home screen
-            auto prompt_bar = vbox({
-                hbox({
-                    text(" ❯ ") | color(accent2(theme)) | bold,
-                    input->Render() | flex,
-                }),
-                separatorLight() | color(accent(theme)),
-                hbox({
-                    text(" " + providers_list[selected_provider].models[selected_model].name + " ") | bold | bgcolor(accent(theme)) | color(Color::Black),
-                    text(" "),
-                    text(enable_tools ? " 🔧 Tools: ON " : " ⚙ Tools: OFF ") | bold | bgcolor(enable_tools ? Color::RGB(0x22, 0xBB, 0x88) : Color::RGB(0x44, 0x44, 0x44)) | color(Color::White),
-                    filler(),
-                    text("Press Enter to send · Alt+Enter for newline ") | dim,
-                })
+            auto prompt_bar = hbox({
+                text(" ❯ ") | color(accent2(theme)) | bold,
+                input->Render() | flex,
             }) | border | color(accent(theme));
 
             body = vbox({
@@ -384,35 +400,12 @@ ftxui::Element render_view(
                 msgs.push_back(text(""));
             }
             // Animated spinner during generation
-            static const std::array<const char*, 10> spinner_frames = {
-                "⠋", "⠙", "⠹", "⠸", "⠼",
-                "⠴", "⠦", "⠧", "⠏", "⠋"
-            };
-            std::string status;
-            if (*state.is_generating) {
-                int frame = *state.generation_frame % spinner_frames.size();
-                status = "  " + std::string(spinner_frames[frame]) + " Generating...";
-            } else {
-                status = "";
-            }
-            if (state.selection_mode) {
-                status = "↑↓ navigate  y/Enter copy  Esc exit visual selection";
-            }
+            // Status displayed in header strip, not here
 
-            // OpenCode-style input bar: compact, no inner separator, model badge inline
-            auto prompt_box = vbox({
-                hbox({
-                    text(" ❯ ") | color(accent2(theme)) | bold,
-                    input->Render() | flex,
-                }),
-                separatorLight() | color(accent(theme)),
-                hbox({
-                    text(" " + providers_list[selected_provider].models[selected_model].name + " ") | bold | bgcolor(accent(theme)) | color(Color::Black),
-                    text(" "),
-                    text(enable_tools ? " 🔧 Tools: ON " : " ⚙ Tools: OFF ") | bold | bgcolor(enable_tools ? Color::RGB(0x22, 0xBB, 0x88) : Color::RGB(0x44, 0x44, 0x44)) | color(Color::White),
-                    filler(),
-                    text("Press Enter to send · Alt+Enter for newline ") | dim,
-                })
+            // Clean input bar: just prompt prefix + input (model badge moved to header)
+            auto prompt_box = hbox({
+                text(" ❯ ") | color(accent2(theme)) | bold,
+                input->Render() | flex,
             }) | border | color(accent(theme));
 
             // Dynamic inline slash command / session autocomplete matching opencode
@@ -483,8 +476,7 @@ ftxui::Element render_view(
             LOG_DEBUG("Views: chat tab render, auto_scroll={}, scroll_offset={}", state.auto_scroll, *scroll_offset);
             body = vbox({
                 vbox(std::move(msgs)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPosition(0, *scroll_offset)) | yframe | yflex,
-                hbox({text("  ") | dim, text(status) | dim}),
-                text(status) | dim | ftxui::border,
+                // status removed — shown in header strip instead
                 prompt_box,
             }) | flex;
         }
@@ -695,5 +687,88 @@ ftxui::Element build_session_popup(
            size(WIDTH, EQUAL, 72) | hcenter;
 }
 
+
+
+
+// ── Toast overlay ─────────────────────────────────────────────────────────────
+ftxui::Element render_toast_overlay(
+    const std::vector<Toast>& toasts,
+    const std::string& theme)
+{
+    using namespace ftxui;
+    if (toasts.empty()) return emptyElement();
+    
+    Elements toast_elems;
+    for (const auto& t : toasts) {
+        Color bg;
+        Color fg = Color::White;
+        std::string icon;
+        if (t.variant == "error") {
+            bg = Color::RGB(0xCC, 0x33, 0x33);
+            icon = " ✗ ";
+        } else if (t.variant == "success") {
+            bg = Color::RGB(0x22, 0xBB, 0x88);
+            icon = " ✓ ";
+        } else if (t.variant == "warning") {
+            bg = Color::RGB(0xEE, 0x99, 0x22);
+            icon = " ⚠ ";
+        } else {
+            bg = Color::RGB(0x33, 0x66, 0xCC);
+            icon = " ℹ ";
+        }
+        Elements toast_row;
+        toast_row.push_back(text(icon) | bold);
+        toast_row.push_back(text(t.message));
+        toast_elems.push_back(
+            hbox(std::move(toast_row)) | bgcolor(bg) | color(fg)
+        );
+    }
+    
+    return vbox(std::move(toast_elems)) | size(WIDTH, LESS_THAN, 72) | hcenter;
+}
+
+// ── Dynamic footer with model, token, session info ────────────────────────────
+ftxui::Element render_dynamic_footer(
+    const ChatState& state,
+    const std::vector<ProviderInfo>& providers_list,
+    int selected_provider,
+    int selected_model,
+    const std::string& status)
+{
+    using namespace ftxui;
+    std::string theme = state.theme ? *state.theme : "orange";
+    
+    // Left: model badge
+    std::string model_str = providers_list[selected_provider].models[selected_model].name;
+    std::string provider_str = providers_list[selected_provider].name;
+    
+    // Center: status
+    std::string status_str;
+    if (!status.empty()) {
+        status_str = status;
+    } else if (*state.is_generating) {
+        static const std::array<const char*, 10> spinner = {
+            "⠋", "⠙", "⠹", "⠸", "⠼",
+            "⠴", "⠦", "⠧", "⠏", "⠋"
+        };
+        int frame = *state.generation_frame % spinner.size();
+        status_str = std::string(spinner[frame]) + " Generating...";
+    }
+    
+    // Right: token count
+    std::string token_str = std::to_string(*state.total_tokens) + " tokens";
+    
+    std::string session_short = state.session_id->substr(0, 8);
+    
+    Elements footer_elems;
+    footer_elems.push_back(text(" " + provider_str + "/" + model_str + " ") | color(accent(theme)) | dim);
+    footer_elems.push_back(separatorLight());
+    footer_elems.push_back(text(" " + session_short + " ") | dim);
+    footer_elems.push_back(separatorLight());
+    footer_elems.push_back(text(" " + token_str + " ") | dim);
+    footer_elems.push_back(filler());
+    footer_elems.push_back(text(status_str + " ") | color(accent2(theme)) | bold);
+    return hbox(std::move(footer_elems)) | borderLight | color(accent(theme));
+}
 } // namespace tui
 } // namespace ai

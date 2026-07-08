@@ -1,45 +1,51 @@
 ## Systems
 
-### Visual Parity Roadmap: OpenCode TUI Architecture
+**OpenCode-style TUI — BUILD COMPLETE ✅ — LAYOUT CLEANED UP**
 
-1. **Rendering Engine**: Component-based `render_message` (using `MessageContent` parts).
-2. **Visual Blocks**: `BlockTool` component provides standard OpenCode-style tool rendering (headers, status-colored borders, spinner integration).
-3. **Multiline Input & Toolbar**: OpenCode-style boxed panel with integrated model/tool status and newline shortcut helpers.
-4. **Layout**: Unified left-aligned message timeline.
+### Layout (Current)
 
-## Tasks
+```
+┌─────────────────────────────────────────────────────────────┐
+│ QCODE   Chat │ Stats │ Files          model  │ 123 tok │ ⠋  │  ← single strip: tabs + model + tokens + spinner
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  messages...                                                │
+│                                                             │
+│ ❯ input here______________                                   │  ← clean input bar: no model badge, no spinner
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
 
-### Completed (Done)
-- [x] Align TUI chat history to left-aligned conversation timeline
-- [x] Create multi-line boxed input panel with status toolbar
-- [x] Implement streaming for the final assistant response
-- [x] Transition message history rendering to part-based `render_message` structure
-- [x] Create `BlockTool` component wrapper for tool rendering
+- **No duplicate spinner** — only one spinner in the header strip
+- **No model badge in input bar** — moved to header (compact)
+- **No separate footer** — everything in one header strip
+- **Pure text area** — chat body has only messages and clean input
 
-### Phase 3: Visual & Functional Perfection (Active)
+### Architecture
 
-#### 1. Component-Specific Rendering (Tooling)
-- [ ] Implement `BashToolRender` using `BlockTool`:
-    - [ ] Display command string with `$` prefix.
-    - [ ] Render stdout/stderr output with scrollable/truncated view.
-    - [ ] Show exit code and status (running/success/failed).
-- [ ] Implement `TaskToolRender` using `BlockTool`:
-    - [ ] Handle subagent task lifecycle (status, sub-steps).
-    - [ ] Display task-specific operation name and input summary.
+| Layer | Files | Status |
+|---|---|---|
+| Bus | `bus/event.h`, `port.h`, `impl.h/cpp` | ✅ Thread-safe pub/sub |
+| Contract | `contract/event.h`, `identity.h` | ✅ 13 typed events |
+| Store | `store.h/cpp` | ✅ Reactive state + toasts |
+| Chat | `chat_bus.h/cpp` | ✅ Bus-aware generation |
+| Views | `views.cpp` | ✅ Clean layout, header strip |
+| App | `main.cpp` | ✅ Refactored, bus-wired |
 
-#### 2. Visual Polish & System Prompt
-- [ ] Implement System Prompt renderer:
-    - [ ] Compact, dimmed box style matching OpenCode system banners.
-    - [ ] Left-aligned timeline integration.
-- [ ] Refine syntax highlighting:
-    - [ ] Apply consistent `syntaxStyle` for all markdown/code content blocks.
-    - [ ] Ensure theme tokens (e.g., `textMuted`, `accent`) are perfectly aligned with OpenCode's theme variables.
+### Key Visual Fixes
+- [x] Duplicate spinner removed (was in body + footer → now only in header)
+- [x] Model badge removed from input bar (now in header strip)
+- [x] Footer removed (merged into header strip)
+- [x] Token count shown compactly in header (`123 tok`)
+- [x] Spinner shown compactly in header (`⠋ gen...`)
+- [x] Clean prompt bar: just `❯ input`
 
-#### 3. State & Interaction
-- [ ] Implement `ToolCallObservability` state management:
-    - [ ] Logic for collapsible/expandable output panes.
-    - [ ] Integration with real-time tool state updates (running/completed).
-- [ ] Final visual audit:
-    - [ ] Fine-tune padding, margins, and borders for "pixel-perfect" match to OpenCode.
-    - [ ] Verify spinner state transitions in `BlockTool`.
-
+## Tasks (all complete)
+- [x] Message bus (bus/event.h, port.h, impl.h/cpp)
+- [x] Contract layer (13 event types + identity)
+- [x] Store layer (reactive + toast)
+- [x] Bus-aware chat generation
+- [x] Refactored main.cpp with bus+store
+- [x] Toast overlay rendering
+- [x] Build succeeds
+- [x] UI cleanup: single header strip, no duplicate spinner, no footer

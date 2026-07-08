@@ -1,0 +1,453 @@
+#include <ai/tui/chat_bus.h>
+#include <ai/tui/config.h>
+#include <ai/tui/tools.h>
+#include <ai/tui/db.h>
+#include <ai/tui/contract/event.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <future>
+#include <string>
+#include <utility>
+
+#include <ai/types/client.h>
+#include <ai/logger.h>
+#include <ai/openai.h>
+
+namespace ai {
+namespace tui {
+
+using namespace contract;
+
+// ──────────────────────────────────────────────────────────────
+//  Tools-enabled generation path (bus version)
+// ──────────────────────────────────────────────────────────────
+static void run_tools_generation_bus(ai::Client& client,
+                                      ai::GenerateOptions options,
+                                      bus::BusPort& bus,
+                                      ChatState& state) {
+  auto assistant_text    = std::make_shared<std::string>();
+  auto assistant_msg_idx = std::make_shared<int>(-1);
+  auto tool_starts       = std::make_shared<
+      std::map<std::string, std::chrono::steady_clock::time_point>>();
+  auto step_counter      = std::make_shared<std::atomic<int>>(0);
+  int  max_steps         = options.max_steps;
+
+  // ── Step finished: emit MessageDelta ──
+  options.on_step_finish =
+      [&bus, state_ptr = &state, assistant_text](const ai::GenerateStep& step) {
+        if (step.text.empty()) return;
+        if (*assistant_text == "  \u23f3 Working...") {
+          *assistant_text = step.text;
+        } else {
+          *assistant_text += step.text;
+        }
+        bus.publish<MessageDelta>({
+            .session_id = *state_ptr->session_id,
+            .text = *assistant_text,
+            .done = false
+        });
+      };
+
+  // ── Tool call started: emit ToolCallStarted ──
+  options.on_tool_call_start =
+      [&bus, state_ptr = &state, tool_starts, step_counter, max_steps](const ai::ToolCall& call) {
+        auto now = std::chrono::steady_clock::now();
+        (*tool_starts)[call.id] = now;
+        (*step_counter)++;
+
+        ai::tui::db::save_message(*state_ptr->session_id, "ToolCall",
+                                   Tools::format_tool_call(
+                                       call.tool_name, call.arguments.dump(),
+                                       *step_counter, max_steps));
+
+        bus.publish<ToolCallStarted>({
+            .session_id = *state_ptr->session_id,
+            .tool_call_id = call.id,
+            .tool_name = call.tool_name,
+            .arguments = call.arguments
+        });
+      };
+
+  // ── Tool call finished: emit ToolCallCompleted ──
+  options.on_tool_call_finish =
+      [&bus, state_ptr = &state, assistant_text, tool_starts](const ai::ToolResult& res) {
+        double duration_s = 0.0;
+        auto start_it = tool_starts->find(res.tool_call_id);
+        if (start_it != tool_starts->end()) {
+          duration_s = std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - start_it->second).count();
+        }
+
+        if (*assistant_text == "  \u23f3 Working...") {
+          *assistant_text = "";
+        }
+
+        std::string tool_res_str = Tools::format_tool_result(
+            res.tool_name, res.is_success(),
+            res.is_success() ? res.result.dump() : res.error_message(),
+            -1, duration_s);
+
+        ai::tui::db::save_message(*state_ptr->session_id, "ToolResult", tool_res_str);
+        (*state_ptr->tool_call_count)++;
+        *state_ptr->total_tool_time_ms += duration_s * 1000.0;
+
+        bus.publish<ToolCallCompleted>({
+            .session_id = *state_ptr->session_id,
+            .tool_call_id = res.tool_call_id,
+            .tool_name = res.tool_name,
+            .result = res.result,
+            .is_error = !res.is_success(),
+            .duration_ms = duration_s * 1000.0
+        });
+      };
+
+  // ── Multi-step generation loop ──
+  ai::GenerateResult gen_result;
+  gen_result.finish_reason = ai::kFinishReasonStop;
+
+  ai::Messages response_messages;
+  ai::Messages step_messages = options.messages;
+  if (step_messages.empty() && !options.prompt.empty()) {
+    step_messages.push_back(ai::Message::user(options.prompt));
+  }
+  const size_t initial_count = step_messages.size();
+
+  ai::GenerateOptions step_opts = options;
+  step_opts.prompt.clear();
+
+  int step = 0;
+  bool finished = false;
+
+  while (step < options.max_steps && !finished) {
+    step_messages.erase(std::next(step_messages.begin(), initial_count), step_messages.end());
+    step_messages.insert(step_messages.end(), response_messages.begin(), response_messages.end());
+    step_opts.messages = step_messages;
+    step_opts.max_steps = 1;
+
+    bool is_final_step = (step > 0);
+
+    if (is_final_step) {
+      ai::StreamOptions stream_opts(step_opts);
+      stream_opts.tools.clear();
+
+      auto stream = client.stream_text(stream_opts);
+      if (stream.has_error()) {
+        LOG_ERROR("run_tools_generation_bus stream error: {}", stream.error_message());
+        is_final_step = false;
+      } else {
+        std::string final_step_text;
+        for (const auto& event : stream) {
+          if (event.is_text_delta()) {
+            final_step_text += event.text_delta;
+            if (*assistant_text == "  \u23f3 Working...") {
+              *assistant_text = event.text_delta;
+            } else {
+              *assistant_text += event.text_delta;
+            }
+            bus.publish<MessageDelta>({
+                .session_id = *state.session_id,
+                .text = *assistant_text,
+                .done = false
+            });
+          } else if (event.is_finish()) {
+            if (event.usage.has_value()) {
+              auto u = event.usage.value();
+              gen_result.usage.prompt_tokens += u.prompt_tokens;
+              gen_result.usage.completion_tokens += u.completion_tokens;
+              gen_result.usage.total_tokens += u.total_tokens;
+            }
+          }
+        }
+        gen_result.text += final_step_text;
+        response_messages.push_back(ai::Message::assistant(final_step_text));
+        finished = true;
+        break;
+      }
+    }
+
+    if (!is_final_step) {
+      ai::GenerateResult step_res = client.generate_text(step_opts);
+      if (!step_res.is_success()) {
+        gen_result.error = step_res.error;
+        break;
+      }
+
+      gen_result.text += step_res.text;
+      gen_result.usage.prompt_tokens += step_res.usage.prompt_tokens;
+      gen_result.usage.completion_tokens += step_res.usage.completion_tokens;
+      gen_result.usage.total_tokens += step_res.usage.total_tokens;
+      gen_result.finish_reason = step_res.finish_reason;
+      gen_result.id = step_res.id;
+      gen_result.model = step_res.model;
+      gen_result.created = step_res.created;
+      gen_result.system_fingerprint = step_res.system_fingerprint;
+
+      if (step_res.has_tool_calls()) {
+        std::vector<ai::ToolCallContentPart> tool_parts;
+        for (const auto& call : step_res.tool_calls) {
+          tool_parts.emplace_back(call.id, call.tool_name, call.arguments);
+          gen_result.tool_calls.push_back(call);
+        }
+        response_messages.push_back(ai::Message::assistant_with_tools(step_res.text, tool_parts));
+
+        std::vector<ai::ToolResultContentPart> result_parts;
+        for (const auto& res : step_res.tool_results) {
+          result_parts.emplace_back(res.tool_call_id, res.result, !res.is_success());
+          gen_result.tool_results.push_back(res);
+        }
+        response_messages.push_back(ai::Message::tool_results(result_parts));
+
+        if (options.on_step_finish) {
+          ai::GenerateStep step_data;
+          step_data.text = step_res.text;
+          step_data.tool_calls = step_res.tool_calls;
+          step_data.tool_results = step_res.tool_results;
+          step_data.finish_reason = step_res.finish_reason;
+          step_data.usage = step_res.usage;
+          options.on_step_finish.value()(step_data);
+        }
+      } else {
+        response_messages.push_back(ai::Message::assistant(step_res.text));
+        finished = true;
+      }
+    }
+    step++;
+  }
+
+  gen_result.response_messages = response_messages;
+
+  bus.publish<SessionStatusChanged>({
+      .session_id = *state.session_id,
+      .status = "idle"
+  });
+
+  if (gen_result.is_success()) {
+    std::string final_text;
+    if (!assistant_text->empty()) final_text = *assistant_text;
+    else final_text = gen_result.text;
+    if (final_text.empty()) final_text = "  \u2705 Done";
+
+    bus.publish<MessageDelta>({
+        .session_id = *state.session_id,
+        .text = final_text,
+        .done = true
+    });
+
+    ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+
+    if (!gen_result.response_messages.empty()) {
+      state.messages_history->insert(state.messages_history->end(),
+                                     gen_result.response_messages.begin(),
+                                     gen_result.response_messages.end());
+    } else {
+      state.messages_history->push_back(ai::Message::assistant(gen_result.text));
+    }
+  } else {
+    std::string err_str = "Error: " + gen_result.error_message();
+    bus.publish<ErrorOccurred>({
+        .session_id = *state.session_id,
+        .message = err_str,
+        .severity = "error"
+    });
+    ai::tui::db::save_message(*state.session_id, "System", err_str);
+  }
+
+  bus.publish<TokenUsageUpdated>({
+      .prompt_tokens = gen_result.usage.prompt_tokens,
+      .completion_tokens = gen_result.usage.completion_tokens,
+      .total_tokens = gen_result.usage.total_tokens
+  });
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Non-tools streaming generation path (bus version)
+// ──────────────────────────────────────────────────────────────
+static void run_stream_generation_bus(ai::Client& client,
+                                       ai::GenerateOptions gen_options,
+                                       bus::BusPort& bus,
+                                       ChatState& state) {
+  ai::StreamOptions stream_options(std::move(gen_options));
+  auto stream = client.stream_text(stream_options);
+  LOG_DEBUG("ChatBus: stream_text opened successfully");
+
+  if (stream.has_error()) {
+    LOG_ERROR("ChatBus: stream error: {}", stream.error_message());
+    bus.publish<ErrorOccurred>({
+        .session_id = *state.session_id,
+        .message = stream.error_message(),
+        .severity = "error"
+    });
+    return;
+  }
+
+  std::string text_buffer;
+  auto last_flush = std::chrono::steady_clock::now();
+  constexpr auto FLUSH_INTERVAL = std::chrono::milliseconds(33);
+
+  auto flush_text = [&]() {
+    if (text_buffer.empty()) return;
+    LOG_DEBUG("ChatBus: flush_text buffer_size={}", text_buffer.size());
+    std::string batch = std::move(text_buffer);
+    text_buffer.clear();
+    bus.publish<MessageDelta>({
+        .session_id = *state.session_id,
+        .text = batch,
+        .done = false
+    });
+  };
+
+  for (const auto& event : stream) {
+    if (event.is_text_delta()) {
+      text_buffer += event.text_delta;
+      auto now = std::chrono::steady_clock::now();
+      if (now - last_flush >= FLUSH_INTERVAL) {
+        flush_text();
+        last_flush = now;
+      }
+    } else if (event.is_error()) {
+      LOG_ERROR("ChatBus: stream error during generation");
+      flush_text();
+      bus.publish<ErrorOccurred>({
+          .session_id = *state.session_id,
+          .message = "Error during streaming",
+          .severity = "error"
+      });
+      break;
+    } else if (event.is_finish() && event.usage.has_value()) {
+      LOG_DEBUG("ChatBus: stream finished");
+      flush_text();
+      bus.publish<TokenUsageUpdated>({
+          .prompt_tokens = event.usage->prompt_tokens,
+          .completion_tokens = event.usage->completion_tokens,
+          .total_tokens = event.usage->total_tokens
+      });
+    }
+  }
+
+  ai::tui::db::save_message(*state.session_id, "Assistant", text_buffer);
+
+  bus.publish<MessageDelta>({
+      .session_id = *state.session_id,
+      .text = "",
+      .done = true
+  });
+  bus.publish<SessionStatusChanged>({
+      .session_id = *state.session_id,
+      .status = "idle"
+  });
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Public entry point — matches the client creation pattern
+//  from the original run_llm_generation in chat.cpp
+// ──────────────────────────────────────────────────────────────
+void run_generation_with_bus(
+    const std::string& provider_name,
+    const std::string& model_id,
+    const std::string& system_prompt,
+    const ai::Messages& messages,
+    bool enable_tools,
+    const std::vector<ProviderInfo>& providers,
+    bus::BusPort& bus,
+    ChatState& state)
+{
+  try {
+    bus.publish<SessionStatusChanged>({
+        .session_id = *state.session_id,
+        .status = "generating"
+    });
+
+    // ── Resolve provider & API key ──
+    ai::Client client;
+    std::string api_key = "unused";
+    std::string api_url;
+    std::string provider_id;
+
+    for (const auto& p : providers) {
+      if (p.name == provider_name) {
+        api_url = p.api_url;
+        provider_id = p.id;
+        break;
+      }
+    }
+
+    if (provider_id == "openrouter") {
+      char* key = std::getenv("OPENROUTER_API_KEY");
+      if (!key) {
+        bus.publish<ErrorOccurred>({
+            .session_id = *state.session_id,
+            .message = "OPENROUTER_API_KEY not set.",
+            .severity = "error"
+        });
+        return;
+      }
+      api_key = key;
+      client = ai::openai::create_client(api_key, "https://openrouter.ai/api/v1");
+    } else if (provider_id == "qpilot" || provider_id == "qgenie") {
+      char* key = std::getenv("QPILOT_API_KEY");
+      if (!key) {
+        bus.publish<ErrorOccurred>({
+            .session_id = *state.session_id,
+            .message = "QPILOT_API_KEY not set.",
+            .severity = "error"
+        });
+        return;
+      }
+      api_key = key;
+      client = ai::openai::create_client(
+          api_key,
+          provider_id == "qpilot"
+              ? "https://qpilot-api.qualcomm.com"
+              : "https://qgenie-api.qualcomm.com");
+    } else if (provider_id == "antigravity") {
+      api_key = get_antigravity_token();
+      if (api_key.empty()) {
+        bus.publish<ErrorOccurred>({
+            .session_id = *state.session_id,
+            .message = "Antigravity token failed.",
+            .severity = "error"
+        });
+        return;
+      }
+      client = ai::openai::create_client(
+          api_key,
+          "https://daily-cloudcode-pa.googleapis.com/v1internal");
+    } else {
+      client = ai::openai::create_client(
+          "unused",
+          api_url.empty() ? "https://opencode.ai/zen/v1" : api_url);
+    }
+
+    LOG_INFO("ChatBus: provider={}, model={}, tools={}", provider_id, model_id, enable_tools);
+
+    // ── Build common base options ──
+    ai::GenerateOptions base_opts;
+    base_opts.model = model_id;
+    base_opts.system = system_prompt;
+    base_opts.messages = messages;
+
+    // ── Dispatch ──
+    if (enable_tools) {
+      ai::ToolSet tools = Tools::build_definitions(ToolConfig{true, true});
+      base_opts.tools = std::move(tools);
+      base_opts.max_steps = 99999999;
+      run_tools_generation_bus(client, std::move(base_opts), bus, state);
+    } else {
+      run_stream_generation_bus(client, std::move(base_opts), bus, state);
+    }
+
+  } catch (const std::exception& e) {
+    std::string err_msg = e.what();
+    bus.publish<ErrorOccurred>({
+        .session_id = *state.session_id,
+        .message = "Exception: " + err_msg,
+        .severity = "error"
+    });
+    ai::tui::db::save_message(*state.session_id, "System", "Exception: " + err_msg);
+  }
+}
+
+} // namespace tui
+} // namespace ai

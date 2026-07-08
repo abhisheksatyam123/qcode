@@ -1,0 +1,146 @@
+#pragma once
+
+#include <string>
+#include <vector>
+#include <optional>
+#include <nlohmann/json.hpp>
+#include <ai/tui/bus/port.h>
+
+namespace ai {
+namespace tui {
+namespace contract {
+
+// ─── TUI → Backend (User-initiated) ───────────────────────────────────────────
+
+struct PromptSubmitted {
+    static constexpr const char* type = "tui.prompt.submitted";
+    struct Payload {
+        std::string text;
+        std::vector<std::string> attachment_paths;
+    };
+};
+
+struct CommandExecuted {
+    static constexpr const char* type = "tui.command.executed";
+    struct Payload {
+        std::string command;
+        std::string args;
+    };
+};
+
+struct SessionSelected {
+    static constexpr const char* type = "tui.session.selected";
+    struct Payload {
+        std::string session_id;
+    };
+};
+
+struct ModelSelected {
+    static constexpr const char* type = "tui.model.selected";
+    struct Payload {
+        std::string provider_name;
+        std::string model_id;
+    };
+};
+
+struct SessionListRequested {
+    static constexpr const char* type = "tui.session.list.requested";
+    struct Payload {};
+};
+
+struct ScrollRequested {
+    static constexpr const char* type = "tui.scroll.requested";
+    struct Payload {
+        int delta = 0;
+        bool page = false;
+    };
+};
+
+// ─── Backend → TUI (System-initiated) ─────────────────────────────────────────
+
+struct MessageDelta {
+    static constexpr const char* type = "backend.message.delta";
+    struct Payload {
+        std::string session_id;
+        std::string text;
+        bool done = false;
+    };
+};
+
+struct ToolCallStarted {
+    static constexpr const char* type = "backend.tool.call.started";
+    struct Payload {
+        std::string session_id;
+        std::string tool_call_id;
+        std::string tool_name;
+        nlohmann::json arguments;
+    };
+};
+
+struct ToolCallCompleted {
+    static constexpr const char* type = "backend.tool.call.completed";
+    struct Payload {
+        std::string session_id;
+        std::string tool_call_id;
+        std::string tool_name;
+        nlohmann::json result;
+        bool is_error = false;
+        double duration_ms = 0.0;
+    };
+};
+
+struct SessionStatusChanged {
+    static constexpr const char* type = "backend.session.status.changed";
+    struct Payload {
+        std::string session_id;
+        std::string status; // "idle", "generating", "error"
+    };
+};
+
+struct ErrorOccurred {
+    static constexpr const char* type = "backend.error.occurred";
+    struct Payload {
+        std::string session_id;
+        std::string message;
+        std::string severity; // "info", "warning", "error"
+    };
+};
+
+struct TokenUsageUpdated {
+    static constexpr const char* type = "backend.token.usage.updated";
+    struct Payload {
+        int prompt_tokens = 0;
+        int completion_tokens = 0;
+        int total_tokens = 0;
+    };
+};
+
+struct ToastRequested {
+    static constexpr const char* type = "tui.toast.requested";
+    struct Payload {
+        std::string message;
+        std::string variant = "info";
+        int duration_ms = 5000;
+    };
+};
+
+// ── Registry helper ───────────────────────────────────────────────────────────
+inline void register_all_events(bus::BusPort& bus) {
+    bus.register_event<PromptSubmitted>();
+    bus.register_event<CommandExecuted>();
+    bus.register_event<SessionSelected>();
+    bus.register_event<ModelSelected>();
+    bus.register_event<SessionListRequested>();
+    bus.register_event<ScrollRequested>();
+    bus.register_event<MessageDelta>();
+    bus.register_event<ToolCallStarted>();
+    bus.register_event<ToolCallCompleted>();
+    bus.register_event<SessionStatusChanged>();
+    bus.register_event<ErrorOccurred>();
+    bus.register_event<TokenUsageUpdated>();
+    bus.register_event<ToastRequested>();
+}
+
+} // namespace contract
+} // namespace tui
+} // namespace ai

@@ -7,9 +7,12 @@
 #include <utility>
 #include <ai/tui/commands.h>
 #include <ai/tui/state.h>
+#include <ai/tui/store.h>
+
 namespace ai {
 namespace tui {
-// Colour palette with theme options
+
+// Colour palette
 inline ftxui::Color accent(const std::string& theme = "orange") {
     if (theme == "green") return ftxui::Color::RGB(0x22, 0xBB, 0x88);
     if (theme == "blue") return ftxui::Color::RGB(0x16, 0xB8, 0xF3);
@@ -27,7 +30,9 @@ inline ftxui::Color accent2(const std::string& theme = "orange") {
 inline ftxui::Color user_green() { return ftxui::Color::RGB(0x22, 0xBB, 0x88); }
 inline ftxui::Color dim_gray()   { return ftxui::Color::GrayDark; }
 inline ftxui::Color bg_popup()   { return ftxui::Color::RGB(0x22, 0x22, 0x22); }
+
 ftxui::Element render_logo();
+
 ftxui::Element render_view(
     const ChatState& state,
     const std::vector<ProviderInfo>& providers_list,
@@ -35,29 +40,38 @@ ftxui::Element render_view(
     int selected_model,
     bool enable_tools,
     const std::string& prompt_input,
-    // Slash popup state
     bool show_slash,
     int slash_idx,
     const std::vector<SlashCommand>& slash_commands,
-    // Model selector popup state
     bool show_model_select,
     int model_select_idx,
     const std::vector<ModelEntry>& model_entries,
-    // Session selector popup state
     bool show_session_select,
     int session_select_idx,
     const std::vector<std::pair<std::string, std::string>>& session_entries,
-    // Interactive components
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
     const std::shared_ptr<int>& scroll_offset,
     const ftxui::Component& input
 );
+
+// Markdown
+ftxui::Elements render_markdown(const std::string& input_text);
+
+// Toast overlay
+ftxui::Element render_toast_overlay(
+    const std::vector<Toast>& toasts,
+    const std::string& theme
+);
+
+// Dynamic footer with model, token, session info
+ftxui::Element render_dynamic_footer(
+    const ChatState& state,
+    const std::vector<ProviderInfo>& providers_list,
+    int selected_provider,
+    int selected_model,
+    const std::string& status
+);
+
 } // namespace tui
 } // namespace ai
-
-namespace ai {
-namespace tui {
-ftxui::Elements render_markdown(const std::string& input_text);
-}
-}
