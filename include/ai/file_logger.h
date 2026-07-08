@@ -47,7 +47,7 @@ class FileLogger final : public logger::Logger {
               << ms.count() << "]"
               << " [" << level_to_string(level) << "]"
               << " [" << logger::short_file_name(loc.file_name()) << ":" << loc.line() << "]"
-              << " [" << logger::thread_id_string() << "]"
+              << " [" << logger::thread_name_string() << "]"
               << " " << message << std::endl;
     log_file_.flush();
   }

@@ -124,8 +124,8 @@ static void run_tools_generation_bus(ai::Client& client,
   while (step < options.max_steps && !finished) {
     step_messages.erase(std::next(step_messages.begin(), initial_count), step_messages.end());
     step_messages.insert(step_messages.end(), response_messages.begin(), response_messages.end());
-    LOG_DEBUG("run_tools_generation_bus: step={} is_final_step={} messages={}", step, is_final_step, step_messages.size());
     step_opts.messages = step_messages;
+    LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, step_messages.size());
     step_opts.max_steps = 1;
 
     bool is_final_step = (step > 0);
