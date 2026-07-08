@@ -343,17 +343,32 @@ ftxui::Element render_view(
     std::string hdr_tokens = std::to_string(*state.total_tokens) + " tok";
     
     // Status (compact, no spinner — spinner is rendered in the header below)
+    Color status_color = accent2(theme);
     std::string hdr_status;
     if (*state.is_generating) {
         static const std::array<const char*, 10> sp = {
-            "⠋", "⠙", "⠹", "⠸", "⠼",
-            "⠴", "⠦", "⠧", "⠏", "⠋"
+            "\u280b", "\u2819", "\u2839", "\u2838", "\u283c",
+            "\u2834", "\u2836", "\u2837", "\u280f", "\u280b"
         };
         int frame = *state.generation_frame % sp.size();
         hdr_status = std::string(sp[frame]) + " gen...";
+    } else if (state.status && *state.status == "error") {
+        hdr_status = "\u26a0 error";
+        status_color = Color::RGB(0xCC, 0x33, 0x33);
+    } else if (state.status && *state.status == "warn") {
+        // "warn" reflects an empty model response (see chat_bus.cpp)
+        hdr_status = "\u26a0 empty";
+        status_color = Color::Yellow;
     } else if (state.selection_mode) {
         hdr_status = "SELECT";
     }
+
+    // Prompt queue indicator
+    std::string hdr_queue;
+    if (state.queued_prompts && *state.queued_prompts > 0) {
+        hdr_queue = "\u29d6 " + std::to_string(*state.queued_prompts);
+    }
+
     
     auto header = hbox({
         text(" QCODE ") | bold | bgcolor(accent(theme)) | color(Color::White),
@@ -364,9 +379,13 @@ ftxui::Element render_view(
         text(" " + hdr_model + " ") | color(accent2(theme)) | bold,
         separatorLight(),
         text(" " + hdr_tokens + " ") | dim,
+        (hdr_queue.empty() ? emptyElement() : hbox({
+            separatorLight(),
+            text(" " + hdr_queue + " ") | color(Color::Yellow) | bold,
+        })),
         (hdr_status.empty() ? emptyElement() : hbox({
             separatorLight(),
-            text(" " + hdr_status + " ") | color(accent2(theme)) | bold,
+            text(" " + hdr_status + " ") | color(status_color) | bold,
         })),
     }) | borderLight | color(accent(theme));
 
@@ -476,7 +495,6 @@ ftxui::Element render_view(
                 }
             }
 
-            LOG_DEBUG("Views: chat tab render, auto_scroll={}, scroll_ratio={}", state.auto_scroll, *scroll_ratio);
             body = vbox({
                 vbox(std::move(msgs)) | vscroll_indicator | (state.auto_scroll ? focusPositionRelative(0.f, 1.f) : focusPositionRelative(0.f, std::min(1.f, *scroll_ratio))) | yframe | flex,
                 // status removed — shown in header strip instead
@@ -529,7 +547,6 @@ ftxui::Element render_view(
                 file_blocks.push_back(text(""));
             }
             
-            LOG_DEBUG("Views: files tab render, auto_scroll={}, scroll_ratio={}", state.auto_scroll, *scroll_ratio);
             body = vbox({
                 text(" MODIFIED FILES ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
@@ -584,6 +601,8 @@ ftxui::Element render_view(
                     hbox({ text("Prompt Tokens: ") | dim, text(std::to_string(*state.total_prompt_tokens)) }),
                     hbox({ text("Completion Tokens: ") | dim, text(std::to_string(*state.total_completion_tokens)) }),
                     hbox({ text("Total Tokens: ") | dim, text(std::to_string(*state.total_tokens)) }),
+                    hbox({ text("Tool Calls: ") | dim, text(std::to_string(*state.tool_call_count)) }),
+                    hbox({ text("Tool Time: ") | dim, text(std::to_string(static_cast<int>(*state.total_tool_time_ms)) + " ms") }),
                     hbox({ text("Estimated Cost: ") | dim, text("$" + std::to_string(cost)) | color(Color::Green) | bold }),
                 }) | flex,
                 text("  ")

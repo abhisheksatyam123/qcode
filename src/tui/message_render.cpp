@@ -111,7 +111,6 @@ static std::string extract_tool_summary(const ai::ToolCallContentPart& part) {
 // Style: `▶ tool_name  summary_text`   ⠋ calling...
 static Element render_tool_call(const ai::ToolCallContentPart& part,
                                 const std::string& theme) {
-  LOG_DEBUG("render_tool_call: tool_name={} id={}", part.tool_name, part.id);
 
   std::string summary = extract_tool_summary(part);
 
@@ -128,8 +127,6 @@ static Element render_tool_call(const ai::ToolCallContentPart& part,
 // Shows title, command, output, exit code, and timing in a styled block
 static Element render_tool_result(const ai::ToolResultContentPart& part,
                                   const std::string& theme) {
-  LOG_DEBUG("render_tool_result: tool_call_id={} is_error={}", part.tool_call_id,
-            part.is_error);
 
   Elements content;
 
@@ -279,8 +276,6 @@ Element render_message(const ai::Message& msg, const ChatState& state,
                        const std::vector<ProviderInfo>& providers_list,
                        int selected_provider, int selected_model,
                        const std::string& theme) {
-  LOG_DEBUG("render_message: role={} content_parts={}",
-            msg.roleToString(), msg.content.size());
 
   Elements parts;
 
@@ -289,8 +284,6 @@ Element render_message(const ai::Message& msg, const ChatState& state,
   bool has_tool_calls = msg.has_tool_calls();
   bool has_tool_results = msg.has_tool_results();
 
-  LOG_DEBUG("render_message: has_text={} has_tool_calls={} has_tool_results={}",
-            has_text, has_tool_calls, has_tool_results);
 
   // ── Role header ──
   if (msg.role == kMessageRoleAssistant && has_text) {
@@ -329,8 +322,6 @@ Element render_message(const ai::Message& msg, const ChatState& state,
   // ── Content parts ──
   for (const auto& part : msg.content) {
     if (const auto* text_part = std::get_if<ai::TextContentPart>(&part)) {
-      LOG_DEBUG("render_message: dispatching TextContentPart len={}",
-                text_part->text.size());
       if (!text_part->text.empty()) {
         if (msg.role == kMessageRoleSystem) {
           // System messages: render dim
@@ -349,13 +340,9 @@ Element render_message(const ai::Message& msg, const ChatState& state,
       }
     } else if (const auto* tool_part =
                    std::get_if<ai::ToolCallContentPart>(&part)) {
-      LOG_DEBUG("render_message: dispatching ToolCallContentPart name={}",
-                tool_part->tool_name);
       parts.push_back(render_tool_call(*tool_part, theme));
     } else if (const auto* result_part =
                    std::get_if<ai::ToolResultContentPart>(&part)) {
-      LOG_DEBUG("render_message: dispatching ToolResultContentPart id={}",
-                result_part->tool_call_id);
       parts.push_back(render_tool_result(*result_part, theme));
     }
   }

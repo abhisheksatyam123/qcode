@@ -62,6 +62,11 @@ struct ChatState {
     // Tool observability stats
     std::shared_ptr<int> tool_call_count = std::make_shared<int>(0);
     std::shared_ptr<double> total_tool_time_ms = std::make_shared<double>(0.0);
+
+    // Prompt queue + status mirrors (consumed by the view)
+    std::shared_ptr<int> queued_prompts = std::make_shared<int>(0);
+    std::shared_ptr<std::string> status = std::make_shared<std::string>("idle");
+    std::shared_ptr<std::string> last_error = std::make_shared<std::string>();
 };
 
 // Helper to scan for modified files using git status

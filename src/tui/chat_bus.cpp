@@ -276,11 +276,16 @@ static void run_tools_generation_bus(ai::Client& client,
           .done = true
       });
       ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+    } else {
+      // LLM produced no text and no tool output. Surface a non-error notice
+      // instead of leaving the user with a silently blank turn.
+      LOG_WARN("run_tools_generation_bus: model returned empty response (no text, no tool output)");
+      bus.publish<ErrorOccurred>({
+          .session_id = *state.session_id,
+          .message = "The model returned an empty response (no text generated).",
+          .severity = "warning"
+      });
     }
-    // If the LLM produced no text, don't fabricate a message.
-    // Tool call/result messages are already in the history,
-    // and SessionStatusChanged(idle) above signals completion.
-
 
   } else if (!assistant_text->empty() || !gen_result.text.empty()) {
     LOG_WARN("run_tools_generation_bus: partial result after step failure - finishing gracefully");

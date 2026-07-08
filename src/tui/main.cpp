@@ -27,6 +27,7 @@
 #include <ai/tui/contract/identity.h>
 #include <atomic>
 #include <chrono>
+#include <functional>
 
 using namespace ftxui;
 using namespace ai::tui::contract;
@@ -125,8 +126,80 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     //  3. Submit handler (uses bus-aware chat)
     // ═══════════════════════════════════════════════════════════
+    // ── Generation spawner + queue drain ──
+    // Spawns an LLM generation thread for a single prompt. When the generation
+    // finishes, it automatically drains the next queued prompt (if any) so a
+    // sequence of queued prompts runs back-to-back. Queued prompts keep running
+    // even after an error (the error stays visible as a System message + toast).
+    std::function<void(const std::string&)> spawn_generation;
+    spawn_generation = [&](const std::string& p) {
+        store.set_generating(true);
+        state.auto_scroll = true;
+        store.append_chat_message("User", p);
+        ai::tui::db::save_message(store.session_id(), "User", p);
+        LOG_INFO("Main: spawn_generation prompt_len={} queue_remaining={} provider={} model={}",
+                 p.size(), store.queue_size(),
+                 providers_list[selected_provider].name,
+                 providers_list[selected_provider].models[selected_model].name);
+
+        // Capture by value so the worker thread is independent of the UI thread.
+        auto providers_copy = providers_list;
+        int sel_prov = selected_provider;
+        int sel_mod = selected_model;
+        std::string sys_prompt = system_prompt;
+        bool tools_enabled = enable_tools;
+        auto bus_ptr = bus;
+        auto state_ptr = &state;
+
+        std::thread llm_thread([bus_ptr, state_ptr, p, providers_copy, app_running,
+                                sel_prov, sel_mod, sys_prompt, tools_enabled,
+                                &store, &spawn_generation]() {
+            ai::logger::set_thread_name("llm");
+            auto gen_start = std::chrono::steady_clock::now();
+            ai::tui::run_generation_with_bus(
+                providers_copy[sel_prov].name,
+                providers_copy[sel_prov].models[sel_mod].id,
+                sys_prompt, *state_ptr->messages_history, tools_enabled,
+                providers_copy, *bus_ptr, *state_ptr);
+
+            auto gen_end = std::chrono::steady_clock::now();
+            auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end - gen_start).count();
+            LOG_INFO("Main: generation complete duration_ms={} queue_remaining={}", dur_ms, store.queue_size());
+
+            if (app_running->load()) {
+                ai::tui::update_modified_files(*state_ptr);
+            }
+
+            // Drain the queue: run the next queued prompt (if any).
+            if (store.has_queued_prompt()) {
+                std::string next = store.dequeue_prompt();
+                int remaining = static_cast<int>(store.queue_size());
+                LOG_INFO("Main: draining queued prompt (remaining={})", remaining);
+                store.add_toast("Running queued prompt (" +
+                                std::to_string(remaining) + " left)", "info", 1500);
+                spawn_generation(next);
+            }
+        });
+        background_threads->push_back(std::move(llm_thread));
+    };
+
+    //  3. Submit handler (uses bus-aware chat)
+    // ═══════════════════════════════════════════════════════════
     auto submit = [&] {
-        if (prompt_input.empty() || store.is_generating()) return;
+        if (prompt_input.empty()) return;
+        if (store.is_generating()) {
+            if (store.has_queued_prompt()) {
+                store.append_to_last_queued_prompt(prompt_input);
+                store.add_toast("Prompt appended to queue", "info", 1000);
+                LOG_INFO("Main: prompt appended to queue (queue_size={})", store.queue_size());
+            } else {
+                store.enqueue_prompt(prompt_input);
+                store.add_toast("Prompt queued", "info", 1000);
+                LOG_INFO("Main: prompt queued (queue_size={})", store.queue_size());
+            }
+            prompt_input = "";
+            return;
+        }
 
         LOG_DEBUG("Main: submit prompt_len={}", prompt_input.size());
         // Slash commands
@@ -165,38 +238,12 @@ int main() {
             return;
         }
 
-        // Normal message
-        store.set_generating(true);
-        state.auto_scroll = true;
+        // Normal message — hand off to the spawner (which also drains the queue)
         std::string p = prompt_input;
         prompt_input = "";
-        store.append_chat_message("User", p);
-        ai::tui::db::save_message(store.session_id(), "User", p);
-
-        // Run generation via bus (no screen->Post!)
-        auto providers_copy = providers_list;
-        int sel_prov = selected_provider;
-        int sel_mod = selected_model;
-        std::string sys_prompt = system_prompt;
-        bool tools_enabled = enable_tools;
-        auto bus_ptr = bus;
-        auto state_ptr = &state;
-
-        std::thread llm_thread([bus_ptr, state_ptr, p, providers_copy, app_running,
-                                sel_prov, sel_mod, sys_prompt, tools_enabled]() {
-            ai::logger::set_thread_name("llm");
-            ai::tui::run_generation_with_bus(
-                providers_copy[sel_prov].name,
-                providers_copy[sel_prov].models[sel_mod].id,
-                sys_prompt, *state_ptr->messages_history, tools_enabled,
-                providers_copy, *bus_ptr, *state_ptr);
-
-            if (app_running->load()) {
-                ai::tui::update_modified_files(*state_ptr);
-            }
-        });
-        background_threads->push_back(std::move(llm_thread));
+        spawn_generation(p);
     };
+
 
     // ═══════════════════════════════════════════════════════════
     //  4. Event handlers (keyboard, mouse, etc.)
