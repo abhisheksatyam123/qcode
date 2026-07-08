@@ -194,6 +194,7 @@ static void run_tools_generation_bus(ai::Client& client,
       if (!step_res.is_success()) {
         LOG_ERROR("run_tools_generation_bus: step={} generate_text failed: finish_reason={} error=\"{}\" provider_metadata_size={}", step, step_res.finishReasonToString(), step_res.error_message(), step_res.provider_metadata.value_or("").size());
         gen_result.error = step_res.error;
+        gen_result.provider_metadata = step_res.provider_metadata;
         break;
       }
 
