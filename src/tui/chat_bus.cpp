@@ -283,6 +283,9 @@ static void run_tools_generation_bus(ai::Client& client,
 
   } else {
     std::string err_str = "Error: " + gen_result.error_message();
+    if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
+      err_str += "\n[Response] " + gen_result.provider_metadata.value().substr(0, 500);
+    }
     bus.publish<ErrorOccurred>({
         .session_id = *state.session_id,
         .message = err_str,
