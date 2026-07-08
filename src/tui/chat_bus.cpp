@@ -282,6 +282,17 @@ static void run_tools_generation_bus(ai::Client& client,
     // and SessionStatusChanged(idle) above signals completion.
 
 
+  } else if (!assistant_text->empty() || !gen_result.text.empty()) {
+    LOG_WARN("run_tools_generation_bus: partial result after step failure - finishing gracefully");
+    std::string final_text;
+    if (!assistant_text->empty()) final_text = *assistant_text;
+    else final_text = gen_result.text;
+    bus.publish<MessageDelta>({
+        .session_id = *state.session_id,
+        .text = final_text,
+        .done = true
+    });
+    ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
   } else {
     std::string err_str = "Error: " + gen_result.error_message();
     if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
