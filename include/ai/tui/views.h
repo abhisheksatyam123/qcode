@@ -51,7 +51,7 @@ ftxui::Element render_view(
     const std::vector<std::pair<std::string, std::string>>& session_entries,
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
-    const std::shared_ptr<float>& scroll_ratio,
+    const std::shared_ptr<int>& scroll_line,
     const ftxui::Component& input
 );
 

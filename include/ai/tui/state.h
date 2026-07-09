@@ -36,7 +36,7 @@ struct ChatState {
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
-    std::shared_ptr<float> scroll_ratio = std::make_shared<float>(1.0f);
+    std::shared_ptr<int> scroll_line = std::make_shared<int>(INT_MAX);
     bool auto_scroll = true;
     std::shared_ptr<std::atomic<int>> generation_frame = std::make_shared<std::atomic<int>>(0);
 

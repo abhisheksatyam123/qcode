@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <climits>
 
 #include <ai/file_logger.h>
 #include <ai/tui/chat.h>
@@ -480,13 +481,15 @@ int main() {
             }
             return true;
         }
-        if (e == Event::PageUp) { state.auto_scroll = false; *state.scroll_ratio = std::max(0.0f, *state.scroll_ratio - 0.1f); return true; }
-        if (e == Event::PageDown) { *state.scroll_ratio = std::min(1.0f, *state.scroll_ratio + 0.1f); return true; }
-        if (e == Event::End) { state.auto_scroll = true; *state.scroll_ratio = 1.0f; return true; }
-        if (e == Event::Home) { state.auto_scroll = false; *state.scroll_ratio = 0.0f; return true; }
+        constexpr int kLinesPerWheel = 3;
+        constexpr int kLinesPerPage = 20;
+        if (e == Event::PageUp) { state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerPage); return true; }
+        if (e == Event::PageDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerPage); return true; }
+        if (e == Event::End) { state.auto_scroll = true; *state.scroll_line = INT_MAX; return true; }
+        if (e == Event::Home) { state.auto_scroll = false; *state.scroll_line = 0; return true; }
         if (e.is_mouse()) {
-            if (e.mouse().button == Mouse::WheelUp) { state.auto_scroll = false; *state.scroll_ratio = std::max(0.0f, *state.scroll_ratio - 0.05f); return true; }
-            if (e.mouse().button == Mouse::WheelDown) { *state.scroll_ratio = std::min(1.0f, *state.scroll_ratio + 0.05f); return true; }
+            if (e.mouse().button == Mouse::WheelUp) { state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
+            if (e.mouse().button == Mouse::WheelDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerWheel); return true; }
             // Left click on chat message area → select and auto-copy
             if (e.mouse().button == Mouse::Left && e.mouse().motion == Mouse::Pressed) {
                 if (state.tab_selected == 0 && !state.chat_history->empty()) {
@@ -566,7 +569,7 @@ int main() {
             show_slash, slash_idx, slash_commands,
             show_model_select, model_select_idx, model_entries,
             show_session_select, session_select_idx, session_entries,
-            tab_toggle, files_menu, state.scroll_ratio, input);
+            tab_toggle, files_menu, state.scroll_line, input);
         
         // Everything is in the header strip now — no separate footer
         auto layout = main_view;

@@ -1,3 +1,4 @@
+## STATUS: DONE (committed; see git history).
 ## Systems
 - Goals:
     1. Improve TUI rendering for tool calls, results, system messages, and user/assistant messages to be more Opencode-like.
@@ -11,6 +12,6 @@
     - Streaming is disabled when tools are enabled.
 
 ## Tasks
-- [ ] Investigate current implementation in src/tui/views.cpp and src/tui/tools.cpp.
-- [ ] Analyze src/tui/chat.cpp to understand why streaming is bypassed when tools are enabled.
-- [ ] Develop a plan to refactor rendering and streaming.
+- [x] Investigate current implementation in src/tui/views.cpp and src/tui/tools.cpp.
+- [x] Analyze src/tui/chat.cpp to understand why streaming is bypassed when tools are enabled.
+- [x] Develop a plan to refactor rendering and streaming.
