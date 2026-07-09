@@ -9,6 +9,8 @@ add_executable(qcode-tui
     system_prompt.cpp
     tools.cpp
     views.cpp
+    markdown.cpp
+    ../../third_party/md4c/md4c.c
     message_render.cpp
     tool_renderers.cpp
     store.cpp
@@ -25,4 +27,9 @@ target_link_libraries(qcode-tui PRIVATE
 
 target_include_directories(qcode-tui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/md4c
 )
+set_source_files_properties(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/md4c/md4c.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=c99")
+

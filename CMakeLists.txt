@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 project(ai-sdk-cpp 
     VERSION 0.1.0
     DESCRIPTION "A unified C++ SDK for multiple AI/LLM providers"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 # C++20 requirement

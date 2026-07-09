@@ -1,4 +1,5 @@
 #pragma once
+#include <ai/tui/markdown.h>  // render_markdown
 #include <ftxui/component/component.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/color.hpp>
@@ -56,7 +57,6 @@ ftxui::Element render_view(
 );
 
 // Markdown
-ftxui::Elements render_markdown(const std::string& input_text);
 
 // Toast overlay
 ftxui::Element render_toast_overlay(
