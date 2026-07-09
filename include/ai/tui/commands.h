@@ -37,6 +37,7 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"new",      "New session",   "Start a new clean chat session",    "Session"},
         {"session",  "Select session", "Manage and load saved sessions",   "Session"},
         {"help",     "Help",          "Show available commands",           "Help"},
+        {"compact",  "Compact",       "Summarize conversation to save context", "Session"},
     };
 }
 
