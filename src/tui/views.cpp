@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <array>
+#include <algorithm>
 #include <cstdio>
 #include <climits>
 #include <unordered_map>
@@ -496,8 +497,23 @@ ftxui::Element render_view(
                 }
             }
 
+            // Measure chat content height (in rendered lines) so scrolling uses a
+            // real line index instead of INT_MAX. ftxui clamps focusPosition(y) to
+            // [0, content-1], so INT_MAX (and INT_MAX-3) both pin to the bottom and
+            // make wheel/key scrolling a no-op. Keeping a real index fixes that.
+            Element chat_scroll = vbox(std::move(msgs));
+            chat_scroll->ComputeRequirement();
+            {
+                const int content_height = std::max(0, chat_scroll->requirement().min_y);
+                if (state.auto_scroll) {
+                    *state.scroll_line = std::max(0, content_height - 1);
+                } else {
+                    *state.scroll_line =
+                        std::clamp(*state.scroll_line, 0, std::max(0, content_height - 1));
+                }
+            }
             body = vbox({
-                vbox(std::move(msgs)) | vscroll_indicator | focusPosition(0, state.auto_scroll ? INT_MAX : *scroll_line) | yframe | flex,
+                chat_scroll | vscroll_indicator | focusPosition(0, *state.scroll_line) | yframe | flex,
                 // status removed — shown in header strip instead
                 prompt_box,
             }) | flex;
@@ -548,10 +564,22 @@ ftxui::Element render_view(
                 file_blocks.push_back(text(""));
             }
             
+            // Same real-line-index treatment as the chat tab (shared scroll_line).
+            Element file_scroll = vbox(std::move(file_blocks));
+            file_scroll->ComputeRequirement();
+            {
+                const int content_height = std::max(0, file_scroll->requirement().min_y);
+                if (state.auto_scroll) {
+                    *state.scroll_line = std::max(0, content_height - 1);
+                } else {
+                    *state.scroll_line =
+                        std::clamp(*state.scroll_line, 0, std::max(0, content_height - 1));
+                }
+            }
             body = vbox({
                 text(" MODIFIED FILES ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
-                vbox(std::move(file_blocks)) | vscroll_indicator | focusPosition(0, state.auto_scroll ? INT_MAX : *scroll_line) | yframe | flex,
+                file_scroll | vscroll_indicator | focusPosition(0, *state.scroll_line) | yframe | flex,
             }) | flex;
         }
     }
