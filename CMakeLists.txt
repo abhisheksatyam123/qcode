@@ -45,6 +45,8 @@ set(HTTPLIB_COMPILE_DEFS
 add_library(ai-sdk-cpp-core)
 add_library(ai-sdk-cpp-openai)
 add_library(ai-sdk-cpp-anthropic)
+add_library(ai-sdk-cpp-antigravity)
+add_library(ai-sdk-cpp-registry)
 add_library(ai-sdk-cpp-langfuse)
 add_library(ai-sdk-cpp INTERFACE)
 
@@ -53,12 +55,16 @@ add_library(ai::sdk ALIAS ai-sdk-cpp)
 add_library(ai::core ALIAS ai-sdk-cpp-core)
 add_library(ai::openai ALIAS ai-sdk-cpp-openai)
 add_library(ai::anthropic ALIAS ai-sdk-cpp-anthropic)
+add_library(ai::antigravity ALIAS ai-sdk-cpp-antigravity)
+add_library(ai::registry ALIAS ai-sdk-cpp-registry)
 add_library(ai::langfuse ALIAS ai-sdk-cpp-langfuse)
 
 # Configure all component libraries
 configure_ai_component(ai-sdk-cpp-core)
 configure_ai_component(ai-sdk-cpp-openai)
 configure_ai_component(ai-sdk-cpp-anthropic)
+configure_ai_component(ai-sdk-cpp-antigravity)
+configure_ai_component(ai-sdk-cpp-registry)
 configure_ai_component(ai-sdk-cpp-langfuse)
 
 # Configure main interface library
@@ -77,6 +83,7 @@ target_sources(ai-sdk-cpp-core
         src/types/stream_result.cpp
         src/types/message.cpp
         src/transform/transform.cpp
+        src/transform/gemini_transform.cpp
         
         # HTTP and base provider infrastructure
         src/http/http_request_handler.cpp
@@ -107,7 +114,20 @@ set(ANTHROPIC_SOURCES
 )
 
 target_sources(ai-sdk-cpp-openai PRIVATE ${OPENAI_SOURCES})
+# Antigravity (Google Vertex / Gemini) provider
+set(ANTIGRAVITY_SOURCES
+    src/providers/antigravity/antigravity_client.cpp
+    src/providers/antigravity/antigravity_request_builder.cpp
+    src/providers/antigravity/antigravity_factory.cpp
+)
+
 target_sources(ai-sdk-cpp-anthropic PRIVATE ${ANTHROPIC_SOURCES})
+target_sources(ai-sdk-cpp-antigravity PRIVATE ${ANTIGRAVITY_SOURCES})
+# Provider registry (central dispatch)
+set(REGISTRY_SOURCES
+    src/providers/registry.cpp
+)
+target_sources(ai-sdk-cpp-registry PRIVATE ${REGISTRY_SOURCES})
 
 # Langfuse tracing component
 target_sources(ai-sdk-cpp-langfuse
@@ -127,7 +147,7 @@ target_link_libraries(ai-sdk-cpp-core
 )
 
 # Provider components link to core and share common dependencies
-foreach(provider openai anthropic)
+foreach(provider openai anthropic antigravity)
     target_link_libraries(ai-sdk-cpp-${provider}
         PUBLIC
             ai::core
@@ -149,6 +169,18 @@ endforeach()
 
 # Langfuse tracing component links to core and uses httplib + OpenSSL +
 # stduuid (header-only, vendored under third_party/stduuid-header-only).
+target_link_libraries(ai-sdk-cpp-registry
+    PUBLIC
+        ai::openai
+        ai::core
+        nlohmann_json::nlohmann_json
+)
+
+target_compile_definitions(ai-sdk-cpp-registry
+    PUBLIC
+        AI_SDK_HAS_REGISTRY=1
+)
+
 target_link_libraries(ai-sdk-cpp-langfuse
     PUBLIC
         ai::core
@@ -178,7 +210,9 @@ target_link_libraries(ai-sdk-cpp
         ai::core
         ai::openai
         ai::anthropic
+        ai::antigravity
         ai::langfuse
+        ai::registry
 )
 
 # Define all component availability for main library
@@ -186,7 +220,9 @@ target_compile_definitions(ai-sdk-cpp
     INTERFACE
         AI_SDK_HAS_OPENAI=1
         AI_SDK_HAS_ANTHROPIC=1
+        AI_SDK_HAS_ANTIGRAVITY=1
         AI_SDK_HAS_LANGFUSE=1
+        AI_SDK_HAS_REGISTRY=1
 )
 
 # List of all concrete component targets
@@ -194,6 +230,8 @@ set(COMPONENT_TARGETS
     ai-sdk-cpp-core
     ai-sdk-cpp-openai
     ai-sdk-cpp-anthropic
+    ai-sdk-cpp-antigravity
+    ai-sdk-cpp-registry
     ai-sdk-cpp-langfuse
 )
 

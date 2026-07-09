@@ -14,6 +14,8 @@
 #include <ai/types/client.h>
 #include <ai/logger.h>
 #include <ai/openai.h>
+#include "ai/registry.h"
+#include "ai/tui/provider_registry_init.h"
 
 namespace ai {
 namespace tui {
@@ -420,7 +422,6 @@ void run_generation_with_bus(
 
     // ── Resolve provider & API key ──
     ai::Client client;
-    std::string api_key = "unused";
     std::string api_url;
     std::string provider_id;
 
@@ -434,52 +435,20 @@ void run_generation_with_bus(
 
     LOG_DEBUG("chat_bus: resolved provider={} api_url={}", provider_id, api_url);
 
-    if (provider_id == "openrouter") {
-      char* key = std::getenv("OPENROUTER_API_KEY");
-      if (!key) {
-        bus.publish<ErrorOccurred>({
-            .session_id = *state.session_id,
-            .message = "OPENROUTER_API_KEY not set.",
-            .severity = "error"
-        });
-        return;
-      }
-      api_key = key;
-      client = ai::openai::create_client(api_key, "https://openrouter.ai/api");
-    } else if (provider_id == "qpilot" || provider_id == "qgenie") {
-      char* key = std::getenv("QPILOT_API_KEY");
-      if (!key) {
-        bus.publish<ErrorOccurred>({
-            .session_id = *state.session_id,
-            .message = "QPILOT_API_KEY not set.",
-            .severity = "error"
-        });
-        return;
-      }
-      api_key = key;
-      client = ai::openai::create_client(
-          api_key,
-          provider_id == "qpilot"
-              ? "https://qpilot-api.qualcomm.com"
-              : "https://qgenie-api.qualcomm.com");
-    } else if (provider_id == "antigravity") {
-      api_key = get_antigravity_token();
-      if (api_key.empty()) {
-        bus.publish<ErrorOccurred>({
-            .session_id = *state.session_id,
-            .message = "Antigravity token failed.",
-            .severity = "error"
-        });
-        return;
-      }
-      client = ai::openai::create_client(
-          api_key,
-          "https://daily-cloudcode-pa.googleapis.com/v1internal");
-    } else {
-      client = ai::openai::create_client(
-          "unused",
-          api_url.empty() ? "https://opencode.ai/zen/v1" : api_url);
+    // Resolve the provider client via the central registry (auth + base
+    // URL handled per provider). Errors are surfaced on the bus.
+    ai::providers::register_tui_providers();
+    auto resolution =
+        ai::providers::ProviderRegistry::instance().resolve(provider_id, api_url);
+    if (!resolution.ok()) {
+      bus.publish<ErrorOccurred>({
+          .session_id = *state.session_id,
+          .message = resolution.error,
+          .severity = "error"
+      });
+      return;
     }
+    client = std::move(resolution.client);
 
     LOG_INFO("ChatBus: provider={}, model={}, tools={}", provider_id, model_id, enable_tools);
 

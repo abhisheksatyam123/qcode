@@ -1,5 +1,6 @@
 #pragma once
 
+
 #include "ai/types/stream_result.h"
 
 #include <atomic>
@@ -31,6 +32,11 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   StreamEvent get_next_event() override;
   bool has_more_events() const override;
   void stop_stream() override;
+
+#ifdef AI_SDK_TESTING
+  // Allow unit tests to drive the SSE parser directly.
+  void test_parse_sse_line(const std::string& line) { parse_sse_line(line); }
+#endif
 
  private:
   void run_stream(const std::string& url,

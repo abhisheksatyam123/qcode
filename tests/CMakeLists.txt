@@ -7,6 +7,9 @@ add_executable(ai_tests
     unit/openai_stream_test.cpp
     unit/anthropic_stream_test.cpp
     unit/openai_embeddings_test.cpp
+    unit/registry_test.cpp
+    unit/gemini_transform_test.cpp
+    unit/antigravity_client_test.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp

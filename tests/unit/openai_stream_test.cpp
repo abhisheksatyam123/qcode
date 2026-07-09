@@ -3,6 +3,7 @@
 #include "ai/types/stream_event.h"
 #include "ai/types/stream_options.h"
 #include "ai/types/stream_result.h"
+#include "providers/openai/openai_stream.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -325,6 +326,74 @@ TEST_F(StreamEdgeCaseTest, UnicodeInStream) {
     }
   }
   EXPECT_TRUE(found_unicode);
+}
+
+// ── Antigravity (Google Vertex) wrapped-SSE parsing ──────────────────
+// Antigravity streams SSE chunks wrapped as
+//   { "response": { "candidates": [...], "usageMetadata": {...} },
+//     "traceId": ..., "metadata": {} }
+// The streaming parser must unwrap the "response" envelope, otherwise every
+// chunk is ignored and the model appears to return an empty response.
+class AntigravityStreamTest : public OpenAITestFixture {};
+
+TEST_F(AntigravityStreamTest, UnwrapsResponseEnvelopeAndExtractsText) {
+  ai::openai::OpenAIStreamImpl impl;
+
+  std::vector<std::string> chunks = {
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":""}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":1,"totalTokenCount":16}},"traceId":"t1","metadata":{}})",
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":1,"totalTokenCount":16}},"traceId":"t1","metadata":{}})",
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":" there"}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":1,"totalTokenCount":16}},"traceId":"t1","metadata":{}})",
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":","}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":1,"totalTokenCount":16}},"traceId":"t1","metadata":{}})",
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":" friend"}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":1,"totalTokenCount":16}},"traceId":"t1","metadata":{}})",
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"!"}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":1,"totalTokenCount":16}},"traceId":"t1","metadata":{}})",
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":""}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":8,"totalTokenCount":23}},"traceId":"t1","metadata":{}})",
+  };
+  for (const auto& c : chunks) impl.test_parse_sse_line("data: " + c);
+  impl.test_parse_sse_line("data: [DONE]");
+
+  std::string text;
+  bool saw_finish = false;
+  bool saw_usage = false;
+  while (impl.has_more_events()) {
+    ai::StreamEvent ev = impl.get_next_event();
+    if (ev.is_text_delta()) {
+      text += ev.text_delta;
+    } else if (ev.is_finish()) {
+      saw_finish = true;
+      if (ev.usage.has_value()) saw_usage = true;
+    } else if (ev.is_error()) {
+      FAIL() << "unexpected error event: " << ev.error.value_or("");
+    } else {
+      break;  // empty event => stream drained & complete
+    }
+  }
+
+  EXPECT_EQ(text, "Hi there, friend!");
+  EXPECT_TRUE(saw_finish);
+  EXPECT_TRUE(saw_usage);
+}
+
+TEST_F(AntigravityStreamTest, SurfacesProviderErrorInsteadOfEmpty) {
+  ai::openai::OpenAIStreamImpl impl;
+  // Antigravity quota/rate-limit errors arrive at the top level (no envelope).
+  impl.test_parse_sse_line(
+      R"(data: {"error":{"code":429,"message":"Individual quota reached. Please upgrade your subscription."}})");
+  impl.test_parse_sse_line("data: [DONE]");
+
+  bool saw_error = false;
+  while (impl.has_more_events()) {
+    ai::StreamEvent ev = impl.get_next_event();
+    if (ev.is_error()) {
+      saw_error = true;
+      EXPECT_THAT(ev.error.value_or(""), testing::HasSubstr("Individual quota reached"));
+      break;
+    } else if (ev.is_text_delta() || ev.is_finish()) {
+      continue;
+    } else {
+      break;
+    }
+  }
+  EXPECT_TRUE(saw_error);
 }
 
 }  // namespace test

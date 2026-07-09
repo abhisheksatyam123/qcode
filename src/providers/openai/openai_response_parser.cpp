@@ -1,6 +1,7 @@
 #include "openai_response_parser.h"
 
 #include "../../utils/response_utils.h"
+#include "ai/gemini_transform.h"
 #include "ai/logger.h"
 
 namespace ai {
@@ -10,59 +11,9 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     const nlohmann::json& response) {
   LOG_DEBUG("Parsing OpenAI chat completion response");
 
-  nlohmann::json normalized_response = response;
-  
-  // Gemini/Antigravity response normalization
-  nlohmann::json gemini_data = response;
-  if (response.contains("response") && response["response"].is_object()) {
-    gemini_data = response["response"];
-  }
-  
-  if (gemini_data.contains("candidates")) {
-    normalized_response = nlohmann::json::object();
-    normalized_response["id"] = gemini_data.value("responseId", response.value("requestId", ""));
-    normalized_response["model"] = gemini_data.value("modelVersion", response.value("model", ""));
-    normalized_response["created"] = 0;
-    
-    nlohmann::json choices = nlohmann::json::array();
-    auto& candidates = gemini_data["candidates"];
-    if (!candidates.empty()) {
-      auto& cand = candidates[0];
-      nlohmann::json choice = nlohmann::json::object();
-      choice["index"] = 0;
-      
-      nlohmann::json message = nlohmann::json::object();
-      message["role"] = "assistant";
-      
-      std::string text_content = "";
-      if (cand.contains("content") && cand["content"].contains("parts")) {
-        auto& parts = cand["content"]["parts"];
-        if (!parts.empty() && parts[0].contains("text")) {
-          text_content = parts[0]["text"].get<std::string>();
-        }
-      }
-      message["content"] = text_content;
-      
-      choice["message"] = message;
-      
-      std::string finish_reason_str = cand.value("finishReason", "stop");
-      if (finish_reason_str == "STOP") choice["finish_reason"] = "stop";
-      else if (finish_reason_str == "MAX_TOKENS") choice["finish_reason"] = "length";
-      else choice["finish_reason"] = "stop";
-      
-      choices.push_back(choice);
-    }
-    normalized_response["choices"] = choices;
-    
-    if (gemini_data.contains("usageMetadata")) {
-      auto& usage_meta = gemini_data["usageMetadata"];
-      nlohmann::json usage = nlohmann::json::object();
-      usage["prompt_tokens"] = usage_meta.value("promptTokenCount", 0);
-      usage["completion_tokens"] = usage_meta.value("candidatesTokenCount", 0);
-      usage["total_tokens"] = usage_meta.value("totalTokenCount", 0);
-      normalized_response["usage"] = usage;
-    }
-  }
+  // Gemini/Antigravity response normalization: unwrap the envelope and
+  // translate a generateContent payload into OpenAI-shaped JSON.
+  nlohmann::json normalized_response = ai::gemini::normalize_gemini_response(response);
 
   GenerateResult result;
 

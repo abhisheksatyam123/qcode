@@ -1,6 +1,7 @@
 #include "openai_stream.h"
 
 #include "ai/logger.h"
+#include "ai/gemini_transform.h"
 #include "http/http_request_handler.h"
 
 #include <chrono>
@@ -212,7 +213,29 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
 
     try {
       auto json = nlohmann::json::parse(data);
-      
+
+      // Antigravity wraps every SSE chunk in { response: {...}, traceId,
+      // metadata }. Unwrap so the Gemini/OpenAI branches below see the inner
+      // payload (candidates / usageMetadata / choices / delta).
+      json = ai::gemini::unwrap_envelope(json);
+
+      // Surface provider errors (e.g. Antigravity quota/rate-limit) instead of
+      // silently yielding an empty response.
+      if (json.contains("error")) {
+        const auto& err = json["error"];
+        std::string msg;
+        if (err.is_string()) {
+          msg = err.get<std::string>();
+        } else if (err.contains("message")) {
+          msg = err["message"].get<std::string>();
+        }
+        if (!msg.empty()) {
+          LOG_ERROR("Stream error from provider: {}", msg);
+          push_event(create_error_event(msg));
+          return;
+        }
+      }
+
       // Google Gemini / Antigravity SSE parsing
       if (json.contains("candidates")) {
         auto& candidates = json["candidates"];

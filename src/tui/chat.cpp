@@ -13,6 +13,8 @@
 #include <ai/types/client.h>
 #include <ai/logger.h>
 #include <ai/openai.h>
+#include "ai/registry.h"
+#include "ai/tui/provider_registry_init.h"
 
 namespace ai {
 namespace tui {
@@ -457,7 +459,6 @@ void run_llm_generation(
   try {
     // ── Resolve provider & API key ──
     ai::Client client;
-    std::string api_key = "unused";
     std::string api_url;
     std::string provider_id;
 
@@ -469,47 +470,16 @@ void run_llm_generation(
       }
     }
 
-    // ---- openrouter ----
-    if (provider_id == "openrouter") {
-      char* key = std::getenv("OPENROUTER_API_KEY");
-      if (!key) {
-        report_error(screen, state, "OPENROUTER_API_KEY not set.");
-        return;
-      }
-      api_key = key;
-      client = ai::openai::create_client(api_key,
-                                         "https://openrouter.ai/api");
+    // Resolve the provider client via the central registry (auth + base
+    // URL handled per provider). Errors are surfaced through report_error.
+    ai::providers::register_tui_providers();
+    auto resolution =
+        ai::providers::ProviderRegistry::instance().resolve(provider_id, api_url);
+    if (!resolution.ok()) {
+      report_error(screen, state, resolution.error);
+      return;
     }
-    // ---- qpilot / qgenie ----
-    else if (provider_id == "qpilot" || provider_id == "qgenie") {
-      char* key = std::getenv("QPILOT_API_KEY");
-      if (!key) {
-        report_error(screen, state, "QPILOT_API_KEY not set.");
-        return;
-      }
-      api_key = key;
-      client = ai::openai::create_client(
-          api_key, provider_id == "qpilot"
-                       ? "https://qpilot-api.qualcomm.com"
-                       : "https://qgenie-api.qualcomm.com");
-    }
-    // ---- antigravity ----
-    else if (provider_id == "antigravity") {
-      api_key = get_antigravity_token();
-      if (api_key.empty()) {
-        report_error(screen, state, "Antigravity token failed.");
-        return;
-      }
-      client = ai::openai::create_client(
-          api_key,
-          "https://daily-cloudcode-pa.googleapis.com/v1internal");
-    }
-    // ---- generic / opencode ----
-    else {
-      client = ai::openai::create_client(
-          "unused",
-          api_url.empty() ? "https://opencode.ai/zen/v1" : api_url);
-    }
+    client = std::move(resolution.client);
 
     LOG_INFO("LLM gen: provider={}, model={}, tools={}", provider_id,
              model, enable_tools);
