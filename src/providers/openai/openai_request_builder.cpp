@@ -108,6 +108,13 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
   if (options.max_tokens) {
     request["max_completion_tokens"] = *options.max_tokens;
+  } else if (options.reasoning_effort) {
+    // o-series require a completion-token budget; provide a safe default.
+    request["max_completion_tokens"] = 8192;
+  }
+
+  if (options.reasoning_effort) {
+    request["reasoning_effort"] = *options.reasoning_effort;
   }
 
   if (options.top_p) {

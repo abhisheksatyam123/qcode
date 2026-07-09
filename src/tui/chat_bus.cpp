@@ -357,6 +357,21 @@ static void run_stream_generation_bus(ai::Client& client,
     });
   };
 
+  std::string reasoning_buffer;
+  std::string last_reasoning_signature;
+  auto flush_reasoning = [&]() {
+    if (reasoning_buffer.empty()) return;
+    LOG_DEBUG("ChatBus: flush_reasoning buffer_size={}", reasoning_buffer.size());
+    std::string batch = std::move(reasoning_buffer);
+    reasoning_buffer.clear();
+    bus.publish<ReasoningDelta>({
+        .session_id = *state.session_id,
+        .text = batch,
+        .signature = last_reasoning_signature,
+        .done = false
+    });
+  };
+
   for (const auto& event : stream) {
     if (event.is_text_delta()) {
       text_buffer += event.text_delta;
@@ -365,6 +380,23 @@ static void run_stream_generation_bus(ai::Client& client,
       if (now - last_flush >= FLUSH_INTERVAL) {
         flush_text();
         last_flush = now;
+      }
+    } else if (event.is_reasoning_delta()) {
+      // OpenRouter encrypts reasoning as [REDACTED]; drop those chunks.
+      std::string chunk = event.text_delta;
+      if (chunk.find("[REDACTED]") != std::string::npos) {
+        LOG_DEBUG("ChatBus: dropping redacted reasoning chunk");
+      } else {
+        reasoning_buffer += chunk;
+        if (event.metadata.has_value() && !event.metadata->empty()) {
+          last_reasoning_signature = *event.metadata;
+        }
+        LOG_DEBUG("ChatBus: reasoning_delta buffer_size={}", reasoning_buffer.size());
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_flush >= FLUSH_INTERVAL) {
+          flush_reasoning();
+          last_flush = now;
+        }
       }
     } else if (event.is_error()) {
       LOG_ERROR("run_stream_generation_bus: stream error");
@@ -390,6 +422,14 @@ static void run_stream_generation_bus(ai::Client& client,
   bus.publish<MessageDelta>({
       .session_id = *state.session_id,
       .text = text_buffer,
+      .done = true
+  });
+
+  flush_reasoning();
+  bus.publish<ReasoningDelta>({
+      .session_id = *state.session_id,
+      .text = reasoning_buffer,
+      .signature = last_reasoning_signature,
       .done = true
   });
 
@@ -457,6 +497,20 @@ void run_generation_with_bus(
     base_opts.model = model_id;
     base_opts.system = system_prompt;
     base_opts.messages = messages;
+
+    // ── Opt-in extended thinking / reasoning ──
+    const std::string& rm = *state.reasoning_mode;
+    if (rm == "low" || rm == "medium" || rm == "high") {
+      bool is_anthropic =
+          (provider_id.find("anthropic") != std::string::npos) ||
+          (model_id.find("claude") != std::string::npos);
+      if (is_anthropic) {
+        int budget = (rm == "low") ? 2000 : (rm == "medium") ? 8000 : 16000;
+        base_opts.budget_tokens = budget;
+      } else {
+        base_opts.reasoning_effort = rm;  // openai o-series / openrouter / etc.
+      }
+    }
 
     // ── Dispatch ──
     if (enable_tools) {

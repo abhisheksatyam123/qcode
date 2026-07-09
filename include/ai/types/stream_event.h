@@ -24,6 +24,16 @@ struct StreamEvent {
 
   bool is_text_delta() const { return type == kStreamEventTypeTextDelta; }
 
+  // Reasoning/thinking delta: text in text_delta; signature (if any) in metadata.
+  static StreamEvent reasoning(std::string text,
+                               std::optional<std::string> signature = std::nullopt) {
+    StreamEvent e(kStreamEventTypeReasoningDelta);
+    e.text_delta = std::move(text);
+    e.metadata = std::move(signature);
+    return e;
+  }
+  bool is_reasoning_delta() const { return type == kStreamEventTypeReasoningDelta; }
+
   bool is_error() const { return type == kStreamEventTypeError; }
 
   bool is_finish() const { return type == kStreamEventTypeFinish; }

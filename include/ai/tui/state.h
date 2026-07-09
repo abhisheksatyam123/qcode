@@ -38,6 +38,9 @@ struct ChatState {
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
     std::shared_ptr<int> scroll_line = std::make_shared<int>(INT_MAX);
     bool auto_scroll = true;
+    std::shared_ptr<bool> show_thinking = std::make_shared<bool>(true);
+    // Reasoning/thinking level: "off" | "low" | "medium" | "high" (opt-in)
+    std::shared_ptr<std::string> reasoning_mode = std::make_shared<std::string>("off");
     std::shared_ptr<std::atomic<int>> generation_frame = std::make_shared<std::atomic<int>>(0);
 
     // Tab navigation

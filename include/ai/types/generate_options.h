@@ -26,6 +26,10 @@ struct GenerateOptions {
   std::optional<double> frequency_penalty;
   std::optional<double> presence_penalty;
 
+  // Reasoning / extended-thinking support (opt-in; provider-specific)
+  std::optional<std::string> reasoning_effort;  // openai o-series: "low"/"medium"/"high"
+  std::optional<int> budget_tokens;            // anthropic: thinking budget
+
   // Tool calling support
   ToolSet tools;
   ToolChoice tool_choice = ToolChoice::auto_choice();

@@ -106,6 +106,16 @@ struct ErrorOccurred {
     };
 };
 
+struct ReasoningDelta {
+    static constexpr const char* type = "backend.reasoning.delta";
+    struct Payload {
+        std::string session_id;
+        std::string text;
+        std::string signature; // provider signature (anthropic); may be empty
+        bool done = false;
+    };
+};
+
 struct TokenUsageUpdated {
     static constexpr const char* type = "backend.token.usage.updated";
     struct Payload {
@@ -138,6 +148,7 @@ inline void register_all_events(bus::BusPort& bus) {
     bus.register_event<SessionStatusChanged>();
     bus.register_event<ErrorOccurred>();
     bus.register_event<TokenUsageUpdated>();
+    bus.register_event<ReasoningDelta>();
     bus.register_event<ToastRequested>();
 }
 

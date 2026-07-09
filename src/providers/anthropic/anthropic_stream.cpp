@@ -185,15 +185,25 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
       // Start of content block
       return;
     } else if (event_type == "content_block_delta") {
-      // Text delta - this is what we want to stream
-      if (json_event.contains("delta") &&
-          json_event["delta"].contains("text")) {
-        std::string text = json_event["delta"]["text"];
-
-        StreamEvent event(text);
-        push_event(event);
-
-        LOG_DEBUG("Enqueued text delta: '{}'", text);
+      // Text and/or thinking deltas
+      if (json_event.contains("delta")) {
+        const auto& delta = json_event["delta"];
+        std::string delta_type = delta.value("type", "");
+        if (delta_type == "thinking_delta" && delta.contains("thinking")) {
+          std::string thinking = delta["thinking"].get<std::string>();
+          push_event(StreamEvent::reasoning(thinking));
+          LOG_DEBUG("Enqueued thinking delta: '{}'", thinking);
+        } else if (delta_type == "signature_delta" &&
+                   delta.contains("signature")) {
+          std::string sig = delta["signature"].get<std::string>();
+          push_event(StreamEvent::reasoning("", sig));
+          LOG_DEBUG("Enqueued thinking signature");
+        } else if (delta.contains("text")) {
+          std::string text = delta["text"].get<std::string>();
+          StreamEvent event(text);
+          push_event(event);
+          LOG_DEBUG("Enqueued text delta: '{}'", text);
+        }
       }
     } else if (event_type == "content_block_stop") {
       // End of content block

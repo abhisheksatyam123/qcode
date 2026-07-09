@@ -272,6 +272,25 @@ static Element render_tool_result(const ai::ToolResultContentPart& part,
 }
 
 // ── Render a full message ──
+// ── Reasoning / thinking block (matches opencode ReasoningPart) ──
+static Element render_reasoning(const ai::ReasoningContentPart& rp,
+                                const std::string& theme) {
+  if (rp.text.empty()) return Element();
+  Elements md = render_markdown(rp.text);
+  Elements indented;
+  for (auto& el : md) {
+    indented.push_back(hbox({text("  "), std::move(el)}));
+  }
+  auto border_color = dim_gray();
+  return vbox({
+      hbox({text("  "), text("_Thinking:_") | dim | color(border_color)}),
+      hbox({
+          separatorLight() | color(border_color),
+          vbox(std::move(indented)) | flex,
+      }),
+  });
+}
+
 Element render_message(const ai::Message& msg, const ChatState& state,
                        const std::vector<ProviderInfo>& providers_list,
                        int selected_provider, int selected_model,
@@ -344,6 +363,11 @@ Element render_message(const ai::Message& msg, const ChatState& state,
     } else if (const auto* result_part =
                    std::get_if<ai::ToolResultContentPart>(&part)) {
       parts.push_back(render_tool_result(*result_part, theme));
+    } else if (const auto* reasoning_part =
+                   std::get_if<ai::ReasoningContentPart>(&part)) {
+      if (*state.show_thinking) {
+        parts.push_back(render_reasoning(*reasoning_part, theme));
+      }
     }
   }
 

@@ -415,6 +415,14 @@ int main() {
     });
 
     main_container |= CatchEvent([&](Event e) {
+        // Toggle visibility of reasoning/thinking blocks (Ctrl-T or F2)
+        if (e == Event::Special(std::string(1, '\x14')) || e == Event::F2) {
+            *state.show_thinking = !*state.show_thinking;
+            store.add_toast(*state.show_thinking ? "Thinking: shown"
+                                                 : "Thinking: hidden",
+                            "info", 2000);
+            return true;
+        }
         if (e == Event::Tab) {
             if (state.tab_selected == 1) {
                 if (tab_toggle->Focused()) files_menu->TakeFocus();

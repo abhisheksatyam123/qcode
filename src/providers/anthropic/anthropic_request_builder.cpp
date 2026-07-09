@@ -10,7 +10,14 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
     const GenerateOptions& options) {
   nlohmann::json request;
   request["model"] = options.model;
-  request["max_tokens"] = options.max_tokens.value_or(4096);
+  int max_tokens = options.max_tokens.value_or(4096);
+  if (options.budget_tokens.has_value()) {
+    // Anthropic requires max_tokens > budget_tokens.
+    max_tokens = std::max(max_tokens, *options.budget_tokens + 1024);
+    request["thinking"] = {{"type", "enabled"},
+                           {"budget_tokens", *options.budget_tokens}};
+  }
+  request["max_tokens"] = max_tokens;
   request["messages"] = nlohmann::json::array();
 
   // Handle system message
@@ -54,8 +61,27 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
         // Anthropic expects content as array for mixed content or tool calls
         if (!tool_calls.empty() ||
-            (msg.role == kMessageRoleAssistant && !text_content.empty())) {
+            (msg.role == kMessageRoleAssistant &&
+             (!text_content.empty() || msg.has_reasoning()))) {
           message["content"] = nlohmann::json::array();
+
+          // Echo thinking blocks (required when extended thinking is enabled).
+          // Must appear before the text block and carry the original signature.
+          if (options.budget_tokens.has_value() && msg.has_reasoning()) {
+            for (const auto& part : msg.content) {
+              if (const auto* rp =
+                      std::get_if<ai::ReasoningContentPart>(&part)) {
+                if (!rp->text.empty()) {
+                  nlohmann::json thinking;
+                  thinking["type"] = "thinking";
+                  thinking["thinking"] = rp->text;
+                  thinking["signature"] =
+                      rp->signature.empty() ? "" : rp->signature;
+                  message["content"].push_back(thinking);
+                }
+              }
+            }
+          }
 
           // Add text content if present
           if (!text_content.empty()) {

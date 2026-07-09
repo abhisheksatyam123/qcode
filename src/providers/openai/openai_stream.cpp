@@ -290,6 +290,22 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
                                 content.length());
           push_event(StreamEvent(content));
         }
+
+        // o-series reasoning tokens (reasoning or structured reasoning_details)
+        if (delta.contains("reasoning") && !delta["reasoning"].is_null()) {
+          std::string reasoning = delta["reasoning"].get<std::string>();
+          LOG_DEBUG("Received reasoning chunk - length: {}", reasoning.length());
+          push_event(StreamEvent::reasoning(reasoning));
+        } else if (delta.contains("reasoning_details") &&
+                   delta["reasoning_details"].is_array()) {
+          for (const auto& rd : delta["reasoning_details"]) {
+            if (rd.is_object() && rd.value("type", "") == "text" &&
+                rd.contains("text")) {
+              std::string reasoning = rd["text"].get<std::string>();
+              push_event(StreamEvent::reasoning(reasoning));
+            }
+          }
+        }
       }
 
       // Check for finish_reason

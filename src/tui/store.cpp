@@ -76,6 +76,30 @@ void AppStore::update_last_assistant_message(const std::string& text) {
     notify();
 }
 
+void AppStore::append_reasoning(const std::string& text,
+                                const std::string& signature) {
+    if (state_.messages_history->empty() ||
+        state_.messages_history->back().role != ai::kMessageRoleAssistant) {
+        state_.messages_history->push_back(
+            ai::Message::assistant_with_reasoning("", text, signature));
+    } else {
+        auto& last = state_.messages_history->back();
+        bool found = false;
+        for (auto& part : last.content) {
+            if (auto* rp = std::get_if<ai::ReasoningContentPart>(&part)) {
+                rp->text = text;
+                if (!signature.empty()) rp->signature = signature;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            last.content.push_back(ai::ReasoningContentPart{text, signature});
+        }
+    }
+    notify();
+}
+
 void AppStore::set_generating(bool v) {
     *state_.is_generating = v;
     notify();
@@ -174,6 +198,10 @@ void AppStore::wire() {
         } else {
             update_last_assistant_message(p.text);
         }
+    }));
+    subs_.push_back(bus_.subscribe<ReasoningDelta>([this](const ReasoningDelta::Payload& p) {
+        // p.done carries the final (full) reasoning + signature; otherwise incremental full buffer.
+        append_reasoning(p.text, p.signature);
     }));
     // ... remaining wire implementation same as before
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {

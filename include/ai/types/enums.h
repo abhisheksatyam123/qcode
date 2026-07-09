@@ -18,6 +18,7 @@ enum FinishReason {
 
 enum StreamEventType {
   kStreamEventTypeTextDelta,
+  kStreamEventTypeReasoningDelta,
   kStreamEventTypeToolCall,
   kStreamEventTypeToolResult,
   kStreamEventTypeStepStart,

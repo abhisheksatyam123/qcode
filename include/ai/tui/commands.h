@@ -38,6 +38,7 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"session",  "Select session", "Manage and load saved sessions",   "Session"},
         {"help",     "Help",          "Show available commands",           "Help"},
         {"compact",  "Compact",       "Summarize conversation to save context", "Session"},
+        {"reasoning", "Reasoning", "Set reasoning level: off|low|medium|high", "Session"},
     };
 }
 

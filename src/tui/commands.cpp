@@ -190,6 +190,24 @@ bool handle_slash_command(
         return true;
     }
 
+    if (cmd == "reasoning") {
+        std::string lvl = args;
+        // Trim whitespace
+        while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.front()))) lvl.erase(lvl.begin());
+        while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.back()))) lvl.pop_back();
+        if (lvl.empty()) lvl = "off";
+        if (lvl != "off" && lvl != "low" && lvl != "medium" && lvl != "high") {
+            state.chat_history->push_back(
+                {"System", "Reasoning: invalid level '" + lvl +
+                 "'. Use off|low|medium|high."});
+            return true;
+        }
+        *state.reasoning_mode = lvl;
+        state.chat_history->push_back({"System", "Reasoning mode: " + lvl});
+        LOG_DEBUG("Commands: reasoning mode set to '{}'", lvl);
+        return true;
+    }
+
     if (cmd == "compact") {
         LOG_DEBUG("Commands: /compact args='{}'", args);
         int keep = 4;
@@ -220,6 +238,8 @@ bool handle_slash_command(
                     text += "[Tool call: " + tcp->tool_name + "]\n";
                 } else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
                     text += "[Tool result]\n";
+                } else if (const auto* rcp = std::get_if<ai::ReasoningContentPart>(&part)) {
+                    if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";
                 }
             }
             transcript << role_str << ": " << text << "\n";

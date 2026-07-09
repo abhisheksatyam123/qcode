@@ -40,9 +40,19 @@ struct ToolResultContentPart {
         duration_ms(dur) {}
 };
 
+struct ReasoningContentPart {
+  std::string text;        // thinking/reasoning text (display)
+  std::string signature;   // provider signature (anthropic) for multi-turn echo-back
+
+  ReasoningContentPart() = default;
+  ReasoningContentPart(std::string t, std::string sig = "")
+      : text(std::move(t)), signature(std::move(sig)) {}
+};
+
 // Content part variant
 using ContentPart =
-    std::variant<TextContentPart, ToolCallContentPart, ToolResultContentPart>;
+    std::variant<TextContentPart, ToolCallContentPart, ToolResultContentPart,
+                 ReasoningContentPart>;
 
 // Message content is now a vector of content parts
 using MessageContent = std::vector<ContentPart>;
@@ -85,6 +95,20 @@ struct Message {
     return Message(kMessageRoleAssistant, std::move(content_parts));
   }
 
+  static Message assistant_with_reasoning(
+      const std::string& text, const std::string& reasoning,
+      const std::string& signature = "") {
+    MessageContent content_parts;
+    if (!reasoning.empty()) {
+      content_parts.emplace_back(
+          ReasoningContentPart{reasoning, signature});
+    }
+    if (!text.empty()) {
+      content_parts.emplace_back(TextContentPart{text});
+    }
+    return Message(kMessageRoleAssistant, std::move(content_parts));
+  }
+
   static Message tool_results(
       const std::vector<ToolResultContentPart>& results) {
     MessageContent content_parts;
@@ -115,6 +139,23 @@ struct Message {
         content.begin(), content.end(), [](const ContentPart& part) {
           return std::holds_alternative<ToolResultContentPart>(part);
         });
+  }
+
+  bool has_reasoning() const {
+    return std::any_of(
+        content.begin(), content.end(), [](const ContentPart& part) {
+          return std::holds_alternative<ReasoningContentPart>(part);
+        });
+  }
+
+  std::string get_reasoning() const {
+    std::string result;
+    for (const auto& part : content) {
+      if (const auto* rp = std::get_if<ReasoningContentPart>(&part)) {
+        result += rp->text;
+      }
+    }
+    return result;
   }
 
   std::string get_text() const {

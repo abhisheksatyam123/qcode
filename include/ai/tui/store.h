@@ -42,6 +42,7 @@ public:
 
     void append_chat_message(const std::string& role, const std::string& text);
     void update_last_assistant_message(const std::string& text);
+    void append_reasoning(const std::string& text, const std::string& signature = "");
     void set_generating(bool v);
     void set_session_id(const std::string& id);
     void set_status(const std::string& s);
