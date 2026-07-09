@@ -44,10 +44,7 @@ struct ChatState {
     int tab_selected = 0; // 0 = Chat, 1 = Files, 2 = Stats
     int selected_file = 0; // Selected index in modified_files
 
-    // Selection & Clipboard
-    int selected_message = -1; // Index in chat_history, or -1 if none
     int terminal_height = 40; // Approximate terminal height, updated during render
-    bool selection_mode = false; // When true, arrow keys navigate messages instead of input
 
     // Color Theme Option (orange, green, blue, purple, monochrome)
     std::shared_ptr<std::string> theme = std::make_shared<std::string>("orange");

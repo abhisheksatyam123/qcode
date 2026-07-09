@@ -361,8 +361,6 @@ ftxui::Element render_view(
         // "warn" reflects an empty model response (see chat_bus.cpp)
         hdr_status = "\u26a0 empty";
         status_color = Color::Yellow;
-    } else if (state.selection_mode) {
-        hdr_status = "SELECT";
     }
 
     // Prompt queue indicator
