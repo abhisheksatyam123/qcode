@@ -309,8 +309,40 @@ bool handle_slash_command(
         return true;
     }
 
+
+    if (cmd == "tools") {
+        LOG_DEBUG("Commands: /tools args='{}'", args);
+        if (args.empty()) {
+            enable_tools = !enable_tools;
+            std::string status = enable_tools ? "ENABLED (observability mode)" : "DISABLED (real-time streaming mode)";
+            state.chat_history->push_back({"System", "Tools " + status});
+        } else if (args == "on") {
+            enable_tools = true;
+            state.chat_history->push_back({"System", "Tools ENABLED (observability mode)"});
+        } else if (args == "off") {
+            enable_tools = false;
+            state.chat_history->push_back({"System", "Tools DISABLED (real-time streaming mode)"});
+        } else {
+            state.chat_history->push_back({"System", "Usage: /tools [on|off]"});
+        }
+        return true;
     }
 
+    if (cmd == "help" || cmd == "?") {
+        std::ostringstream h;
+        h << "Available commands:\n"
+          << "  /model [list]     - select provider/model\n"
+          << "  /theme [name]     - set UI theme (orange/green/blue/purple/monochrome)\n"
+          << "  /new              - start a new persistent session\n"
+          << "  /session <id>     - load a persistent session by id\n"
+          << "  /reasoning [on|off|<0..1>] - set reasoning effort\n"
+          << "  /compact [keep]   - compress conversation into a handoff summary\n"
+          << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
+          << "  /help             - show this help\n"
+          << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
+        state.chat_history->push_back({"System", h.str()});
+        return true;
+    }
     state.chat_history->push_back({"System", "Unknown command: /" + cmd});
     return true;
 }
