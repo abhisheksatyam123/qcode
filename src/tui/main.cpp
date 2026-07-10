@@ -428,14 +428,20 @@ int main() {
                             "info", 2000);
             return true;
         }
-        // Toggle collapse/expand for tool blocks ('c' key)
+        // Toggle collapse/expand for all tool blocks ('c' key)
         if (e == Event::Character('c')) {
-            // We'll handle this by re-rendering; the actual toggle happens
-            // when we detect focus on a tool block. For now, we just need
-            // to ensure the state is updated. The actual collapse state is
-            // managed per-tool-call-id in ChatState.tool_collapse_state.
-            // This will be handled by the renderer when it detects the key.
-            return false;  // Let it fall through to allow other handlers
+            // Toggle all tool blocks: if any are collapsed, expand all; else collapse all
+            if (state.tool_collapse_state && !state.tool_collapse_state->empty()) {
+                bool any_collapsed = false;
+                for (const auto& [id, collapsed] : *state.tool_collapse_state) {
+                    if (collapsed) { any_collapsed = true; break; }
+                }
+                bool new_state = any_collapsed ? false : true;  // opposite of current
+                for (auto& [id, collapsed] : *state.tool_collapse_state) {
+                    collapsed = new_state;
+                }
+            }
+            return true;
         }
         if (e == Event::Tab) {
             if (state.tab_selected == 1) {
