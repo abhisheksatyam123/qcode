@@ -314,17 +314,35 @@ See the [OpenRouter example](examples/openrouter_example.cpp) for a complete dem
 - ✅ **Streaming**: Real-time streaming of generated content
 - ✅ **Multi-turn Conversations**: Support for conversation history
 - ✅ **Error Handling**: Comprehensive error handling with optional types
+- ✅ **Tool Calling**: Function calling and tool integration with multi-step support
+- ✅ **Async Tools**: Asynchronous tool execution with parallel processing
+- ✅ **Embeddings**: Text embedding support (Anthropic)
+- ✅ **Reasoning**: Configurable reasoning effort for providers that expose
+  thinking/reasoning tokens (e.g. Anthropic)
+- ✅ **Provider Registry**: Pluggable providers, including the registry-backed
+  **Antigravity** provider and any OpenAI-compatible endpoint (OpenRouter, etc.)
 
 ### Recently Added
 
-- ✅ **Tool Calling**: Function calling and tool integration with multi-step support
-- ✅ **Async Tools**: Asynchronous tool execution with parallel processing
 - ✅ **Configurable Retries**: Customizable retry behavior with exponential backoff
+
+### Configuration & Security
+
+- **Credentials** load from the environment (e.g. `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`) or user configuration; no secrets are compiled into the
+  binary.
+- **Reasoning** is only honored by providers that support thinking/reasoning
+  tokens; others ignore the setting.
+- **Tool execution** runs model-generated shell commands. Each command requires a
+  short description, passes a safety check, and (by default) requests
+  confirmation before running. Treat model-generated commands as untrusted and
+  review them before approving.
+- **Sessions & database**: chat history is persisted to a configurable SQLite
+  database. Reloading a session restores messages, tool calls, and tool results.
 
 ### Coming Soon
 
 - 🚧 **Additional Providers**: Google, Cohere, and other providers
-- 🚧 **Embeddings**: Text embedding support
 - 🚧 **Image Generation**: Support for image generation models
 
 ## Examples
