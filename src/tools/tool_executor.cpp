@@ -7,6 +7,7 @@
 
 #include <ai/tools.h>
 #include <ai/types/tool.h>
+#include <ai/utils/utf8.h>
 
 namespace ai {
 
@@ -192,6 +193,10 @@ ToolResult ToolExecutor::execute_sync_tool(
 
   try {
     JsonValue result = tool.execute.value()(tool_call.arguments, context);
+    // Tool output is untrusted external text (command stdout, file content,
+    // etc.) and may contain invalid UTF-8; sanitize so it never breaks JSON
+    // serialization downstream (see base_provider_client request building).
+    ai::utils::sanitize_json_strings(result);
     return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
                       result);
   } catch (const std::exception& e) {
@@ -223,6 +228,7 @@ ToolResult ToolExecutor::execute_async_tool(
     const std::chrono::milliseconds timeout = async_tool_timeout();
     if (future.wait_for(timeout) == std::future_status::ready) {
       JsonValue result = future.get();
+      ai::utils::sanitize_json_strings(result);
       return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments, result);
     }
     // Timed out: move the still-running future into a detached background

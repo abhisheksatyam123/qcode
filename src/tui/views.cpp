@@ -17,6 +17,14 @@ namespace tui {
 
 using namespace ftxui;
 
+// Compact token-count formatter: 1234 -> "1234", 128000 -> "128k",
+// 2'000'000 -> "2M". Used for the always-visible context usage / window.
+static std::string format_tokens(int n) {
+  if (n >= 1'000'000) return std::to_string(n / 1'000'000) + "M";
+  if (n >= 10'000) return std::to_string(n / 1'000) + "k";
+  return std::to_string(n);
+}
+
 // Raw helper to get git diff of the selected file
 // Quote a path as a single-quoted POSIX shell literal (escapes embedded
 // single quotes) so a file path containing shell metacharacters cannot inject
@@ -194,7 +202,15 @@ ftxui::Element render_view(
 
     // ── Header strip: tabs + model badge + token count + status ──
     std::string hdr_model = providers_list[selected_provider].models[selected_model].name;
-    std::string hdr_tokens = std::to_string(*state.total_tokens) + " tok";
+    const auto& hdr_model_info = providers_list[selected_provider].models[selected_model];
+    // Always show current context usage against the model's window size.
+    std::string hdr_tokens;
+    if (hdr_model_info.context_window > 0) {
+      hdr_tokens = format_tokens(*state.total_tokens) + " / " +
+                   format_tokens(hdr_model_info.context_window) + " tok";
+    } else {
+      hdr_tokens = format_tokens(*state.total_tokens) + " tok";
+    }
     
     // Status (compact, no spinner — spinner is rendered in the header below)
     Color status_color = accent2(theme);
@@ -656,8 +672,15 @@ ftxui::Element render_dynamic_footer(
         status_str = std::string(spinner[frame]) + " Generating...";
     }
     
-    // Right: token count
-    std::string token_str = std::to_string(*state.total_tokens) + " tokens";
+    // Right: token count (current usage / context-window size)
+    const auto& footer_model = providers_list[selected_provider].models[selected_model];
+    std::string token_str;
+    if (footer_model.context_window > 0) {
+      token_str = format_tokens(*state.total_tokens) + " / " +
+                  format_tokens(footer_model.context_window) + " tok";
+    } else {
+      token_str = format_tokens(*state.total_tokens) + " tok";
+    }
     
     std::string session_short = state.session_id->substr(0, 8);
     

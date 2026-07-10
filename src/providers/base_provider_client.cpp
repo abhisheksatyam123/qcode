@@ -59,7 +59,7 @@ GenerateResult BaseProviderClient::generate_text_single_step(
   try {
     // Build request JSON using the provider-specific builder
     auto request_json = request_builder_->build_request_json(options);
-    std::string json_body = request_json.dump();
+    std::string json_body = request_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     LOG_DEBUG("Request JSON built: {}", json_body);
 
     // Build headers
@@ -162,7 +162,7 @@ EmbeddingResult BaseProviderClient::embeddings(
   try {
     // Build request JSON using the provider-specific builder
     auto request_json = request_builder_->build_request_json(options);
-    std::string json_body = request_json.dump();
+    std::string json_body = request_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     LOG_DEBUG("Request JSON built: {}", json_body);
 
     // Build headers
