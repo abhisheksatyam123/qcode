@@ -22,6 +22,7 @@ target_link_libraries(qcode-tui PRIVATE
     ftxui::dom
     ftxui::component
     sqlite3
+    stduuid::stduuid
 )
 
 target_include_directories(qcode-tui PRIVATE

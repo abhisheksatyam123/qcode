@@ -1,5 +1,7 @@
 #include <ai/tui/commands.h>
 #include <ai/tui/db.h>
+#include <ai/tui/config.h>
+#include <ai/tui/contract/event.h>
 #include <ai/logger.h>
 #include <ai/types/client.h>
 #include "ai/registry.h"
@@ -132,6 +134,11 @@ bool handle_slash_command(
 
         if (target_id.empty()) {
             state.chat_history->push_back({"System", "Usage: /session <session_id>"});
+            return true;
+        }
+
+        if (!db::is_valid_session_id(target_id)) {
+            state.chat_history->push_back({"System", "Invalid session id: " + target_id});
             return true;
         }
 

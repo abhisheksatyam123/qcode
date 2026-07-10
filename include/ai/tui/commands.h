@@ -6,6 +6,7 @@
 #include <thread>
 
 #include <ai/tui/state.h>
+#include <ai/tui/bus/port.h>
 
 namespace ai {
 namespace tui {
