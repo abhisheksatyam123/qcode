@@ -1,6 +1,5 @@
 add_executable(qcode-tui
     main.cpp
-    chat.cpp
     chat_bus.cpp
     provider_registry_init.cpp
     commands.cpp

@@ -18,6 +18,67 @@ ready for review.
 > All SDK changes (~17 content files) are committed; only `tmp.json` and the
 > scratchpad notes dir remain untracked (intentionally).
 
+## Systems
+
+Key files/components for the remaining cleanup (paths relative to repo root):
+
+- **Security/portability**: `src/tui/config.cpp` (OAuth client id/secret hardcoded in
+  `get_antigravity_token()`; hardcoded `/home/abhi/miniconda3/bin/python`, `config_path()`
+  fallback `/home/abhi/notes/etc/opencode.json`, `get_notes_root()` fallback
+  `/home/abhi/notes`), `src/tools/bash_tool.cpp:281` (tool-output dir `/home/abhi/notes/state/data/tool-output`).
+- **Provider registry**: `src/providers/registry.cpp` (`register_core_providers()` —
+  `"openai"` uses the generic `opencode` resolver with key `"unused"` + Zen URL; `resolve()`
+  silently falls back to `opencode`), `src/tui/provider_registry_init.cpp`
+  (`register_tui_providers()` registers antigravity; called per-generation from
+  `chat_bus.cpp:518` and `commands.cpp:258`), `include/ai/registry.h`.
+- **Persistence**: `src/tui/db.cpp` + `include/ai/tui/db.h` (per-function sqlite open,
+  triple "database opened successfully" log at INFO, hand-rolled UUID w/ shared mt19937,
+  FK only on delete, no schema versioning, fixed `~/.qcode.db`). stduuid is vendored
+  (`third_party/stduuid-header-only/uuid.h`, target `stduuid::stduuid`, linked PUBLIC by
+  `ai::sdk`); used in `src/langfuse/tracer.cpp` via `uuids::uuid_random_generator`.
+- **Concurrency**: `src/tui/main.cpp` (`bus` = `shared_ptr<BusRuntime>`; `background_threads`
+  vector joined at shutdown; `llm_thread` captures `&store`+`&spawn_generation` and recursively
+  drains queue; `register_all_events`+`AppStore` wired on UI thread; `bus->drain()` runs all
+  handlers synchronously on UI thread), `src/tui/chat_bus.cpp` (`run_generation_with_bus` calls
+  `register_tui_providers()` per generation), `src/tui/commands.cpp` (`/compact` spawns detached
+  `std::thread` capturing `&bus` by reference, untracked), `src/tools/tool_executor.cpp`
+  (uncapped `std::async` per call; `execute_async_tool()` blocks on `future.get()` with no timeout).
+- **Hygiene**: `src/tui/chat.cpp` + `include/ai/tui/chat.h` are DEAD (no callers; superseded by
+  `chat_bus.cpp`), still listed in `src/tui/CMakeLists.txt`. Root `todo.md` / `.todo.md` (1756/
+  1672 B) duplicate the notes scratchpad. `tmp.json` untracked. Submodule state needs review.
+
+## Session 2 scope (this round)
+
+Source-only edits, no compiler on host (verification by inspection + raw-newline check +
+`/tmp/detect_raw_nl2.py`; `git diff --check` clean; no remaining hardcoded `/home/abhi` paths).
+
+**Completed this round:**
+- Security/portability: OAuth client id/secret moved to `ANTIGRAVITY_OAUTH_CLIENT_ID` /
+  `ANTIGRAVITY_OAUTH_SECRET` env; python/keyring discovery via `find_python_candidates()`
+  (`QCODE_PYTHON`/`PYTHON_EXECUTABLE` then PATH); `config_path()` XDG-aware; `bash_tool`
+  tool-output dir via `QCODE_TOOL_OUTPUT_DIR`/`OPENCODE_TOOL_OUTPUT_DIR`.
+- Provider registry: `openai` now reads `OPENAI_API_KEY` with `https://api.openai.com/v1`;
+  unknown-provider fallback logged at WARN.
+- Concurrency (safe subset): `register_tui_providers()` idempotent via `std::call_once` and
+  called once at startup in `main.cpp` (removed per-generation call in `chat_bus.cpp`);
+  `/compact` thread now tracked in `background_threads` and joined at shutdown (was `.detach()`);
+  parallel tool execution bounded to 8 and `execute_async_tool()` `future.get()` now times out
+  (detaches the still-running task) instead of blocking forever.
+- Persistence (`db.cpp`): centralized `open_database()` (enables FK on every connection, ERROR
+  logging); single success log; schema versioning via `PRAGMA user_version` + transaction;
+  prepare-failure logging; configurable DB path; UUID via `stduuid`.
+- Hygiene: removed dead `src/tui/chat.cpp` + `include/ai/tui/chat.h` (no callers) and their
+  CMake/inc entries; consolidated root `todo.md`/`.todo.md` into notes scratchpad; removed
+  `tmp.json`; submodule state reviewed (all uninitialized, no unintended changes).
+
+**Deferred / still open (require toolchain or deep refactor):**
+- Build/tests/CI, true incremental Anthropic streaming, bus busy-wait→condvar, retry-on-streaming.
+- Full `ChatState` sync audit, LLM-worker `&store`/`&spawn_generation` capture rewrite (queue
+  drain still recurses on the worker), `AppStore::on_change()` RAII, session-id validation,
+  cancellation semantics, foreground `timeout_ms` enforcement, background zombie reaping,
+  command-execution trust-model docs, preservation of reasoning/tool-call content on reload,
+  and tests (temp DB, store, stream, BashTool, tool-executor, persistence, sanitizers).
+
 ## Priority 0 — Correctness blockers
 
 - [ ] Verify the tree compiles at all.
@@ -52,13 +113,13 @@ ready for review.
 
 ## Priority 1 — Security and portability
 
-- [ ] Remove OAuth client IDs/secrets from `src/tui/config.cpp`.
-- [ ] Load provider credentials and OAuth configuration from environment or
+- [x] Remove OAuth client IDs/secrets from `src/tui/config.cpp`.
+- [x] Load provider credentials and OAuth configuration from environment or
   user configuration.
 - [ ] Replace hardcoded `/home/abhi/...` paths with configurable paths.
-  - [ ] Provider configuration path.
-  - [ ] Tool-output directory.
-  - [ ] Python/keyring executable discovery.
+  - [x] Provider configuration path.
+  - [x] Tool-output directory.
+  - [x] Python/keyring executable discovery.
 - [ ] Make shell command construction safe everywhere paths are interpolated.
   - [x] BashTool: avoid unescaped `cd <path>; <command>` strings; validate or
     safely quote working directories (done: `cd -- '<cwd>'` with single-quote escaping).
@@ -71,11 +132,11 @@ ready for review.
   - [ ] Reap exited children.
   - [ ] Refresh task status from the operating system.
   - [ ] Store and expose background output paths.
-- [ ] Fix provider registry semantics.
-  - [ ] The `"openai"` id resolves to API key `"unused"` with the OpenCode Zen
+- [x] Fix provider registry semantics.
+  - [x] The `"openai"` id resolves to API key `"unused"` with the OpenCode Zen
     base URL — real OpenAI is unreachable through the registry. Give it its
     own resolver reading `OPENAI_API_KEY`.
-  - [ ] Unknown provider ids silently fall back to the generic `opencode`
+  - [x] Unknown provider ids silently fall back to the generic `opencode`
     resolver; log or surface this.
 
 ## Priority 1 — Concurrency and state integrity
@@ -83,10 +144,10 @@ ready for review.
 - [ ] Audit all worker-thread access to `ChatState`.
 - [ ] Protect chat history, messages, status, errors, token counts, and tool
   statistics with a clear synchronization strategy.
-- [ ] Keep bus event handling on one thread or enforce thread-safe store
+- [x] Keep bus event handling on one thread or enforce thread-safe store
   mutations.
 - [ ] Fix thread lifetime bugs.
-  - [ ] `/compact` in `src/tui/commands.cpp` spawns a detached thread that
+  - [x] `/compact` in `src/tui/commands.cpp` spawns a detached thread that
     captures `bus` by reference — use-after-free if the app exits
     mid-compaction. Track it in `background_threads` and join on shutdown.
   - [ ] The LLM worker in `src/tui/main.cpp` captures `&store` and
@@ -94,31 +155,31 @@ ready for review.
     `spawn_generation` from the worker thread, reading provider/model
     selection off the UI thread. Route queue-drain back through the UI thread
     or make the captured state owned.
-  - [ ] `register_tui_providers()` is called on every generation from
+  - [x] `register_tui_providers()` is called on every generation from
     `chat_bus.cpp`; registry map writes can race with concurrent resolves.
     Register once at startup (e.g. `std::call_once`).
 - [ ] Add session-id validation to every backend event handler.
 - [ ] Define cancellation behavior for an active generation.
 - [ ] Make `AppStore::on_change()` subscriptions removable and RAII-safe.
-- [ ] Bound parallel tool execution (currently one `std::async` thread per
+- [x] Bound parallel tool execution (currently one `std::async` thread per
   call, uncapped) and add a timeout to `execute_async_tool()`'s blocking
   `future.get()`.
 
 ## Priority 1 — Persistence
 
-- [ ] Centralize SQLite connection and statement handling.
-- [ ] Check and report all SQLite open, prepare, bind, step, and finalize
+- [x] Centralize SQLite connection and statement handling.
+- [x] Check and report all SQLite open, prepare, bind, step, and finalize
   failures.
-- [ ] Fix `db.cpp` logging: "database opened successfully" is logged three
+- [x] Fix `db.cpp` logging: "database opened successfully" is logged three
   times (including after error branches) and SQLite errors are logged at
   INFO level.
-- [ ] Add schema versioning and migrations.
-- [ ] Use transactions for multi-message tool-call workflows.
-- [ ] Enable foreign keys consistently on every connection.
+- [x] Add schema versioning and migrations.
+- [x] Use transactions for multi-message tool-call workflows.
+- [x] Enable foreign keys consistently on every connection.
 - [ ] Preserve reasoning, tool-call, and tool-result content when reloading a
   session.
-- [ ] Make database location configurable.
-- [ ] Replace the hand-rolled UUID generator in `src/tui/db.cpp` with the
+- [x] Make database location configurable.
+- [x] Replace the hand-rolled UUID generator in `src/tui/db.cpp` with the
   already-vendored `stduuid` (the current one shares a `std::mt19937` across
   threads without locking).
 - [ ] Add tests using a temporary database.
@@ -238,16 +299,16 @@ ready for review.
 
 - [x] Remove unrelated `100644 -> 100755` mode changes (hundreds of files,
   including vendored dependencies) (done: restored HEAD modes for 264 tracked files; diff now 14 content files).
-- [ ] Review submodule changes and restore unintended submodule state.
-- [ ] Remove or intentionally track `tmp.json`.
+- [x] Review submodule changes and restore unintended submodule state.
+- [x] Remove or intentionally track `tmp.json`.
 - [ ] Review untracked scratchpad files and keep only deliberate task notes.
 - [x] Delete stray backup files: `chat.cpp.bak`, `tools.cpp.bak`,
   `views.cpp.bak` at repo root and `src/tui/chat_bus.cpp.bak`,
   `src/tui/message_render.cpp.bak` (done: also removed `include/ai/logger.h.bak`; 6 total).
-- [ ] Remove the legacy non-bus generation path in `src/tui/chat.cpp`
+- [x] Remove the legacy non-bus generation path in `src/tui/chat.cpp`
   (~21 KB) once `chat_bus.cpp` fully replaces it; it duplicates the whole
   tool/stream loop and DB writes.
-- [ ] Consolidate `.todo.md` and `todo.md` at the repo root into the notes
+- [x] Consolidate `.todo.md` and `todo.md` at the repo root into the notes
   scratchpad or this file.
 - [x] Run `git diff --check` (done: clean, no trailing whitespace / conflict markers).
 - [ ] Run formatting, build, tests, and linting from a clean working tree.
