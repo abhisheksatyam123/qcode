@@ -317,14 +317,12 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
 
 ## Open decisions / follow-ups (found during cleanup)
 
-- [ ] **Decide on `/tools` and `/help` slash-command removal in
-  `src/tui/commands.cpp`.** The large `commands.cpp` refactor (~262-line diff)
-  removes the `/tools` and `/help` command handlers and adds a
-  `bus::BusPort& bus` parameter, wired through both `main.cpp` call sites and
-  `commands.h` (verified consistent). No existing todo item covers this
-  removal — confirm it was intended, or restore the two handlers. This is a
-  possible unintended behavioral regression and should be explicitly reviewed
-  before the cleanup is closed out.
+- [x] **Decide on `/tools` and `/help` slash-command removal in
+  `src/tui/commands.cpp`.** Resolved: the handlers were removed unintentionally
+  in `3cbb8d7` (a streaming/retry/config refactor) with no replacement, so both
+  were restored. While restoring, a pre-existing latent bug was found and fixed:
+  `handle_slash_command` closed early right after `/compact`, leaving the
+  "Unknown command" fallback (and a stray `}`) outside the function. See Session 3.
 - [ ] **Compile-verify the full tree once a C/C++ toolchain is available.**
   This host has no `cmake`/`g++`/`clang++`/`uv`, so all fixes this round are
   inspection-verified only. Re-run the verification checklist (format/build/
@@ -345,3 +343,39 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
   - [ ] Queued prompts.
   - [ ] Tool execution and cancellation.
   - [ ] Session reload after restart.
+
+## Session 3 (current) — notes relocation + docs + command restoration
+
+**Completed this session:**
+- Notes vault relocation: finished the notes/ removal from the repo. The notes
+  vault now lives at `~/notes`; a gitignored symlink `notes -> ~/notes` bridges
+  the framework's expected notes/workdir path so the runtime no longer breaks on
+  a missing `./notes`. Commit `277e3ca`.
+- Documentation (Priority 3): README `## Features` updated — embeddings moved out
+  of "Coming Soon" (implemented via Anthropic `EmbeddingOptions`/`EmbeddingResult`);
+  added Provider Registry (Antigravity + OpenAI-compatible), Reasoning, and a
+  Configuration & Security section (credentials-from-env, reasoning limitations,
+  tool-execution trust model, SQLite session persistence).
+- Open decision resolved: `/tools` and `/help` slash commands were removed
+  unintentionally in `3cbb8d7` (a streaming/retry/config refactor) with no
+  replacement. Restored both handlers in `src/tui/commands.cpp`. While doing so,
+  found and fixed a pre-existing latent bug: `handle_slash_command` closed early
+  right after the `/compact` block, leaving the "Unknown command" fallback (and a
+  stray `}`) outside the function. Verified balanced (string/comment-aware brace
+  match: opens 52, closes 348, 69/69 real braces) and clean via
+  `/tmp/detect_raw_nl2.py` + `git diff --check`.
+
+**Remaining feasible without a toolchain (still open):**
+- Priority 1: foreground `timeout_ms` enforcement; background zombie reaping;
+  session-id validation; cancellation semantics; `AppStore::on_change()` RAII.
+- Priority 2 SDK: `parse_base_url` host:port + invalid-URL handling; configurable
+  `kEventTimeout`; retry-policy improvements (jitter, max-delay cap, return-failed
+  for non-retryable).
+- Priority 1 Persistence: preserve reasoning/tool-call content on session reload.
+- Priority 3 TUI polish: mouse click-to-copy line offsets.
+
+**Still BLOCKED (no toolchain / deep refactor — unchanged):**
+- Build/tests/CI, true incremental Anthropic streaming, ChatState sync audit,
+  LLM-worker `&store`/`&spawn_generation` capture rewrite, bus busy-wait->condvar,
+  HTTP connection reuse, streaming retry, all tests, format/build/lint, and the
+  full compile-verify before merge.
