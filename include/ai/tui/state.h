@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -79,6 +80,10 @@ struct ChatState {
     std::shared_ptr<int> queued_prompts = std::make_shared<int>(0);
     std::shared_ptr<std::string> status = std::make_shared<std::string>("idle");
     std::shared_ptr<std::string> last_error = std::make_shared<std::string>();
+
+    // Tool collapse/expand state (keyed by tool_call_id)
+    std::shared_ptr<std::unordered_map<std::string, bool>> tool_collapse_state =
+        std::make_shared<std::unordered_map<std::string, bool>>();
 };
 
 // Helper to scan for modified files using git status
