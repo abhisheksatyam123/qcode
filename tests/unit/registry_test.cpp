@@ -5,6 +5,7 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "ai/types/generate_options.h"
 
 namespace ai {
 namespace providers {
@@ -36,6 +37,10 @@ class ScopedEnv {
 };
 
 TEST(RegistryTest, CoreProvidersRegisterAndResolveOpenAI) {
+  // The "openai" resolver requires OPENAI_API_KEY (set at resolve time); provide
+  // a dummy key so resolution succeeds, mirroring OpenRouterSucceedsWithKey.
+  ScopedEnv key("OPENAI_API_KEY");
+  key.set("dummy-token");
   register_core_providers();
   ClientResolution res = ProviderRegistry::instance().resolve("openai", "");
   EXPECT_TRUE(res.ok());
@@ -103,5 +108,45 @@ TEST(RegistryTest, ResolutionFailureHelper) {
 }
 
 }  // namespace
+
+TEST(RegistryTest, OpenCodeResolvesWithoutKey) {
+  // Backward-compatible: opencode is the generic OpenAI-compatible fallback and
+  // historically used a placeholder key for local OpenCode Zen proxies.
+  register_core_providers();
+  ClientResolution res = ProviderRegistry::instance().resolve("opencode", "");
+  EXPECT_TRUE(res.ok());
+  EXPECT_TRUE(res.error.empty());
+}
+
+TEST(RegistryTest, OpenCodeResolvesWithConfiguredKey) {
+  // When OPENCODE_API_KEY is set, the generic resolver picks it up (enables real
+  // OpenAI-compatible endpoints that require authentication).
+  ScopedEnv key("OPENCODE_API_KEY");
+  key.set("dummy-token");
+  register_core_providers();
+  ClientResolution res = ProviderRegistry::instance().resolve("opencode", "");
+  EXPECT_TRUE(res.ok());
+  EXPECT_TRUE(res.error.empty());
+}
+
+TEST(RegistryTest, OpenCodeOpenRouterE2E) {
+  // End-to-end proof that the generic "opencode" provider works against a real
+  // OpenAI-compatible endpoint. Runs only when OPENROUTER_API_KEY is available.
+  const char* ort = std::getenv("OPENROUTER_API_KEY");
+  if (!ort) GTEST_SKIP() << "OPENROUTER_API_KEY not set";
+  ScopedEnv key("OPENCODE_API_KEY");
+  key.set(ort);
+  register_core_providers();
+  ClientResolution res = ProviderRegistry::instance().resolve(
+      "opencode", "https://openrouter.ai/api");
+  ASSERT_TRUE(res.ok()) << res.error;
+  GenerateOptions opts;
+  opts.model = "openai/gpt-4o-mini";
+  opts.prompt = "Reply with exactly the word: OK";
+  GenerateResult out = res.client.generate_text(opts);
+  EXPECT_TRUE(out.is_success()) << out.error_message();
+  EXPECT_FALSE(out.text.empty());
+}
+
 }  // namespace providers
 }  // namespace ai

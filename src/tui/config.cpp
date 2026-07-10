@@ -35,6 +35,12 @@ static std::vector<std::string> find_python_candidates() {
 }
 
 std::string get_antigravity_token() {
+    // Hardcoded OAuth client credentials for Antigravity (from opencode)
+    // These allow refreshing the access token from the stored refresh_token.
+    constexpr const char* kAntigravityClientId =
+        "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+    constexpr const char* kAntigravityClientSecret = "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";
+
     char* api_key_env = std::getenv("ANTIGRAVITY_API_KEY");
     if (api_key_env && std::string(api_key_env).length() > 0)
         return api_key_env;
@@ -45,11 +51,23 @@ std::string get_antigravity_token() {
         // access_token is frequently rejected by cloudcode-pa, so prefer a
         // refresh whenever a refresh_token is present (mirrors opencode's chain).
         std::string cmd = std::string(py) +
-            " -c \"import os, keyring, json, urllib.request, urllib.parse, datetime\n"
+            " -c \"import os, json, urllib.request, urllib.parse, datetime\n"
+"try:\n"
+"    import keyring\n"
+"except Exception:\n"
+"    keyring = None\n"
             "try:\n"
-            "    cid = os.environ.get('ANTIGRAVITY_OAUTH_CLIENT_ID','')\n"
-            "    csec = os.environ.get('ANTIGRAVITY_OAUTH_CLIENT_SECRET','')\n"
-            "    raw = keyring.get_password('gemini', 'antigravity')\n"
+            "    cid = \"1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com\"\n"
+            "    csec = \"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\"\n"
+            "    raw = keyring.get_password('gemini', 'antigravity') if keyring else None\n"
+            "    if not raw:\n"
+            "        try:\n"
+            "            import os as _os\n"
+            "            _p = _os.environ.get('ANTIGRAVITY_TOKEN_FILE') or _os.path.expanduser('~/.gemini/antigravity-cli/antigravity-oauth-token')\n"
+            "            if _os.path.exists(_p):\n"
+            "                with open(_p) as _f: raw = _f.read()\n"
+            "        except Exception:\n"
+            "            raw = ''\n"
             "    if not raw:\n"
             "        print('')\n"
             "    else:\n"

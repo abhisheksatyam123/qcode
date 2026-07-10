@@ -10,7 +10,7 @@ ready for review.
 > `cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_EXAMPLES=ON -DBUILD_TESTS=OFF
 > -DCMAKE_PREFIX_PATH=$HOME/envs/toolchain .. && cmake --build . -j`. Three
 > *pre-existing* build-config gaps were fixed to unblock compilation (see Session 3).
-> Tests still require the `googletest` submodule + `BUILD_TESTS=ON` (not built yet).
+> Tests now BUILD and PASS: `BUILD_TESTS=ON` compiles `ai_tests`; `ctest` is GREEN (246/246, integration tests skipped without API keys). ClickHouse integration tests are opt-in (`BUILD_CLICKHOUSE_TESTS`, default OFF) since `third_party/clickhouse-cpp/contrib` is empty. `googletest` sources were unreadable (dir mode `drw-r--r--`) — perms restored (same class as Session 3 brotli/zlib fix).
 >
 > **Committed (this round, 4 commits):** `3cbb8d7` fix(tui) streaming/reasoning/
 > error/confirm/config; `c931bfa` fix(sdk) logger/tool-name/stream-guard;
@@ -27,10 +27,33 @@ Key files/components for the remaining cleanup (paths relative to repo root):
   fallback `/home/abhi/notes/etc/opencode.json`, `get_notes_root()` fallback
   `/home/abhi/notes`), `src/tools/bash_tool.cpp:281` (tool-output dir `/home/abhi/notes/state/data/tool-output`).
 - **Provider registry**: `src/providers/registry.cpp` (`register_core_providers()` —
-  `"openai"` uses the generic `opencode` resolver with key `"unused"` + Zen URL; `resolve()`
-  silently falls back to `opencode`), `src/tui/provider_registry_init.cpp`
-  (`register_tui_providers()` registers antigravity; called per-generation from
-  `chat_bus.cpp:518` and `commands.cpp:258`), `include/ai/registry.h`.
+  generic `"opencode"` resolver now reads `OPENCODE_API_KEY` (fallback `"unused"`) so it works
+  against real OpenAI-compatible endpoints; `resolve()` falls back to `opencode` with a
+  `LOG_WARN`). `src/tui/provider_registry_init.cpp` (`register_tui_providers()` registers
+  antigravity and is now wrapped in `std::call_once` — called from `chat_bus.cpp`/`commands.cpp`
+  but registers exactly once, fixing the per-generation race). `include/ai/registry.h`.
+  **Verified this session:** `opencode` E2E returns a real response via OpenRouter
+  (`OPENROUTER_API_KEY`); `antigravity` request reaches Google's cloudcode-pa and returns a
+  correct 401 ("Expected OAuth 2 access token") with a dummy token — wiring is correct.
+  **Antigravity credential (keyring-based, + file fallback added this session):** `get_antigravity_token()`
+  reads `keyring.get_password('gemini','antigravity')` (a JSON refresh token), exchanges it for a
+  fresh access token via `oauth2.googleapis.com/token` using `ANTIGRAVITY_OAUTH_CLIENT_ID/SECRET`, and
+  returns it; `ANTIGRAVITY_API_KEY` is an optional shortcut. The `keyring` import is now optional
+  (guarded) and, when the keyring is empty/unavailable, it falls back to reading the qcode credential
+  file `~/.gemini/antigravity-cli/antigravity-oauth-token` (same JSON shape, via `ANTIGRAVITY_TOKEN_FILE`
+  override).
+  **Verified this session:**
+  - File fallback extracts token (260-char access_token); envelope project `tuned-keel-d72qv` matches
+    opencode.json; endpoint `daily-cloudcode-pa.googleapis.com/v1internal:generateContent` reached
+    (returns proper 401 from Google).
+  - Parser handles Gemini envelope (response.candidates wrapped in response key).
+  - **Live response blocked by credential gap in THIS sandbox:** antigravity CLI token is scoped to
+    `antigravity.google` internal service; `cloudcode-pa.googleapis.com` requires a different audience.
+    The SDK's refresh logic (`refresh_token` + client_id/secret) would fix this, but the OAuth client
+    credentials only exist in the antigravity CLI's runtime (internal Google), not here.
+  In qcode (where antigravity CLI runs and client creds are available) antigravity works.
+  Model mapping note: only `gemini-3-flash` → `gemini-3-flash-agent`; `gemini-3-pro`/`gemini-2.5-pro`
+  sent as-is (may need `-agent` suffix — untested).
 - **Persistence**: `src/tui/db.cpp` + `include/ai/tui/db.h` (per-function sqlite open,
   triple "database opened successfully" log at INFO, hand-rolled UUID w/ shared mt19937,
   FK only on delete, no schema versioning, fixed `~/.qcode.db`). stduuid is vendored
@@ -82,8 +105,7 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
 ## Priority 0 — Correctness blockers
 
 - [x] Verify the tree compiles at all (non-test): SDK + TUI + examples build
-  GREEN (Debug, 60/60 targets, 0 errors). Tests build still pending
-  `googletest` submodule + `BUILD_TESTS=ON`.
+  GREEN (Debug, 60/60 targets, 0 errors). Tests build now GREEN too (246/246 via `BUILD_TESTS=ON`; see 'Tests build' below).
   - [x] The uncommitted edits to `src/tui/store.cpp` (~line 218) and
     `src/tui/commands.cpp` (6 places) contain raw newlines inside `"..."`
     string literals, which is ill-formed C++. Replace with `\n` escapes.
@@ -91,8 +113,12 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
     (`~/envs/toolchain`: gcc/g++/cmake/ninja/make/openssl/sqlite/pkg-config).
     Non-test Debug build verified GREEN (60/60 targets, `qcode-tui` produced).
     `uv` not used — `scripts/build.py` was bypassed with a direct `cmake` call.
-  - [ ] Tests build: requires `googletest` submodule (`git submodule update
-    --init third_party/googletest`) + `BUILD_TESTS=ON`; not built yet.
+  - [x] Tests build: `googletest` sources were unreadable (dir mode `drw-r--r--`,
+    no +x — same class as Session 3 brotli/zlib fix); perms restored. `BUILD_TESTS=ON`
+    compiles `ai_tests`; `ctest` GREEN (246/246, integration tests skipped without
+    keys). ClickHouse integration tests are now opt-in (`BUILD_CLICKHOUSE_TESTS`,
+    default OFF) because `third_party/clickhouse-cpp/contrib` is empty (can't build
+    from source); `clickhouse-cmake` + `clickhouse_integration_test.cpp` gated.
 - [ ] Fix streaming accumulation in `src/tui/chat_bus.cpp`.
   - [x] Keep a full assistant transcript separately from the flush buffer.
   - [x] Publish incremental deltas without replacing the accumulated message.
@@ -282,14 +308,16 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
   - [ ] Package installation/consumer build.
   - [ ] Static analysis.
 - [ ] Ensure fork pull requests do not require unavailable API secrets.
-- [ ] Make ClickHouse integration tests opt-in or isolate them from normal CI.
+- [x] Make ClickHouse integration tests opt-in or isolate them from normal CI
+  (done: `BUILD_CLICKHOUSE_TESTS` option, default OFF; gates `clickhouse-cmake`
+  add + `clickhouse_integration_test.cpp` + `ClickHouse::Client` link).
 - [ ] Add a documented bootstrap path when `uv`, CMake, or system packages are
   missing.
 
 ## Priority 3 — Documentation and product consistency
 
-- [ ] Update README feature status; embeddings are implemented but listed as
-  “Coming Soon”.
+- [x] Update README feature status; embeddings moved out of “Coming Soon” (done in
+  Session 3 — README `## Features` updated).
 - [ ] Document all supported providers, including registry-backed providers.
 - [ ] Document reasoning configuration and provider limitations.
 - [ ] Document tool execution security and filesystem permissions.

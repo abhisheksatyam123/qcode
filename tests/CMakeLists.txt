@@ -15,7 +15,6 @@ add_executable(ai_tests
     integration/openai_integration_test.cpp
     integration/anthropic_integration_test.cpp
     integration/tool_calling_integration_test.cpp
-    integration/clickhouse_integration_test.cpp
     integration/openai_embeddings_integration_test.cpp
     integration/multi_step_duplicate_execution_test.cpp
 
@@ -34,7 +33,6 @@ target_link_libraries(ai_tests
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
-        ClickHouse::Client  # ClickHouse C++ client for integration tests
 )
 
 # Include directories for tests
@@ -74,3 +72,16 @@ gtest_discover_tests(ai_tests
     PROPERTIES 
         TIMEOUT 30
 )
+
+# ClickHouse integration tests are opt-in: they require the clickhouse-cpp submodule
+# (with its contrib/) and a live ClickHouse server, so they are excluded from the
+# default test build.
+if(BUILD_CLICKHOUSE_TESTS)
+    target_sources(ai_tests PRIVATE
+        integration/clickhouse_integration_test.cpp
+    )
+    target_link_libraries(ai_tests PRIVATE
+        ClickHouse::Client
+    )
+endif()
+

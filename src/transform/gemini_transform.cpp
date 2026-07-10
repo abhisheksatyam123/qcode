@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <random>
+#include <unordered_set>
 
 namespace ai {
 namespace gemini {

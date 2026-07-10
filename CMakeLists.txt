@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Build options
 option(BUILD_TESTS "Build tests" OFF)
+option(BUILD_CLICKHOUSE_TESTS "Build ClickHouse integration tests (requires clickhouse-cpp submodule + live server)" OFF)
 option(BUILD_EXAMPLES "Build example applications" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 

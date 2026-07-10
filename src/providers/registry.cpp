@@ -43,8 +43,14 @@ void register_core_providers() {
   auto& reg = ProviderRegistry::instance();
 
   auto generic = [](const std::string& api_url) {
-    return ClientResolution{ai::openai::create_client(
-        "unused", api_url.empty() ? "https://opencode.ai/zen/v1" : api_url)};
+    // The generic "opencode" provider is OpenAI-compatible. It defaults to the
+    // OpenCode Zen endpoint with a placeholder key (local Zen proxies handle
+    // auth themselves), but honors OPENCODE_API_KEY when set so it can target
+    // any OpenAI-compatible endpoint that requires authentication.
+    const char* key = std::getenv("OPENCODE_API_KEY");
+    std::string api_key = key ? std::string(key) : "unused";
+    std::string url = api_url.empty() ? "https://opencode.ai/zen/v1" : api_url;
+    return ClientResolution{ai::openai::create_client(api_key, url)};
   };
   reg.register_provider("openai", [](const std::string&) {
     char* key = std::getenv("OPENAI_API_KEY");
