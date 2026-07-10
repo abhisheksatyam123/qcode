@@ -6,44 +6,40 @@
 Make QCode TUI look like OpenCode with beautiful tool rendering and clean backend/frontend separation.
 
 ### Architecture (Current)
-- Bus pattern already exists: `BusPort` → typed events → `AppStore` → FTXUI render
-- Backend (`chat_bus.cpp`) has zero FTXUI deps — communicates via bus events only
-- Coupling: `run_generation_with_bus()` takes `ChatState&` (only reads `session_id` + `reasoning_mode`)
+- Bus pattern: `BusPort` → typed events → `AppStore` → FTXUI render
+- Backend (`chat_bus.cpp`) now uses `GenerationContext` instead of `ChatState&` (Phase 2.1 done)
+- Remaining coupling: `db::save_message()` calls directly in chat_bus.cpp
+- Still need: `BackendService` class wrapping bus + providers
 
 ### Key Files
 ```
-src/tui/message_render.cpp  — ~630L — tool block, render_message, render_tool_pair (MAIN TARGET)
-src/tui/tool_renderers.cpp  — per-tool renderers (BashToolRender, etc.)
-src/tui/main.cpp            — 554L — monolithic entry, keyboard handler
+src/tui/message_render.cpp  — tool rendering (BlockTool, render_tool_pair, etc.)
+src/tui/main.cpp            — entry point, keyboard handler
+src/tui/chat_bus.cpp        — backend generation logic (needs db::save_message refactor)
+src/tui/views.cpp           — FTXUI views, layout
+include/ai/tui/chat_bus.h   — GenerationContext, run_generation_with_bus decl
 include/ai/tui/state.h      — ChatState struct
-include/ai/tui/message_render.h — BlockTool, render_message decl
-include/ai/tui/views.h      — color palette, accent() etc.
+include/ai/tui/bus/         — event bus types
+src/tui/db/                 — database helpers (save_message, etc.)
 ```
 
-### Phase Status
-Phase 1 (1.1-1.5): ✅ Complete. Beautiful tool blocks, per-tool renderers.
-Phase 1b: Almost complete. Pairing + collapse/expand logic is in place.
-Phase 2: Next — decouple backend from ChatState&.
-Phase 3: Planned — multi-frontend (headless server).
+### GenerationContext
+```
+struct GenerationContext {
+    std::string session_id;
+    std::string reasoning_mode = "off";
+    int tool_call_count = 0;          // synced back to ChatState after gen
+    double total_tool_time_ms = 0.0;  // synced back to ChatState after gen
+};
+```
 
 ## Tasks
 
-### Phase 1 & 1b: Tool Rendering with Collapse/Expand (Complete)
-- [x] 1.1 Redesign `BlockTool()` — accent-colored left border, icon, status badge, duration
-- [x] 1.2 Add per-tool-type renderers (bash, task, read_file, write_file, search)
-- [x] 1.3 Improve `render_tool_call()` — icon per type, better layout
-- [x] 1.4 Improve `render_tool_result()` — truncated output, expand hint, better structure
-- [x] 1.6 Add `tool_collapse_state` map to `ChatState` (key: tool_call_id, value: expanded bool)
-- [x] 1.7 Modify `render_message` to pair tool calls with results by `tool_call_id`
-- [x] 1.8 Create `render_tool_pair()` that renders combined call+result with expand/collapse
-- [x] 1.10 Visual indicator: ▼/▶ chevron, show input when collapsed, show both when expanded
-- [x] 1.11 Build and test (compiles and links)
-- [ ] 1.9 Implement keyboard toggle (Enter/Space or 'c') to toggle collapse state
-  - 'c' handler exists as stub (returns false — no-op)
-  - Need to track which block has focus and toggle its collapse state in ChatState
+### Phase 1 & 1b: Tool Rendering ✅
+All complete — tool blocks, per-tool renderers, collapse/expand, 'c' toggle.
 
 ### Phase 2: Backend Decoupling
-- [ ] 2.1 Replace `ChatState&` param with `GenerationContext` struct (session_id, reasoning_mode)
+- [x] 2.1 Replace `ChatState&` with `GenerationContext` in all backend functions
 - [ ] 2.2 Move `db::save_message()` from chat_bus.cpp → store event handlers
 - [ ] 2.3 Create `BackendService` class wrapping bus + providers
 

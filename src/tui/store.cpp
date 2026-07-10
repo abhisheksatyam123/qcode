@@ -269,6 +269,8 @@ void AppStore::wire() {
         state_.chat_history->emplace_back("ToolCall", tool_str);
         ai::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
         state_.messages_history->push_back(ai::Message::assistant_with_tools("", {tc_part}));
+        ai::tui::db::save_message(p.session_id, "ToolCall",
+            p.tool_name + "(" + p.arguments.dump() + ")");
         notify();
     }));
 
@@ -286,6 +288,7 @@ void AppStore::wire() {
         std::string result_str = p.is_error ? "  \u2716 " + p.tool_name + " failed (" + p.result.dump() + ")" : "  \u2714 " + p.tool_name + " (" + std::to_string((int)p.duration_ms) + "ms)";
         state_.chat_history->emplace_back("ToolResult", result_str);
         state_.messages_history->push_back(ai::Message::tool_results({{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
+        ai::tui::db::save_message(p.session_id, "ToolResult", result_str);
         notify();
     }));
 
@@ -300,6 +303,7 @@ void AppStore::wire() {
         } else {
             set_error(p.message);
             append_chat_message("System", "Error: " + p.message);
+            ai::tui::db::save_message(p.session_id, "System", "Error: " + p.message);
         }
     }));
 

@@ -61,11 +61,6 @@ static void run_tools_generation_bus(ai::Client& client,
         (*tool_starts)[call.id] = now;
         (*step_counter)++;
 
-        ai::tui::db::save_message(ctx.session_id, "ToolCall",
-                                   Tools::format_tool_call(
-                                       call.tool_name, call.arguments.dump(),
-                                       *step_counter, max_steps));
-
         bus.publish<ToolCallStarted>({
             .session_id = ctx.session_id,
             .tool_call_id = call.id,
@@ -97,12 +92,6 @@ static void run_tools_generation_bus(ai::Client& client,
           *assistant_text = "";
         }
 
-        std::string tool_res_str = Tools::format_tool_result(
-            res.tool_name, res.is_success(),
-            res.is_success() ? res.result.dump() : res.error_message(),
-            -1, duration_s);
-
-        ai::tui::db::save_message(ctx.session_id, "ToolResult", tool_res_str);
         ctx.tool_call_count++;
         ctx.total_tool_time_ms += duration_s * 1000.0;
 
@@ -292,9 +281,7 @@ static void run_tools_generation_bus(ai::Client& client,
             .text = final_text,
             .done = true
         });
-        ai::tui::db::save_message(ctx.session_id, "Assistant", final_text);
       }
-      ai::tui::db::save_message(ctx.session_id, "System", limit_msg);
     } else if (!final_text.empty() && !is_placeholder) {
       LOG_DEBUG("run_tools_generation_bus: publishing final MessageDelta text_len={}", final_text.size());
       bus.publish<MessageDelta>({
@@ -302,7 +289,6 @@ static void run_tools_generation_bus(ai::Client& client,
           .text = final_text,
           .done = true
       });
-      ai::tui::db::save_message(ctx.session_id, "Assistant", final_text);
     } else if (!final_text.empty() && is_placeholder) {
       // Model left only the in-progress placeholder; treat as no real text.
       LOG_WARN("run_tools_generation_bus: model returned only the in-progress placeholder");
@@ -332,7 +318,6 @@ static void run_tools_generation_bus(ai::Client& client,
         .text = final_text,
         .done = true
     });
-    ai::tui::db::save_message(ctx.session_id, "Assistant", final_text);
   } else {
     std::string err_str = "Error: " + gen_result.error_message();
     if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
@@ -343,7 +328,6 @@ static void run_tools_generation_bus(ai::Client& client,
         .message = err_str,
         .severity = "error"
     });
-    ai::tui::db::save_message(ctx.session_id, "System", err_str);
   }
 
   bus.publish<TokenUsageUpdated>({
@@ -472,7 +456,6 @@ static void run_stream_generation_bus(ai::Client& client,
     });
   }
 
-  ai::tui::db::save_message(ctx.session_id, "Assistant", full_text);
   bus.publish<SessionStatusChanged>({
       .session_id = ctx.session_id,
       .status = "idle"
@@ -575,7 +558,6 @@ void run_generation_with_bus(
         .message = "Exception: " + err_msg,
         .severity = "error"
     });
-    ai::tui::db::save_message(ctx.session_id, "System", "Exception: " + err_msg);
   }
 }
 
