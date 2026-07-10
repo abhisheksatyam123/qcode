@@ -14,8 +14,8 @@
 #include <climits>
 
 #include <ai/file_logger.h>
-#include <ai/tui/chat.h>
 #include <ai/tui/chat_bus.h>
+#include <ai/tui/provider_registry_init.h>
 #include <ai/tui/commands.h>
 #include <ai/tui/config.h>
 #include <ai/tui/db.h>
@@ -47,6 +47,9 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     auto bus = std::make_shared<ai::tui::bus::BusRuntime>();
     register_all_events(*bus);
+    // Populate the provider registry once, before any generation thread starts,
+    // so resolve() only ever reads a fully-initialized registry.
+    ai::providers::register_tui_providers();
     ai::tui::AppStore store(*bus);
 
     // Wire bus events to store mutations
@@ -235,7 +238,8 @@ int main() {
             prompt_input = "";
             ai::tui::handle_slash_command(raw, prompt_input, providers_list,
                                           selected_provider, selected_model,
-                                          enable_tools, system_prompt, state, *bus);
+                                          enable_tools, system_prompt, state,
+                                          background_threads, *bus);
             return;
         }
 
@@ -363,7 +367,8 @@ int main() {
                             std::string raw = "/" + cmd_name;
                             ai::tui::handle_slash_command(raw, prompt_input, providers_list,
                                                           selected_provider, selected_model,
-                                                          enable_tools, system_prompt, state, *bus);
+                                                          enable_tools, system_prompt, state,
+                                                          background_threads, *bus);
                         }
                         return true;
                     }

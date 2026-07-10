@@ -1,4 +1,5 @@
 #include "ai/registry.h"
+#include <ai/logger.h>
 
 #include "ai/openai.h"
 
@@ -25,7 +26,13 @@ void ProviderRegistry::register_provider(const std::string& id,
 ClientResolution ProviderRegistry::resolve(const std::string& id,
                                             const std::string& api_url) const {
   auto it = resolvers_.find(id);
-  if (it == resolvers_.end()) it = resolvers_.find(kGenericId);
+  if (it == resolvers_.end()) {
+    if (id != kGenericId) {
+      LOG_WARN("ProviderRegistry: unknown provider '{}'; falling back to "
+               "generic '{}' resolver", id, kGenericId);
+    }
+    it = resolvers_.find(kGenericId);
+  }
   if (it == resolvers_.end()) {
     return ClientResolution::fail("Unknown provider: " + id);
   }
@@ -39,7 +46,12 @@ void register_core_providers() {
     return ClientResolution{ai::openai::create_client(
         "unused", api_url.empty() ? "https://opencode.ai/zen/v1" : api_url)};
   };
-  reg.register_provider("openai", generic);
+  reg.register_provider("openai", [](const std::string&) {
+    char* key = std::getenv("OPENAI_API_KEY");
+    if (!key) return ClientResolution::fail("OPENAI_API_KEY not set.");
+    return ClientResolution{
+        ai::openai::create_client(key, "https://api.openai.com/v1")};
+  });
   reg.register_provider("opencode", generic);
 
   reg.register_provider("openrouter", [](const std::string&) {

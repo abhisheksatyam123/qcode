@@ -513,9 +513,9 @@ void run_generation_with_bus(
 
     LOG_DEBUG("chat_bus: resolved provider={} api_url={}", provider_id, api_url);
 
-    // Resolve the provider client via the central registry (auth + base
-    // URL handled per provider). Errors are surfaced on the bus.
-    ai::providers::register_tui_providers();
+    // Provider registry is populated once at startup (see main.cpp). Resolve the
+    // provider client via the central registry (auth + base URL handled per
+    // provider). Errors are surfaced on the bus.
     auto resolution =
         ai::providers::ProviderRegistry::instance().resolve(provider_id, api_url);
     if (!resolution.ok()) {

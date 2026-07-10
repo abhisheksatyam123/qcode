@@ -2,6 +2,8 @@
 
 #include <string>
 #include <vector>
+#include <memory>
+#include <thread>
 
 #include <ai/tui/state.h>
 
@@ -55,6 +57,7 @@ bool handle_slash_command(
     bool& enable_tools,
     std::string& system_prompt,
     ChatState& state,
+    std::shared_ptr<std::vector<std::thread>> background_threads,
     bus::BusPort& bus
 );
 

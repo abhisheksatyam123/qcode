@@ -110,11 +110,17 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
       results.push_back(result);
     }
   } else {
-    // Execute in parallel using futures
-    std::vector<std::future<ToolResult>> futures;
-    futures.reserve(tool_calls.size());
+    // Execute in parallel using futures, but bound concurrency so we never
+    // spawn an unbounded number of threads (previously one std::async per call).
+    constexpr std::size_t kMaxParallelTools = 8;
+    const std::size_t n = tool_calls.size();
+    for (std::size_t start = 0; start < n; start += kMaxParallelTools) {
+      const std::size_t end = std::min(start + kMaxParallelTools, n);
+      std::vector<std::future<ToolResult>> batch;
+      batch.reserve(end - start);
 
-    for (const auto& tool_call : tool_calls) {
+      for (std::size_t i = start; i < end; ++i) {
+        const auto& tool_call = tool_calls[i];
       // Confirmation (mirror sequential path) - must run before execution
       if (options && options->on_tool_call_confirm.has_value()) {
         bool confirmed = options->on_tool_call_confirm.value()(tool_call);
@@ -135,7 +141,7 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
       }
 
       // Capture by VALUE to avoid dangling ref (tool_call is a loop variable)
-      futures.emplace_back(
+      batch.emplace_back(
           std::async(std::launch::async, [tool_call, &tools, &messages, options]() {
             ToolResult result = execute_tool(tool_call, tools, messages);
             // Fire on_tool_call_finish callback from the async thread
@@ -146,9 +152,10 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
           }));
     }
 
-    // Collect results
-    for (auto& future : futures) {
-      results.push_back(future.get());
+      // Collect this batch before launching the next one (bounds concurrency).
+      for (auto& future : batch) {
+        results.push_back(future.get());
+      }
     }
   }
 
@@ -194,6 +201,13 @@ ToolResult ToolExecutor::execute_sync_tool(
   }
 }
 
+static std::chrono::milliseconds async_tool_timeout() {
+  if (const char* e = std::getenv("QCODE_TOOL_TIMEOUT_MS")) {
+    try { return std::chrono::milliseconds(std::stoll(e)); } catch (...) {}
+  }
+  return std::chrono::minutes(5);
+}
+
 ToolResult ToolExecutor::execute_async_tool(
     const ToolCall& tool_call,
     const Tool& tool,
@@ -205,9 +219,20 @@ ToolResult ToolExecutor::execute_async_tool(
 
   try {
     auto future = tool.execute_async.value()(tool_call.arguments, context);
-    JsonValue result = future.get();  // Wait for completion
+    // Bound the wait so a hung async tool cannot block the tool loop forever.
+    const std::chrono::milliseconds timeout = async_tool_timeout();
+    if (future.wait_for(timeout) == std::future_status::ready) {
+      JsonValue result = future.get();
+      return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments, result);
+    }
+    // Timed out: move the still-running future into a detached background
+    // thread (so its destructor does not block) and report the timeout.
+    std::thread([f = std::move(future)]() mutable {
+      try { f.get(); } catch (...) {}
+    }).detach();
     return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
-                      result);
+                      std::string("Async tool execution timed out after ") +
+                          std::to_string(timeout.count()) + " ms");
   } catch (const std::exception& e) {
     return ToolResult(
         tool_call.id, tool_call.tool_name, tool_call.arguments,

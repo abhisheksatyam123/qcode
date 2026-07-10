@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cstdlib>
+#include <thread>
 #include <ctime>
 
 #include <algorithm>
@@ -46,6 +47,7 @@ bool handle_slash_command(
     bool& enable_tools,
     std::string& system_prompt,
     ChatState& state,
+    std::shared_ptr<std::vector<std::thread>> background_threads,
     bus::BusPort& bus
 ) {
     std::string cmd = raw_cmd.substr(1);
@@ -199,7 +201,7 @@ bool handle_slash_command(
             .session_id = sid,
             .status = "generating"});
 
-        std::thread([providers_copy, sp, sm, snapshot, keep, sid, &bus]() mutable {
+        std::thread compact_thread([providers_copy, sp, sm, snapshot, keep, sid, &bus]() mutable {
             ai::tui::contract::CompactionResult::Payload result;
             result.keep = keep;
             result.original_size = snapshot.size();
@@ -299,7 +301,10 @@ bool handle_slash_command(
             result.todo_path = std::move(todo_path);
             result.wrote = wrote;
             bus.publish<ai::tui::contract::CompactionResult>(result);
-        }).detach();
+        });
+        // Track the compaction thread so it is joined at shutdown (before the
+        // bus is torn down), avoiding a detached use-after-free.
+        background_threads->push_back(std::move(compact_thread));
 
         return true;
     }
