@@ -18,6 +18,12 @@ namespace ai {
 namespace tui {
 
 using ordered_json = nlohmann::ordered_json;
+// OpenCode uses these bundled Antigravity OAuth client credentials to refresh
+// the token stored by the Antigravity CLI.
+constexpr const char* kAntigravityOAuthClientId =
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+constexpr const char* kAntigravityOAuthClientSecret =
+    "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";
 
 static std::string normalize_api_url(std::string url) {
     while (!url.empty() && url.back() == '/') url.pop_back();
@@ -98,6 +104,12 @@ std::string get_antigravity_token() {
     const auto refresh_token = token.value("refresh_token", "");
     const char* client_id = std::getenv("ANTIGRAVITY_OAUTH_CLIENT_ID");
     const char* client_secret = std::getenv("ANTIGRAVITY_OAUTH_CLIENT_SECRET");
+    if (client_id == nullptr || *client_id == '\0') {
+        client_id = kAntigravityOAuthClientId;
+    }
+    if (client_secret == nullptr || *client_secret == '\0') {
+        client_secret = kAntigravityOAuthClientSecret;
+    }
     if (refresh_token.empty() || client_id == nullptr || *client_id == '\0') {
         return access_token;
     }
