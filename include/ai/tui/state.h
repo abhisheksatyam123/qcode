@@ -84,6 +84,12 @@ struct ChatState {
     // Tool collapse/expand state (keyed by tool_call_id)
     std::shared_ptr<std::unordered_map<std::string, bool>> tool_collapse_state =
         std::make_shared<std::unordered_map<std::string, bool>>();
+
+    // Keyboard navigation: ordered list of tool_call_ids in render order,
+    // plus the currently focused index. -1 means no tool block focused.
+    std::shared_ptr<std::vector<std::string>> tool_block_order =
+        std::make_shared<std::vector<std::string>>();
+    std::shared_ptr<int> focused_tool_index = std::make_shared<int>(-1);
 };
 
 // Helper to scan for modified files using git status

@@ -22,7 +22,8 @@ ftxui::Element ToolBlock(const std::string& icon,
                           ftxui::Color accent_color,
                           double duration_ms = 0.0,
                           bool collapsed = false,
-                          bool collapsible = true);
+                          bool collapsible = true,
+                          bool focused = false);
 
 // ── Legacy BlockTool (compatibility) ──
 ftxui::Element BlockTool(const std::string& title, ftxui::Element content,

@@ -38,10 +38,13 @@ void handle_signal(int) { g_running = false; }
 struct GenSession {
     std::string id;
     ai::tui::GenerationContext ctx;
+    ai::Messages messages;
     std::vector<nlohmann::json> event_queue;
     std::mutex queue_mutex;
     std::atomic<bool> done{false};
+    std::atomic<bool> generation_started{false};
     std::string error;
+    std::shared_ptr<std::vector<ai::tui::bus::Subscription>> subs;
 };
 
 static std::mutex g_sessions_mutex;
@@ -214,37 +217,57 @@ int main(int argc, char* argv[]) {
             ai::tui::SystemPrompt::build_default());
         std::string reasoning_mode = body.value("reasoning_mode", "off");
 
-        // Create session
-        auto session = std::make_shared<GenSession>();
-        session->id = ai::utils::generate_uuid();
+        // ── Resolve or create session for multi-turn ──
+        std::string session_id = body.value("session_id", "");
+        std::shared_ptr<GenSession> session;
+
+        {
+            std::lock_guard<std::mutex> lock(g_sessions_mutex);
+            if (!session_id.empty()) {
+                auto it = g_sessions.find(session_id);
+                if (it != g_sessions.end()) session = it->second;
+            }
+            if (!session) {
+                session = std::make_shared<GenSession>();
+                session->id = session_id.empty() ? ai::utils::generate_uuid() : session_id;
+                {
+                    std::lock_guard<std::mutex> lock2(g_sessions_mutex);
+                    g_sessions[session->id] = session;
+                }
+            }
+        }
+
+        // Set up generation context (reasoning mode can change per request)
         session->ctx = ai::tui::GenerationContext{
             .session_id = session->id,
             .reasoning_mode = reasoning_mode
         };
 
-        // Subscribe to bus events for this session
-        auto subs = std::make_shared<std::vector<ai::tui::bus::Subscription>>(subscribe_session(*g_bus, session));
+        // Subscribe to bus events for this session (once)
+        if (!session->subs) {
+            session->subs = std::make_shared<std::vector<ai::tui::bus::Subscription>>(
+                subscribe_session(*g_bus, session));
+        }
 
         // Save user message and add to history
         ai::tui::db::save_message(session->id, "User", text);
-        ai::Messages messages;
-        messages.push_back(ai::Message::user(text));
+        session->messages.push_back(ai::Message::user(text));
+
+        // Keep a local copy of messages for the generation thread
+        ai::Messages messages = session->messages;
 
         // ── Set up streaming response ──
-        // We'll collect events in the session queue and write them
-        // as NDJSON to the response in a background thread.
-        // httplib supports chunked transfer encoding via a callback.
+        // Generation runs in a background thread. The chunked provider
+        // callback polls the event queue and writes events as they arrive,
+        // giving true real-time streaming to the client.
         res.set_chunked_content_provider("application/x-ndjson",
-            [session, subs, &backend,
+            [session, &backend,
              provider, model, system_prompt, messages = std::move(messages),
              reasoning_mode](size_t offset, httplib::DataSink& sink) mutable -> bool
             {
-                // Start generation in this thread if not started yet
-                // We use a static flag to run generation only once
-                static bool started = false;
-                if (!started) {
-                    started = true;
-                    // Send session_id event first
+                // Start generation in a background thread (once per session)
+                if (!session->generation_started.exchange(true)) {
+                    // Send session.started event first
                     nlohmann::json start_msg = {
                         {"type", "session.started"},
                         {"session_id", session->id}
@@ -254,17 +277,20 @@ int main(int argc, char* argv[]) {
                         return false;
                     }
 
-                    // Run generation synchronously in this thread
-                    // Events will be queued via bus subscriptions
-                    try {
-                        backend.run_generation(
-                            provider, model, system_prompt,
-                            messages, true, session->ctx);
-                    } catch (const std::exception& e) {
-                        LOG_ERROR("Generation error: {}", e.what());
-                        session->error = e.what();
-                    }
-                    session->done = true;
+                    // Launch background thread for generation
+                    std::thread gen_thread([session, &backend, provider, model,
+                                            system_prompt, messages = std::move(messages)]() {
+                        try {
+                            backend.run_generation(
+                                provider, model, system_prompt,
+                                messages, true, session->ctx);
+                        } catch (const std::exception& e) {
+                            LOG_ERROR("Generation error: {}", e.what());
+                            session->error = e.what();
+                        }
+                        session->done = true;
+                    });
+                    gen_thread.detach();
                 }
 
                 // Drain queued events
@@ -281,8 +307,8 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                if (session->done) {
-                    // Send final event
+                // If generation is done and queue is drained, send final event
+                if (session->done && events.empty()) {
                     nlohmann::json final_msg = {
                         {"type", "generation.complete"},
                         {"session_id", session->id},

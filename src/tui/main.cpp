@@ -435,9 +435,38 @@ int main() {
                             "info", 2000);
             return true;
         }
-        // Toggle collapse/expand for all tool blocks ('c' key)
-        if (e == Event::Character('c')) {
-            // Toggle all tool blocks: if any are collapsed, expand all; else collapse all
+        // ── Tool block keyboard navigation ──
+        // ArrowUp/ArrowDown (or k/j) move focus between tool blocks.
+        auto navigate_tool = [&](int delta) -> bool {
+            if (!state.tool_block_order || state.tool_block_order->empty()) return false;
+            int n = static_cast<int>(state.tool_block_order->size());
+            int cur = *state.focused_tool_index;
+            cur = std::max(-1, std::min(n - 1, cur + delta));
+            *state.focused_tool_index = cur;
+            return true;
+        };
+        if (e == Event::ArrowUp || e == Event::Character('k')) {
+            if (navigate_tool(-1)) return true;
+        }
+        if (e == Event::ArrowDown || e == Event::Character('j')) {
+            if (navigate_tool(1)) return true;
+        }
+
+        // Toggle collapse/expand for tool blocks ('c' or Enter on focused block)
+        if (e == Event::Character('c') || e == Event::Return) {
+            // If a specific tool block is focused, toggle just that one.
+            if (state.tool_block_order && *state.focused_tool_index >= 0 &&
+                *state.focused_tool_index < static_cast<int>(state.tool_block_order->size())) {
+                const std::string& id = (*state.tool_block_order)[*state.focused_tool_index];
+                if (!state.tool_collapse_state) {
+                    state.tool_collapse_state =
+                        std::make_shared<std::unordered_map<std::string, bool>>();
+                }
+                bool cur = (*state.tool_collapse_state)[id];
+                (*state.tool_collapse_state)[id] = !cur;
+                return true;
+            }
+            // Otherwise toggle all: if any are collapsed, expand all; else collapse all
             if (state.tool_collapse_state && !state.tool_collapse_state->empty()) {
                 bool any_collapsed = false;
                 for (const auto& [id, collapsed] : *state.tool_collapse_state) {

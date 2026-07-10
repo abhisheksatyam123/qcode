@@ -257,3 +257,38 @@ body {
   animation: slideIn 0.2s ease;
 }
 @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+/* ── Markdown Content ── */
+.md-content { line-height: 1.6; }
+.md-content h1, .md-content h2, .md-content h3 {
+  margin: 8px 0 4px;
+  color: #64ffda;
+}
+.md-content h1 { font-size: 18px; }
+.md-content h2 { font-size: 16px; }
+.md-content h3 { font-size: 14px; }
+.md-content p { margin: 4px 0; }
+.md-content ul { margin: 4px 0 4px 20px; }
+.md-content li { margin: 2px 0; }
+.md-content code.md-inline-code {
+  background: #0f3460;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 12px;
+}
+.md-content pre.md-code {
+  background: #0f3460;
+  padding: 8px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+  border-left: 3px solid #64ffda;
+}
+.md-content pre.md-code code {
+  font-family: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+.md-content a { color: #64ffda; }
+

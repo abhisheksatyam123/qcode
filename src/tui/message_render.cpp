@@ -17,7 +17,8 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
                                 const ai::ToolResultContentPart& result_part,
                                 const std::string& theme,
                                 bool collapsed,
-                                bool collapsible);
+                                bool collapsible,
+                                bool focused = false);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  ToolBlock: OpenCode-style tool rendering block with collapse/expand
@@ -45,7 +46,8 @@ Element ToolBlock(const std::string& icon,
                    Color accent_color,
                    double duration_ms,
                    bool collapsed,
-                   bool collapsible) {
+                   bool collapsible,
+                   bool focused) {
 
     // ── Header line ──
     Elements header_parts;
@@ -121,7 +123,7 @@ Element ToolBlock(const std::string& icon,
     if (!collapsed) {
         block_parts.push_back(
             hbox({
-                text("│") | color(accent_color),
+                text("│") | color(accent_color) | (focused ? bold : nothing),
                 text(" "),
                 vbox(std::move(content)) | flex,
             })
@@ -429,6 +431,9 @@ Element render_message(const ai::Message& msg, const ChatState& state,
 
     Elements parts;
 
+    // Reset focused tool navigation order (repopulated during render)
+    if (state.tool_block_order) state.tool_block_order->clear();
+
     bool has_text = msg.has_text();
     bool has_tool_calls = msg.has_tool_calls();
     bool has_tool_results = msg.has_tool_results();
@@ -507,8 +512,20 @@ Element render_message(const ai::Message& msg, const ChatState& state,
                 if (state.tool_collapse_state && state.tool_collapse_state->count(tool_part->id)) {
                     collapsed = (*state.tool_collapse_state)[tool_part->id];
                 }
-                
-                parts.push_back(render_tool_pair(*tool_part, *result_part, theme, collapsed, true));
+
+                // Track for keyboard navigation
+                bool focused = false;
+                if (state.tool_block_order) {
+                    int idx = static_cast<int>(state.tool_block_order->size());
+                    state.tool_block_order->push_back(tool_part->id);
+                    if (state.focused_tool_index &&
+                        *state.focused_tool_index == idx) {
+                        focused = true;
+                    }
+                }
+
+                parts.push_back(render_tool_pair(*tool_part, *result_part, theme,
+                                                 collapsed, true, focused));
                 
                 rendered_tool_calls.insert(tool_part->id);
                 rendered_tool_results.insert(tool_part->id);
@@ -542,7 +559,8 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
                                  const ai::ToolResultContentPart& result_part,
                                  const std::string& theme,
                                  bool collapsed,
-                                 bool collapsible) {
+                                 bool collapsible,
+                                 bool focused) {
     std::string icon = tool_icon(call_part.tool_name);
     std::string display = tool_display_name(call_part.tool_name);
     std::string desc = extract_tool_description(call_part);
@@ -622,7 +640,7 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
 
     return ToolBlock(icon, display, desc, vbox(std::move(combined_content)),
                       false, status, Color::Default, result_part.duration_ms,
-                      collapsed, collapsible);
+                      collapsed, collapsible, focused);
 }
 
 } // namespace tui

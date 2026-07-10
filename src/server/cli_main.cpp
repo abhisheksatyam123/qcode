@@ -17,6 +17,7 @@ struct Config {
     std::string provider;
     std::string model;
     std::string prompt;
+    std::string session_id;
     std::string reasoning_mode = "off";
     bool verbose = false;
 };
@@ -28,6 +29,7 @@ static void print_usage(const char* argv0) {
               << "  --provider <id>   Provider ID\n"
               << "  --model <id>      Model ID\n"
               << "  --reasoning <mode> Reasoning mode\n"
+              << "  --session <id>    Continue existing session\n"
               << "  --verbose, -v     Print tool calls to stderr\n"
               << "  --help, -h        Show this help\n";
 }
@@ -41,6 +43,7 @@ static Config parse_args(int argc, char* argv[]) {
         else if (arg == "--provider" && i + 1 < argc) cfg.provider = argv[++i];
         else if (arg == "--model" && i + 1 < argc) cfg.model = argv[++i];
         else if (arg == "--reasoning" && i + 1 < argc) cfg.reasoning_mode = argv[++i];
+        else if (arg == "--session" && i + 1 < argc) cfg.session_id = argv[++i];
         else if (arg == "--verbose" || arg == "-v") cfg.verbose = true;
         else if (arg == "--help" || arg == "-h") { print_usage(argv[0]); exit(0); }
     }
@@ -79,6 +82,7 @@ int main(int argc, char* argv[]) {
         {"model", cfg.model},
         {"reasoning_mode", cfg.reasoning_mode}
     };
+    if (!cfg.session_id.empty()) body["session_id"] = cfg.session_id;
 
     // Send POST and get streaming response
     auto res = cli.Post("/generate", body.dump(), "application/json");
@@ -125,5 +129,26 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n";
+
+    // Print session_id for continuing conversation
+    for (const auto& line : std::vector<std::string>{}) {}
+    if (res->body.find("session.started") != std::string::npos) {
+        try {
+            auto events = res->body;
+            size_t pos = 0;
+            while (pos < events.size()) {
+                auto nl = events.find('\n', pos);
+                if (nl == std::string::npos) break;
+                std::string l = events.substr(pos, nl - pos);
+                pos = nl + 1;
+                if (l.empty()) continue;
+                auto evt = nlohmann::json::parse(l);
+                if (evt.value("type", "") == "session.started") {
+                    std::cerr << "Session ID: " << evt.value("session_id", "") << "\n";
+                    break;
+                }
+            }
+        } catch (...) {}
+    }
     return 0;
 }
