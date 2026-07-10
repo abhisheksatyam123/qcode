@@ -23,28 +23,41 @@ static std::string normalize_api_url(std::string url) {
     return url;
 }
 
+static std::vector<std::string> find_python_candidates() {
+    // Discover a Python interpreter for keyring/OAuth resolution. Prefer an
+    // explicit override, then fall back to PATH lookups (no hardcoded paths).
+    std::vector<std::string> cands;
+    if (const char* pe = std::getenv("QCODE_PYTHON")) cands.push_back(pe);
+    if (const char* pe = std::getenv("PYTHON_EXECUTABLE")) cands.push_back(pe);
+    cands.push_back("python3");
+    cands.push_back("python");
+    return cands;
+}
+
 std::string get_antigravity_token() {
     char* api_key_env = std::getenv("ANTIGRAVITY_API_KEY");
     if (api_key_env && std::string(api_key_env).length() > 0)
         return api_key_env;
 
-    for (const char* py : {"/home/abhi/miniconda3/bin/python", "python3"}) {
+    for (const std::string& py : find_python_candidates()) {
         // Resolve the Antigravity OAuth credential from the OS keyring and
         // exchange its refresh_token for a fresh access_token. The stored
         // access_token is frequently rejected by cloudcode-pa, so prefer a
         // refresh whenever a refresh_token is present (mirrors opencode's chain).
         std::string cmd = std::string(py) +
-            " -c \"import keyring, json, urllib.request, urllib.parse, datetime\n"
+            " -c \"import os, keyring, json, urllib.request, urllib.parse, datetime\n"
             "try:\n"
+            "    cid = os.environ.get('ANTIGRAVITY_OAUTH_CLIENT_ID','')\n"
+            "    csec = os.environ.get('ANTIGRAVITY_OAUTH_CLIENT_SECRET','')\n"
             "    raw = keyring.get_password('gemini', 'antigravity')\n"
             "    if not raw:\n"
             "        print('')\n"
             "    else:\n"
             "        d = json.loads(raw); tok = d.get('token', {}); rt = tok.get('refresh_token')\n"
             "        refreshed = None\n"
-            "        if rt:\n"
+            "        if rt and cid and csec:\n"
             "            try:\n"
-            "                data = urllib.parse.urlencode({'grant_type':'refresh_token','refresh_token':rt,'client_id':'1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com','client_secret':'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'}).encode('utf-8')\n"
+            "                data = urllib.parse.urlencode({'grant_type':'refresh_token','refresh_token':rt,'client_id':cid,'client_secret':csec}).encode('utf-8')\n"
             "                req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data)\n"
             "                with urllib.request.urlopen(req, timeout=20) as resp: refreshed = json.loads(resp.read().decode('utf-8'))\n"
             "                tok['access_token'] = refreshed['access_token']\n"
@@ -89,13 +102,17 @@ std::string get_antigravity_token() {
 
 std::string config_path() {
     if (const char* p = std::getenv("OPENCODE_CONFIG")) return p;
-    return "/home/abhi/notes/etc/opencode.json";
+    if (const char* xdg = std::getenv("XDG_CONFIG_HOME"))
+        return std::string(xdg) + "/opencode/opencode.json";
+    if (const char* h = std::getenv("HOME"))
+        return std::string(h) + "/.config/opencode/opencode.json";
+    return "opencode.json";
 }
 
 std::string get_notes_root() {
     if (const char* r = std::getenv("OPENCODE_NOTES_ROOT")) return r;
     if (const char* h = std::getenv("HOME")) return std::string(h) + "/notes";
-    return "/home/abhi/notes";
+    return "notes";
 }
 
 std::vector<ProviderInfo> load_providers_from_config() {

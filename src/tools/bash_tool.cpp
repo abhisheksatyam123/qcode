@@ -243,6 +243,16 @@ static std::string generate_unique_tool_file_name() {
   return "tool_" + std::to_string(ms) + suffix;
 }
 
+static std::string get_tool_output_dir() {
+    // Truncated command output is written here. Configurable via
+    // QCODE_TOOL_OUTPUT_DIR / OPENCODE_TOOL_OUTPUT_DIR; falls back to a
+    // cache dir under HOME (or /tmp) so no absolute path is hardcoded.
+    if (const char* d = std::getenv("QCODE_TOOL_OUTPUT_DIR")) return d;
+    if (const char* d = std::getenv("OPENCODE_TOOL_OUTPUT_DIR")) return d;
+    if (const char* h = std::getenv("HOME")) return std::string(h) + "/.cache/qcode/tool-output";
+    return "/tmp/qcode-tool-output";
+}
+
 std::string BashTool::apply_output_budget(const std::string& output,
                                            std::optional<int> max_chars,
                                            std::optional<int> max_lines) {
@@ -278,7 +288,7 @@ std::string BashTool::apply_output_budget(const std::string& output,
   }
   
   // Perform truncation: write full output to truncation directory
-  std::string dir_path = "/home/abhi/notes/state/data/tool-output";
+  std::string dir_path = get_tool_output_dir();
   std::error_code ec;
   std::filesystem::create_directories(dir_path, ec);
   
