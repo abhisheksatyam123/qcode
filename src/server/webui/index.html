@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QCode Chat</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <h1>QCode</h1>
+      <div class="version">v0.1</div>
+    </div>
+    <div class="sidebar-controls">
+      <label>Provider</label>
+      <select id="provider-select"></select>
+      <label>Model</label>
+      <select id="model-select"></select>
+      <label>Reasoning</label>
+      <select id="reasoning-select">
+        <option value="off">Off</option>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+      </select>
+    </div>
+    <div class="sidebar-footer">
+      <button id="clear-btn">Clear Chat</button>
+    </div>
+  </aside>
+  <main id="main">
+    <div id="chat-container">
+      <div id="messages"></div>
+    </div>
+    <div id="input-area">
+      <textarea id="prompt-input" placeholder="Type your message..." rows="3"></textarea>
+      <button id="send-btn">Send</button>
+    </div>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

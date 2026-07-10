@@ -12,6 +12,7 @@
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+#include <unistd.h>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -152,6 +153,23 @@ int main(int argc, char* argv[]) {
 
     // ── HTTP server ──
     httplib::Server svr;
+
+    // Serve Web UI static files
+    {
+        std::string webui_path = std::string(argv[0]);
+        auto pos = webui_path.find_last_of("/\\");
+        if (pos != std::string::npos) webui_path = webui_path.substr(0, pos);
+        webui_path += "/webui";
+        if (access(webui_path.c_str(), F_OK) != 0) {
+            webui_path = AI_SERVER_WEBUI_DIR;
+        }
+        if (access(webui_path.c_str(), F_OK) == 0) {
+            LOG_INFO("Serving Web UI from {}", webui_path);
+            svr.set_mount_point("/", webui_path);
+        } else {
+            LOG_WARN("Web UI directory not found at {}", webui_path);
+        }
+    }
 
     // Health check
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
