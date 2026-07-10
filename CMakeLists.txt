@@ -12,6 +12,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Export compile commands for clangd / LSP support
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Build options
 option(BUILD_TESTS "Build tests" OFF)
 option(BUILD_CLICKHOUSE_TESTS "Build ClickHouse integration tests (requires clickhouse-cpp submodule + live server)" OFF)
