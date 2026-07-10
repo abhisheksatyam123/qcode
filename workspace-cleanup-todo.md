@@ -3,14 +3,14 @@
 Scope: make the SDK and `qcode-tui` reliable, portable, secure, testable, and
 ready for review.
 
-> **Status / verification note (updated this session):** No C/C++ toolchain
-> (`cmake`/`g++`/`clang++`/`uv`) exists on this host, so nothing is compile-
-> verified locally. Correctness is established by source inspection plus a
-> corrected raw-newline-in-string detector (`/tmp/detect_raw_nl2.py`); the
-> tree is CLEAN. The working tree was reduced from 271 changed files (256 of
-> them spurious `100644->100755` mode bits on vendored files) to **16 content
-> files** after restoring HEAD modes and deleting 6 stray `.bak` files.
-> `git diff --check` is clean.
+> **Status / verification note (updated this session):** A C/C++ toolchain is now
+> installed via micromamba (`~/envs/toolchain`: gcc/g++ 15.2.0, cmake 4.4.0,
+> ninja 1.13.2, make, openssl, sqlite, pkg-config). The **non-test Debug build is
+> GREEN** (60/60 targets, 0 errors; `qcode-tui` produced) via
+> `cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_EXAMPLES=ON -DBUILD_TESTS=OFF
+> -DCMAKE_PREFIX_PATH=$HOME/envs/toolchain .. && cmake --build . -j`. Three
+> *pre-existing* build-config gaps were fixed to unblock compilation (see Session 3).
+> Tests still require the `googletest` submodule + `BUILD_TESTS=ON` (not built yet).
 >
 > **Committed (this round, 4 commits):** `3cbb8d7` fix(tui) streaming/reasoning/
 > error/confirm/config; `c931bfa` fix(sdk) logger/tool-name/stream-guard;
@@ -81,14 +81,18 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
 
 ## Priority 0 — Correctness blockers
 
-- [ ] Verify the tree compiles at all.
+- [x] Verify the tree compiles at all (non-test): SDK + TUI + examples build
+  GREEN (Debug, 60/60 targets, 0 errors). Tests build still pending
+  `googletest` submodule + `BUILD_TESTS=ON`.
   - [x] The uncommitted edits to `src/tui/store.cpp` (~line 218) and
     `src/tui/commands.cpp` (6 places) contain raw newlines inside `"..."`
     string literals, which is ill-formed C++. Replace with `\n` escapes.
-  - [ ] Install build prerequisites (`uv`, `cmake`) — neither is available on
-    this machine, so no build has been verified locally.
-    **BLOCKED:** no compiler/toolchain on this host; edits verified by source
-    inspection + a corrected raw-newline detector (`detect_raw_nl2.py`).**
+  - [x] Install build prerequisites: toolchain installed via micromamba
+    (`~/envs/toolchain`: gcc/g++/cmake/ninja/make/openssl/sqlite/pkg-config).
+    Non-test Debug build verified GREEN (60/60 targets, `qcode-tui` produced).
+    `uv` not used — `scripts/build.py` was bypassed with a direct `cmake` call.
+  - [ ] Tests build: requires `googletest` submodule (`git submodule update
+    --init third_party/googletest`) + `BUILD_TESTS=ON`; not built yet.
 - [ ] Fix streaming accumulation in `src/tui/chat_bus.cpp`.
   - [x] Keep a full assistant transcript separately from the flush buffer.
   - [x] Publish incremental deltas without replacing the accumulated message.
@@ -158,9 +162,9 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
   - [x] `register_tui_providers()` is called on every generation from
     `chat_bus.cpp`; registry map writes can race with concurrent resolves.
     Register once at startup (e.g. `std::call_once`).
-- [ ] Add session-id validation to every backend event handler.
+- [x] Add session-id validation to every backend event handler (`db::is_valid_session_id` canonical-UUID check guards `save_message`, `reload_session_history`, `delete_session`; `/session` command rejects malformed ids with a clear error).
 - [ ] Define cancellation behavior for an active generation.
-- [ ] Make `AppStore::on_change()` subscriptions removable and RAII-safe.
+- [x] Make `AppStore::on_change()` subscriptions removable and RAII-safe (`callbacks_` now id-keyed; `on_change` returns a `bus::Subscription` that calls `remove_callback(id)` on destruction).
 - [x] Bound parallel tool execution (currently one `std::async` thread per
   call, uncapped) and add a timeout to `execute_async_tool()`'s blocking
   `future.get()`.
@@ -188,21 +192,26 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
 
 - [ ] Replace busy-wait polling (`sleep_for(1ms)`) in both stream impls'
   `get_next_event()` with a condition variable or blocking queue.
-- [ ] Make the hard 30-second `kEventTimeout` between stream events
+- [x] Make the hard 30-second `kEventTimeout` between stream events configurable (`event_timeout_` member + `set_event_timeout()`; defaults to 30s, overridable via `QCODE_STREAM_EVENT_TIMEOUT_SEC` env at stream start in both OpenAI and Anthropic impls).
   configurable; it aborts legitimately slow generations (long tool
   latencies, deep reasoning).
 - [x] Add a double-start guard/mutex to `AnthropicStreamImpl::start_stream()`
   (the OpenAI impl has one).
 - [ ] Reuse HTTP connections: `HttpRequestHandler` builds a new
   `httplib::Client` per request (TLS handshake every call).
-- [ ] Handle explicit ports (`host:port`) and invalid URLs in
-  `parse_base_url()`.
+- [x] Handle explicit ports (`host:port`) and invalid URLs in
+  `parse_base_url()` (`HttpConfig::port` added; `parse_base_url` splits
+  host:port into `host`+`port`, validates non-empty host with an error log;
+  `make_request` applies the port via the two-arg `httplib::(SSL)Client(host,
+  port)` ctor, defaulting to 443/80; IPv6 literals skipped).
 - [ ] Add retry support for streaming requests (only non-streaming `post()`
   retries today).
-- [ ] Retry policy improvements.
-  - [ ] Return failed results instead of throwing `RetryError` for
-    non-retryable errors.
-  - [ ] Add jitter and a maximum-delay cap to the exponential backoff.
+- [x] Retry policy improvements.
+  - [x] Return failed results instead of throwing `RetryError` for
+    non-retryable errors (and for exhausted retries).
+  - [x] Add jitter and a maximum-delay cap to the exponential backoff
+    (`RetryConfig::max_delay` default 30s; `jitter` default 0.25; thread_local
+    RNG, no shared `mt19937`).
   - [ ] Make the blocking retry sleep cancellation-aware.
 - [ ] Logger fixes.
   - [x] `ConsoleLogger` uses `std::localtime` (not thread-safe); switch to
@@ -323,7 +332,9 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
   were restored. While restoring, a pre-existing latent bug was found and fixed:
   `handle_slash_command` closed early right after `/compact`, leaving the
   "Unknown command" fallback (and a stray `}`) outside the function. See Session 3.
-- [ ] **Compile-verify the full tree once a C/C++ toolchain is available.**
+- [x] **Compile-verify the full tree** (non-test): done this session — toolchain
+  installed, SDK+TUI+examples Debug build GREEN. Tests still need the
+  `googletest` submodule + `BUILD_TESTS=ON`.
   This host has no `cmake`/`g++`/`clang++`/`uv`, so all fixes this round are
   inspection-verified only. Re-run the verification checklist (format/build/
   test/lint) from a clean tree before merging.
@@ -365,17 +376,44 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
   match: opens 52, closes 348, 69/69 real braces) and clean via
   `/tmp/detect_raw_nl2.py` + `git diff --check`.
 
-**Remaining feasible without a toolchain (still open):**
+**Toolchain + build verification (this session):**
+- Installed C/C++ toolchain via micromamba at `~/envs/toolchain` (no `sudo`/`apt`
+  available). Fixed `third_party/{brotli,zlib}` dir perms (mode `644` blocked
+  traversal) so CMake could read them; submodules were already checked out.
+  Configured + built Debug with Ninja (examples ON, tests OFF): **GREEN, 60/60
+  targets, `qcode-tui` produced**.
+- Fixed 3 pre-existing build-config gaps that prevented compilation:
+  1. `src/tui/CMakeLists.txt`: `qcode-tui` now links `stduuid::stduuid` (db.cpp
+     uses `#include <uuid.h>`).
+  2. `include/ai/tui/commands.h`: added `#include <ai/tui/bus/port.h>` (declares
+     `bus::BusPort` used in `handle_slash_command` signature).
+  3. `src/tui/commands.cpp`: added `#include <ai/tui/config.h>` + `<ai/tui/contract/event.h>`
+     (`get_notes_root`, `contract::` event types).
+
+**GitHub push (pending — needs auth):**
+- `origin` currently points to `ClickHouse/ai-sdk-cpp` (this is a clone of upstream);
+  will NOT push there. Plan: add a new remote for `abhisheksatyam123` (default repo
+  name `qcode`, **private** by default) and push `main` there.
+- Blockers: no `gh` binary and no GitHub token in env, so the repo cannot be
+  *created* autonomously; and a secrets review of the full tree is still OPEN.
+- Local SSH key `~/.ssh/id_ed25519` exists; SSH push works only if that key is
+  authorized on the `abhisheksatyam123` GitHub account.
+- Secrets scan of `src/`+`include/` (excluding `third_party`) found **no literal
+  secrets**; the one `client_secret` hit is a variable in an OAuth request template
+  (OAuth creds already moved to env). `third_party` vendored deps not yet reviewed.
+
+**Remaining feasible (no toolchain needed — still open):**
 - Priority 1: foreground `timeout_ms` enforcement; background zombie reaping;
-  session-id validation; cancellation semantics; `AppStore::on_change()` RAII.
-- Priority 2 SDK: `parse_base_url` host:port + invalid-URL handling; configurable
-  `kEventTimeout`; retry-policy improvements (jitter, max-delay cap, return-failed
-  for non-retryable).
+  ~~session-id validation — DONE this session~~; cancellation semantics; ~~`AppStore::on_change()` RAII — DONE this session~~.
+- Priority 2 SDK: ~~`parse_base_url` host:port + invalid-URL handling — DONE this session~~; configurable
+  ~~`kEventTimeout` — DONE this session~~; ~~retry-policy improvements (jitter, max-delay cap, return-failed
+  for non-retryable) — DONE this session~~.
 - Priority 1 Persistence: preserve reasoning/tool-call content on session reload.
 - Priority 3 TUI polish: mouse click-to-copy line offsets.
 
-**Still BLOCKED (no toolchain / deep refactor — unchanged):**
-- Build/tests/CI, true incremental Anthropic streaming, ChatState sync audit,
+**Still BLOCKED (deep refactor / tests / CI — unchanged):**
+- Tests build+run (needs `googletest` submodule + `BUILD_TESTS=ON`), build/tests/CI
+  jobs, true incremental Anthropic streaming, ChatState sync audit,
   LLM-worker `&store`/`&spawn_generation` capture rewrite, bus busy-wait->condvar,
   HTTP connection reuse, streaming retry, all tests, format/build/lint, and the
   full compile-verify before merge.
