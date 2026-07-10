@@ -160,11 +160,19 @@ int main() {
                                 &store, &spawn_generation]() {
             ai::logger::set_thread_name("llm");
             auto gen_start = std::chrono::steady_clock::now();
+            ai::tui::GenerationContext ctx{
+                .session_id = *state_ptr->session_id,
+                .reasoning_mode = *state_ptr->reasoning_mode
+            };
             ai::tui::run_generation_with_bus(
                 providers_copy[sel_prov].id,
                 providers_copy[sel_prov].models[sel_mod].id,
                 sys_prompt, *state_ptr->messages_history, tools_enabled,
-                providers_copy, *bus_ptr, *state_ptr);
+                providers_copy, *bus_ptr,
+                ctx);
+            // Sync counters back to ChatState for stats tab
+            *state_ptr->tool_call_count = ctx.tool_call_count;
+            *state_ptr->total_tool_time_ms = ctx.total_tool_time_ms;
 
             auto gen_end = std::chrono::steady_clock::now();
             auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end - gen_start).count();

@@ -28,7 +28,7 @@ using namespace contract;
 static void run_tools_generation_bus(ai::Client& client,
                                       ai::GenerateOptions options,
                                       bus::BusPort& bus,
-                                      ChatState& state) {
+                                      GenerationContext& ctx) {
   auto assistant_text    = std::make_shared<std::string>();
   auto assistant_msg_idx = std::make_shared<int>(-1);
   auto tool_starts       = std::make_shared<
@@ -38,7 +38,7 @@ static void run_tools_generation_bus(ai::Client& client,
 
   // ── Step finished: emit MessageDelta ──
   options.on_step_finish =
-      [&bus, state_ptr = &state, assistant_text](const ai::GenerateStep& step) {
+      [&bus, &ctx, assistant_text](const ai::GenerateStep& step) {
         LOG_DEBUG("chat_bus: on_step_finish text_len={}", step.text.size());
         if (step.text.empty()) return;
         if (*assistant_text == "  \u23f3 Working...") {
@@ -47,7 +47,7 @@ static void run_tools_generation_bus(ai::Client& client,
           *assistant_text += step.text;
         }
         bus.publish<MessageDelta>({
-            .session_id = *state_ptr->session_id,
+            .session_id = ctx.session_id,
             .text = *assistant_text,
             .done = false
         });
@@ -55,19 +55,19 @@ static void run_tools_generation_bus(ai::Client& client,
 
   // ── Tool call started: emit ToolCallStarted ──
   options.on_tool_call_start =
-      [&bus, state_ptr = &state, tool_starts, step_counter, max_steps](const ai::ToolCall& call) {
+      [&bus, &ctx, tool_starts, step_counter, max_steps](const ai::ToolCall& call) {
         LOG_DEBUG("chat_bus: on_tool_call_start tool={} step={}/{}", call.tool_name, (int)*step_counter, max_steps);
         auto now = std::chrono::steady_clock::now();
         (*tool_starts)[call.id] = now;
         (*step_counter)++;
 
-        ai::tui::db::save_message(*state_ptr->session_id, "ToolCall",
+        ai::tui::db::save_message(ctx.session_id, "ToolCall",
                                    Tools::format_tool_call(
                                        call.tool_name, call.arguments.dump(),
                                        *step_counter, max_steps));
 
         bus.publish<ToolCallStarted>({
-            .session_id = *state_ptr->session_id,
+            .session_id = ctx.session_id,
             .tool_call_id = call.id,
             .tool_name = call.tool_name,
             .arguments = call.arguments
@@ -76,7 +76,7 @@ static void run_tools_generation_bus(ai::Client& client,
 
   // ── Tool call finished: emit ToolCallCompleted ──
   options.on_tool_call_finish =
-      [&bus, state_ptr = &state, assistant_text, tool_starts](const ai::ToolResult& res) {
+      [&bus, &ctx, assistant_text, tool_starts](const ai::ToolResult& res) {
         double duration_s = 0.0;
         {
           auto start_it_tmp = tool_starts->find(res.tool_call_id);
@@ -102,12 +102,12 @@ static void run_tools_generation_bus(ai::Client& client,
             res.is_success() ? res.result.dump() : res.error_message(),
             -1, duration_s);
 
-        ai::tui::db::save_message(*state_ptr->session_id, "ToolResult", tool_res_str);
-        (*state_ptr->tool_call_count)++;
-        *state_ptr->total_tool_time_ms += duration_s * 1000.0;
+        ai::tui::db::save_message(ctx.session_id, "ToolResult", tool_res_str);
+        ctx.tool_call_count++;
+        ctx.total_tool_time_ms += duration_s * 1000.0;
 
         bus.publish<ToolCallCompleted>({
-            .session_id = *state_ptr->session_id,
+            .session_id = ctx.session_id,
             .tool_call_id = res.tool_call_id,
             .tool_name = res.tool_name,
             .result = res.result,
@@ -169,7 +169,7 @@ static void run_tools_generation_bus(ai::Client& client,
               *assistant_text += event.text_delta;
             }
             bus.publish<MessageDelta>({
-                .session_id = *state.session_id,
+                .session_id = ctx.session_id,
                 .text = *assistant_text,
                 .done = false
             });
@@ -260,7 +260,7 @@ static void run_tools_generation_bus(ai::Client& client,
   gen_result.response_messages = response_messages;
 
   bus.publish<SessionStatusChanged>({
-      .session_id = *state.session_id,
+      .session_id = ctx.session_id,
       .status = "idle"
   });
 
@@ -282,32 +282,32 @@ static void run_tools_generation_bus(ai::Client& client,
             "requesting tools.";
       LOG_WARN("run_tools_generation_bus: {}", limit_msg);
       bus.publish<ErrorOccurred>({
-          .session_id = *state.session_id,
+          .session_id = ctx.session_id,
           .message = limit_msg,
           .severity = "warning"
       });
       if (!is_placeholder && !final_text.empty()) {
         bus.publish<MessageDelta>({
-            .session_id = *state.session_id,
+            .session_id = ctx.session_id,
             .text = final_text,
             .done = true
         });
-        ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+        ai::tui::db::save_message(ctx.session_id, "Assistant", final_text);
       }
-      ai::tui::db::save_message(*state.session_id, "System", limit_msg);
+      ai::tui::db::save_message(ctx.session_id, "System", limit_msg);
     } else if (!final_text.empty() && !is_placeholder) {
       LOG_DEBUG("run_tools_generation_bus: publishing final MessageDelta text_len={}", final_text.size());
       bus.publish<MessageDelta>({
-          .session_id = *state.session_id,
+          .session_id = ctx.session_id,
           .text = final_text,
           .done = true
       });
-      ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+      ai::tui::db::save_message(ctx.session_id, "Assistant", final_text);
     } else if (!final_text.empty() && is_placeholder) {
       // Model left only the in-progress placeholder; treat as no real text.
       LOG_WARN("run_tools_generation_bus: model returned only the in-progress placeholder");
       bus.publish<ErrorOccurred>({
-          .session_id = *state.session_id,
+          .session_id = ctx.session_id,
           .message = "The model returned an empty response (no text generated).",
           .severity = "warning"
       });
@@ -316,7 +316,7 @@ static void run_tools_generation_bus(ai::Client& client,
       // instead of leaving the user with a silently blank turn.
       LOG_WARN("run_tools_generation_bus: model returned empty response (no text, no tool output)");
       bus.publish<ErrorOccurred>({
-          .session_id = *state.session_id,
+          .session_id = ctx.session_id,
           .message = "The model returned an empty response (no text generated).",
           .severity = "warning"
       });
@@ -328,22 +328,22 @@ static void run_tools_generation_bus(ai::Client& client,
     if (!assistant_text->empty()) final_text = *assistant_text;
     else final_text = gen_result.text;
     bus.publish<MessageDelta>({
-        .session_id = *state.session_id,
+        .session_id = ctx.session_id,
         .text = final_text,
         .done = true
     });
-    ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+    ai::tui::db::save_message(ctx.session_id, "Assistant", final_text);
   } else {
     std::string err_str = "Error: " + gen_result.error_message();
     if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
       err_str += "\n[Response] " + gen_result.provider_metadata.value().substr(0, 500);
     }
     bus.publish<ErrorOccurred>({
-        .session_id = *state.session_id,
+        .session_id = ctx.session_id,
         .message = err_str,
         .severity = "error"
     });
-    ai::tui::db::save_message(*state.session_id, "System", err_str);
+    ai::tui::db::save_message(ctx.session_id, "System", err_str);
   }
 
   bus.publish<TokenUsageUpdated>({
@@ -359,7 +359,7 @@ static void run_tools_generation_bus(ai::Client& client,
 static void run_stream_generation_bus(ai::Client& client,
                                        ai::GenerateOptions gen_options,
                                        bus::BusPort& bus,
-                                       ChatState& state) {
+                                       GenerationContext& ctx) {
   ai::StreamOptions stream_options(std::move(gen_options));
   auto stream = client.stream_text(stream_options);
   LOG_DEBUG("run_stream_generation_bus: streaming model={} system={}", stream_options.model, stream_options.system.size());
@@ -367,7 +367,7 @@ static void run_stream_generation_bus(ai::Client& client,
   if (stream.has_error()) {
     LOG_ERROR("ChatBus: stream error: {}", stream.error_message());
     bus.publish<ErrorOccurred>({
-        .session_id = *state.session_id,
+        .session_id = ctx.session_id,
         .message = stream.error_message(),
         .severity = "error"
     });
@@ -385,7 +385,7 @@ static void run_stream_generation_bus(ai::Client& client,
     std::string snap = full_text;
     text_buffer.clear();
     bus.publish<MessageDelta>({
-        .session_id = *state.session_id,
+        .session_id = ctx.session_id,
         .text = snap,
         .done = false
     });
@@ -400,7 +400,7 @@ static void run_stream_generation_bus(ai::Client& client,
     std::string snap = full_reasoning;
     reasoning_buffer.clear();
     bus.publish<ReasoningDelta>({
-        .session_id = *state.session_id,
+        .session_id = ctx.session_id,
         .text = snap,
         .signature = last_reasoning_signature,
         .done = false
@@ -440,7 +440,7 @@ static void run_stream_generation_bus(ai::Client& client,
       flush_text();
       flush_reasoning();
       bus.publish<ErrorOccurred>({
-          .session_id = *state.session_id,
+          .session_id = ctx.session_id,
           .message = "Error during streaming",
           .severity = "error"
       });
@@ -458,23 +458,23 @@ static void run_stream_generation_bus(ai::Client& client,
 
   LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={}", full_text.size());
   bus.publish<MessageDelta>({
-      .session_id = *state.session_id,
+      .session_id = ctx.session_id,
       .text = full_text,
       .done = true
   });
 
   if (!full_reasoning.empty()) {
     bus.publish<ReasoningDelta>({
-        .session_id = *state.session_id,
+        .session_id = ctx.session_id,
         .text = full_reasoning,
         .signature = last_reasoning_signature,
         .done = true
     });
   }
 
-  ai::tui::db::save_message(*state.session_id, "Assistant", full_text);
+  ai::tui::db::save_message(ctx.session_id, "Assistant", full_text);
   bus.publish<SessionStatusChanged>({
-      .session_id = *state.session_id,
+      .session_id = ctx.session_id,
       .status = "idle"
   });
 }
@@ -491,11 +491,11 @@ void run_generation_with_bus(
     bool enable_tools,
     const std::vector<ProviderInfo>& providers,
     bus::BusPort& bus,
-    ChatState& state)
+    GenerationContext& ctx)
 {
   try {
     bus.publish<SessionStatusChanged>({
-        .session_id = *state.session_id,
+        .session_id = ctx.session_id,
         .status = "generating"
     });
 
@@ -527,7 +527,7 @@ void run_generation_with_bus(
                                                              provider_options);
     if (!resolution.ok()) {
       bus.publish<ErrorOccurred>({
-          .session_id = *state.session_id,
+          .session_id = ctx.session_id,
           .message = resolution.error,
           .severity = "error"
       });
@@ -544,7 +544,7 @@ void run_generation_with_bus(
     base_opts.messages = messages;
 
     // ── Opt-in extended thinking / reasoning ──
-    const std::string& rm = *state.reasoning_mode;
+    const std::string& rm = ctx.reasoning_mode;
     if (rm == "low" || rm == "medium" || rm == "high") {
       bool is_anthropic =
           (provider_id.find("anthropic") != std::string::npos) ||
@@ -563,19 +563,19 @@ void run_generation_with_bus(
       base_opts.tools = std::move(tools);
       constexpr int kMaxToolSteps = 200;  // bounded safe default (was 99999999)
       base_opts.max_steps = kMaxToolSteps;
-      run_tools_generation_bus(client, std::move(base_opts), bus, state);
+      run_tools_generation_bus(client, std::move(base_opts), bus, ctx);
     } else {
-      run_stream_generation_bus(client, std::move(base_opts), bus, state);
+      run_stream_generation_bus(client, std::move(base_opts), bus, ctx);
     }
 
   } catch (const std::exception& e) {
     std::string err_msg = e.what();
     bus.publish<ErrorOccurred>({
-        .session_id = *state.session_id,
+        .session_id = ctx.session_id,
         .message = "Exception: " + err_msg,
         .severity = "error"
     });
-    ai::tui::db::save_message(*state.session_id, "System", "Exception: " + err_msg);
+    ai::tui::db::save_message(ctx.session_id, "System", "Exception: " + err_msg);
   }
 }
 

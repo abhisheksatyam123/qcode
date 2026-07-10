@@ -9,12 +9,26 @@
 namespace ai {
 namespace tui {
 
-// ── Bus-aware generation entry points ────────────────────────────────────────
+// ── Bus-aware generation entry points ────────────────────────────────
 // These replace the old run_llm_generation / run_stream_generation from chat.h.
 // Instead of taking a ScreenInteractive* and ChatState, they take a BusPort&
 // and emit typed events. The UI subscribes to those events.
 
 struct ProviderInfo;
+
+/**
+ * Minimal context needed by the generation backend.
+ * Replaces direct ChatState& dependency with only the fields
+ * the backend actually needs: session_id and reasoning_mode.
+ */
+struct GenerationContext {
+    std::string session_id;
+    std::string reasoning_mode = "off";
+
+    // Tool observability counters (updated by backend during generation)
+    int tool_call_count = 0;
+    double total_tool_time_ms = 0.0;
+};
 
 /**
  * Run LLM generation with tools, emitting bus events for:
@@ -32,7 +46,7 @@ void run_generation_with_bus(
     bool enable_tools,
     const std::vector<ProviderInfo>& providers,
     bus::BusPort& bus,
-    ChatState& state);
+    GenerationContext& ctx);
 
 } // namespace tui
 } // namespace ai
