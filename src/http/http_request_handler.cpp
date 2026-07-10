@@ -29,10 +29,29 @@ HttpConfig HttpRequestHandler::parse_base_url(const std::string& base_url) {
     config.use_ssl = true;
   }
 
-  // Extract host and path
+  // Extract host (and optional explicit :port) and path
   auto pos = url.find('/');
-  config.host = (pos != std::string::npos) ? url.substr(0, pos) : url;
+  std::string host_part = (pos != std::string::npos) ? url.substr(0, pos) : url;
   config.base_path = (pos != std::string::npos) ? url.substr(pos) : "";
+
+  // Split an explicit host:port so the port is applied explicitly via the
+  // (host, port) constructor instead of relying on httplib parsing it from the
+  // host string.
+  auto colon = host_part.find(':');
+  // Skip port parsing for IPv6 literals (e.g. "[::1]:8080"); httplib handles those via the host string.
+  if (colon != std::string::npos && host_part.front() != '[') {
+    try {
+      config.port = std::stoi(host_part.substr(colon + 1));
+    } catch (...) {
+      config.port = 0;
+    }
+    host_part = host_part.substr(0, colon);
+  }
+  config.host = host_part;
+
+  if (config.host.empty()) {
+    LOG_ERROR("Http: base URL '{}' has no host; requests will fail", base_url);
+  }
 
   // Remove trailing slash from base_path if present
   if (!config.base_path.empty() && config.base_path.back() == '/') {
@@ -122,7 +141,7 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
                           " with body size: " + std::to_string(body.size()));
 
     if (config_.use_ssl) {
-      httplib::SSLClient cli(config_.host);
+      httplib::SSLClient cli(config_.host, config_.port != 0 ? config_.port : 443);
       cli.set_connection_timeout(config_.connection_timeout_sec, 0);
       cli.set_read_timeout(config_.read_timeout_sec, 0);
       cli.enable_server_certificate_verification(config_.verify_ssl_cert);
@@ -130,7 +149,7 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
       auto res = cli.Post(full_path, headers, body, content_type);
       return handler(res, "HTTPS");
     } else {
-      httplib::Client cli(config_.host);
+      httplib::Client cli(config_.host, config_.port != 0 ? config_.port : 80);
       cli.set_connection_timeout(config_.connection_timeout_sec, 0);
       cli.set_read_timeout(config_.read_timeout_sec, 0);
 

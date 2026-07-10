@@ -10,6 +10,7 @@
 #include <thread>
 
 #include <nlohmann/json.hpp>
+#include <chrono>
 
 namespace ai {
 namespace openai {
@@ -33,12 +34,17 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   bool has_more_events() const override;
   void stop_stream() override;
 
+  // Override the per-event stream timeout (defaults to 30s; env
+  // QCODE_STREAM_EVENT_TIMEOUT_SEC overrides at stream start).
+  void set_event_timeout(std::chrono::seconds t) { event_timeout_ = t; }
+
 #ifdef AI_SDK_TESTING
   // Allow unit tests to drive the SSE parser directly.
   void test_parse_sse_line(const std::string& line) { parse_sse_line(line); }
 #endif
 
  private:
+  std::chrono::seconds event_timeout_{30};
   void run_stream(const std::string& url,
                   const httplib::Headers& headers,
                   const nlohmann::json& request_body);

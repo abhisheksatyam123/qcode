@@ -183,9 +183,20 @@ bus::Subscription AppStore::on_change(Callback cb) {
     uint64_t id = next_id_.fetch_add(1, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(cb_mutex_);
-        callbacks_.push_back(std::move(cb));
+        callbacks_.push_back({id, std::move(cb)});
     }
-    return bus::Subscription([]{});
+    // RAII: destroying the returned Subscription unregisters this callback.
+    return bus::Subscription([this, id]() { remove_callback(id); });
+}
+
+void AppStore::remove_callback(uint64_t id) {
+    std::lock_guard<std::mutex> lock(cb_mutex_);
+    for (auto it = callbacks_.begin(); it != callbacks_.end(); ++it) {
+        if (it->first == id) {
+            callbacks_.erase(it);
+            break;
+        }
+    }
 }
 
 void AppStore::wire() {
@@ -300,12 +311,12 @@ void AppStore::wire() {
 }
 
 void AppStore::notify() {
-    std::vector<Callback> cbs;
+    std::vector<std::pair<uint64_t, Callback>> cbs;
     {
         std::lock_guard<std::mutex> lock(cb_mutex_);
         cbs = callbacks_;
     }
-    for (auto& cb : cbs) { cb(); }
+    for (auto& entry : cbs) { entry.second(); }
 }
 
 } // namespace tui

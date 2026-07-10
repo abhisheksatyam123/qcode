@@ -19,6 +19,9 @@ std::string create_new_session(const std::string& provider, const std::string& m
 // Retrieve the last active session ID from the database, or empty if none
 std::string get_last_active_session();
 
+
+// Validate that an id has the canonical 36-char RFC 4122 UUID form.
+bool is_valid_session_id(const std::string& id);
 // Save a single chat message into the SQLite database
 void save_message(const std::string& session_id, const std::string& sender, const std::string& content);
 

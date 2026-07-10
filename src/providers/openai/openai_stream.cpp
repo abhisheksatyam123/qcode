@@ -5,10 +5,19 @@
 #include "http/http_request_handler.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <mutex>
 
 namespace {
-constexpr auto kEventTimeout = static_cast<std::chrono::seconds>(30);
+std::chrono::seconds default_event_timeout() {
+  if (const char* v = std::getenv("QCODE_STREAM_EVENT_TIMEOUT_SEC")) {
+    try {
+      const int secs = std::stoi(v);
+      if (secs > 0) return std::chrono::seconds(secs);
+    } catch (...) {}
+  }
+  return std::chrono::seconds(30);
+}
 constexpr auto kSleepInterval = std::chrono::milliseconds(1);
 constexpr auto kConnectionTimeout = 30;  // seconds
 constexpr auto kReadTimeout = 300;       // 5 minutes for long generations
@@ -38,6 +47,7 @@ void OpenAIStreamImpl::start_stream(const std::string& url,
   should_stop_ = false;
   is_complete_ = false;
   finish_event_pushed_ = false;
+  event_timeout_ = default_event_timeout();
 
   LOG_INFO("Launching stream thread for OpenAI API");
 
@@ -59,10 +69,10 @@ StreamEvent OpenAIStreamImpl::get_next_event() {
     }
 
     // Check for timeout
-    if (std::chrono::steady_clock::now() - start_time > kEventTimeout) {
+    if (std::chrono::steady_clock::now() - start_time > event_timeout_) {
       LOG_ERROR(
           "Timeout waiting for next stream event after {} seconds",
-          kEventTimeout.count());
+          event_timeout_.count());
       return StreamEvent(kStreamEventTypeError,
                          "Timeout waiting for next event");
     }

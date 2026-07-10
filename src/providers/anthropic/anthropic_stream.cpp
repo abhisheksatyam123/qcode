@@ -3,11 +3,20 @@
 #include "ai/logger.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <sstream>
 #include <thread>
 
 namespace {
-constexpr auto kEventTimeout = static_cast<std::chrono::seconds>(30);
+std::chrono::seconds default_event_timeout() {
+  if (const char* v = std::getenv("QCODE_STREAM_EVENT_TIMEOUT_SEC")) {
+    try {
+      const int secs = std::stoi(v);
+      if (secs > 0) return std::chrono::seconds(secs);
+    } catch (...) {}
+  }
+  return std::chrono::seconds(30);
+}
 constexpr auto kSleepInterval = std::chrono::milliseconds(1);
 }  // namespace
 
@@ -34,6 +43,7 @@ void AnthropicStreamImpl::start_stream(const std::string& url,
     }
     stop_requested_ = false;
     stream_complete_ = false;
+    event_timeout_ = default_event_timeout();
   }
 
   // Start streaming in a separate thread
@@ -63,10 +73,10 @@ StreamEvent AnthropicStreamImpl::get_next_event() {
     }
 
     // Check for timeout
-    if (std::chrono::steady_clock::now() - start_time > kEventTimeout) {
+    if (std::chrono::steady_clock::now() - start_time > event_timeout_) {
       LOG_ERROR(
           "Timeout waiting for next stream event after {} seconds",
-          kEventTimeout.count());
+          event_timeout_.count());
       return StreamEvent(kStreamEventTypeError,
                          "Timeout waiting for next event");
     }

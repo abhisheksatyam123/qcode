@@ -14,6 +14,7 @@ namespace http {
 
 struct HttpConfig {
   std::string host;
+  int port = 0;  // explicit port from host:port (0 = default 443/80)
   std::string base_path;  // Base path from URL (e.g., "/api" from
                           // "https://openrouter.ai/api")
   bool use_ssl = true;

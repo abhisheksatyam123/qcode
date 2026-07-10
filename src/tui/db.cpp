@@ -177,8 +177,28 @@ std::string get_last_active_session() {
     return uuid;
 }
 
+bool is_valid_session_id(const std::string& id) {
+    // RFC 4122 v4 canonical form: 8-4-4-4-12 lowercase hex with dashes at 8/13/18/23.
+    if (id.size() != 36) return false;
+    constexpr int kDashPos[4] = {8, 13, 18, 23};
+    for (int i = 0; i < 4; ++i) {
+        if (id[kDashPos[i]] != '-') return false;
+    }
+    for (int i = 0; i < 36; ++i) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) continue;
+        const char c = id[i];
+        const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                         (c >= 'A' && c <= 'F');
+        if (!hex) return false;
+    }
+    return true;
+}
+
 void save_message(const std::string& session_id, const std::string& sender, const std::string& content) {
-    if (session_id.empty()) return;
+    if (session_id.empty() || !is_valid_session_id(session_id)) {
+        LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
+        return;
+    }
 
     std::string path;
     sqlite3* db = open_database(path);
@@ -204,7 +224,10 @@ void save_message(const std::string& session_id, const std::string& sender, cons
 }
 
 void reload_session_history(const std::string& session_id, ChatState& state) {
-    if (session_id.empty()) return;
+    if (session_id.empty() || !is_valid_session_id(session_id)) {
+        LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
+        return;
+    }
 
     std::string path;
     sqlite3* db = open_database(path);
@@ -270,7 +293,10 @@ std::vector<std::pair<std::string, std::string>> list_sessions() {
 }
 
 void delete_session(const std::string& session_id) {
-    if (session_id.empty()) return;
+    if (session_id.empty() || !is_valid_session_id(session_id)) {
+        LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
+        return;
+    }
 
     std::string path;
     sqlite3* db = open_database(path);

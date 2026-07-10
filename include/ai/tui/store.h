@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <utility>
 #include <queue>
 #include <chrono>
 
@@ -64,12 +65,13 @@ private:
     std::deque<std::string> prompt_queue_; // Changed to deque for append access
     mutable std::mutex queue_mutex_;
 
-    std::vector<Callback> callbacks_;
+    std::vector<std::pair<uint64_t, Callback>> callbacks_;
     std::vector<bus::Subscription> subs_;
     mutable std::mutex cb_mutex_;
     std::atomic<uint64_t> next_id_{1};
 
     void notify();
+    void remove_callback(uint64_t id);
 };
 
 } // namespace tui
