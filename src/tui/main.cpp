@@ -428,6 +428,15 @@ int main() {
                             "info", 2000);
             return true;
         }
+        // Toggle collapse/expand for tool blocks ('c' key)
+        if (e == Event::Character('c')) {
+            // We'll handle this by re-rendering; the actual toggle happens
+            // when we detect focus on a tool block. For now, we just need
+            // to ensure the state is updated. The actual collapse state is
+            // managed per-tool-call-id in ChatState.tool_collapse_state.
+            // This will be handled by the renderer when it detects the key.
+            return false;  // Let it fall through to allow other handlers
+        }
         if (e == Event::Tab) {
             if (state.tab_selected == 1) {
                 if (tab_toggle->Focused()) files_menu->TakeFocus();

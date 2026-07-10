@@ -1,4 +1,5 @@
 #include <sstream>
+#include <unordered_set>
 #include <algorithm>
 #include <ai/tui/tool_renderers.h>
 #include <ai/tui/message_render.h>
@@ -11,20 +12,30 @@ namespace tui {
 
 using namespace ftxui;
 
+// Forward declarations
+static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
+                                const ai::ToolResultContentPart& result_part,
+                                const std::string& theme,
+                                bool collapsed,
+                                bool collapsible);
+
 // ════════════════════════════════════════════════════════════════════════════
-//  ToolBlock: OpenCode-style tool rendering block
+//  ToolBlock: OpenCode-style tool rendering block with collapse/expand
 // ════════════════════════════════════════════════════════════════════════════
 //
 //  ⚡ Bash · Check project structure · 142ms        ✓ success
-//  │ $ ls -la /home/user/project
-//  │
-//  │   ✓ exit 0
-//  │
-//  │    1 total 44
-//  │    2 drwxrwxr-x  7 user user 4096 ...
-//  │    3 ...
-//  │   [+15 more lines]
+//  ▼ │ $ ls -la /home/user/project
+//    │
+//    │   ✓ exit 0
+//    │
+//    │    1 total 44
+//    │    2 drwxrwxr-x  7 user user 4096 ...
+//    │    3 ...
+//    │   [+15 more lines]
 //
+//  ▸ Bash · Check project structure · 142ms        ✓ success
+//  ▸ │ [collapsed - press 'c' to expand]
+
 Element ToolBlock(const std::string& icon,
                    const std::string& title,
                    const std::string& description,
@@ -32,10 +43,21 @@ Element ToolBlock(const std::string& icon,
                    bool is_running,
                    const std::string& status,
                    Color accent_color,
-                   double duration_ms) {
+                   double duration_ms,
+                   bool collapsed,
+                   bool collapsible) {
 
     // ── Header line ──
     Elements header_parts;
+
+    // Collapse/expand indicator
+    if (collapsible) {
+        std::string collapse_icon = collapsed ? "▸ " : "▼ ";
+        header_parts.push_back(text(collapse_icon) | color(accent_color) | bold);
+    } else if (!icon.empty()) {
+        // Add spacing if not collapsible but has icon
+        header_parts.push_back(text("  "));
+    }
 
     // Icon
     if (!icon.empty()) {
@@ -87,16 +109,28 @@ Element ToolBlock(const std::string& icon,
             text(badge_icon + status + " ") | color(badge_color));
     }
 
+    // Collapsed hint
+    if (collapsed && collapsible) {
+        header_parts.push_back(text(" [collapsed - press 'c' to expand]") | dim | color(Color::GrayDark));
+    }
+
     // ── Build the block with accent-colored left border ──
-    return vbox({
-        hbox(std::move(header_parts)),
-        hbox({
-            text("│") | color(accent_color),
-            text(" "),
-            vbox(std::move(content)) | flex,
-        }),
-        text(""),  // spacing after block
-    });
+    Elements block_parts;
+    block_parts.push_back(hbox(std::move(header_parts)));
+    
+    if (!collapsed) {
+        block_parts.push_back(
+            hbox({
+                text("│") | color(accent_color),
+                text(" "),
+                vbox(std::move(content)) | flex,
+            })
+        );
+    }
+    
+    block_parts.push_back(text(""));  // spacing after block
+
+    return vbox(std::move(block_parts));
 }
 
 // ── Legacy BlockTool (compatibility wrapper) ──
@@ -383,8 +417,11 @@ static Element render_reasoning(const ai::ReasoningContentPart& rp,
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  Render a complete message
+//  Render a complete message (user/assistant/system)
 // ════════════════════════════════════════════════════════════════════════════
+//  This function pairs tool calls with their results by matching
+//  ToolCallContentPart.id with ToolResultContentPart.tool_call_id
+//  and renders them as collapsible combined blocks.
 Element render_message(const ai::Message& msg, const ChatState& state,
                         const std::vector<ProviderInfo>& providers_list,
                         int selected_provider, int selected_model,
@@ -427,7 +464,22 @@ Element render_message(const ai::Message& msg, const ChatState& state,
         }));
     }
 
-    // ── Content parts ──
+    // ── Collect tool calls and results for pairing ──
+    std::unordered_map<std::string, const ai::ToolCallContentPart*> tool_calls;
+    std::unordered_map<std::string, const ai::ToolResultContentPart*> tool_results;
+
+    for (const auto& part : msg.content) {
+        if (const auto* tool_part = std::get_if<ai::ToolCallContentPart>(&part)) {
+            tool_calls[tool_part->id] = tool_part;
+        } else if (const auto* result_part = std::get_if<ai::ToolResultContentPart>(&part)) {
+            tool_results[result_part->tool_call_id] = result_part;
+        }
+    }
+
+    // ── Render content parts, pairing tool calls with results ──
+    std::unordered_set<std::string> rendered_tool_calls;
+    std::unordered_set<std::string> rendered_tool_results;
+
     for (const auto& part : msg.content) {
         if (const auto* text_part = std::get_if<ai::TextContentPart>(&part)) {
             if (!text_part->text.empty()) {
@@ -443,14 +495,37 @@ Element render_message(const ai::Message& msg, const ChatState& state,
                     parts.push_back(vbox(std::move(indented)));
                 }
             }
-        } else if (const auto* tool_part =
-                       std::get_if<ai::ToolCallContentPart>(&part)) {
-            parts.push_back(render_tool_call(*tool_part, theme));
-        } else if (const auto* result_part =
-                       std::get_if<ai::ToolResultContentPart>(&part)) {
+        } else if (const auto* tool_part = std::get_if<ai::ToolCallContentPart>(&part)) {
+            // Check if there's a matching result
+            auto result_it = tool_results.find(tool_part->id);
+            if (result_it != tool_results.end()) {
+                // Paired: render combined tool call + result block
+                const auto* result_part = result_it->second;
+                
+                // Check collapse state
+                bool collapsed = false;
+                if (state.tool_collapse_state && state.tool_collapse_state->count(tool_part->id)) {
+                    collapsed = (*state.tool_collapse_state)[tool_part->id];
+                }
+                
+                parts.push_back(render_tool_pair(*tool_part, *result_part, theme, collapsed, true));
+                
+                rendered_tool_calls.insert(tool_part->id);
+                rendered_tool_results.insert(tool_part->id);
+            } else {
+                // Orphaned tool call (no result yet) - render as running
+                parts.push_back(render_tool_call(*tool_part, theme));
+                rendered_tool_calls.insert(tool_part->id);
+            }
+        } else if (const auto* result_part = std::get_if<ai::ToolResultContentPart>(&part)) {
+            // Check if this result was already rendered with its call
+            if (rendered_tool_results.count(result_part->tool_call_id)) {
+                continue; // Already rendered as paired block
+            }
+            // Orphaned tool result (no matching call in this message) - render standalone
             parts.push_back(render_tool_result(*result_part, theme));
-        } else if (const auto* reasoning_part =
-                       std::get_if<ai::ReasoningContentPart>(&part)) {
+            rendered_tool_results.insert(result_part->tool_call_id);
+        } else if (const auto* reasoning_part = std::get_if<ai::ReasoningContentPart>(&part)) {
             if (*state.show_thinking) {
                 parts.push_back(render_reasoning(*reasoning_part, theme));
             }
@@ -458,6 +533,96 @@ Element render_message(const ai::Message& msg, const ChatState& state,
     }
 
     return vbox(std::move(parts));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Render paired tool call + result as collapsible block
+// ════════════════════════════════════════════════════════════════════════════
+static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
+                                 const ai::ToolResultContentPart& result_part,
+                                 const std::string& theme,
+                                 bool collapsed,
+                                 bool collapsible) {
+    std::string icon = tool_icon(call_part.tool_name);
+    std::string display = tool_display_name(call_part.tool_name);
+    std::string desc = extract_tool_description(call_part);
+
+    // Extract description from result if available
+    std::string result_desc;
+    if (result_part.result.is_object()) {
+        if (result_part.result.contains("title") && result_part.result["title"].is_string()) {
+            result_desc = result_part.result["title"].get<std::string>();
+        } else if (result_part.result.contains("metadata") && result_part.result["metadata"].is_object()) {
+            auto& meta = result_part.result["metadata"];
+            if (meta.contains("description") && meta["description"].is_string()) {
+                result_desc = meta["description"].get<std::string>();
+            }
+        }
+    }
+    // Prefer result description if available
+    if (!result_desc.empty()) desc = result_desc;
+
+    // Determine status and color
+    std::string status = result_part.is_error ? "failed" : "success";
+    Color status_color = result_part.is_error ? Color::Red : Color::Green;
+    // unused: Color accent_clr = accent(theme);
+
+    // Build combined content: call summary + result content
+    Elements combined_content;
+
+    // Call summary (arguments)
+    std::string summary = extract_tool_summary(call_part);
+    if (!summary.empty()) {
+        combined_content.push_back(hbox({
+            text("▸ ") | dim | color(Color::GrayDark),
+            text("Input: ") | bold | dim,
+            text(summary) | dim,
+        }));
+    }
+
+    // Result content - use specialized renderers
+    Element result_inner;
+    nlohmann::json args = call_part.arguments;
+
+    bool is_bash = (call_part.tool_name == "bash" || call_part.tool_name == "shell" || call_part.tool_name == "run_command");
+    bool is_task = (call_part.tool_name == "task" || call_part.tool_name == "dispatch_agent");
+    bool is_file = (call_part.tool_name == "read_file" || call_part.tool_name == "write_file" ||
+                    call_part.tool_name == "view_file" || call_part.tool_name == "edit_file");
+    bool is_search = (call_part.tool_name == "search" || call_part.tool_name == "grep" || call_part.tool_name == "ripgrep");
+
+    if (result_part.is_error) {
+        // Error case
+        Elements error_content;
+        std::string err_detail;
+        if (result_part.result.is_string()) {
+            err_detail = result_part.result.get<std::string>();
+        } else if (result_part.result.is_object() && result_part.result.contains("error")) {
+            err_detail = result_part.result["error"].get<std::string>();
+        } else if (result_part.result.is_object() && result_part.result.contains("output")) {
+            err_detail = result_part.result["output"].get<std::string>();
+        }
+        if (!err_detail.empty()) {
+            error_content.push_back(render_truncated_output(err_detail, 10, theme));
+        }
+        result_inner = vbox(std::move(error_content));
+    } else if (is_bash) {
+        result_inner = RenderBashResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+    } else if (is_task) {
+        result_inner = RenderTaskResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+    } else if (is_file) {
+        result_inner = RenderFileResult(call_part.tool_name, args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+    } else if (is_search) {
+        result_inner = RenderSearchResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+    } else {
+        // Fallback: structured result rendering
+        result_inner = RenderGenericResult(call_part.tool_name, args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+    }
+
+    combined_content.push_back(std::move(result_inner));
+
+    return ToolBlock(icon, display, desc, vbox(std::move(combined_content)),
+                      false, status, Color::Default, result_part.duration_ms,
+                      collapsed, collapsible);
 }
 
 } // namespace tui

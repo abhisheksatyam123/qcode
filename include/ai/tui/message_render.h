@@ -8,10 +8,11 @@ namespace tui {
 
 // ── ToolBlock: OpenCode-style tool rendering block ──
 // Renders a tool call/result as a styled block with:
+//   - Collapse/expand indicator (▼/▸)
 //   - Icon + tool name + description + duration in header
 //   - Accent-colored left border
 //   - Status badge (running/success/failed)
-//   - Content area with optional truncation
+//   - Content area with optional truncation and collapse/expand
 ftxui::Element ToolBlock(const std::string& icon,
                           const std::string& title,
                           const std::string& description,
@@ -19,7 +20,9 @@ ftxui::Element ToolBlock(const std::string& icon,
                           bool is_running,
                           const std::string& status,
                           ftxui::Color accent_color,
-                          double duration_ms = 0.0);
+                          double duration_ms = 0.0,
+                          bool collapsed = false,
+                          bool collapsible = true);
 
 // ── Legacy BlockTool (compatibility) ──
 ftxui::Element BlockTool(const std::string& title, ftxui::Element content,
