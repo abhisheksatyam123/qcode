@@ -251,7 +251,10 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
-        std::string tool_str = "  \u23f3 " + p.tool_name + "...";
+        // Embed the unique tool_call_id so ToolCallCompleted can pair the result
+        // with the exact started entry. Matching by tool_name alone is fragile
+        // when multiple calls of the same tool run concurrently.
+        std::string tool_str = "  \u23f3 " + p.tool_name + " [" + p.tool_call_id + "]...";
         state_.chat_history->emplace_back("ToolCall", tool_str);
         ai::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
         state_.messages_history->push_back(ai::Message::assistant_with_tools("", {tc_part}));
@@ -259,9 +262,12 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
+        // Pair with the exact started entry via the unique tool_call_id rather
+        // than the tool name (name match breaks under concurrent same-tool calls).
+        const std::string id_marker = "[" + p.tool_call_id + "]";
         for (int ci = static_cast<int>(state_.chat_history->size()) - 1; ci >= 0; --ci) {
             auto& entry = (*state_.chat_history)[ci];
-            if (entry.first == "ToolCall" && entry.second.find(p.tool_name) != std::string::npos) {
+            if (entry.first == "ToolCall" && entry.second.find(id_marker) != std::string::npos) {
                 state_.chat_history->erase(state_.chat_history->begin() + ci);
                 break;
             }
