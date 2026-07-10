@@ -390,17 +390,14 @@ Source-only edits, no compiler on host (verification by inspection + raw-newline
   3. `src/tui/commands.cpp`: added `#include <ai/tui/config.h>` + `<ai/tui/contract/event.h>`
      (`get_notes_root`, `contract::` event types).
 
-**GitHub push (pending — needs auth):**
-- `origin` currently points to `ClickHouse/ai-sdk-cpp` (this is a clone of upstream);
-  will NOT push there. Plan: add a new remote for `abhisheksatyam123` (default repo
-  name `qcode`, **private** by default) and push `main` there.
-- Blockers: no `gh` binary and no GitHub token in env, so the repo cannot be
-  *created* autonomously; and a secrets review of the full tree is still OPEN.
-- Local SSH key `~/.ssh/id_ed25519` exists; SSH push works only if that key is
-  authorized on the `abhisheksatyam123` GitHub account.
-- Secrets scan of `src/`+`include/` (excluding `third_party`) found **no literal
-  secrets**; the one `client_secret` hit is a variable in an OAuth request template
-  (OAuth creds already moved to env). `third_party` vendored deps not yet reviewed.
+**GitHub push (DONE this session):**
+- Repo created: **`abhisheksatyam123/qcode` (private)** via `gh`. `origin` still
+  points to `ClickHouse/ai-sdk-cpp` (upstream clone); a new remote `github`
+  (`git@github.com:abhisheksatyam123/qcode.git`, SSH) was added and `main` pushed
+  (commits `79cc167`, `b5cb0b0`, `25b50fa`).
+- Note: secrets review of the full tree is still OPEN (see Repository hygiene);
+  source scan was clean, but vendored `third_party` was not exhaustively reviewed.
+  Repo is **private**; make public only after a full secrets pass.
 
 **Remaining feasible (no toolchain needed — still open):**
 - Priority 1: foreground `timeout_ms` enforcement; background zombie reaping;
