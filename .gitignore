@@ -160,3 +160,5 @@ config.json
 .envrc
 .cache/
 .claude/
+# Notes vault relocated outside repo (~/notes); never track a local notes/ dir
+notes
