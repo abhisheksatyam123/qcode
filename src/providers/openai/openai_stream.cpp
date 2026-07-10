@@ -1,7 +1,6 @@
 #include "openai_stream.h"
 
 #include "ai/logger.h"
-#include "ai/gemini_transform.h"
 #include "http/http_request_handler.h"
 
 #include <chrono>
@@ -108,6 +107,7 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
                                   const nlohmann::json& request_body) {
   // Extract host and path from URL
   std::string_view url_view(url);
+  const bool use_ssl = url_view.starts_with("https://");
 
   // Skip protocol
   if (auto pos = url_view.find("://"); pos != std::string_view::npos) {
@@ -125,7 +125,8 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
       "Stream thread started - connecting to {} with path: {}", host, path);
 
   try {
-    httplib::SSLClient client(host);
+    httplib::Client client(
+        std::string(use_ssl ? "https://" : "http://") + host);
     client.enable_server_certificate_verification(true);
     client.set_connection_timeout(kConnectionTimeout);
     client.set_read_timeout(kReadTimeout);
@@ -207,8 +208,9 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
 }
 
 void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
-  if (line.starts_with("data: ")) {
-    auto data = line.substr(6);
+  if (line.starts_with("data:")) {
+    auto data = line.substr(5);
+    if (!data.empty() && data.front() == ' ') data.erase(0, 1);
 
     LOG_DEBUG("Processing SSE line - data length: {}",
                           data.length());
@@ -224,10 +226,45 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
     try {
       auto json = nlohmann::json::parse(data);
 
+      const auto event_type = json.value("type", "");
+      if (event_type == "response.output_text.delta") {
+        push_event(StreamEvent(json.value("delta", "")));
+        return;
+      }
+      if (event_type == "response.reasoning_text.delta") {
+        push_event(StreamEvent::reasoning(json.value("delta", "")));
+        return;
+      }
+      if (event_type == "response.completed" ||
+          event_type == "response.incomplete") {
+        Usage usage;
+        const auto response = json.value("response", nlohmann::json::object());
+        if (response.contains("usage")) {
+          const auto& raw_usage = response["usage"];
+          usage.prompt_tokens = raw_usage.value("input_tokens", 0);
+          usage.completion_tokens = raw_usage.value("output_tokens", 0);
+          usage.total_tokens = raw_usage.value("total_tokens", 0);
+        }
+        finish_event_pushed_ = true;
+        push_event(StreamEvent(
+            kStreamEventTypeFinish, usage,
+            event_type == "response.incomplete" ? kFinishReasonLength
+                                                  : kFinishReasonStop));
+        return;
+      }
+      if (event_type == "error") {
+        push_event(create_error_event(json.value("message", "Provider error")));
+        return;
+      }
+
       // Antigravity wraps every SSE chunk in { response: {...}, traceId,
       // metadata }. Unwrap so the Gemini/OpenAI branches below see the inner
       // payload (candidates / usageMetadata / choices / delta).
-      json = ai::gemini::unwrap_envelope(json);
+      if (protocol_ == StreamProtocol::kGeminiEnvelope) {
+        if (json.contains("response") && json["response"].is_object()) {
+          json = json["response"];
+        }
+      }
 
       // Surface provider errors (e.g. Antigravity quota/rate-limit) instead of
       // silently yielding an empty response.
@@ -247,15 +284,26 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       }
 
       // Google Gemini / Antigravity SSE parsing
-      if (json.contains("candidates")) {
+      if (protocol_ == StreamProtocol::kGeminiEnvelope &&
+          json.contains("candidates")) {
         auto& candidates = json["candidates"];
         if (!candidates.empty()) {
           auto& cand = candidates[0];
           if (cand.contains("content") && cand["content"].contains("parts")) {
             auto& parts = cand["content"]["parts"];
-            if (!parts.empty() && parts[0].contains("text")) {
-              std::string content_str = parts[0]["text"].get<std::string>();
-              push_event(StreamEvent(content_str));
+            for (const auto& part : parts) {
+              if (part.contains("text")) {
+                const auto content = part["text"].get<std::string>();
+                if (part.value("thought", false)) {
+                  std::optional<std::string> signature;
+                  if (part.contains("thoughtSignature")) {
+                    signature = part["thoughtSignature"].get<std::string>();
+                  }
+                  push_event(StreamEvent::reasoning(content, signature));
+                } else {
+                  push_event(StreamEvent(content));
+                }
+              }
             }
           }
           
@@ -280,16 +328,19 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
           }
         }
         return;
-      } else if (json.contains("usageMetadata")) {
+      } else if (protocol_ == StreamProtocol::kGeminiEnvelope &&
+                 json.contains("usageMetadata")) {
         auto& usage_meta = json["usageMetadata"];
         Usage usage;
         usage.prompt_tokens = usage_meta.value("promptTokenCount", 0);
         usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
         usage.total_tokens = usage_meta.value("totalTokenCount", 0);
+        finish_event_pushed_ = true;
         push_event(StreamEvent(kStreamEventTypeFinish, usage, kFinishReasonStop));
         return;
       }
 
+      if (!json.contains("choices") || !json["choices"].is_array()) return;
       auto& choices = json["choices"];
 
       if (!choices.empty() && choices[0].contains("delta")) {

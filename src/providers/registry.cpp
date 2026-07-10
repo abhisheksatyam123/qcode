@@ -7,11 +7,6 @@
 
 namespace ai {
 namespace providers {
-namespace {
-
-constexpr const char* kGenericId = "opencode";
-
-}  // namespace
 
 ProviderRegistry& ProviderRegistry::instance() {
   static ProviderRegistry inst;
@@ -24,57 +19,94 @@ void ProviderRegistry::register_provider(const std::string& id,
 }
 
 ClientResolution ProviderRegistry::resolve(const std::string& id,
-                                            const std::string& api_url) const {
+                                            const ProviderOptions& options) const {
   auto it = resolvers_.find(id);
   if (it == resolvers_.end()) {
-    if (id != kGenericId) {
-      LOG_WARN("ProviderRegistry: unknown provider '{}'; falling back to "
-               "generic '{}' resolver", id, kGenericId);
+    if (options.base_url.empty()) {
+      return ClientResolution::fail("Unknown provider: " + id);
     }
-    it = resolvers_.find(kGenericId);
+    ai::openai::CompatibleOptions compatible;
+    compatible.base_url = options.base_url;
+    compatible.protocol = options.protocol;
+    compatible.headers = options.headers;
+    if (options.api_key.empty()) {
+      return ClientResolution::fail("No API key configured for provider: " + id);
+    }
+    return ClientResolution{
+        ai::openai::create_client(options.api_key, compatible)};
   }
-  if (it == resolvers_.end()) {
-    return ClientResolution::fail("Unknown provider: " + id);
-  }
-  return it->second(api_url);
+  return it->second(options);
+}
+
+ClientResolution ProviderRegistry::resolve(const std::string& id,
+                                            const std::string& api_url) const {
+  ProviderOptions options;
+  options.base_url = api_url;
+  return resolve(id, options);
 }
 
 void register_core_providers() {
   auto& reg = ProviderRegistry::instance();
 
-  auto generic = [](const std::string& api_url) {
-    // The generic "opencode" provider is OpenAI-compatible. It defaults to the
-    // OpenCode Zen endpoint with a placeholder key (local Zen proxies handle
-    // auth themselves), but honors OPENCODE_API_KEY when set so it can target
-    // any OpenAI-compatible endpoint that requires authentication.
-    const char* key = std::getenv("OPENCODE_API_KEY");
-    std::string api_key = key ? std::string(key) : "unused";
-    std::string url = api_url.empty() ? "https://opencode.ai/zen/v1" : api_url;
-    return ClientResolution{ai::openai::create_client(api_key, url)};
+  auto generic = [](const ProviderOptions& options) {
+    const char* env_key = std::getenv("OPENCODE_API_KEY");
+    const auto api_key =
+        !options.api_key.empty() ? options.api_key
+                                 : (env_key ? std::string(env_key) : "");
+    if (api_key.empty()) {
+      return ClientResolution::fail(
+          "OpenCode Zen API key not configured (set options.apiKey or "
+          "OPENCODE_API_KEY).");
+    }
+    ai::openai::CompatibleOptions compatible;
+    compatible.base_url = options.base_url.empty()
+                              ? "https://opencode.ai/zen/v1"
+                              : options.base_url;
+    compatible.protocol = options.protocol;
+    compatible.headers = options.headers;
+    return ClientResolution{ai::openai::create_client(api_key, compatible)};
   };
-  reg.register_provider("openai", [](const std::string&) {
-    char* key = std::getenv("OPENAI_API_KEY");
-    if (!key) return ClientResolution::fail("OPENAI_API_KEY not set.");
-    return ClientResolution{
-        ai::openai::create_client(key, "https://api.openai.com/v1")};
+  reg.register_provider("openai", [](const ProviderOptions& options) {
+    const char* key = std::getenv("OPENAI_API_KEY");
+    const auto api_key = !options.api_key.empty()
+                             ? options.api_key
+                             : (key ? std::string(key) : "");
+    if (api_key.empty())
+      return ClientResolution::fail("OPENAI_API_KEY not set.");
+    ai::openai::CompatibleOptions compatible;
+    compatible.base_url = options.base_url.empty()
+                              ? "https://api.openai.com"
+                              : options.base_url;
+    compatible.protocol = options.protocol;
+    compatible.headers = options.headers;
+    return ClientResolution{ai::openai::create_client(api_key, compatible)};
   });
   reg.register_provider("opencode", generic);
 
-  reg.register_provider("openrouter", [](const std::string&) {
-    char* key = std::getenv("OPENROUTER_API_KEY");
-    if (!key) return ClientResolution::fail("OPENROUTER_API_KEY not set.");
-    return ClientResolution{
-        ai::openai::create_client(key, "https://openrouter.ai/api")};
+  reg.register_provider("openrouter", [](const ProviderOptions& options) {
+    const char* key = std::getenv("OPENROUTER_API_KEY");
+    const auto api_key = !options.api_key.empty()
+                             ? options.api_key
+                             : (key ? std::string(key) : "");
+    if (api_key.empty())
+      return ClientResolution::fail("OPENROUTER_API_KEY not set.");
+    ai::openai::CompatibleOptions compatible;
+    compatible.base_url = options.base_url.empty()
+                              ? "https://openrouter.ai/api"
+                              : options.base_url;
+    compatible.protocol = options.protocol;
+    compatible.headers = options.headers;
+    return ClientResolution{ai::openai::create_client(api_key, compatible)};
   });
 
-  reg.register_provider("qpilot", [](const std::string&) {
+  reg.register_provider("qpilot", [](const ProviderOptions&) {
     char* key = std::getenv("QPILOT_API_KEY");
     if (!key) return ClientResolution::fail("QPILOT_API_KEY not set.");
     return ClientResolution{
         ai::openai::create_client(key, "https://qpilot-api.qualcomm.com")};
   });
 
-  reg.register_provider("qgenie", [](const std::string&) {
+  reg.register_provider("qgenie", [](const ProviderOptions&) {
     char* key = std::getenv("QPILOT_API_KEY");
     if (!key) return ClientResolution::fail("QPILOT_API_KEY not set.");
     return ClientResolution{

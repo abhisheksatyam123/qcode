@@ -113,11 +113,14 @@ struct ToolCall {
   std::string id;
   std::string tool_name;
   JsonValue arguments;
+  std::string thought_signature;
 
-  ToolCall(std::string call_id, std::string name, JsonValue args)
+  ToolCall(std::string call_id, std::string name, JsonValue args,
+           std::string signature = "")
       : id(std::move(call_id)),
         tool_name(std::move(name)),
-        arguments(std::move(args)) {}
+        arguments(std::move(args)),
+        thought_signature(std::move(signature)) {}
 
   ToolCall() = default;
 

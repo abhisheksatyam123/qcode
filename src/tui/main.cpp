@@ -161,7 +161,7 @@ int main() {
             ai::logger::set_thread_name("llm");
             auto gen_start = std::chrono::steady_clock::now();
             ai::tui::run_generation_with_bus(
-                providers_copy[sel_prov].name,
+                providers_copy[sel_prov].id,
                 providers_copy[sel_prov].models[sel_mod].id,
                 sys_prompt, *state_ptr->messages_history, tools_enabled,
                 providers_copy, *bus_ptr, *state_ptr);

@@ -75,6 +75,18 @@ TEST_F(OpenAIClientTest, ConstructorWithHttpUrl) {
   // EXPECT_FALSE(client.get_use_ssl());
 }
 
+TEST_F(OpenAIClientTest, VersionedBaseUrlDoesNotDuplicateV1) {
+  ai::openai::OpenAIClient client(
+      "sk-test", "https://opencode.ai/zen/v1");
+  EXPECT_EQ(client.get_completions_path(), "/chat/completions");
+}
+
+TEST_F(OpenAIClientTest, ResponsesProtocolUsesResponsesEndpoint) {
+  ai::openai::OpenAIClient client(
+      "sk-test", "https://opencode.ai/zen/v1", true, {});
+  EXPECT_EQ(client.get_completions_path(), "/responses");
+}
+
 // Model Support Tests
 TEST_F(OpenAIClientTest, SupportedModelsContainsExpectedModels) {
   auto models = client_->supported_models();

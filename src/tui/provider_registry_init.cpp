@@ -19,13 +19,20 @@ void register_tui_providers() {
     // Antigravity auth lives in the TUI (keyring + oauth token refresh), so it is
     // registered here rather than in the core registry.
     ProviderRegistry::instance().register_provider(
-        "antigravity", [](const std::string&) {
+        "antigravity", [](const ProviderOptions& options) {
           std::string token = ai::tui::get_antigravity_token();
           if (token.empty()) {
             return ClientResolution::fail("Antigravity token failed.");
           }
-          return ClientResolution{ai::antigravity::create_client(
-              token, "https://daily-cloudcode-pa.googleapis.com/v1internal")};
+          ai::antigravity::Options client_options;
+          client_options.base_url =
+              options.base_url.empty()
+                  ? "https://daily-cloudcode-pa.sandbox.googleapis.com/"
+                    "v1internal"
+                  : options.base_url;
+          client_options.project_id = options.project_id;
+          return ClientResolution{
+              ai::antigravity::create_client(token, client_options)};
         });
   });
 }

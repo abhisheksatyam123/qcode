@@ -2,6 +2,7 @@
 add_executable(ai_tests
     # Unit tests
     unit/openai_client_test.cpp
+    unit/openai_responses_test.cpp
     unit/anthropic_client_test.cpp
     unit/types_test.cpp
     unit/openai_stream_test.cpp
@@ -10,6 +11,8 @@ add_executable(ai_tests
     unit/registry_test.cpp
     unit/gemini_transform_test.cpp
     unit/antigravity_client_test.cpp
+    unit/tui_config_test.cpp
+    ../src/tui/config.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp
@@ -33,6 +36,8 @@ target_link_libraries(ai_tests
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
+        OpenSSL::SSL
+        OpenSSL::Crypto
 )
 
 # Include directories for tests
@@ -40,6 +45,7 @@ target_include_directories(ai_tests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/utils
         ${CMAKE_SOURCE_DIR}/src  # Access to private headers
+        ${CMAKE_SOURCE_DIR}/third_party/httplib-header-only
 )
 
 # Set test properties

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -21,12 +22,18 @@ struct ModelInfo {
     double output_cost = 0.0;  // USD per 1M output tokens
     bool reasoning = false;
     bool tool_call = false;
+    int output_limit = 0;
+    std::string protocol;
 };
 
 struct ProviderInfo {
     std::string name;
     std::string id;
     std::string api_url;
+    std::string api_key;
+    std::map<std::string, std::string> headers;
+    std::string protocol = "chat_completions";
+    std::string project_id;
     std::vector<ModelInfo> models;
 };
 

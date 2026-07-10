@@ -4,8 +4,8 @@
 #include <functional>
 
 #include "ai/logger.h"
+#include "ai/utils/random.h"
 #include "utils/message_utils.h"
-#include "ai/gemini_transform.h"
 
 namespace ai {
 
@@ -58,6 +58,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
       // Get text content (accumulate all text parts)
       std::string text_content = msg.get_text();
+      const auto reasoning_content = msg.get_reasoning();
 
       // Get tool calls
       auto tool_calls = msg.get_tool_calls();
@@ -67,22 +68,39 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       if (!text_content.empty()) {
         message["content"] = text_content;
       }
+      if (!reasoning_content.empty()) {
+        message["reasoning"] = reasoning_content;
+        for (const auto& part : msg.content) {
+          if (const auto* reasoning =
+                  std::get_if<ReasoningContentPart>(&part);
+              reasoning != nullptr && !reasoning->signature.empty()) {
+            message["reasoning_signature"] = reasoning->signature;
+            break;
+          }
+        }
+      }
 
       if (!tool_calls.empty()) {
         nlohmann::json tool_calls_array = nlohmann::json::array();
         for (const auto& tool_call : tool_calls) {
-          tool_calls_array.push_back(
-              {{"id", tool_call.id},
-               {"type", "function"},
-               {"function",
-                {{"name", tool_call.tool_name},
-                 {"arguments", tool_call.arguments.dump()}}}});
+          nlohmann::json encoded_call{
+              {"id", tool_call.id},
+              {"type", "function"},
+              {"function",
+               {{"name", tool_call.tool_name},
+                {"arguments", tool_call.arguments.dump()}}}};
+          if (!tool_call.thought_signature.empty()) {
+            encoded_call["thought_signature"] =
+                tool_call.thought_signature;
+          }
+          tool_calls_array.push_back(std::move(encoded_call));
         }
         message["tool_calls"] = tool_calls_array;
       }
 
       // Skip empty messages
-      if (text_content.empty() && tool_calls.empty()) {
+      if (text_content.empty() && reasoning_content.empty() &&
+          tool_calls.empty()) {
         continue;
       }
 
@@ -184,7 +202,57 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     }
   }
 
-  return request;
+  if (!use_responses_) return request;
+
+  nlohmann::json responses{{"model", request["model"]},
+                           {"input", nlohmann::json::array()}};
+  for (const auto& message : request["messages"]) {
+    const auto role = message.value("role", "");
+    if (role == "tool") {
+      responses["input"].push_back(
+          {{"type", "function_call_output"},
+           {"call_id", message.value("tool_call_id", "")},
+           {"output", message.value("content", "")}});
+      continue;
+    }
+    if (message.contains("content")) {
+      responses["input"].push_back(
+          {{"role", role}, {"content", message["content"]}});
+    }
+    if (message.contains("tool_calls")) {
+      for (const auto& call : message["tool_calls"]) {
+        const auto& function = call["function"];
+        responses["input"].push_back(
+            {{"type", "function_call"},
+             {"call_id", call.value("id", "")},
+             {"name", function.value("name", "")},
+             {"arguments", function.value("arguments", "{}")}});
+      }
+    }
+  }
+  if (request.contains("max_completion_tokens")) {
+    responses["max_output_tokens"] = request["max_completion_tokens"];
+  }
+  if (request.contains("temperature")) {
+    responses["temperature"] = request["temperature"];
+  }
+  if (request.contains("top_p")) responses["top_p"] = request["top_p"];
+  if (request.contains("reasoning_effort")) {
+    responses["reasoning"] = {{"effort", request["reasoning_effort"]}};
+  }
+  if (request.contains("tools")) {
+    responses["tools"] = nlohmann::json::array();
+    for (const auto& tool : request["tools"]) {
+      const auto& function = tool["function"];
+      responses["tools"].push_back(
+          {{"type", "function"},
+           {"name", function.value("name", "")},
+           {"description", function.value("description", "")},
+           {"parameters", function.value("parameters",
+                                          nlohmann::json::object())}});
+    }
+  }
+  return responses;
 }
 
 nlohmann::json OpenAIRequestBuilder::build_request_json(
@@ -216,7 +284,7 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
   httplib::Headers headers;
 
   // Add auth header if api key is provided and not empty
-  if (!config.api_key.empty() && config.api_key != "unused") {
+  if (!config.api_key.empty()) {
     headers.emplace(config.auth_header_name, config.auth_header_prefix + config.api_key);
   }
 
@@ -232,9 +300,9 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
     if (config.base_url.find("qpilot") != std::string::npos) {
       cli_name = "qpilot_cli";
     }
-    std::string turn_id = ai::gemini::new_uuid();
-    std::string session_id = ai::gemini::new_uuid();
-    std::string enc_key = ai::gemini::random_hex(64);
+    std::string turn_id = ai::utils::new_uuid();
+    std::string session_id = ai::utils::new_uuid();
+    std::string enc_key = ai::utils::random_hex(64);
 
     headers.emplace("originator", "codex_cli_rs");
     headers.emplace("version", "0.1.12");

@@ -79,12 +79,12 @@ target_include_directories(ai-sdk-cpp
 target_sources(ai-sdk-cpp-core
     PRIVATE
         # Type implementations
-        src/types/generate_options.cpp
         src/types/stream_options.cpp
         src/types/stream_result.cpp
         src/types/message.cpp
         src/transform/transform.cpp
         src/transform/gemini_transform.cpp
+        src/utils/random.cpp
         
         # HTTP and base provider infrastructure
         src/http/http_request_handler.cpp
@@ -119,6 +119,7 @@ target_sources(ai-sdk-cpp-openai PRIVATE ${OPENAI_SOURCES})
 set(ANTIGRAVITY_SOURCES
     src/providers/antigravity/antigravity_client.cpp
     src/providers/antigravity/antigravity_request_builder.cpp
+    src/providers/antigravity/antigravity_response_parser.cpp
     src/providers/antigravity/antigravity_factory.cpp
 )
 
@@ -167,6 +168,8 @@ foreach(provider openai anthropic antigravity)
             ${HTTPLIB_COMPILE_DEFS}
     )
 endforeach()
+
+target_link_libraries(ai-sdk-cpp-antigravity PUBLIC ai::openai)
 
 # Langfuse tracing component links to core and uses httplib + OpenSSL +
 # stduuid (header-only, vendored under third_party/stduuid-header-only).

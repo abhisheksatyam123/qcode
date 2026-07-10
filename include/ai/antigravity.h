@@ -14,6 +14,11 @@
 namespace ai {
 namespace antigravity {
 
+struct Options {
+  std::string base_url;
+  std::string project_id;
+};
+
 /// Create an Antigravity client with an explicit API key (token).
 /// @param api_key Antigravity bearer token (from get_antigravity_token()).
 /// @return Configured Antigravity client.
@@ -24,6 +29,8 @@ Client create_client(const std::string& api_key);
 /// @param base_url Google Vertex endpoint (default daily-cloudcode-pa).
 /// @return Configured Antigravity client.
 Client create_client(const std::string& api_key, const std::string& base_url);
+
+Client create_client(const std::string& api_key, const Options& options);
 
 }  // namespace antigravity
 }  // namespace ai

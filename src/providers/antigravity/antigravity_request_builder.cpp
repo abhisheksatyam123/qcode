@@ -14,32 +14,26 @@ nlohmann::json AntigravityRequestBuilder::build_request_json(
   openai::OpenAIRequestBuilder inner;
   auto openai_req = inner.build_request_json(options);
   auto gemini_req = ai::gemini::convert_openai_to_gemini(openai_req);
-  return ai::gemini::wrap_antigravity_envelope(gemini_req, options.model);
+  return ai::gemini::wrap_antigravity_envelope(
+      gemini_req, options.model, project_id_);
 }
 
 nlohmann::json AntigravityRequestBuilder::build_request_json(
     const EmbeddingOptions& options) {
-  // Antigravity has no embedding endpoint; fall back to the OpenAI shape.
-  openai::OpenAIRequestBuilder inner;
-  return inner.build_request_json(options);
+  (void)options;
+  return nlohmann::json::object();
 }
 
 httplib::Headers AntigravityRequestBuilder::build_headers(
     const providers::ProviderConfig& config) {
   httplib::Headers headers;
 
-  if (!config.api_key.empty() && config.api_key != "unused") {
+  if (!config.api_key.empty()) {
     headers.emplace(config.auth_header_name,
                     config.auth_header_prefix + config.api_key);
   }
 
-  // Antigravity (Google Vertex) specific headers
-  headers.emplace("User-Agent", "antigravity/1.107.0 linux/x64");
-  headers.emplace("X-Goog-Api-Client",
-                  "google-cloud-sdk vscode_cloudshelleditor/0.1");
-  headers.emplace("Client-Metadata",
-                  "{\"ideType\":\"ANTIGRAVITY\",\"platform\":\"LINUX\","
-                  "\"pluginType\":\"GEMINI\"}");
+  headers.emplace("User-Agent", "antigravity/1.15.8 linux/amd64");
 
   for (const auto& [key, value] : config.extra_headers) {
     headers.emplace(key, value);

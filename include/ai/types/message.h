@@ -23,9 +23,14 @@ struct ToolCallContentPart {
   std::string id;
   std::string tool_name;
   JsonValue arguments;
+  std::string thought_signature;
 
-  ToolCallContentPart(std::string i, std::string n, JsonValue a)
-      : id(std::move(i)), tool_name(std::move(n)), arguments(std::move(a)) {}
+  ToolCallContentPart(std::string i, std::string n, JsonValue a,
+                      std::string signature = "")
+      : id(std::move(i)),
+        tool_name(std::move(n)),
+        arguments(std::move(a)),
+        thought_signature(std::move(signature)) {}
 };
 
 struct ToolResultContentPart {
@@ -89,7 +94,8 @@ struct Message {
     // Add tool calls
     for (const auto& tool : tools) {
       content_parts.emplace_back(
-          ToolCallContentPart{tool.id, tool.tool_name, tool.arguments});
+          ToolCallContentPart{tool.id, tool.tool_name, tool.arguments,
+                              tool.thought_signature});
     }
 
     return Message(kMessageRoleAssistant, std::move(content_parts));
@@ -173,7 +179,8 @@ struct Message {
     for (const auto& part : content) {
       if (const auto* tool_part = std::get_if<ToolCallContentPart>(&part)) {
         result.emplace_back(tool_part->id, tool_part->tool_name,
-                            tool_part->arguments);
+                            tool_part->arguments,
+                            tool_part->thought_signature);
       }
     }
     return result;

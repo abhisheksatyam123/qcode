@@ -1,11 +1,13 @@
 #include "ai/registry.h"
 
 #include <cstdlib>
+#include <algorithm>
 #include <string>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "ai/types/generate_options.h"
+#include "ai/tui/config.h"
 
 namespace ai {
 namespace providers {
@@ -48,17 +50,18 @@ TEST(RegistryTest, CoreProvidersRegisterAndResolveOpenAI) {
 }
 
 TEST(RegistryTest, GenericProviderResolves) {
+  ScopedEnv key("OPENCODE_API_KEY");
+  key.set("dummy-token");
   register_core_providers();
   ClientResolution res = ProviderRegistry::instance().resolve("opencode", "");
   EXPECT_TRUE(res.ok());
 }
 
-TEST(RegistryTest, UnknownProviderFallsBackToGeneric) {
+TEST(RegistryTest, UnknownProviderFailsWithoutConfiguredEndpoint) {
   register_core_providers();
-  // Unknown ids fall back to the "opencode" generic resolver, which succeeds.
   ClientResolution res =
       ProviderRegistry::instance().resolve("does-not-exist", "");
-  EXPECT_TRUE(res.ok());
+  EXPECT_FALSE(res.ok());
 }
 
 TEST(RegistryTest, OpenRouterRequiresKey) {
@@ -92,7 +95,7 @@ TEST(RegistryTest, CustomProviderCanBeRegistered) {
   register_core_providers();
   bool called = false;
   ProviderRegistry::instance().register_provider(
-      "custom", [&called](const std::string&) {
+      "custom", [&called](const ProviderOptions&) {
         called = true;
         return ClientResolution{Client{}, std::string{}};
       });
@@ -110,12 +113,12 @@ TEST(RegistryTest, ResolutionFailureHelper) {
 }  // namespace
 
 TEST(RegistryTest, OpenCodeResolvesWithoutKey) {
-  // Backward-compatible: opencode is the generic OpenAI-compatible fallback and
-  // historically used a placeholder key for local OpenCode Zen proxies.
+  ScopedEnv key("OPENCODE_API_KEY");
+  key.unset();
   register_core_providers();
   ClientResolution res = ProviderRegistry::instance().resolve("opencode", "");
-  EXPECT_TRUE(res.ok());
-  EXPECT_TRUE(res.error.empty());
+  EXPECT_FALSE(res.ok());
+  EXPECT_FALSE(res.error.empty());
 }
 
 TEST(RegistryTest, OpenCodeResolvesWithConfiguredKey) {
@@ -133,7 +136,9 @@ TEST(RegistryTest, OpenCodeOpenRouterE2E) {
   // End-to-end proof that the generic "opencode" provider works against a real
   // OpenAI-compatible endpoint. Runs only when OPENROUTER_API_KEY is available.
   const char* ort = std::getenv("OPENROUTER_API_KEY");
-  if (!ort) GTEST_SKIP() << "OPENROUTER_API_KEY not set";
+  if (!ort || std::getenv("QCODE_RUN_LIVE_TESTS") == nullptr) {
+    GTEST_SKIP() << "Live provider tests disabled";
+  }
   ScopedEnv key("OPENCODE_API_KEY");
   key.set(ort);
   register_core_providers();
@@ -146,6 +151,33 @@ TEST(RegistryTest, OpenCodeOpenRouterE2E) {
   GenerateResult out = res.client.generate_text(opts);
   EXPECT_TRUE(out.is_success()) << out.error_message();
   EXPECT_FALSE(out.text.empty());
+}
+
+TEST(RegistryTest, OpenCodeZenE2E) {
+  if (std::getenv("QCODE_RUN_LIVE_TESTS") == nullptr) {
+    GTEST_SKIP() << "Live provider tests disabled";
+  }
+  const auto providers = tui::load_providers_from_config();
+  const auto it = std::find_if(
+      providers.begin(), providers.end(),
+      [](const auto& provider) { return provider.id == "opencode"; });
+  if (it == providers.end() || it->models.empty()) {
+    GTEST_SKIP() << "OpenCode provider/model not configured";
+  }
+  ProviderOptions options;
+  options.base_url = it->api_url;
+  options.api_key = it->api_key;
+  options.headers = it->headers;
+  options.protocol = it->models.front().protocol;
+  register_core_providers();
+  auto resolution = ProviderRegistry::instance().resolve("opencode", options);
+  ASSERT_TRUE(resolution.ok()) << resolution.error;
+  GenerateOptions request;
+  request.model = it->models.front().id;
+  request.prompt = "Reply with exactly OK";
+  const auto result = resolution.client.generate_text(request);
+  EXPECT_TRUE(result.is_success()) << result.error_message();
+  EXPECT_FALSE(result.text.empty());
 }
 
 }  // namespace providers

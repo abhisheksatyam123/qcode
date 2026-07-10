@@ -15,9 +15,13 @@
 namespace ai {
 namespace openai {
 
+enum class StreamProtocol { kOpenAI, kGeminiEnvelope };
+
 class OpenAIStreamImpl : public internal::StreamResultImpl {
  public:
-  OpenAIStreamImpl() = default;
+  explicit OpenAIStreamImpl(
+      StreamProtocol protocol = StreamProtocol::kOpenAI)
+      : protocol_(protocol) {}
   ~OpenAIStreamImpl();
 
   // Non-copyable, non-movable for thread safety
@@ -64,6 +68,7 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   std::atomic<bool> is_complete_{false};
   std::atomic<bool> should_stop_{false};
   std::atomic<bool> finish_event_pushed_{false};
+  StreamProtocol protocol_;
 };
 
 }  // namespace openai

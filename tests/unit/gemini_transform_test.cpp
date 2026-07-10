@@ -74,13 +74,38 @@ TEST(GeminiTransformTest, ConvertEmptyRequestYieldsEmptyStructures) {
   EXPECT_FALSE(gem.contains("systemInstruction"));
 }
 
+TEST(GeminiTransformTest, ConvertPreservesToolsCallsAndResults) {
+  json request = parsed(R"({
+    "messages": [
+      {"role":"assistant","tool_calls":[{"id":"call-1","type":"function",
+       "thought_signature":"sig","function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]},
+      {"role":"tool","tool_call_id":"call-1","content":"{\"value\":1}"}
+    ],
+    "tools":[{"type":"function","function":{"name":"lookup","description":"Lookup",
+      "parameters":{"type":"object"}}}],
+    "tool_choice":"required",
+    "top_p":0.9,
+    "reasoning_effort":"high"
+  })");
+  const auto gemini = convert_openai_to_gemini(request);
+  EXPECT_EQ(gemini["contents"][0]["parts"][0]["functionCall"]["name"], "lookup");
+  EXPECT_EQ(gemini["contents"][0]["parts"][0]["thoughtSignature"], "sig");
+  EXPECT_EQ(gemini["contents"][1]["parts"][0]["functionResponse"]["name"],
+            "lookup");
+  EXPECT_EQ(gemini["tools"][0]["functionDeclarations"][0]["name"], "lookup");
+  EXPECT_EQ(gemini["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
+  EXPECT_DOUBLE_EQ(gemini["generationConfig"]["topP"], 0.9);
+  EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high");
+}
+
 // ---- envelope -------------------------------------------------------------
 
 TEST(GeminiTransformTest, WrapEnvelopeWrapsRequestAndMapsFlashModel) {
   json gem = parsed(R"({"contents":[]})");
   json env = wrap_antigravity_envelope(gem, "gemini-3-flash");
 
-  EXPECT_EQ(env["project"].get<std::string>(), "tuned-keel-d72qv");
+  EXPECT_EQ(env["project"].get<std::string>(), "rising-fact-p41fc");
   EXPECT_EQ(env["model"].get<std::string>(), "gemini-3-flash-agent");  // mapped
   EXPECT_EQ(env["userAgent"].get<std::string>(), "antigravity");
   EXPECT_EQ(env["requestType"].get<std::string>(), "agent");
@@ -91,6 +116,13 @@ TEST(GeminiTransformTest, WrapEnvelopeWrapsRequestAndMapsFlashModel) {
 TEST(GeminiTransformTest, WrapEnvelopeLeavesNonFlashModelUnchanged) {
   json env = wrap_antigravity_envelope(json::object(), "claude-sonnet");
   EXPECT_EQ(env["model"].get<std::string>(), "claude-sonnet");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeUsesConfiguredProjectAndLegacyAlias) {
+  const auto env = wrap_antigravity_envelope(
+      json::object(), "antigravity-gemini-3-flash", "project-1");
+  EXPECT_EQ(env["project"], "project-1");
+  EXPECT_EQ(env["model"], "gemini-3-flash-agent");
 }
 
 // ---- unwrap ---------------------------------------------------------------
@@ -151,6 +183,23 @@ TEST(GeminiTransformTest, NormalizeUsesResponseIdWhenPresent) {
   json resp = parsed(
       R"({"response":{"responseId":"r1","candidates":[{"content":{"parts":[{"text":"x"}]}}]}})");
   EXPECT_EQ(normalize_gemini_response(resp)["id"].get<std::string>(), "r1");
+}
+
+TEST(GeminiTransformTest, NormalizePreservesAllPartsAndFunctionCalls) {
+  const auto response = parsed(R"({
+    "candidates":[{"finishReason":"STOP","content":{"parts":[
+      {"text":"a"},{"text":"thinking","thought":true,"thoughtSignature":"sig"},
+      {"text":"b"},{"functionCall":{"id":"call-1","name":"lookup","args":{"q":"x"}},
+       "thoughtSignature":"tool-sig"}
+    ]}}]
+  })");
+  const auto normalized = normalize_gemini_response(response);
+  const auto& message = normalized["choices"][0]["message"];
+  EXPECT_EQ(message["content"], "ab");
+  EXPECT_EQ(message["reasoning"], "thinking");
+  EXPECT_EQ(message["tool_calls"][0]["function"]["name"], "lookup");
+  EXPECT_EQ(message["tool_calls"][0]["thought_signature"], "tool-sig");
+  EXPECT_EQ(normalized["choices"][0]["finish_reason"], "tool_calls");
 }
 
 TEST(GeminiTransformTest, NormalizeReturnsNonCandidatePayloadUnchanged) {

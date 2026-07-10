@@ -21,11 +21,14 @@ class AntigravityClient : public providers::BaseProviderClient {
   explicit AntigravityClient(
       const std::string& api_key,
       const std::string& base_url =
-          "https://daily-cloudcode-pa.googleapis.com/v1internal");
+          "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal");
   AntigravityClient(const std::string& api_key, const std::string& base_url,
                     const retry::RetryConfig& retry_config);
+  AntigravityClient(const std::string& api_key, const std::string& base_url,
+                    const std::string& project_id);
 
   StreamResult stream_text(const StreamOptions& options) override;
+  EmbeddingResult embeddings(const EmbeddingOptions& options) override;
   std::string provider_name() const override;
   std::vector<std::string> supported_models() const override;
   bool supports_model(const std::string& model_name) const override;

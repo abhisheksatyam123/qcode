@@ -5,6 +5,7 @@
 #include "providers/base_provider_client.h"
 
 #include <string>
+#include <map>
 #include <vector>
 
 namespace ai {
@@ -18,6 +19,9 @@ class OpenAIClient : public providers::BaseProviderClient {
   explicit OpenAIClient(const std::string& api_key,
                         const std::string& base_url,
                         const retry::RetryConfig& retry_config);
+  OpenAIClient(const std::string& api_key, const std::string& base_url,
+               bool use_responses,
+               const std::map<std::string, std::string>& headers);
 
   // Override only what's specific to OpenAI
   StreamResult stream_text(const StreamOptions& options) override;
@@ -30,6 +34,9 @@ class OpenAIClient : public providers::BaseProviderClient {
   // Member access for testing
   const std::string& get_api_key() const { return config_.api_key; }
   const std::string& get_base_url() const { return config_.base_url; }
+  const std::string& get_completions_path() const {
+    return config_.completions_endpoint_path;
+  }
 };
 
 }  // namespace openai

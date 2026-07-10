@@ -1,11 +1,60 @@
 #include "openai_response_parser.h"
 
 #include "../../utils/response_utils.h"
-#include "ai/gemini_transform.h"
 #include "ai/logger.h"
 
 namespace ai {
 namespace openai {
+namespace {
+
+nlohmann::json normalize_responses_api(const nlohmann::json& response) {
+  if (!response.contains("output") || !response["output"].is_array()) {
+    return response;
+  }
+  nlohmann::json message{{"role", "assistant"}, {"content", ""}};
+  nlohmann::json tool_calls = nlohmann::json::array();
+  std::string text;
+  for (const auto& item : response["output"]) {
+    if (item.value("type", "") == "message" && item.contains("content")) {
+      for (const auto& part : item["content"]) {
+        if (part.value("type", "") == "output_text") {
+          text += part.value("text", "");
+        }
+      }
+    } else if (item.value("type", "") == "function_call") {
+      tool_calls.push_back(
+          {{"id", item.value("call_id", item.value("id", ""))},
+           {"type", "function"},
+           {"function",
+            {{"name", item.value("name", "")},
+             {"arguments", item.value("arguments", "{}")}}}});
+    }
+  }
+  message["content"] = text;
+  if (!tool_calls.empty()) message["tool_calls"] = std::move(tool_calls);
+  const auto finish_reason =
+      !message.contains("tool_calls")
+          ? (response.value("status", "") == "incomplete" ? "length" : "stop")
+          : "tool_calls";
+  nlohmann::json normalized{
+      {"id", response.value("id", "")},
+      {"model", response.value("model", "")},
+      {"created", response.value("created_at", 0)},
+      {"choices",
+       {{{"index", 0},
+         {"message", std::move(message)},
+         {"finish_reason", finish_reason}}}}};
+  if (response.contains("usage")) {
+    const auto& usage = response["usage"];
+    normalized["usage"] = {
+        {"prompt_tokens", usage.value("input_tokens", 0)},
+        {"completion_tokens", usage.value("output_tokens", 0)},
+        {"total_tokens", usage.value("total_tokens", 0)}};
+  }
+  return normalized;
+}
+
+}  // namespace
 
 GenerateResult OpenAIResponseParser::parse_success_completion_response(
     const nlohmann::json& response) {
@@ -13,7 +62,7 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
 
   // Gemini/Antigravity response normalization: unwrap the envelope and
   // translate a generateContent payload into OpenAI-shaped JSON.
-  nlohmann::json normalized_response = ai::gemini::normalize_gemini_response(response);
+  nlohmann::json normalized_response = normalize_responses_api(response);
 
   GenerateResult result;
 
@@ -82,7 +131,9 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
               } else {
                 arguments = JsonValue::parse(arguments_str);
               }
-              ToolCall tool_call(call_id, function_name, arguments);
+              ToolCall tool_call(
+                  call_id, function_name, arguments,
+                  tool_call_json.value("thought_signature", ""));
               result.tool_calls.push_back(tool_call);
 
               LOG_DEBUG("Parsed tool call: {} with args: {}",
@@ -95,8 +146,34 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
         }
       }
 
-      // Add assistant response to messages
-      if (!result.text.empty()) {
+      std::string reasoning;
+      std::string reasoning_signature;
+      if (message.contains("reasoning") && message["reasoning"].is_string()) {
+        reasoning = message["reasoning"].get<std::string>();
+      }
+      if (message.contains("reasoning_details") &&
+          message["reasoning_details"].is_array()) {
+        for (const auto& detail : message["reasoning_details"]) {
+          if (reasoning.empty()) reasoning += detail.value("text", "");
+          if (reasoning_signature.empty()) {
+            reasoning_signature = detail.value("signature", "");
+          }
+        }
+      }
+
+      if (!result.tool_calls.empty()) {
+        std::vector<ToolCallContentPart> calls;
+        calls.reserve(result.tool_calls.size());
+        for (const auto& call : result.tool_calls) {
+          calls.emplace_back(call.id, call.tool_name, call.arguments,
+                             call.thought_signature);
+        }
+        result.response_messages.push_back(
+            Message::assistant_with_tools(result.text, calls));
+      } else if (!reasoning.empty()) {
+        result.response_messages.push_back(Message::assistant_with_reasoning(
+            result.text, reasoning, reasoning_signature));
+      } else if (!result.text.empty()) {
         result.response_messages.push_back(Message::assistant(result.text));
       }
     }

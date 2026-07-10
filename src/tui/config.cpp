@@ -2,11 +2,15 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <nlohmann/json.hpp>
+#include <httplib.h>
 
 #include <ai/logger.h>
 
@@ -16,105 +20,124 @@ namespace tui {
 using ordered_json = nlohmann::ordered_json;
 
 static std::string normalize_api_url(std::string url) {
-    while (url.size() >= 3 &&
-           url.compare(url.size() - 3, 3, "/v1") == 0) {
-        url.resize(url.size() - 3);
-    }
+    while (!url.empty() && url.back() == '/') url.pop_back();
     return url;
 }
 
-static std::vector<std::string> find_python_candidates() {
-    // Discover a Python interpreter for keyring/OAuth resolution. Prefer an
-    // explicit override, then fall back to PATH lookups (no hardcoded paths).
-    std::vector<std::string> cands;
-    if (const char* pe = std::getenv("QCODE_PYTHON")) cands.push_back(pe);
-    if (const char* pe = std::getenv("PYTHON_EXECUTABLE")) cands.push_back(pe);
-    cands.push_back("python3");
-    cands.push_back("python");
-    return cands;
+static std::string resolve_config_value(const ordered_json& value) {
+    if (!value.is_string()) return "";
+    const auto text = value.get<std::string>();
+    constexpr std::string_view prefix = "{env:";
+    if (text.starts_with(prefix) && text.ends_with('}')) {
+        const auto name = text.substr(prefix.size(), text.size() - prefix.size() - 1);
+        if (const char* env = std::getenv(name.c_str())) return env;
+        return "";
+    }
+    return text;
+}
+
+static ProviderInfo default_opencode_provider() {
+    ProviderInfo provider;
+    provider.name = "OpenCode Zen";
+    provider.id = "opencode";
+    provider.api_url = "https://opencode.ai/zen/v1";
+    provider.protocol = "chat_completions";
+    provider.models = {
+        {"Nemotron 3 Ultra", "nemotron-3-ultra-free"},
+        {"DeepSeek V4 Flash", "deepseek-v4-flash-free"},
+        {"North Mini Code", "north-mini-code-free"}};
+    return provider;
+}
+
+static std::string form_encode(std::string_view value) {
+    std::ostringstream encoded;
+    encoded << std::uppercase << std::hex;
+    for (const auto ch : value) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded << ch;
+        } else {
+            encoded << '%' << std::setw(2) << std::setfill('0')
+                    << static_cast<int>(c);
+        }
+    }
+    return encoded.str();
 }
 
 std::string get_antigravity_token() {
-    // Hardcoded OAuth client credentials for Antigravity (from opencode)
-    // These allow refreshing the access token from the stored refresh_token.
-    constexpr const char* kAntigravityClientId =
-        "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-    constexpr const char* kAntigravityClientSecret = "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";
-
-    char* api_key_env = std::getenv("ANTIGRAVITY_API_KEY");
-    if (api_key_env && std::string(api_key_env).length() > 0)
-        return api_key_env;
-
-    for (const std::string& py : find_python_candidates()) {
-        // Resolve the Antigravity OAuth credential from the OS keyring and
-        // exchange its refresh_token for a fresh access_token. The stored
-        // access_token is frequently rejected by cloudcode-pa, so prefer a
-        // refresh whenever a refresh_token is present (mirrors opencode's chain).
-        std::string cmd = std::string(py) +
-            " -c \"import os, json, urllib.request, urllib.parse, datetime\n"
-"try:\n"
-"    import keyring\n"
-"except Exception:\n"
-"    keyring = None\n"
-            "try:\n"
-            "    cid = \"1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com\"\n"
-            "    csec = \"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\"\n"
-            "    raw = keyring.get_password('gemini', 'antigravity') if keyring else None\n"
-            "    if not raw:\n"
-            "        try:\n"
-            "            import os as _os\n"
-            "            _p = _os.environ.get('ANTIGRAVITY_TOKEN_FILE') or _os.path.expanduser('~/.gemini/antigravity-cli/antigravity-oauth-token')\n"
-            "            if _os.path.exists(_p):\n"
-            "                with open(_p) as _f: raw = _f.read()\n"
-            "        except Exception:\n"
-            "            raw = ''\n"
-            "    if not raw:\n"
-            "        print('')\n"
-            "    else:\n"
-            "        d = json.loads(raw); tok = d.get('token', {}); rt = tok.get('refresh_token')\n"
-            "        refreshed = None\n"
-            "        if rt and cid and csec:\n"
-            "            try:\n"
-            "                data = urllib.parse.urlencode({'grant_type':'refresh_token','refresh_token':rt,'client_id':cid,'client_secret':csec}).encode('utf-8')\n"
-            "                req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data)\n"
-            "                with urllib.request.urlopen(req, timeout=20) as resp: refreshed = json.loads(resp.read().decode('utf-8'))\n"
-            "                tok['access_token'] = refreshed['access_token']\n"
-            "                new_exp = datetime.datetime.now() + datetime.timedelta(seconds=refreshed.get('expires_in', 3600))\n"
-            "                tok['expiry'] = new_exp.strftime('%Y-%m-%dT%H:%M:%S') + '+05:30'\n"
-            "                d['token'] = tok\n"
-            "                try: keyring.set_password('gemini', 'antigravity', json.dumps(d))\n"
-            "                except Exception: pass\n"
-            "                print(refreshed['access_token'])\n"
-            "            except Exception: pass\n"
-            "        if refreshed is None and tok.get('access_token'):\n"
-            "            print(tok['access_token'])\n"
-            "        elif refreshed is None:\n"
-            "            print('')\n"
-            "except Exception:\n"
-            "    print('')\" 2>/dev/null";
-
-        std::array<char, 1024> buf;
-        std::string output;
-        FILE* pipe = popen(cmd.c_str(), "r");
-        if (!pipe) continue;
-        while (fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr)
-            output += buf.data();
-        int rc = pclose(pipe);
-        if (rc != 0 || output.empty() || output == "None\n") continue;
-
-        try {
-            auto parsed = ordered_json::parse(output);
-            if (parsed.contains("token") && parsed["token"].contains("access_token"))
-                return parsed["token"]["access_token"].get<std::string>();
-            if (parsed.contains("access_token"))
-                return parsed["access_token"].get<std::string>();
-        } catch (...) {}
-
-        auto nl = output.find('\n');
-        std::string trimmed = (nl != std::string::npos) ? output.substr(0, nl) : output;
-        if (!trimmed.empty()) return trimmed;
+    if (const char* token = std::getenv("ANTIGRAVITY_API_KEY");
+        token != nullptr && *token != '\0') {
+        return token;
     }
-    return "";
+
+    std::filesystem::path token_path;
+    if (const char* configured = std::getenv("ANTIGRAVITY_TOKEN_FILE")) {
+        token_path = configured;
+    } else if (const char* home = std::getenv("HOME")) {
+        token_path = std::filesystem::path(home) /
+                     ".gemini/antigravity-cli/antigravity-oauth-token";
+    }
+    if (token_path.empty()) return "";
+
+    ordered_json document;
+    try {
+        std::ifstream input(token_path);
+        if (!input) return "";
+        document = ordered_json::parse(input);
+    } catch (const std::exception& error) {
+        LOG_ERROR("Unable to read Antigravity token file: {}", error.what());
+        return "";
+    }
+
+    if (!document.contains("token") || !document["token"].is_object()) {
+        LOG_ERROR("Antigravity token file has no token object");
+        return "";
+    }
+    auto& token = document["token"];
+    const auto access_token = token.value("access_token", "");
+    const auto refresh_token = token.value("refresh_token", "");
+    const char* client_id = std::getenv("ANTIGRAVITY_OAUTH_CLIENT_ID");
+    const char* client_secret = std::getenv("ANTIGRAVITY_OAUTH_CLIENT_SECRET");
+    if (refresh_token.empty() || client_id == nullptr || *client_id == '\0') {
+        return access_token;
+    }
+
+    auto body = "grant_type=refresh_token&refresh_token=" +
+                form_encode(refresh_token) + "&client_id=" +
+                form_encode(client_id);
+    if (client_secret != nullptr && *client_secret != '\0') {
+        body += "&client_secret=" + form_encode(client_secret);
+    }
+    httplib::Client client("https://oauth2.googleapis.com");
+    client.set_connection_timeout(20);
+    const auto response =
+        client.Post("/token", body, "application/x-www-form-urlencoded");
+    if (!response || response->status != 200) {
+        LOG_ERROR("Antigravity OAuth refresh failed with status {}",
+                  response ? response->status : 0);
+        return access_token;
+    }
+    try {
+        const auto refreshed = ordered_json::parse(response->body);
+        const auto fresh_token = refreshed.value("access_token", "");
+        if (fresh_token.empty()) return access_token;
+        token["access_token"] = fresh_token;
+        if (refreshed.contains("expires_in")) {
+            token["expires_in"] = refreshed["expires_in"];
+        }
+        const auto temporary = token_path.string() + ".tmp";
+        {
+            std::ofstream output(temporary, std::ios::trunc);
+            output << document.dump(2);
+        }
+        std::error_code error;
+        std::filesystem::rename(temporary, token_path, error);
+        if (error) std::filesystem::remove(temporary);
+        return fresh_token;
+    } catch (const std::exception& error) {
+        LOG_ERROR("Unable to parse Antigravity OAuth response: {}", error.what());
+    }
+    return access_token;
 }
 
 
@@ -139,12 +162,7 @@ std::vector<ProviderInfo> load_providers_from_config() {
     LOG_DEBUG("load_providers: path={}", path);
     if (!std::filesystem::exists(path)) {
         LOG_WARN("Config not found, using defaults");
-        return {
-            {"OpenCode Zen", "opencode", "https://opencode.ai/zen/v1",
-             {{"Nemotron 3 Ultra", "nemotron-3-ultra-free"},
-              {"DeepSeek V4 Flash", "deepseek-v4-flash-free"},
-              {"North Mini Code", "north-mini-code-free"}}}
-        };
+        return {default_opencode_provider()};
     }
     try {
         std::ifstream file(path);
@@ -154,12 +172,37 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 ProviderInfo prov;
                 prov.id = prov_id;
                 prov.name = prov_data.value("name", prov_id);
-                prov.api_url = normalize_api_url(prov_data.value("api", ""));
+                const auto options = prov_data.value(
+                    "options", ordered_json::object());
+                prov.api_url = normalize_api_url(
+                    resolve_config_value(options.value("baseURL", ordered_json{})));
+                if (prov.api_url.empty()) {
+                    prov.api_url = normalize_api_url(prov_data.value("api", ""));
+                }
+                prov.api_key = resolve_config_value(
+                    options.value("apiKey", ordered_json{}));
+                if (options.contains("headers") && options["headers"].is_object()) {
+                    for (const auto& [name, value] : options["headers"].items()) {
+                        const auto resolved = resolve_config_value(value);
+                        if (!resolved.empty()) prov.headers.emplace(name, resolved);
+                    }
+                }
+                const auto package = prov_data.value("npm", "");
+                if (package == "@ai-sdk/openai") {
+                    prov.protocol = "responses";
+                } else {
+                    prov.protocol = "chat_completions";
+                }
+                prov.project_id = resolve_config_value(
+                    options.value("project", ordered_json{}));
                 if (prov_data.contains("models")) {
                     for (auto& [model_id, model_data] : prov_data["models"].items()) {
                         ModelInfo model{model_data.value("name", model_id), model_id};
-                        if (model_data.contains("limit") && model_data["limit"].contains("context"))
-                            model.context_window = model_data["limit"]["context"].get<int>();
+                        if (model_data.contains("limit")) {
+                            const auto& limit = model_data["limit"];
+                            model.context_window = limit.value("context", 0);
+                            model.output_limit = limit.value("output", 0);
+                        }
                         if (model_data.contains("cost")) {
                             auto& c = model_data["cost"];
                             model.input_cost = c.value("input", 0.0);
@@ -167,6 +210,7 @@ std::vector<ProviderInfo> load_providers_from_config() {
                         }
                         model.reasoning = model_data.value("reasoning", false);
                         model.tool_call = model_data.value("tool_call", false);
+                        model.protocol = model_data.value("protocol", prov.protocol);
                         prov.models.push_back(model);
                     }
                 }

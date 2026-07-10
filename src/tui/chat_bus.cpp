@@ -214,7 +214,8 @@ static void run_tools_generation_bus(ai::Client& client,
       if (step_res.has_tool_calls()) {
         std::vector<ai::ToolCallContentPart> tool_parts;
         for (const auto& call : step_res.tool_calls) {
-          tool_parts.emplace_back(call.id, call.tool_name, call.arguments);
+          tool_parts.emplace_back(call.id, call.tool_name, call.arguments,
+                                  call.thought_signature);
           gen_result.tool_calls.push_back(call);
         }
         response_messages.push_back(ai::Message::assistant_with_tools(step_res.text, tool_parts));
@@ -500,24 +501,30 @@ void run_generation_with_bus(
 
     // ── Resolve provider & API key ──
     ai::Client client;
-    std::string api_url;
     std::string provider_id;
+    ai::providers::ProviderOptions provider_options;
 
     for (const auto& p : providers) {
-      if (p.name == provider_name) {
-        api_url = p.api_url;
+      if (p.id == provider_name || p.name == provider_name) {
         provider_id = p.id;
+        provider_options.base_url = p.api_url;
+        provider_options.api_key = p.api_key;
+        provider_options.headers = p.headers;
+        provider_options.protocol = p.protocol;
+        provider_options.project_id = p.project_id;
         break;
       }
     }
 
-    LOG_DEBUG("chat_bus: resolved provider={} api_url={}", provider_id, api_url);
+    LOG_DEBUG("chat_bus: resolved provider={} api_url={}", provider_id,
+              provider_options.base_url);
 
     // Provider registry is populated once at startup (see main.cpp). Resolve the
     // provider client via the central registry (auth + base URL handled per
     // provider). Errors are surfaced on the bus.
     auto resolution =
-        ai::providers::ProviderRegistry::instance().resolve(provider_id, api_url);
+        ai::providers::ProviderRegistry::instance().resolve(provider_id,
+                                                             provider_options);
     if (!resolution.ok()) {
       bus.publish<ErrorOccurred>({
           .session_id = *state.session_id,

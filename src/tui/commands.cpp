@@ -265,7 +265,14 @@ bool handle_slash_command(
 
             const auto& sel = providers_copy[sp];
             ai::providers::register_tui_providers();
-            auto resolution = ai::providers::ProviderRegistry::instance().resolve(sel.id, sel.api_url);
+            ai::providers::ProviderOptions provider_options;
+            provider_options.base_url = sel.api_url;
+            provider_options.api_key = sel.api_key;
+            provider_options.headers = sel.headers;
+            provider_options.protocol = sel.protocol;
+            provider_options.project_id = sel.project_id;
+            auto resolution = ai::providers::ProviderRegistry::instance().resolve(
+                sel.id, provider_options);
             if (!resolution.ok()) {
                 fail("Compaction failed: " + resolution.error);
                 return;

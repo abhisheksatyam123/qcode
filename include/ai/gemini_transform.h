@@ -21,7 +21,8 @@ nlohmann::json convert_openai_to_gemini(const nlohmann::json& openai_req);
 /// (project / requestId / request / model / userAgent / requestType).
 /// Maps "gemini-3-flash" -> "gemini-3-flash-agent".
 nlohmann::json wrap_antigravity_envelope(const nlohmann::json& gemini_req,
-                                         const std::string& model);
+                                         const std::string& model,
+                                         const std::string& project_id = "");
 
 /// Unwrap an Antigravity SSE/HTTP envelope. If `json` carries an object under
 /// the "response" key, return that inner payload; otherwise return `json`

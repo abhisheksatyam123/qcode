@@ -9,10 +9,17 @@
 #include "types/client.h"
 
 #include <optional>
+#include <map>
 #include <string>
 
 namespace ai {
 namespace openai {
+
+struct CompatibleOptions {
+  std::string base_url;
+  std::string protocol = "chat_completions";
+  std::map<std::string, std::string> headers;
+};
 
 namespace models {
 /// Common OpenAI model identifiers
@@ -88,6 +95,10 @@ Client create_client(const std::string& api_key);
 /// @param base_url Custom base URL (for OpenAI-compatible APIs)
 /// @return Configured OpenAI client
 Client create_client(const std::string& api_key, const std::string& base_url);
+
+/// Create an OpenAI-compatible client with explicit transport and headers.
+Client create_client(const std::string& api_key,
+                     const CompatibleOptions& options);
 
 /// Create an OpenAI client with custom configuration and retry settings
 /// @param api_key OpenAI API key

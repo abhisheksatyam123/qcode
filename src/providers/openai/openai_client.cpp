@@ -12,11 +12,29 @@
 namespace ai {
 
 namespace {
-std::string get_completions_path(const std::string& base_url) {
+bool has_version_suffix(const std::string& base_url) {
+  return base_url.ends_with("/v1") || base_url.ends_with("/v1/");
+}
+
+std::string compute_completions_path(const std::string& base_url,
+                                     bool use_responses = false) {
   if (base_url.find("qualcomm.com") != std::string::npos) {
     return "/responses";
   }
-  return "/v1/chat/completions";
+  const std::string resource =
+      use_responses ? "/responses" : "/chat/completions";
+  return has_version_suffix(base_url) ? resource : "/v1" + resource;
+}
+
+std::string get_embeddings_path(const std::string& base_url) {
+  return has_version_suffix(base_url) ? "/embeddings" : "/v1/embeddings";
+}
+
+httplib::Headers make_headers(
+    const std::map<std::string, std::string>& headers) {
+  httplib::Headers result;
+  for (const auto& [name, value] : headers) result.emplace(name, value);
+  return result;
 }
 }
 
@@ -28,8 +46,8 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
           providers::ProviderConfig{
               .api_key = api_key,
               .base_url = base_url,
-              .completions_endpoint_path = get_completions_path(base_url),
-              .embeddings_endpoint_path = "/v1/embeddings",
+              .completions_endpoint_path = compute_completions_path(base_url),
+              .embeddings_endpoint_path = get_embeddings_path(base_url),
               .auth_header_name = "Authorization",
               .auth_header_prefix = "Bearer ",
               .extra_headers = {}},
@@ -46,8 +64,8 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
           providers::ProviderConfig{
               .api_key = api_key,
               .base_url = base_url,
-              .completions_endpoint_path = get_completions_path(base_url),
-              .embeddings_endpoint_path = "/v1/embeddings",
+              .completions_endpoint_path = compute_completions_path(base_url),
+              .embeddings_endpoint_path = get_embeddings_path(base_url),
               .auth_header_name = "Authorization",
               .auth_header_prefix = "Bearer ",
               .extra_headers = {},
@@ -58,6 +76,22 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
       "OpenAI client initialized with base_url: {} and custom retry config",
       base_url);
 }
+
+OpenAIClient::OpenAIClient(
+    const std::string& api_key, const std::string& base_url,
+    bool use_responses, const std::map<std::string, std::string>& headers)
+    : BaseProviderClient(
+          providers::ProviderConfig{
+              .api_key = api_key,
+              .base_url = base_url,
+              .completions_endpoint_path =
+                  compute_completions_path(base_url, use_responses),
+              .embeddings_endpoint_path = get_embeddings_path(base_url),
+              .auth_header_name = "Authorization",
+              .auth_header_prefix = "Bearer ",
+              .extra_headers = make_headers(headers)},
+          std::make_unique<OpenAIRequestBuilder>(use_responses),
+          std::make_unique<OpenAIResponseParser>()) {}
 
 StreamResult OpenAIClient::stream_text(const StreamOptions& options) {
   LOG_DEBUG(

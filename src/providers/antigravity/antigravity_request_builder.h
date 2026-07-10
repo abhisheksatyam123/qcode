@@ -19,9 +19,15 @@ namespace antigravity {
 // carry the Antigravity/Vertex identity.
 class AntigravityRequestBuilder : public providers::RequestBuilder {
  public:
+  explicit AntigravityRequestBuilder(std::string project_id = "")
+      : project_id_(std::move(project_id)) {}
+
   nlohmann::json build_request_json(const GenerateOptions& options) override;
   nlohmann::json build_request_json(const EmbeddingOptions& options) override;
   httplib::Headers build_headers(const providers::ProviderConfig& config) override;
+
+ private:
+  std::string project_id_;
 };
 
 }  // namespace antigravity

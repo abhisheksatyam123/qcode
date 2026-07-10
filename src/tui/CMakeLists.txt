@@ -23,12 +23,16 @@ target_link_libraries(qcode-tui PRIVATE
     ftxui::component
     sqlite3
     stduuid::stduuid
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 target_include_directories(qcode-tui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/md4c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/httplib-header-only
 )
+target_compile_definitions(qcode-tui PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT=1)
 set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/md4c/md4c.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=c99")

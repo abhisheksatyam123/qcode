@@ -337,7 +337,8 @@ TEST_F(StreamEdgeCaseTest, UnicodeInStream) {
 class AntigravityStreamTest : public OpenAITestFixture {};
 
 TEST_F(AntigravityStreamTest, UnwrapsResponseEnvelopeAndExtractsText) {
-  ai::openai::OpenAIStreamImpl impl;
+  ai::openai::OpenAIStreamImpl impl(
+      ai::openai::StreamProtocol::kGeminiEnvelope);
 
   std::vector<std::string> chunks = {
       R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":""}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":1,"totalTokenCount":16}},"traceId":"t1","metadata":{}})",

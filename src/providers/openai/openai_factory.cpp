@@ -1,6 +1,7 @@
 #include "openai_factory.h"
 
 #include "ai/errors.h"
+#include "ai/openai.h"
 #include "openai_client.h"
 
 #include <cstdlib>
@@ -47,6 +48,14 @@ Client create_client(const std::string& api_key, const std::string& base_url) {
   LOG_DEBUG("OpenAIFactory: create_client (with api_key, base_url={})", base_url);
   return Client(std::make_unique<OpenAIClient>(
       get_api_key_or_default(api_key), get_base_url_or_default(base_url)));
+}
+
+Client create_client(const std::string& api_key,
+                     const CompatibleOptions& options) {
+  const auto base_url = get_base_url_or_default(options.base_url);
+  return Client(std::make_unique<OpenAIClient>(
+      get_api_key_or_default(api_key), base_url,
+      options.protocol == "responses", options.headers));
 }
 
 Client create_client(const std::string& api_key,
