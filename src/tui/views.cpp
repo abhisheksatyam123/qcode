@@ -18,6 +18,25 @@ namespace tui {
 using namespace ftxui;
 
 // Raw helper to get git diff of the selected file
+// Quote a path as a single-quoted POSIX shell literal (escapes embedded
+// single quotes) so a file path containing shell metacharacters cannot inject
+// commands when we run git via popen.
+static std::string shell_quote(const std::string& s) {
+  std::string out = "'";
+  for (char c : s) {
+    if (c == '\'') {
+      out += '\'';
+      out += '\\';
+      out += '\'';
+      out += '\'';
+    } else {
+      out += c;
+    }
+  }
+  out += "'";
+  return out;
+}
+
 static std::string get_file_diff_raw(const std::string& path) {
     if (path.empty()) return "";
     
@@ -25,7 +44,7 @@ static std::string get_file_diff_raw(const std::string& path) {
     std::array<char, 512> buffer;
     
     // Check if the file is tracked
-    std::string check_cmd = "git ls-files --error-unmatch \"" + path + "\" 2>/dev/null";
+    std::string check_cmd = "git ls-files --error-unmatch " + shell_quote(path) + " 2>/dev/null";
     FILE* check_pipe = popen(check_cmd.c_str(), "r");
     bool is_tracked = false;
     if (check_pipe) {
@@ -35,10 +54,10 @@ static std::string get_file_diff_raw(const std::string& path) {
     std::string cmd;
     if (is_tracked) {
         // Tracked file: show diff against HEAD (unstaged + staged changes)
-        cmd = "git diff HEAD -- \"" + path + "\" 2>/dev/null";
+        cmd = "git diff HEAD -- " + shell_quote(path) + " 2>/dev/null";
     } else {
         // Untracked file: show diff as a new file (all lines added)
-        cmd = "git diff --no-index /dev/null \"" + path + "\" 2>/dev/null";
+        cmd = "git diff --no-index /dev/null " + shell_quote(path) + " 2>/dev/null";
     }
 
     FILE* pipe = popen(cmd.c_str(), "r");

@@ -132,6 +132,25 @@ static std::string generate_task_id() {
   return "bg-" + std::to_string(ms) + "-" + rand_part;
 }
 
+// Quote a path as a single-quoted POSIX shell literal (escapes embedded
+// single quotes) so a working directory containing shell metacharacters
+// cannot inject commands into the `cd` prefix we prepend to the command.
+static std::string shell_quote_literal(const std::string& s) {
+  std::string out = "'";
+  for (char c : s) {
+    if (c == '\'') {
+      out += '\'';
+      out += '\\';
+      out += '\'';
+      out += '\'';
+    } else {
+      out += c;
+    }
+  }
+  out += "'";
+  return out;
+}
+
 static std::string resolve_cwd(const std::string& workdir) {
   if (workdir.empty()) return std::filesystem::current_path().string();
   std::error_code ec;
@@ -287,7 +306,7 @@ std::string BashTool::apply_output_budget(const std::string& output,
 std::string BashTool::run_shell(const std::string& command, const std::string& cwd,
                                  int /*timeout_ms*/, int& exit_code) {
   exit_code = -1;
-  std::string cmd = "cd " + cwd + " 2>/dev/null; " + command;
+  std::string cmd = "cd -- " + shell_quote_literal(cwd) + " 2>/dev/null; " + command;
 
   std::array<char, 128> buffer;
   std::string result;
@@ -381,7 +400,7 @@ JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionCo
   pid_t pid = fork();
   if (pid == 0) {
     // Child process
-    std::string cmd = "cd " + cwd + " 2>/dev/null; " + command;
+    std::string cmd = "cd -- " + shell_quote_literal(cwd) + " 2>/dev/null; " + command;
     execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
     _exit(1);
   } else if (pid > 0) {

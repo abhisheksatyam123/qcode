@@ -12,10 +12,11 @@ ready for review.
 > files** after restoring HEAD modes and deleting 6 stray `.bak` files.
 > `git diff --check` is clean.
 >
-> **Committed (this round, 3 commits):** `3cbb8d7` fix(tui) streaming/reasoning/
+> **Committed (this round, 4 commits):** `3cbb8d7` fix(tui) streaming/reasoning/
 > error/confirm/config; `c931bfa` fix(sdk) logger/tool-name/stream-guard;
-> `75ced72` chore todo update. All SDK changes are now committed; only
-> `tmp.json` and the scratchpad notes dir remain untracked (intentionally).
+> `91b2818` chore todo update; `55cf6ca` fix(security) shell-command quoting.
+> All SDK changes (~17 content files) are committed; only `tmp.json` and the
+> scratchpad notes dir remain untracked (intentionally).
 
 ## Priority 0 — Correctness blockers
 
@@ -59,10 +60,10 @@ ready for review.
   - [ ] Tool-output directory.
   - [ ] Python/keyring executable discovery.
 - [ ] Make shell command construction safe everywhere paths are interpolated.
-  - [ ] BashTool: avoid unescaped `cd <path>; <command>` strings; validate or
-    safely quote working directories.
-  - [ ] `views.cpp`: `git diff` commands interpolate file paths into quoted
-    strings; paths containing `"` or `$` break them.
+  - [x] BashTool: avoid unescaped `cd <path>; <command>` strings; validate or
+    safely quote working directories (done: `cd -- '<cwd>'` with single-quote escaping).
+  - [x] `views.cpp`: `git diff` commands interpolate file paths into quoted
+    strings; paths containing `"` or `$` break them (done: single-quote `shell_quote()` for all 3 path sites).
 - [ ] Implement actual `timeout_ms` enforcement for foreground commands.
 - [ ] Review command execution policy and document the trust model for model-
   generated shell commands.
