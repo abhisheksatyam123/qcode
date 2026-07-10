@@ -282,6 +282,10 @@ FetchContent_MakeAvailable(ftxui)
 
 # TUI
 add_subdirectory(src/tui)
+option(QCODE_BUILD_SERVER "Build headless server" OFF)
+if(QCODE_BUILD_SERVER)
+    add_subdirectory(src/server)
+endif()
 
 # Examples
 if(BUILD_EXAMPLES)
