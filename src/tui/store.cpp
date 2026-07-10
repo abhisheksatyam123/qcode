@@ -204,6 +204,52 @@ void AppStore::wire() {
         append_reasoning(p.text, p.signature);
     }));
     // ... remaining wire implementation same as before
+    subs_.push_back(bus_.subscribe<CompactionResult>([this](const CompactionResult::Payload& p) {
+        if (!p.error.empty()) {
+            state_.chat_history->push_back({"System", p.error});
+            set_status("idle");
+            notify();
+            return;
+        }
+        const auto& hist = *state_.messages_history;
+        ai::Messages new_messages;
+        std::string summary_body =
+            "This conversation was compacted into a handoff packet" +
+            (p.wrote ? (" written to: " + p.todo_path) : "") + ".\n\n" + p.summary;
+        new_messages.push_back(ai::Message::user(summary_body));
+        size_t start = (hist.size() > static_cast<size_t>(p.keep))
+                           ? hist.size() - static_cast<size_t>(p.keep)
+                           : 0;
+        for (size_t i = start; i < hist.size(); ++i) {
+            new_messages.push_back(hist[i]);
+        }
+
+        auto new_chat = std::make_shared<std::vector<std::pair<std::string, std::string>>>();
+        std::string note = "Conversation compacted: " + std::to_string(p.original_size) +
+                           " messages -> handoff packet";
+        note += p.wrote ? ("\nTodo file: " + p.todo_path) : " (todo file write failed)";
+        new_chat->push_back({"System", note});
+        for (const auto& m : new_messages) {
+            std::string role_str;
+            if (m.role == ai::kMessageRoleUser) role_str = "User";
+            else if (m.role == ai::kMessageRoleAssistant) role_str = "Assistant";
+            else if (m.role == ai::kMessageRoleSystem) role_str = "System";
+            else role_str = "Message";
+            std::string text;
+            for (const auto& part : m.content) {
+                if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) text += tp->text;
+                else if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) text += "[Tool call: " + tcp->tool_name + "]";
+                else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) text += "[Tool result]";
+                else if (const auto* rcp = std::get_if<ai::ReasoningContentPart>(&part)) { if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]"; }
+            }
+            new_chat->push_back({role_str, text});
+        }
+        state_.messages_history = std::make_shared<ai::Messages>(new_messages);
+        state_.chat_history = new_chat;
+        set_status("idle");
+        notify();
+    }));
+
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
         std::string tool_str = "  \u23f3 " + p.tool_name + "...";
         state_.chat_history->emplace_back("ToolCall", tool_str);

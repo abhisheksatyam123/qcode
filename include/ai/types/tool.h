@@ -36,6 +36,7 @@ using AsyncToolExecuteFunction =
                                          const ToolExecutionContext&)>;
 
 struct Tool {
+  std::string name;  // tool identifier; mirrors the ToolSet key (set by helpers)
   std::string description;
   JsonValue parameters_schema;
   std::optional<ToolExecuteFunction> execute;

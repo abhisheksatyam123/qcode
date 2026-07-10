@@ -122,9 +122,10 @@ class ConsoleLogger final : public Logger {
                   now.time_since_epoch()) %
               1000;
 
+    std::tm tm_buf{};
     char time_buf[32];
     std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S",
-                  std::localtime(&time_t_now));
+                  localtime_r(&time_t_now, &tm_buf));
 
     auto& stream = (level == LogLevel::kLogLevelError) ? std::cerr : std::cout;
     stream << "[" << time_buf << "." << std::setfill('0') << std::setw(3)
@@ -137,10 +138,10 @@ class ConsoleLogger final : public Logger {
   }
 
   bool is_enabled(LogLevel level) const override {
-    return static_cast<int>(level) >= static_cast<int>(min_level_);
+    return static_cast<int>(level) >= static_cast<int>(min_level_.load());
   }
 
-  void set_min_level(LogLevel level) { min_level_ = level; }
+  void set_min_level(LogLevel level) { min_level_.store(level); }
 
  private:
   static constexpr std::string_view level_to_string(LogLevel level) {
@@ -153,7 +154,9 @@ class ConsoleLogger final : public Logger {
     return "UNKNOWN";
   }
 
-  LogLevel min_level_;
+  // Atomic so set_min_level() is safe to call from any thread while other
+  // threads are logging through is_enabled()/log().
+  std::atomic<LogLevel> min_level_;
 };
 
 // ── Global logger management ──

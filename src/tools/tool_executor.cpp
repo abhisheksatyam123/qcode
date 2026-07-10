@@ -115,6 +115,20 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
     futures.reserve(tool_calls.size());
 
     for (const auto& tool_call : tool_calls) {
+      // Confirmation (mirror sequential path) - must run before execution
+      if (options && options->on_tool_call_confirm.has_value()) {
+        bool confirmed = options->on_tool_call_confirm.value()(tool_call);
+        if (!confirmed) {
+          ToolResult rejected_res(tool_call.id, tool_call.tool_name,
+                                  tool_call.arguments,
+                                  std::string("Tool execution rejected by user"));
+          if (options && options->on_tool_call_finish.has_value()) {
+            options->on_tool_call_finish.value()(rejected_res);
+          }
+          results.push_back(rejected_res);
+          continue;
+        }
+      }
       // Fire on_tool_call_start callback
       if (options && options->on_tool_call_start.has_value()) {
         options->on_tool_call_start.value()(tool_call);
@@ -262,7 +276,9 @@ Tool create_simple_tool(const std::string& name,
                         const std::map<std::string, std::string>& parameters,
                         ToolExecuteFunction execute_func) {
   JsonValue schema = create_object_schema(parameters);
-  return create_tool(description, schema, std::move(execute_func));
+  Tool tool = create_tool(description, schema, std::move(execute_func));
+  tool.name = name;
+  return tool;
 }
 
 Tool create_simple_async_tool(
@@ -271,7 +287,9 @@ Tool create_simple_async_tool(
     const std::map<std::string, std::string>& parameters,
     AsyncToolExecuteFunction execute_func) {
   JsonValue schema = create_object_schema(parameters);
-  return create_async_tool(description, schema, std::move(execute_func));
+  Tool tool = create_async_tool(description, schema, std::move(execute_func));
+  tool.name = name;
+  return tool;
 }
 
 ToolSet create_tool_set(

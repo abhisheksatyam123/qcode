@@ -16,6 +16,11 @@ namespace tui {
 struct ModelInfo {
     std::string name;
     std::string id;
+    int context_window = 0;   // tokens; 0 => unknown (fallback)
+    double input_cost = 0.0;   // USD per 1M input tokens
+    double output_cost = 0.0;  // USD per 1M output tokens
+    bool reasoning = false;
+    bool tool_call = false;
 };
 
 struct ProviderInfo {

@@ -416,7 +416,7 @@ ftxui::Element render_view(
     }
     // ── Tab 2: Stats ──
     else {
-        int hard_limit = 200000;
+        int hard_limit = 200000;  // fallback; overridden below from model config
         int used = *state.total_tokens;
         double used_pct = (double)used / hard_limit * 100.0;
         if (used_pct > 100.0) used_pct = 100.0;
@@ -430,11 +430,11 @@ ftxui::Element render_view(
 
         double cost = 0.0;
         std::string prov_id = providers_list[selected_provider].id;
-        if (prov_id == "openrouter") {
-            cost = (*state.total_prompt_tokens * 2.50 + *state.total_completion_tokens * 10.00) / 1000000.0;
-        } else {
-            cost = (*state.total_prompt_tokens * 3.00 + *state.total_completion_tokens * 15.00) / 1000000.0;
-        }
+        const auto& m = providers_list[selected_provider].models[selected_model];
+        if (m.context_window > 0) hard_limit = m.context_window;
+        double in_rate = m.input_cost > 0 ? m.input_cost : (prov_id == "openrouter" ? 2.50 : 3.00);
+        double out_rate = m.output_cost > 0 ? m.output_cost : (prov_id == "openrouter" ? 10.00 : 15.00);
+        cost = (*state.total_prompt_tokens * in_rate + *state.total_completion_tokens * out_rate) / 1000000.0;
 
         body = vbox({
             text(""),

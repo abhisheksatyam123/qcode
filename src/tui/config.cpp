@@ -86,9 +86,21 @@ std::string get_antigravity_token() {
     return "";
 }
 
+
+std::string config_path() {
+    if (const char* p = std::getenv("OPENCODE_CONFIG")) return p;
+    return "/home/abhi/notes/etc/opencode.json";
+}
+
+std::string get_notes_root() {
+    if (const char* r = std::getenv("OPENCODE_NOTES_ROOT")) return r;
+    if (const char* h = std::getenv("HOME")) return std::string(h) + "/notes";
+    return "/home/abhi/notes";
+}
+
 std::vector<ProviderInfo> load_providers_from_config() {
     std::vector<ProviderInfo> loaded;
-    std::string path = "/home/abhi/notes/etc/opencode.json";
+    std::string path = config_path();
     LOG_DEBUG("load_providers: path={}", path);
     if (!std::filesystem::exists(path)) {
         LOG_WARN("Config not found, using defaults");
@@ -111,6 +123,15 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 if (prov_data.contains("models")) {
                     for (auto& [model_id, model_data] : prov_data["models"].items()) {
                         ModelInfo model{model_data.value("name", model_id), model_id};
+                        if (model_data.contains("limit") && model_data["limit"].contains("context"))
+                            model.context_window = model_data["limit"]["context"].get<int>();
+                        if (model_data.contains("cost")) {
+                            auto& c = model_data["cost"];
+                            model.input_cost = c.value("input", 0.0);
+                            model.output_cost = c.value("output", 0.0);
+                        }
+                        model.reasoning = model_data.value("reasoning", false);
+                        model.tool_call = model_data.value("tool_call", false);
                         prov.models.push_back(model);
                     }
                 }

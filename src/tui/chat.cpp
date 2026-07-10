@@ -495,7 +495,7 @@ void run_llm_generation(
       ai::ToolSet tools =
           Tools::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
-      base_opts.max_steps = 99999999;
+      base_opts.max_steps = 200;  // bounded safe default (was 99999999)
       run_tools_generation(client, std::move(base_opts), screen, state);
     } else {
       run_stream_generation(client, std::move(base_opts), screen, state);

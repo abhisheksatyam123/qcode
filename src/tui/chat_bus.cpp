@@ -270,7 +270,31 @@ static void run_tools_generation_bus(ai::Client& client,
 
     LOG_DEBUG("run_tools_generation_bus: final assistant_text empty={} gen_result.text empty={}",
              assistant_text->empty(), gen_result.text.empty());
-    if (!final_text.empty()) {
+    bool is_placeholder = (final_text == "  \u23f3 Working...");
+    if (!finished) {
+      // Tool loop hit the step cap without a natural finish (model kept
+      // requesting tools). Surface a clear, non-fatal warning instead of
+      // presenting the pending placeholder as a successful answer.
+      std::string limit_msg = "Stopped: tool loop reached the maximum step limit ("
+          + std::to_string(options.max_steps)
+          + ") without producing a final response. The model may be stuck "
+            "requesting tools.";
+      LOG_WARN("run_tools_generation_bus: {}", limit_msg);
+      bus.publish<ErrorOccurred>({
+          .session_id = *state.session_id,
+          .message = limit_msg,
+          .severity = "warning"
+      });
+      if (!is_placeholder && !final_text.empty()) {
+        bus.publish<MessageDelta>({
+            .session_id = *state.session_id,
+            .text = final_text,
+            .done = true
+        });
+        ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+      }
+      ai::tui::db::save_message(*state.session_id, "System", limit_msg);
+    } else if (!final_text.empty() && !is_placeholder) {
       LOG_DEBUG("run_tools_generation_bus: publishing final MessageDelta text_len={}", final_text.size());
       bus.publish<MessageDelta>({
           .session_id = *state.session_id,
@@ -278,6 +302,14 @@ static void run_tools_generation_bus(ai::Client& client,
           .done = true
       });
       ai::tui::db::save_message(*state.session_id, "Assistant", final_text);
+    } else if (!final_text.empty() && is_placeholder) {
+      // Model left only the in-progress placeholder; treat as no real text.
+      LOG_WARN("run_tools_generation_bus: model returned only the in-progress placeholder");
+      bus.publish<ErrorOccurred>({
+          .session_id = *state.session_id,
+          .message = "The model returned an empty response (no text generated).",
+          .severity = "warning"
+      });
     } else {
       // LLM produced no text and no tool output. Surface a non-error notice
       // instead of leaving the user with a silently blank turn.
@@ -341,32 +373,34 @@ static void run_stream_generation_bus(ai::Client& client,
     return;
   }
 
-  std::string text_buffer;
+  std::string text_buffer;        // per-flush throttle accumulator
+  std::string full_text;           // complete assistant transcript (never cleared)
   auto last_flush = std::chrono::steady_clock::now();
   constexpr auto FLUSH_INTERVAL = std::chrono::milliseconds(33);
 
   auto flush_text = [&]() {
     if (text_buffer.empty()) return;
     LOG_DEBUG("ChatBus: flush_text buffer_size={}", text_buffer.size());
-    std::string batch = std::move(text_buffer);
+    std::string snap = full_text;
     text_buffer.clear();
     bus.publish<MessageDelta>({
         .session_id = *state.session_id,
-        .text = batch,
+        .text = snap,
         .done = false
     });
   };
 
-  std::string reasoning_buffer;
+  std::string reasoning_buffer;     // per-flush throttle accumulator
+  std::string full_reasoning;       // complete reasoning transcript (never cleared)
   std::string last_reasoning_signature;
   auto flush_reasoning = [&]() {
     if (reasoning_buffer.empty()) return;
     LOG_DEBUG("ChatBus: flush_reasoning buffer_size={}", reasoning_buffer.size());
-    std::string batch = std::move(reasoning_buffer);
+    std::string snap = full_reasoning;
     reasoning_buffer.clear();
     bus.publish<ReasoningDelta>({
         .session_id = *state.session_id,
-        .text = batch,
+        .text = snap,
         .signature = last_reasoning_signature,
         .done = false
     });
@@ -375,6 +409,7 @@ static void run_stream_generation_bus(ai::Client& client,
   for (const auto& event : stream) {
     if (event.is_text_delta()) {
       text_buffer += event.text_delta;
+      full_text   += event.text_delta;
       LOG_DEBUG("run_stream_generation_bus: text_delta buffer_size={}", text_buffer.size());
       auto now = std::chrono::steady_clock::now();
       if (now - last_flush >= FLUSH_INTERVAL) {
@@ -388,6 +423,7 @@ static void run_stream_generation_bus(ai::Client& client,
         LOG_DEBUG("ChatBus: dropping redacted reasoning chunk");
       } else {
         reasoning_buffer += chunk;
+        full_reasoning  += chunk;
         if (event.metadata.has_value() && !event.metadata->empty()) {
           last_reasoning_signature = *event.metadata;
         }
@@ -401,12 +437,13 @@ static void run_stream_generation_bus(ai::Client& client,
     } else if (event.is_error()) {
       LOG_ERROR("run_stream_generation_bus: stream error");
       flush_text();
+      flush_reasoning();
       bus.publish<ErrorOccurred>({
           .session_id = *state.session_id,
           .message = "Error during streaming",
           .severity = "error"
       });
-      break;
+      return;  // do NOT publish a success message / save / go idle after an error
     } else if (event.is_finish() && event.usage.has_value()) {
       LOG_DEBUG("run_stream_generation_bus: stream finished text_len={}", text_buffer.size());
       flush_text();
@@ -418,22 +455,23 @@ static void run_stream_generation_bus(ai::Client& client,
     }
   }
 
-  LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={}", text_buffer.size());
+  LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={}", full_text.size());
   bus.publish<MessageDelta>({
       .session_id = *state.session_id,
-      .text = text_buffer,
+      .text = full_text,
       .done = true
   });
 
-  flush_reasoning();
-  bus.publish<ReasoningDelta>({
-      .session_id = *state.session_id,
-      .text = reasoning_buffer,
-      .signature = last_reasoning_signature,
-      .done = true
-  });
+  if (!full_reasoning.empty()) {
+    bus.publish<ReasoningDelta>({
+        .session_id = *state.session_id,
+        .text = full_reasoning,
+        .signature = last_reasoning_signature,
+        .done = true
+    });
+  }
 
-  ai::tui::db::save_message(*state.session_id, "Assistant", text_buffer);
+  ai::tui::db::save_message(*state.session_id, "Assistant", full_text);
   bus.publish<SessionStatusChanged>({
       .session_id = *state.session_id,
       .status = "idle"
@@ -516,7 +554,8 @@ void run_generation_with_bus(
     if (enable_tools) {
       ai::ToolSet tools = Tools::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
-      base_opts.max_steps = 99999999;
+      constexpr int kMaxToolSteps = 200;  // bounded safe default (was 99999999)
+      base_opts.max_steps = kMaxToolSteps;
       run_tools_generation_bus(client, std::move(base_opts), bus, state);
     } else {
       run_stream_generation_bus(client, std::move(base_opts), bus, state);

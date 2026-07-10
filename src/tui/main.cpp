@@ -235,7 +235,7 @@ int main() {
             prompt_input = "";
             ai::tui::handle_slash_command(raw, prompt_input, providers_list,
                                           selected_provider, selected_model,
-                                          enable_tools, system_prompt, state);
+                                          enable_tools, system_prompt, state, *bus);
             return;
         }
 
@@ -363,7 +363,7 @@ int main() {
                             std::string raw = "/" + cmd_name;
                             ai::tui::handle_slash_command(raw, prompt_input, providers_list,
                                                           selected_provider, selected_model,
-                                                          enable_tools, system_prompt, state);
+                                                          enable_tools, system_prompt, state, *bus);
                         }
                         return true;
                     }

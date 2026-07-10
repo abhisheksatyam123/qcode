@@ -33,10 +33,8 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
     return {
         {"model",    "Switch model",  "Select a model from any provider",  "Model"},
         {"theme",    "Switch theme",  "Select a UI theme color",           "Theme"},
-        {"tools",    "Toggle tools",  "Toggle tool usage / streaming mode", "Settings"},
         {"new",      "New session",   "Start a new clean chat session",    "Session"},
         {"session",  "Select session", "Manage and load saved sessions",   "Session"},
-        {"help",     "Help",          "Show available commands",           "Help"},
         {"compact",  "Compact",       "Summarize conversation to save context", "Session"},
         {"reasoning", "Reasoning", "Set reasoning level: off|low|medium|high", "Session"},
     };
@@ -56,7 +54,8 @@ bool handle_slash_command(
     int& selected_model,
     bool& enable_tools,
     std::string& system_prompt,
-    ChatState& state
+    ChatState& state,
+    bus::BusPort& bus
 );
 
 } // namespace tui

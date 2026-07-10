@@ -125,6 +125,18 @@ struct TokenUsageUpdated {
     };
 };
 
+struct CompactionResult {
+    static constexpr const char* type = "backend.compaction.result";
+    struct Payload {
+        std::string summary;
+        std::string todo_path;
+        bool wrote = false;
+        int keep = 0;
+        size_t original_size = 0;
+        std::string error;
+    };
+};
+
 struct ToastRequested {
     static constexpr const char* type = "tui.toast.requested";
     struct Payload {
@@ -149,6 +161,7 @@ inline void register_all_events(bus::BusPort& bus) {
     bus.register_event<ErrorOccurred>();
     bus.register_event<TokenUsageUpdated>();
     bus.register_event<ReasoningDelta>();
+    bus.register_event<CompactionResult>();
     bus.register_event<ToastRequested>();
 }
 
