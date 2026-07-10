@@ -85,6 +85,10 @@ struct ChatState {
     std::shared_ptr<std::unordered_map<std::string, bool>> tool_collapse_state =
         std::make_shared<std::unordered_map<std::string, bool>>();
 
+    // Copy mode: when true, mouse tracking is disabled so the terminal
+    // emulator can do native text selection (clean copy/paste).
+    std::shared_ptr<bool> copy_mode = std::make_shared<bool>(false);
+
     // Keyboard navigation: ordered list of tool_call_ids in render order,
     // plus the currently focused index. -1 means no tool block focused.
     std::shared_ptr<std::vector<std::string>> tool_block_order =

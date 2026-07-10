@@ -435,6 +435,20 @@ int main() {
                             "info", 2000);
             return true;
         }
+        // Toggle COPY MODE (F3): disables mouse tracking so the terminal
+        // emulator can do native text selection (clean copy/paste).
+        if (e == Event::F3) {
+            *state.copy_mode = !*state.copy_mode;
+            screen.TrackMouse(!*state.copy_mode);
+            if (*state.copy_mode) {
+                store.add_toast("Copy mode ON - select text with mouse, press F3 to return",
+                                "info", 4000);
+            } else {
+                store.add_toast("Copy mode OFF", "info", 1500);
+            }
+            screen.Post(Event::Custom);
+            return true;
+        }
         // ── Tool block keyboard navigation ──
         // ArrowUp/ArrowDown (or k/j) move focus between tool blocks.
         auto navigate_tool = [&](int delta) -> bool {
@@ -498,48 +512,6 @@ int main() {
         if (e.is_mouse()) {
             if (e.mouse().button == Mouse::WheelUp) { state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
             if (e.mouse().button == Mouse::WheelDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerWheel); return true; }
-            // Left click on chat message area → select and auto-copy
-            if (e.mouse().button == Mouse::Left && e.mouse().motion == Mouse::Pressed) {
-                if (state.tab_selected == 0 && !state.chat_history->empty()) {
-                    const int HEADER_H = 3;
-                    const int PROMPT_H = 3;
-                    int mouse_y = e.mouse().y;
-                    // Check if click is in the message area
-                    if (mouse_y >= HEADER_H && mouse_y < state.terminal_height - PROMPT_H) {
-                        int msg_area_h = state.terminal_height - HEADER_H - PROMPT_H;
-                        if (msg_area_h > 0) {
-                            int msg_count = (int)state.chat_history->size();
-                            // Estimate which message was clicked based on vertical position
-                            double ratio = (double)(mouse_y - HEADER_H) / (double)msg_area_h;
-                            ratio = std::max(0.0, std::min(1.0, ratio));
-                            int clicked_idx = (int)(ratio * msg_count);
-                            clicked_idx = std::max(0, std::min(clicked_idx, msg_count - 1));
-                            // Auto-copy the clicked message (opencode-style: click = select+copy)
-                            auto& msg = (*state.chat_history)[clicked_idx];
-                            std::string text_to_copy = msg.second;
-                            // Auto-resolve truncation file path
-                            size_t tag_pos = text_to_copy.find("Full output saved to ");
-                            if (tag_pos != std::string::npos) {
-                                size_t path_start = tag_pos + 21;
-                                size_t path_end = text_to_copy.find("]", path_start);
-                                if (path_end != std::string::npos) {
-                                    std::string filepath = text_to_copy.substr(path_start, path_end - path_start);
-                                    std::ifstream infile(filepath, std::ios::in | std::ios::binary);
-                                    if (infile.is_open()) {
-                                        std::string full_content((std::istreambuf_iterator<char>(infile)),
-                                                                 std::istreambuf_iterator<char>());
-                                        text_to_copy = full_content;
-                                    }
-                                }
-                            }
-                            ai::tui::copy_to_clipboard(text_to_copy);
-                            store.add_toast("Copied message to clipboard", "info");
-                            return true;
-                        }
-                    }
-                }
-            }
-
         }
         if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
         if (e == Event::Special("\x1b\x32")) { state.tab_selected = 1; return true; }

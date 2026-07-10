@@ -3,9 +3,10 @@
 ## Systems
 
 ### Architecture (Current)
-- **TUI**: Bus → Store → FTXUI render (Phase 1 & 2 complete)
-- **Server**: qcode-server executable with HTTP/NDJSON API (Phase 3.1 complete)
-- Shared backend: `chat_bus.cpp`, `GenerationContext`, `BackendService` across both
+- **TUI**: Bus → Store → FTXUI render (OpenCode-style tool rendering)
+- **Server**: qcode-server with HTTP/NDJSON API + built-in Web UI
+- **CLI**: qcode-cli for scripting
+- Shared backend: `chat_bus.cpp`, `GenerationContext`, `BackendService`
 
 ### GenerationContext
 ```
@@ -19,32 +20,34 @@ struct GenerationContext {
 
 ### How to Build & Run
 ```
-# Build TUI (default)
-cd build && cmake .. && make qcode-tui && ./src/tui/qcode-tui
+# Build everything
+cd build && cmake .. -DQCODE_BUILD_SERVER=ON && make -j$(nproc)
 
-# Build server
-cd build && cmake .. -DQCODE_BUILD_SERVER=ON && make qcode-server
+# TUI
+./src/tui/qcode-tui
+
+# Server + Web UI (open http://localhost:9080)
 ./src/server/qcode-server --port 9080
 
-# Test server
-curl http://localhost:9080/health
-curl http://localhost:9080/providers
-curl -X POST http://localhost:9080/generate -d '{"text":"Hello","provider":"openai","model":"gpt-4"}'
+# CLI
+./src/server/qcode-cli --prompt "Hello" --verbose
 ```
 
 ## Tasks
 
 ### Phase 1 & 1b: Tool Rendering ✅
-All complete — tool blocks, per-tool renderers, collapse/expand, 'c' toggle.
+- Tool blocks, per-tool renderers, collapse/expand, 'c' toggle
 
 ### Phase 2: Backend Decoupling ✅
-- [x] 2.1 GenerationContext replaces ChatState&
-- [x] 2.2 db::save_message moved to store event handlers
-- [x] 2.3 BackendService class
+- GenerationContext, db::save_message in store handlers, BackendService
 
-### Phase 3: Multi-Frontend
-- [x] 3.1 Headless server mode (HTTP/NDJSON streaming)
-  - POST /generate → streams NDJSON events
-  - GET /health, GET /providers
-  - No FTXUI deps — pure HTTP/JSON
-- [ ] 3.2 CLI client or TUI-as-client mode
+### Phase 3: Multi-Frontend ✅
+- HTTP server (POST /generate, GET /health, /providers)
+- Web UI (chat, markdown, multi-turn sessions, tool blocks)
+- CLI client (--prompt, --session, --verbose)
+
+### Phase 3 Enhancements ✅
+- Real-time NDJSON streaming (background thread)
+- Multi-turn sessions (session_id persistence)
+- Markdown rendering in Web UI
+- TUI per-block keyboard nav (Up/Down to focus, c/Enter to toggle)
