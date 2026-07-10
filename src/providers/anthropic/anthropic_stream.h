@@ -47,6 +47,7 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
 
   moodycamel::ConcurrentQueue<StreamEvent> event_queue_;
   std::thread stream_thread_;
+  std::mutex thread_mutex_;  // serializes start_stream / double-start guard
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> stream_complete_{false};
 };

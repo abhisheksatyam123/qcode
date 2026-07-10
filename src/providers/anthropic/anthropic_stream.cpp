@@ -23,6 +23,19 @@ void AnthropicStreamImpl::start_stream(const std::string& url,
                                        const nlohmann::json& request_body) {
   LOG_DEBUG("Starting Anthropic stream to URL: {}", url);
 
+  // Mirror OpenAIStreamImpl: serialize start and refuse a second concurrent
+  // start. Also clear the stop/complete flags left set by a prior stop_stream()
+  // so a fresh stream does not immediately bail out.
+  {
+    std::lock_guard<std::mutex> lock(thread_mutex_);
+    if (stream_thread_.joinable()) {
+      LOG_DEBUG("Stream thread already running, not starting new one");
+      return;  // Already running
+    }
+    stop_requested_ = false;
+    stream_complete_ = false;
+  }
+
   // Start streaming in a separate thread
   stream_thread_ = std::thread([this, url, headers, request_body]() {
     try {
