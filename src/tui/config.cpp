@@ -143,10 +143,25 @@ std::string get_antigravity_token() {
 
 std::string config_path() {
     if (const char* p = std::getenv("OPENCODE_CONFIG")) return p;
-    if (const char* xdg = std::getenv("XDG_CONFIG_HOME"))
-        return std::string(xdg) + "/opencode/opencode.json";
-    if (const char* h = std::getenv("HOME"))
-        return std::string(h) + "/.config/opencode/opencode.json";
+    std::vector<std::filesystem::path> candidates;
+    if (const char* xdg = std::getenv("XDG_CONFIG_HOME")) {
+        candidates.emplace_back(
+            std::filesystem::path(xdg) / "opencode/opencode.json");
+    }
+    if (const char* h = std::getenv("HOME")) {
+        const auto home = std::filesystem::path(h);
+        candidates.emplace_back(home / ".config/opencode/opencode.json");
+        candidates.emplace_back(home / "notes/etc/opencode.json");
+    }
+    if (const char* notes = std::getenv("OPENCODE_NOTES_ROOT")) {
+        candidates.emplace_back(
+            std::filesystem::path(notes) / "etc/opencode.json");
+    }
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::is_regular_file(candidate)) {
+            return candidate.string();
+        }
+    }
     return "opencode.json";
 }
 
