@@ -562,4 +562,20 @@ void run_generation_with_bus(
 }
 
 } // namespace tui
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BackendService implementation
+// ════════════════════════════════════════════════════════════════════════════
+
+void ai::tui::BackendService::run_generation(
+    const std::string& provider_name,
+    const std::string& model_id,
+    const std::string& system_prompt,
+    const ai::Messages& messages,
+    bool enable_tools,
+    GenerationContext& ctx)
+{
+    ai::tui::run_generation_with_bus(provider_name, model_id, system_prompt,
+                            messages, enable_tools, providers_, bus_, ctx);
+}
 } // namespace ai

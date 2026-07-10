@@ -30,6 +30,32 @@ struct GenerationContext {
     double total_tool_time_ms = 0.0;
 };
 
+
+/**
+ * BackendService: high-level interface for LLM generation.
+ * Wraps bus + providers and exposes a clean run_generation method.
+ */
+class BackendService {
+public:
+    BackendService(bus::BusPort& bus, const std::vector<ProviderInfo>& providers)
+        : bus_(bus), providers_(providers) {}
+
+    /**
+     * Run LLM generation with tools, emitting bus events.
+     */
+    void run_generation(
+        const std::string& provider_name,
+        const std::string& model_id,
+        const std::string& system_prompt,
+        const ai::Messages& messages,
+        bool enable_tools,
+        GenerationContext& ctx);
+
+private:
+    bus::BusPort& bus_;
+    const std::vector<ProviderInfo>& providers_;
+};
+
 /**
  * Run LLM generation with tools, emitting bus events for:
  *   - MessageDelta    (streaming text)

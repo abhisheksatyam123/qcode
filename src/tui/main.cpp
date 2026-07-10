@@ -160,15 +160,15 @@ int main() {
                                 &store, &spawn_generation]() {
             ai::logger::set_thread_name("llm");
             auto gen_start = std::chrono::steady_clock::now();
+            ai::tui::BackendService backend{*bus_ptr, providers_copy};
             ai::tui::GenerationContext ctx{
                 .session_id = *state_ptr->session_id,
                 .reasoning_mode = *state_ptr->reasoning_mode
             };
-            ai::tui::run_generation_with_bus(
+            backend.run_generation(
                 providers_copy[sel_prov].id,
                 providers_copy[sel_prov].models[sel_mod].id,
                 sys_prompt, *state_ptr->messages_history, tools_enabled,
-                providers_copy, *bus_ptr,
                 ctx);
             // Sync counters back to ChatState for stats tab
             *state_ptr->tool_call_count = ctx.tool_call_count;
@@ -288,7 +288,6 @@ int main() {
                 state.chat_history->clear();
                 state.messages_history->clear();
                 ai::tui::db::reload_session_history(sid, state);
-                
                 show_session_select = false;
                 return true;
             }
