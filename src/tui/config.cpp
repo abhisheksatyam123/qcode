@@ -261,6 +261,7 @@ namespace tui {
 
 void update_modified_files(ChatState& state) {
     state.modified_files->clear();
+    ++*state.files_revision;
     std::string command = "git status --porcelain 2>/dev/null";
     std::array<char, 128> buffer;
     FILE* pipe = popen(command.c_str(), "r");

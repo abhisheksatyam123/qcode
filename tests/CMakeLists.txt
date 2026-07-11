@@ -11,8 +11,11 @@ add_executable(ai_tests
     unit/registry_test.cpp
     unit/gemini_transform_test.cpp
     unit/antigravity_client_test.cpp
+    unit/bash_tool_test.cpp
     unit/tui_config_test.cpp
+    unit/tui_bus_test.cpp
     ../src/tui/config.cpp
+    ../src/tui/bus/impl.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp

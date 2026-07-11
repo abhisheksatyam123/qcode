@@ -47,12 +47,15 @@ static bool matches_query(const std::string& target, const std::string& query) {
 }
 
 int main() {
-    ai::install_file_logger("/tmp/qcode.log", ai::logger::LogLevel::kLogLevelDebug);
+    // Debug mode serializes complete requests and every stream delta. Keeping it
+    // enabled in normal runs produced hundreds of megabytes of logs in minutes.
+    ai::install_file_logger("/tmp/qcode.log", ai::logger::LogLevel::kLogLevelInfo);
     ai::logger::set_thread_name("main");
     LOG_INFO("QCode starting (bus architecture)...");
 
     auto app_running = std::make_shared<std::atomic<bool>>(true);
-    auto background_threads = std::make_shared<std::vector<std::thread>>();
+    auto compaction_thread = std::make_shared<std::jthread>();
+    auto generation_thread = std::make_shared<std::jthread>();
     auto screen = ScreenInteractive::Fullscreen();
 
     // ═══════════════════════════════════════════════════════════
@@ -60,6 +63,7 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     auto bus = std::make_shared<ai::tui::bus::BusRuntime>();
     register_all_events(*bus);
+    bus->set_wake_callback([&screen]() { screen.Post(Event::Custom); });
     // Populate the provider registry once, before any generation thread starts,
     // so resolve() only ever reads a fully-initialized registry.
     ai::providers::register_tui_providers();
@@ -75,13 +79,12 @@ int main() {
     std::thread spinner_thread([&store, app_running]() {
         ai::logger::set_thread_name("spinner");
         while (app_running->load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
             if (store.is_generating()) {
                 store.advance_frame();
             }
         }
     });
-    background_threads->push_back(std::move(spinner_thread));
 
 
 
@@ -119,7 +122,8 @@ int main() {
     bool show_session_select = false;
     int session_select_idx = 0;
     std::string session_query = "";
-    std::vector<ai::tui::db::SessionInfo> session_entries;
+    std::vector<ai::tui::db::SessionInfo> session_entries =
+        ai::tui::db::list_sessions_full();
 
     bool show_theme_select = false;
     int theme_select_idx = 0;
@@ -157,12 +161,14 @@ int main() {
     //  3. Submit handler (uses bus-aware chat)
     // ═══════════════════════════════════════════════════════════
     // ── Generation spawner + queue drain ──
-    // Spawns an LLM generation thread for a single prompt. When the generation
-    // finishes, it automatically drains the next queued prompt (if any) so a
-    // sequence of queued prompts runs back-to-back. Queued prompts keep running
-    // even after an error (the error stays visible as a System message + toast).
+    // A generation worker handles the initial prompt and drains queued prompts
+    // itself. The previous implementation spawned and retained one joinable
+    // pthread per turn until process exit.
     std::function<void(const std::string&)> spawn_generation;
     spawn_generation = [&](const std::string& p) {
+        if (generation_thread->joinable()) {
+            generation_thread->join();
+        }
         store.set_generating(true);
         *state.auto_scroll = true;
         store.append_chat_message("User", p);
@@ -181,91 +187,97 @@ int main() {
         auto bus_ptr = bus;
         auto state_ptr = &state;
 
-        std::thread llm_thread([bus_ptr, state_ptr, p, providers_copy, app_running,
-                                sel_prov, sel_mod, sys_prompt, tools_enabled,
-                                &store, &spawn_generation, background_threads]() {
+        *generation_thread = std::jthread(
+            [bus_ptr, state_ptr, providers_copy, app_running, sel_prov,
+             sel_mod, sys_prompt, tools_enabled,
+             &store](std::stop_token stop_token) {
             ai::logger::set_thread_name("llm");
-            auto gen_start = std::chrono::steady_clock::now();
             ai::tui::BackendService backend{*bus_ptr, providers_copy};
-            ai::tui::GenerationContext ctx{
-                .session_id = *state_ptr->session_id,
-                .reasoning_mode = *state_ptr->reasoning_mode,
-                .abort_flag = state_ptr->abort_flag
-            };
-            *state_ptr->abort_flag = false;
+            if (app_running->load() && !stop_token.stop_requested()) {
+                const auto gen_start = std::chrono::steady_clock::now();
+                ai::tui::GenerationContext ctx{
+                    .session_id = *state_ptr->session_id,
+                    .reasoning_mode = *state_ptr->reasoning_mode,
+                    .abort_flag = state_ptr->abort_flag
+                };
+                *state_ptr->abort_flag = false;
 
-            // ── Context window management ──
-            // Build a (possibly pruned) copy of messages to fit the model's context.
-            ai::Messages gen_messages = *state_ptr->messages_history;
-            size_t ctx_window = providers_copy[sel_prov].models[sel_mod].context_window;
-            if (ctx_window > 0) {
-                size_t sys_tok = ai::tui::estimate_system_tokens(sys_prompt);
-                size_t msg_tok = ai::tui::estimate_tokens(gen_messages);
-                size_t heuristic = sys_tok + msg_tok;
-                // Calibrate heuristic against actual token count from last gen
-                size_t total = ai::tui::calibrate_estimate(
-                    heuristic,
-                    *state_ptr->last_actual_prompt_tokens,
-                    *state_ptr->last_estimated_tokens);
-                *state_ptr->last_estimated_tokens = static_cast<int>(heuristic);
-                size_t warn_at = (ctx_window * 7) / 10;   // 70%
-                size_t prune_at = (ctx_window * 85) / 100; // 85%
-                if (total > prune_at) {
-                    LOG_WARN("Context over limit: estimated {} tokens / {} (prune>={})",
-                             total, ctx_window, prune_at);
-                    gen_messages = ai::tui::prune_context(gen_messages, ctx_window);
-                    size_t after = sys_tok + ai::tui::estimate_tokens(gen_messages);
-                    if (after < total) {
-                        store.add_toast("Context pruned: " + std::to_string(total) +
-                            " → " + std::to_string(after) + " tokens", "warning", 4000);
-                        *state_ptr->consecutive_prunes = *state_ptr->consecutive_prunes + 1;
+                // Build a short-lived request snapshot. Canonical history remains
+                // UI-owned and this copy is released at the end of each turn.
+                ai::Messages gen_messages = *state_ptr->messages_history;
+                gen_messages.erase(
+                    std::remove_if(
+                        gen_messages.begin(), gen_messages.end(),
+                        [](const ai::Message& message) {
+                            return message.role == ai::kMessageRoleSystem;
+                        }),
+                    gen_messages.end());
+                const size_t ctx_window =
+                    providers_copy[sel_prov].models[sel_mod].context_window;
+                if (ctx_window > 0) {
+                    const size_t sys_tok = ai::tui::estimate_system_tokens(sys_prompt);
+                    const size_t msg_tok = ai::tui::estimate_tokens(gen_messages);
+                    const size_t heuristic = sys_tok + msg_tok;
+                    const size_t total = ai::tui::calibrate_estimate(
+                        heuristic,
+                        *state_ptr->last_actual_prompt_tokens,
+                        *state_ptr->last_estimated_tokens);
+                    *state_ptr->last_estimated_tokens =
+                        static_cast<int>(heuristic);
+                    const size_t warn_at = (ctx_window * 7) / 10;
+                    const size_t prune_at = (ctx_window * 85) / 100;
+                    if (total > prune_at) {
+                        LOG_WARN("Context over limit: estimated {} tokens / {} (prune>={})",
+                                 total, ctx_window, prune_at);
+                        gen_messages =
+                            ai::tui::prune_context(gen_messages, ctx_window);
+                        const size_t after =
+                            sys_tok + ai::tui::estimate_tokens(gen_messages);
+                        if (after < total) {
+                            store.add_toast(
+                                "Context pruned: " + std::to_string(total) +
+                                " → " + std::to_string(after) + " tokens",
+                                "warning", 4000);
+                            *state_ptr->consecutive_prunes =
+                                *state_ptr->consecutive_prunes + 1;
+                        }
+                    } else if (total > warn_at) {
+                        store.add_toast(
+                            "Context at " + std::to_string(total) + "/" +
+                            std::to_string(ctx_window) +
+                            " tokens — run /compact soon",
+                            "info", 3000);
+                        *state_ptr->consecutive_prunes = 0;
+                    } else {
+                        *state_ptr->consecutive_prunes = 0;
                     }
-                } else if (total > warn_at) {
-                    store.add_toast("Context at " + std::to_string(total) + "/" +
-                        std::to_string(ctx_window) + " tokens — run /compact soon", "info", 3000);
-                    *state_ptr->consecutive_prunes = 0;
-                } else {
-                    *state_ptr->consecutive_prunes = 0;
+
+                    if (*state_ptr->consecutive_prunes >= 3) {
+                        *state_ptr->consecutive_prunes = 0;
+                        LOG_WARN(
+                            "Context required pruning for three consecutive turns");
+                        store.add_toast(
+                            "Context remains large — run /compact when this "
+                            "turn finishes",
+                            "warning", 5000);
+                    }
                 }
 
-                // Auto-compact after repeated pruning (conversation persistently too long)
-                if (*state_ptr->consecutive_prunes >= 3) {
-                    *state_ptr->consecutive_prunes = 0;
-                    LOG_WARN("Auto-compacting after {} consecutive pruned turns", 3);
-                    store.add_toast("Auto-compacting conversation...", "info", 4000);
-                    ai::tui::run_compaction(*state_ptr, providers_copy, sel_prov, sel_mod,
-                                           4, background_threads, *bus_ptr);
-                }
-            }
+                backend.run_generation(
+                    providers_copy[sel_prov].id,
+                    providers_copy[sel_prov].models[sel_mod].id,
+                    sys_prompt, gen_messages, tools_enabled, ctx);
 
-            backend.run_generation(
-                providers_copy[sel_prov].id,
-                providers_copy[sel_prov].models[sel_mod].id,
-                sys_prompt, gen_messages, tools_enabled,
-                ctx);
-            // Sync counters back to ChatState for stats tab
-            *state_ptr->tool_call_count = ctx.tool_call_count;
-            *state_ptr->total_tool_time_ms = ctx.total_tool_time_ms;
+                const auto duration_ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - gen_start)
+                        .count();
+                LOG_INFO(
+                    "Main: generation complete duration_ms={} queue_remaining={}",
+                    duration_ms, store.queue_size());
 
-            auto gen_end = std::chrono::steady_clock::now();
-            auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end - gen_start).count();
-            LOG_INFO("Main: generation complete duration_ms={} queue_remaining={}", dur_ms, store.queue_size());
-
-            if (app_running->load()) {
-                ai::tui::update_modified_files(*state_ptr);
-            }
-
-            // Drain the queue: run the next queued prompt (if any).
-            if (store.has_queued_prompt()) {
-                std::string next = store.dequeue_prompt();
-                int remaining = static_cast<int>(store.queue_size());
-                LOG_INFO("Main: draining queued prompt (remaining={})", remaining);
-                store.add_toast("Running queued prompt (" +
-                                std::to_string(remaining) + " left)", "info", 1500);
-                spawn_generation(next);
             }
         });
-        background_threads->push_back(std::move(llm_thread));
     };
 
     //  3. Submit handler (uses bus-aware chat)
@@ -336,7 +348,7 @@ int main() {
             ai::tui::handle_slash_command(raw, prompt_input, providers_list,
                                           selected_provider, selected_model,
                                           enable_tools, system_prompt, state,
-                                          background_threads, *bus);
+                                          compaction_thread, *bus);
             return;
         }
 
@@ -428,7 +440,6 @@ int main() {
                 if (!filtered_session_entries.empty()) {
                     std::string sid = filtered_session_entries[session_select_idx].id;
                     store.set_session_id(sid);
-                    state.chat_history->clear();
                     state.messages_history->clear();
                     ai::tui::db::reload_session_history(sid, state);
                 }
@@ -602,7 +613,7 @@ int main() {
                             ai::tui::handle_slash_command(raw, prompt_input, providers_list,
                                                           selected_provider, selected_model,
                                                           enable_tools, system_prompt, state,
-                                                          background_threads, *bus);
+                                                          compaction_thread, *bus);
                         }
                         return true;
                     }
@@ -742,10 +753,36 @@ int main() {
         }
         constexpr int kLinesPerWheel = 3;
         constexpr int kLinesPerPage = 20;
-        if (e == Event::PageUp) { *state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerPage); return true; }
-        if (e == Event::PageDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerPage); return true; }
-        if (e == Event::End) { *state.auto_scroll = true; *state.scroll_line = INT_MAX; return true; }
-        if (e == Event::Home) { *state.auto_scroll = false; *state.scroll_line = 0; return true; }
+        if (e == Event::PageUp) {
+            *state.auto_scroll = false;
+            const auto page = static_cast<size_t>(std::max(8, state.terminal_height / 2));
+            *state.history_window_start =
+                *state.history_window_start > page
+                    ? *state.history_window_start - page
+                    : 0;
+            *state.scroll_line = 0;
+            return true;
+        }
+        if (e == Event::PageDown) {
+            *state.auto_scroll = false;
+            const auto page = static_cast<size_t>(std::max(8, state.terminal_height / 2));
+            *state.history_window_start = std::min(
+                state.messages_history->size(),
+                *state.history_window_start + page);
+            *state.scroll_line = INT_MAX;
+            return true;
+        }
+        if (e == Event::End) {
+            *state.auto_scroll = true;
+            *state.scroll_line = INT_MAX;
+            return true;
+        }
+        if (e == Event::Home) {
+            *state.auto_scroll = false;
+            *state.history_window_start = 0;
+            *state.scroll_line = 0;
+            return true;
+        }
         if (e.is_mouse()) {
             if (e.mouse().button == Mouse::WheelUp) { *state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
             if (e.mouse().button == Mouse::WheelDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerWheel); return true; }
@@ -764,6 +801,8 @@ int main() {
         screen.Post(Event::Custom);
     });
 
+    bool was_generating = store.is_generating();
+    int previous_tab = state.tab_selected;
     auto renderer = Renderer(main_container, [&] {
         // Track terminal height for mouse selection calculations
         auto screen_box = ftxui::Terminal::Size();
@@ -771,6 +810,27 @@ int main() {
         // Drain bus events on the UI thread — this is where store mutations happen
         // (all bus event handlers run synchronously during drain)
         bus->drain();
+        if (was_generating && !store.is_generating()) {
+            ai::tui::update_modified_files(state);
+        }
+
+        // Start queued work only after the prior turn's complete event batch has
+        // updated canonical history. This keeps context ordering deterministic
+        // and all message-list mutations on the UI thread.
+        if (!store.is_generating() && store.has_queued_prompt()) {
+            auto next = store.dequeue_prompt();
+            const auto remaining = static_cast<int>(store.queue_size());
+            store.add_toast(
+                "Running queued prompt (" + std::to_string(remaining) +
+                " left)",
+                "info", 1500);
+            spawn_generation(next);
+        }
+        was_generating = store.is_generating();
+        if (state.tab_selected == 1 && previous_tab != 1) {
+            ai::tui::update_modified_files(state);
+        }
+        previous_tab = state.tab_selected;
         
         // Expire old toasts
         store.expire_toasts();
@@ -837,8 +897,14 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     LOG_DEBUG("Main: app exiting, signalling threads...");
     *app_running = false;
-    for (auto& t : *background_threads) {
-        if (t.joinable()) t.join();
+    if (generation_thread->joinable()) {
+        generation_thread->request_stop();
+        generation_thread->join();
     }
+    if (compaction_thread->joinable()) {
+        compaction_thread->request_stop();
+        compaction_thread->join();
+    }
+    if (spinner_thread.joinable()) spinner_thread.join();
     LOG_DEBUG("Main: exit complete");
 }

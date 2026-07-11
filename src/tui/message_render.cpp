@@ -427,12 +427,10 @@ static Element render_reasoning(const ai::ReasoningContentPart& rp,
 Element render_message(const ai::Message& msg, const ChatState& state,
                         const std::vector<ProviderInfo>& providers_list,
                         int selected_provider, int selected_model,
-                        const std::string& theme) {
+                        const std::string& theme,
+                        const ai::Message* adjacent_tool_results) {
 
     Elements parts;
-
-    // Reset focused tool navigation order (repopulated during render)
-    if (state.tool_block_order) state.tool_block_order->clear();
 
     bool has_text = msg.has_text();
     bool has_tool_calls = msg.has_tool_calls();
@@ -478,6 +476,14 @@ Element render_message(const ai::Message& msg, const ChatState& state,
             tool_calls[tool_part->id] = tool_part;
         } else if (const auto* result_part = std::get_if<ai::ToolResultContentPart>(&part)) {
             tool_results[result_part->tool_call_id] = result_part;
+        }
+    }
+    if (adjacent_tool_results != nullptr) {
+        for (const auto& part : adjacent_tool_results->content) {
+            if (const auto* result_part =
+                    std::get_if<ai::ToolResultContentPart>(&part)) {
+                tool_results[result_part->tool_call_id] = result_part;
+            }
         }
     }
 
@@ -585,58 +591,54 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
     Color status_color = result_part.is_error ? Color::Red : Color::Green;
     // unused: Color accent_clr = accent(theme);
 
-    // Build combined content: call summary + result content
+    // Collapsed blocks are the common case. Do not parse/copy potentially large
+    // tool results until the user explicitly expands the block.
     Elements combined_content;
-
-    // Call summary (arguments)
-    std::string summary = extract_tool_summary(call_part);
-    if (!summary.empty()) {
-        combined_content.push_back(hbox({
-            text("▸ ") | dim | color(Color::GrayDark),
-            text("Input: ") | bold | dim,
-            text(summary) | dim,
-        }));
-    }
-
-    // Result content - use specialized renderers
-    Element result_inner;
-    nlohmann::json args = call_part.arguments;
-
-    bool is_bash = (call_part.tool_name == "bash" || call_part.tool_name == "shell" || call_part.tool_name == "run_command");
-    bool is_task = (call_part.tool_name == "task" || call_part.tool_name == "dispatch_agent");
-    bool is_file = (call_part.tool_name == "read_file" || call_part.tool_name == "write_file" ||
-                    call_part.tool_name == "view_file" || call_part.tool_name == "edit_file");
-    bool is_search = (call_part.tool_name == "search" || call_part.tool_name == "grep" || call_part.tool_name == "ripgrep");
-
-    if (result_part.is_error) {
-        // Error case
-        Elements error_content;
-        std::string err_detail;
-        if (result_part.result.is_string()) {
-            err_detail = result_part.result.get<std::string>();
-        } else if (result_part.result.is_object() && result_part.result.contains("error")) {
-            err_detail = result_part.result["error"].get<std::string>();
-        } else if (result_part.result.is_object() && result_part.result.contains("output")) {
-            err_detail = result_part.result["output"].get<std::string>();
+    if (!collapsed) {
+        const auto summary = extract_tool_summary(call_part);
+        if (!summary.empty()) {
+            combined_content.push_back(hbox({
+                text("▸ ") | dim | color(Color::GrayDark),
+                text("Input: ") | bold | dim,
+                text(summary) | dim,
+            }));
         }
-        if (!err_detail.empty()) {
-            error_content.push_back(render_truncated_output(err_detail, 10, theme));
-        }
-        result_inner = vbox(std::move(error_content));
-    } else if (is_bash) {
-        result_inner = RenderBashResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
-    } else if (is_task) {
-        result_inner = RenderTaskResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
-    } else if (is_file) {
-        result_inner = RenderFileResult(call_part.tool_name, args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
-    } else if (is_search) {
-        result_inner = RenderSearchResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
-    } else {
-        // Fallback: structured result rendering
-        result_inner = RenderGenericResult(call_part.tool_name, args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
-    }
 
-    combined_content.push_back(std::move(result_inner));
+        Element result_inner;
+        const auto& args = call_part.arguments;
+        const bool is_bash = (call_part.tool_name == "bash" || call_part.tool_name == "shell" || call_part.tool_name == "run_command");
+        const bool is_task = (call_part.tool_name == "task" || call_part.tool_name == "dispatch_agent");
+        const bool is_file = (call_part.tool_name == "read_file" || call_part.tool_name == "write_file" ||
+                              call_part.tool_name == "view_file" || call_part.tool_name == "edit_file");
+        const bool is_search = (call_part.tool_name == "search" || call_part.tool_name == "grep" || call_part.tool_name == "ripgrep");
+
+        if (result_part.is_error) {
+            Elements error_content;
+            std::string err_detail;
+            if (result_part.result.is_string()) {
+                err_detail = result_part.result.get<std::string>();
+            } else if (result_part.result.is_object() && result_part.result.contains("error")) {
+                err_detail = result_part.result["error"].get<std::string>();
+            } else if (result_part.result.is_object() && result_part.result.contains("output")) {
+                err_detail = result_part.result["output"].get<std::string>();
+            }
+            if (!err_detail.empty()) {
+                error_content.push_back(render_truncated_output(err_detail, 10, theme));
+            }
+            result_inner = vbox(std::move(error_content));
+        } else if (is_bash) {
+            result_inner = RenderBashResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+        } else if (is_task) {
+            result_inner = RenderTaskResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+        } else if (is_file) {
+            result_inner = RenderFileResult(call_part.tool_name, args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+        } else if (is_search) {
+            result_inner = RenderSearchResult(args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+        } else {
+            result_inner = RenderGenericResult(call_part.tool_name, args, result_part.result, result_part.is_error, result_part.duration_ms, theme);
+        }
+        combined_content.push_back(std::move(result_inner));
+    }
 
     return ToolBlock(icon, display, desc, vbox(std::move(combined_content)),
                       false, status, Color::Default, result_part.duration_ms,

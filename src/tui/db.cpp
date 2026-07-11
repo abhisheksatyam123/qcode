@@ -9,6 +9,7 @@
 #include <chrono>
 #include <iostream>
 #include <filesystem>
+#include <mutex>
 
 #include <ai/logger.h>
 
@@ -53,6 +54,52 @@ static bool prepare_stmt(sqlite3* db, const char* sql, sqlite3_stmt** stmt) {
     }
     return true;
 }
+
+class MessageWriterConnection final {
+public:
+    MessageWriterConnection() {
+        std::string path;
+        db_ = open_database(path);
+        if (!db_) return;
+        sqlite3_busy_timeout(db_, 2000);
+        constexpr auto kInsertSql =
+            "INSERT INTO messages (session_id, sender, content, created_at) "
+            "VALUES (?, ?, ?, ?);";
+        if (!prepare_stmt(db_, kInsertSql, &insert_)) {
+            sqlite3_close(db_);
+            db_ = nullptr;
+        }
+    }
+
+    ~MessageWriterConnection() {
+        if (insert_) sqlite3_finalize(insert_);
+        if (db_) sqlite3_close(db_);
+    }
+
+    MessageWriterConnection(const MessageWriterConnection&) = delete;
+    MessageWriterConnection& operator=(const MessageWriterConnection&) = delete;
+
+    void write(const std::string& session_id, const std::string& sender,
+               const std::string& content, long long created_at) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!insert_) return;
+        sqlite3_reset(insert_);
+        sqlite3_clear_bindings(insert_);
+        sqlite3_bind_text(
+            insert_, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insert_, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insert_, 3, content.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(insert_, 4, created_at);
+        if (sqlite3_step(insert_) != SQLITE_DONE) {
+            LOG_ERROR("SQLite: message insert failed: {}", sqlite3_errmsg(db_));
+        }
+    }
+
+private:
+    sqlite3* db_ = nullptr;
+    sqlite3_stmt* insert_ = nullptr;
+    std::mutex mutex_;
+};
 
 static std::string generate_uuid() {
     // Thread-safe RFC 4122 v4 UUID via the vendored stduuid library. The previous
@@ -212,27 +259,10 @@ void save_message(const std::string& session_id, const std::string& sender, cons
         return;
     }
 
-    std::string path;
-    sqlite3* db = open_database(path);
-    if (!db) {
-        return;
-    }
-
     auto now = std::chrono::system_clock::now();
     long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-
-    const char* sql = "INSERT INTO messages (session_id, sender, content, created_at) VALUES (?, ?, ?, ?);";
-    sqlite3_stmt* stmt = nullptr;
-    if (prepare_stmt(db, sql, &stmt)) {
-        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(stmt, 2, sender.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(stmt, 3, content.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_int64(stmt, 4, created_at);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
-    }
-
-    sqlite3_close(db);
+    static MessageWriterConnection writer;
+    writer.write(session_id, sender, content, created_at);
 }
 
 void reload_session_history(const std::string& session_id, ChatState& state) {
@@ -247,7 +277,6 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
         return;
     }
 
-    state.chat_history->clear();
     state.messages_history->clear();
 
     const char* sql = "SELECT sender, content FROM messages WHERE session_id = ? ORDER BY id ASC;";
@@ -261,16 +290,15 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
             std::string sender = sender_txt ? reinterpret_cast<const char*>(sender_txt) : "";
             std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
             
-            state.chat_history->push_back({sender, content});
-            
-            // Build ai::Message object for AI API context
             if (sender == "User") {
                 state.messages_history->push_back(ai::Message::user(content));
             } else if (sender == "Assistant") {
                 state.messages_history->push_back(ai::Message::assistant(content));
+            } else {
+                // Persisted tool/status rows are display history. They are kept
+                // in the canonical UI list and filtered from model requests.
+                state.messages_history->push_back(ai::Message::system(content));
             }
-            // System/Tool messages are not directly pushed to messages_history unless they represent tool execution 
-            // sequence, but here they can just be loaded in UI history.
         }
         sqlite3_finalize(stmt);
     }

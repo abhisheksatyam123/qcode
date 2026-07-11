@@ -62,6 +62,8 @@ struct MessageDelta {
     static constexpr const char* type = "backend.message.delta";
     struct Payload {
         std::string session_id;
+        // Append-only text produced since the previous event. A final event may
+        // carry an empty chunk when all text has already been flushed.
         std::string text;
         bool done = false;
     };
@@ -110,6 +112,7 @@ struct ReasoningDelta {
     static constexpr const char* type = "backend.reasoning.delta";
     struct Payload {
         std::string session_id;
+        // Append-only reasoning produced since the previous event.
         std::string text;
         std::string signature; // provider signature (anthropic); may be empty
         bool done = false;

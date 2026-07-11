@@ -1,4 +1,5 @@
 #include <ai/tui/store.h>
+#include <ai/tui/bus/impl.h>
 #include <ai/tui/db.h>
 #include <algorithm>
 #include <ai/types/message.h>
@@ -7,7 +8,14 @@
 namespace ai {
 namespace tui {
 
-AppStore::AppStore(bus::BusPort& bus) : bus_(bus) {}
+AppStore::AppStore(bus::BusPort& bus) : bus_(bus) {
+    runtime_ = dynamic_cast<bus::BusRuntime*>(&bus_);
+}
+
+std::vector<Toast> AppStore::toasts() const {
+    std::lock_guard<std::mutex> lock(toast_mutex_);
+    return toasts_;
+}
 
 // ... existing methods ...
 void AppStore::add_toast(const std::string& message, const std::string& variant, int duration_ms) {
@@ -37,23 +45,18 @@ void AppStore::expire_toasts() {
 }
 
 void AppStore::append_chat_message(const std::string& role, const std::string& text) {
-    state_.chat_history->emplace_back(role, text);
     if (role == "User") {
-        state_.messages_history->push_back(ai::Message::user(text));
+        state_.messages_history->emplace_back(ai::Message::user(text));
     } else if (role == "Assistant") {
-        state_.messages_history->push_back(ai::Message::assistant(text));
+        state_.messages_history->emplace_back(ai::Message::assistant(text));
+    } else {
+        state_.messages_history->emplace_back(ai::Message::system(text));
     }
     notify();
 }
 
-void AppStore::update_last_assistant_message(const std::string& text) {
-    if (!state_.chat_history->empty()) {
-        auto& [role, content] = state_.chat_history->back();
-        if (role == "Assistant") { content = text; }
-        else { state_.chat_history->emplace_back("Assistant", text); }
-    } else {
-        state_.chat_history->emplace_back("Assistant", text);
-    }
+void AppStore::append_assistant_chunk(const std::string& chunk) {
+    if (chunk.empty()) return;
 
     if (!state_.messages_history->empty()) {
         auto& last = state_.messages_history->back();
@@ -61,43 +64,63 @@ void AppStore::update_last_assistant_message(const std::string& text) {
             bool found_text = false;
             for (auto& part : last.content) {
                 if (auto* tp = std::get_if<ai::TextContentPart>(&part)) {
-                    tp->text = text;
+                    tp->text += chunk;
                     found_text = true;
                     break;
                 }
             }
-            if (!found_text) { last.content.push_back(ai::TextContentPart{text}); }
+            if (!found_text) {
+                last.content.emplace_back(ai::TextContentPart{chunk});
+            }
         } else {
-            state_.messages_history->push_back(ai::Message::assistant(text));
+            state_.messages_history->emplace_back(ai::Message::assistant(chunk));
         }
     } else {
-        state_.messages_history->push_back(ai::Message::assistant(text));
+        state_.messages_history->emplace_back(ai::Message::assistant(chunk));
     }
     notify();
 }
 
-void AppStore::append_reasoning(const std::string& text,
+void AppStore::append_reasoning(const std::string& chunk,
                                 const std::string& signature) {
     if (state_.messages_history->empty() ||
         state_.messages_history->back().role != ai::kMessageRoleAssistant) {
-        state_.messages_history->push_back(
-            ai::Message::assistant_with_reasoning("", text, signature));
+        if (chunk.empty()) return;
+        state_.messages_history->emplace_back(
+            ai::Message::assistant_with_reasoning("", chunk, signature));
     } else {
         auto& last = state_.messages_history->back();
         bool found = false;
         for (auto& part : last.content) {
             if (auto* rp = std::get_if<ai::ReasoningContentPart>(&part)) {
-                rp->text = text;
+                rp->text += chunk;
                 if (!signature.empty()) rp->signature = signature;
                 found = true;
                 break;
             }
         }
-        if (!found) {
-            last.content.push_back(ai::ReasoningContentPart{text, signature});
+        if (!found && !chunk.empty()) {
+            last.content.emplace_back(
+                ai::ReasoningContentPart{chunk, signature});
         }
     }
     notify();
+}
+
+std::string AppStore::latest_assistant_text() const {
+    for (auto message = state_.messages_history->rbegin();
+         message != state_.messages_history->rend(); ++message) {
+        if (message->role != ai::kMessageRoleAssistant) continue;
+        std::string text;
+        for (const auto& part : message->content) {
+            if (const auto* content =
+                    std::get_if<ai::TextContentPart>(&part)) {
+                text += content->text;
+            }
+        }
+        if (!text.empty()) return text;
+    }
+    return {};
 }
 
 void AppStore::set_generating(bool v) {
@@ -202,22 +225,20 @@ void AppStore::remove_callback(uint64_t id) {
 void AppStore::wire() {
     using namespace contract;
     subs_.push_back(bus_.subscribe<MessageDelta>([this](const MessageDelta::Payload& p) {
+        append_assistant_chunk(p.text);
         if (p.done) {
             set_generating(false);
-            update_last_assistant_message(p.text);
-            ai::tui::db::save_message(*state_.session_id, "Assistant", p.text);
-        } else {
-            update_last_assistant_message(p.text);
+            const auto final_text = latest_assistant_text();
+            ai::tui::db::save_message(p.session_id, "Assistant", final_text);
         }
     }));
     subs_.push_back(bus_.subscribe<ReasoningDelta>([this](const ReasoningDelta::Payload& p) {
-        // p.done carries the final (full) reasoning + signature; otherwise incremental full buffer.
         append_reasoning(p.text, p.signature);
     }));
     // ... remaining wire implementation same as before
     subs_.push_back(bus_.subscribe<CompactionResult>([this](const CompactionResult::Payload& p) {
         if (!p.error.empty()) {
-            state_.chat_history->push_back({"System", p.error});
+            state_.messages_history->emplace_back(ai::Message::system(p.error));
             set_status("idle");
             notify();
             return;
@@ -227,7 +248,7 @@ void AppStore::wire() {
         std::string summary_body =
             "This conversation was compacted into a handoff packet" +
             (p.wrote ? (" written to: " + p.todo_path) : "") + ".\n\n" + p.summary;
-        new_messages.push_back(ai::Message::user(summary_body));
+        new_messages.emplace_back(ai::Message::user(summary_body));
         size_t start = (hist.size() > static_cast<size_t>(p.keep))
                            ? hist.size() - static_cast<size_t>(p.keep)
                            : 0;
@@ -235,28 +256,12 @@ void AppStore::wire() {
             new_messages.push_back(hist[i]);
         }
 
-        auto new_chat = std::make_shared<std::vector<std::pair<std::string, std::string>>>();
         std::string note = "Conversation compacted: " + std::to_string(p.original_size) +
                            " messages -> handoff packet";
         note += p.wrote ? ("\nTodo file: " + p.todo_path) : " (todo file write failed)";
-        new_chat->push_back({"System", note});
-        for (const auto& m : new_messages) {
-            std::string role_str;
-            if (m.role == ai::kMessageRoleUser) role_str = "User";
-            else if (m.role == ai::kMessageRoleAssistant) role_str = "Assistant";
-            else if (m.role == ai::kMessageRoleSystem) role_str = "System";
-            else role_str = "Message";
-            std::string text;
-            for (const auto& part : m.content) {
-                if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) text += tp->text;
-                else if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) text += "[Tool call: " + tcp->tool_name + "]";
-                else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) text += "[Tool result]";
-                else if (const auto* rcp = std::get_if<ai::ReasoningContentPart>(&part)) { if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]"; }
-            }
-            new_chat->push_back({role_str, text});
-        }
+        new_messages.insert(
+            new_messages.begin(), ai::Message::system(std::move(note)));
         state_.messages_history = std::make_shared<ai::Messages>(new_messages);
-        state_.chat_history = new_chat;
         set_status("idle");
         notify();
     }));
@@ -265,29 +270,21 @@ void AppStore::wire() {
         // Embed the unique tool_call_id so ToolCallCompleted can pair the result
         // with the exact started entry. Matching by tool_name alone is fragile
         // when multiple calls of the same tool run concurrently.
-        std::string tool_str = "  \u23f3 " + p.tool_name + " [" + p.tool_call_id + "]...";
-        state_.chat_history->emplace_back("ToolCall", tool_str);
         ai::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
-        state_.messages_history->push_back(ai::Message::assistant_with_tools("", {tc_part}));
+        state_.messages_history->emplace_back(
+            ai::Message::assistant_with_tools("", {tc_part}));
         ai::tui::db::save_message(p.session_id, "ToolCall",
             p.tool_name + "(" + p.arguments.dump() + ")");
         notify();
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
-        // Pair with the exact started entry via the unique tool_call_id rather
-        // than the tool name (name match breaks under concurrent same-tool calls).
-        const std::string id_marker = "[" + p.tool_call_id + "]";
-        for (int ci = static_cast<int>(state_.chat_history->size()) - 1; ci >= 0; --ci) {
-            auto& entry = (*state_.chat_history)[ci];
-            if (entry.first == "ToolCall" && entry.second.find(id_marker) != std::string::npos) {
-                state_.chat_history->erase(state_.chat_history->begin() + ci);
-                break;
-            }
-        }
         std::string result_str = p.is_error ? "  \u2716 " + p.tool_name + " failed (" + p.result.dump() + ")" : "  \u2714 " + p.tool_name + " (" + std::to_string((int)p.duration_ms) + "ms)";
-        state_.chat_history->emplace_back("ToolResult", result_str);
-        state_.messages_history->push_back(ai::Message::tool_results({{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
+        state_.messages_history->emplace_back(
+            ai::Message::tool_results(
+                {{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
+        ++*state_.tool_call_count;
+        *state_.total_tool_time_ms += p.duration_ms;
         ai::tui::db::save_message(p.session_id, "ToolResult", result_str);
         notify();
     }));
@@ -298,7 +295,6 @@ void AppStore::wire() {
         if (p.severity == "warning") {
             LOG_WARN("Store: warning message={}", p.message);
             set_status("warn");
-            *state_.is_generating = false;
             add_toast("\u26a0 " + p.message, "warning", 6000);
         } else {
             set_error(p.message);
@@ -314,10 +310,18 @@ void AppStore::wire() {
         // Calibration anchor: remember the actual prompt token count so the
         // next heuristic estimate can be corrected against ground truth.
         *state_.last_actual_prompt_tokens = p.prompt_tokens;
+        notify();
     }));
 }
 
 void AppStore::notify() {
+    if (runtime_ != nullptr && runtime_->is_draining()) {
+        return;
+    }
+    notify_now();
+}
+
+void AppStore::notify_now() {
     std::vector<std::pair<uint64_t, Callback>> cbs;
     {
         std::lock_guard<std::mutex> lock(cb_mutex_);

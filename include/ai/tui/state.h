@@ -41,16 +41,20 @@ struct ProviderInfo {
 // ── Shared chat state ──
 
 struct ChatState {
-    std::shared_ptr<bool> is_generating = std::make_shared<bool>(false);
-    std::shared_ptr<std::vector<std::pair<std::string, std::string>>> chat_history =
-        std::make_shared<std::vector<std::pair<std::string, std::string>>>();
+    std::shared_ptr<std::atomic<bool>> is_generating =
+        std::make_shared<std::atomic<bool>>(false);
     std::shared_ptr<ai::Messages> messages_history = std::make_shared<ai::Messages>();
     std::shared_ptr<int> total_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
+    std::shared_ptr<size_t> files_revision = std::make_shared<size_t>(0);
     std::shared_ptr<int> scroll_line = std::make_shared<int>(INT_MAX);
     std::shared_ptr<bool> auto_scroll = std::make_shared<bool>(true);
+    // First message in the bounded render window. The complete history remains
+    // in messages_history, but only a viewport-sized slice is turned into
+    // FTXUI nodes on each frame.
+    std::shared_ptr<size_t> history_window_start = std::make_shared<size_t>(0);
     std::shared_ptr<bool> show_thinking = std::make_shared<bool>(true);
     // Reasoning/thinking level: "off" | "low" | "medium" | "high" (opt-in)
     std::shared_ptr<std::string> reasoning_mode = std::make_shared<std::string>("off");

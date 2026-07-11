@@ -143,10 +143,8 @@ class BashTool {
   static JsonValue exec_cleanup(const JsonValue& args);
 
   static std::string run_shell(const std::string& command, const std::string& cwd,
-                                int timeout_ms, int& exit_code);
-  static std::string apply_output_budget(const std::string& output,
-                                          std::optional<int> max_chars,
-                                          std::optional<int> max_lines);
+                               int timeout_ms, std::optional<int> max_chars,
+                               std::optional<int> max_lines, int& exit_code);
   static std::string resolve_workdir(const std::string& workdir);
 };
 

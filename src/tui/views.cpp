@@ -9,6 +9,7 @@
 #include <array>
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <climits>
 #include <unordered_map>
 
@@ -47,8 +48,11 @@ static std::string shell_quote(const std::string& s) {
 
 static std::string get_file_diff_raw(const std::string& path) {
     if (path.empty()) return "";
-    
+
+    static constexpr size_t kMaxPreviewBytes = 2 * 1024 * 1024;
     std::string diff_output;
+    diff_output.reserve(64 * 1024);
+    bool truncated = false;
     std::array<char, 512> buffer;
     
     // Check if the file is tracked
@@ -71,7 +75,15 @@ static std::string get_file_diff_raw(const std::string& path) {
     FILE* pipe = popen(cmd.c_str(), "r");
     if (pipe) {
         while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-            diff_output += buffer.data();
+            const auto remaining = kMaxPreviewBytes - diff_output.size();
+            if (remaining == 0) {
+                truncated = true;
+                continue;
+            }
+            diff_output.append(
+                buffer.data(), std::min(remaining, std::strlen(buffer.data())));
+            truncated = truncated ||
+                        std::strlen(buffer.data()) > remaining;
         }
         pclose(pipe);
     }
@@ -82,41 +94,79 @@ static std::string get_file_diff_raw(const std::string& path) {
         if (file.is_open()) {
             std::string line;
             while (std::getline(file, line)) {
+                if (diff_output.size() + line.size() + 2 >
+                    kMaxPreviewBytes) {
+                    truncated = true;
+                    break;
+                }
                 diff_output += "+" + line + "\n";
             }
         }
+    }
+    if (truncated) {
+        diff_output += "\n[Diff preview truncated at 2 MiB]\n";
     }
 
     return diff_output;
 }
 
-// Cached helper using file modification timestamp to optimize rendering performance
-static std::string get_file_diff(const std::string& path) {
-    static std::unordered_map<std::string, std::string> diff_cache;
-    static std::unordered_map<std::string, std::filesystem::file_time_type> time_cache;
+// Keep previews bounded: diffs can be multi-megabyte and the old cache retained
+// every file ever viewed for the lifetime of the process.
+static const std::string& get_file_diff(const std::string& path,
+                                        size_t files_revision) {
+    struct CacheEntry {
+        std::string content;
+        std::filesystem::file_time_type modified_at{};
+        size_t last_used = 0;
+    };
+    static std::unordered_map<std::string, CacheEntry> cache;
+    static size_t cache_bytes = 0;
+    static size_t use_counter = 0;
+    static size_t cached_revision = 0;
+    static constexpr size_t kMaxCacheEntries = 16;
+    static constexpr size_t kMaxCacheBytes = 4 * 1024 * 1024;
+    static const std::string kEmpty;
 
-    if (path.empty()) return "";
-
-    try {
-        bool needs_update = (diff_cache.find(path) == diff_cache.end());
-        if (std::filesystem::exists(path)) {
-            auto current_time = std::filesystem::last_write_time(path);
-            if (!needs_update && time_cache[path] != current_time) {
-                needs_update = true;
-            }
-            if (needs_update) {
-                time_cache[path] = current_time;
-            }
-        }
-
-        if (needs_update) {
-            diff_cache[path] = get_file_diff_raw(path);
-        }
-    } catch (...) {
-        return get_file_diff_raw(path);
+    if (path.empty()) return kEmpty;
+    if (cached_revision != files_revision) {
+        cache.clear();
+        cache_bytes = 0;
+        cached_revision = files_revision;
     }
 
-    return diff_cache[path];
+    auto& entry = cache[path];
+    entry.last_used = ++use_counter;
+    auto needs_update = entry.content.empty();
+    try {
+        if (std::filesystem::exists(path)) {
+            const auto current_time = std::filesystem::last_write_time(path);
+            needs_update = needs_update || entry.modified_at != current_time;
+            entry.modified_at = current_time;
+        }
+    } catch (...) {
+        needs_update = true;
+    }
+
+    if (needs_update) {
+        cache_bytes -= entry.content.size();
+        entry.content = get_file_diff_raw(path);
+        cache_bytes += entry.content.size();
+    }
+
+    while (cache.size() > kMaxCacheEntries || cache_bytes > kMaxCacheBytes) {
+        auto oldest = cache.end();
+        for (auto it = cache.begin(); it != cache.end(); ++it) {
+            if (it->first == path) continue;
+            if (oldest == cache.end() ||
+                it->second.last_used < oldest->second.last_used) {
+                oldest = it;
+            }
+        }
+        if (oldest == cache.end()) break;
+        cache_bytes -= oldest->second.content.size();
+        cache.erase(oldest);
+    }
+    return entry.content;
 }
 
 ftxui::Element render_logo() {
@@ -322,7 +372,7 @@ ftxui::Element render_view(
 
     // ── Tab 0: Chat ──
     if (state.tab_selected == 0) {
-        bool empty = state.chat_history->empty();
+        bool empty = state.messages_history->empty();
 
         if (empty) {
             // Home screen
@@ -340,15 +390,104 @@ ftxui::Element render_view(
                 filler() | flex,
             }) | flex;
         } else {
-            // Chat history list
+            // Chat history viewport. Building an FTXUI tree for every historical
+            // message on every token made render cost grow without bound.
             Elements msgs;
-            for (const auto& msg : *state.messages_history) {
-                msgs.push_back(render_message(msg, state, providers_list, selected_provider, selected_model, *state.theme));
+            const auto history_size = state.messages_history->size();
+            const auto window_size = static_cast<size_t>(
+                std::max(32, state.terminal_height * 2));
+            const auto max_start =
+                history_size > window_size ? history_size - window_size : 0;
+            if (*state.auto_scroll) {
+                *state.history_window_start = max_start;
+            } else {
+                *state.history_window_start =
+                    std::min(*state.history_window_start, max_start);
+            }
+            const auto first = *state.history_window_start;
+            const auto last = std::min(history_size, first + window_size);
+
+            // Completed plain messages are immutable. Reuse their parsed
+            // Markdown/FTXUI trees across frames and keep cache residency
+            // bounded to the current window.
+            static const ai::Messages* cache_owner = nullptr;
+            static size_t cached_history_size = 0;
+            static int cached_width = 0;
+            static int cached_provider = -1;
+            static int cached_model = -1;
+            static std::string cached_theme;
+            static std::string cached_session;
+            static bool cached_thinking = false;
+            static std::unordered_map<size_t, Element> message_cache;
+            const auto terminal_width = Terminal::Size().dimx;
+            if (cache_owner != state.messages_history.get() ||
+                history_size < cached_history_size ||
+                terminal_width != cached_width ||
+                cached_provider != selected_provider ||
+                cached_model != selected_model ||
+                cached_theme != *state.theme ||
+                cached_session != *state.session_id ||
+                cached_thinking != *state.show_thinking) {
+                message_cache.clear();
+                cache_owner = state.messages_history.get();
+                cached_width = terminal_width;
+                cached_provider = selected_provider;
+                cached_model = selected_model;
+                cached_theme = *state.theme;
+                cached_session = *state.session_id;
+                cached_thinking = *state.show_thinking;
+            }
+            cached_history_size = history_size;
+            for (auto it = message_cache.begin(); it != message_cache.end();) {
+                if (it->first < first || it->first >= last) {
+                    it = message_cache.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            if (state.tool_block_order) state.tool_block_order->clear();
+            if (first > 0) {
+                msgs.push_back(
+                    text(" " + std::to_string(first) +
+                         " earlier messages · Home/PageUp to view ") |
+                    dim | hcenter);
+                msgs.push_back(separatorLight() | color(dim_gray()));
+            }
+            for (size_t i = first; i < last; ++i) {
+                const auto& msg = (*state.messages_history)[i];
+                const ai::Message* adjacent_tool_results = nullptr;
+                if (msg.has_tool_calls() && i + 1 < last &&
+                    (*state.messages_history)[i + 1].has_tool_results()) {
+                    adjacent_tool_results =
+                        &(*state.messages_history)[i + 1];
+                }
+                const bool cacheable =
+                    i + 1 < history_size && !msg.has_tool_calls() &&
+                    !msg.has_tool_results() && !msg.has_reasoning();
+                auto cached = message_cache.find(i);
+                if (cacheable && cached != message_cache.end()) {
+                    msgs.push_back(cached->second);
+                } else {
+                    auto rendered = render_message(
+                        msg, state, providers_list, selected_provider,
+                        selected_model, *state.theme,
+                        adjacent_tool_results);
+                    if (cacheable) message_cache[i] = rendered;
+                    msgs.push_back(std::move(rendered));
+                }
                 msgs.push_back(
                 separatorLight() | color(
                     msg.role == kMessageRoleAssistant ? accent(theme) :
                     msg.role == kMessageRoleUser ? user_green() :
                     dim_gray()));
+                if (adjacent_tool_results != nullptr) ++i;
+            }
+            if (last < history_size) {
+                msgs.push_back(
+                    text(" " + std::to_string(history_size - last) +
+                         " later messages · PageDown/End to view ") |
+                    dim | hcenter);
             }
             // Animated spinner during generation
             // Status displayed in header strip, not here
@@ -362,12 +501,11 @@ ftxui::Element render_view(
             // Dynamic inline slash command / session autocomplete matching opencode
             if (prompt_input.size() >= 9 && prompt_input.substr(0, 9) == "/session ") {
                 std::string filter_str = prompt_input.substr(9);
-                auto all_sessions = db::list_sessions();
                 std::vector<std::pair<std::string, std::string>> matches;
-                for (const auto& s : all_sessions) {
-                    if (s.first.find(filter_str) != std::string::npos ||
-                        s.second.find(filter_str) != std::string::npos) {
-                        matches.push_back(s);
+                for (const auto& session : session_entries) {
+                    if (session.id.find(filter_str) != std::string::npos ||
+                        session.title.find(filter_str) != std::string::npos) {
+                        matches.emplace_back(session.id, session.title);
                     }
                 }
                 if (!matches.empty()) {
@@ -460,9 +598,14 @@ ftxui::Element render_view(
             }) | flex;
         } else {
             Elements file_blocks;
-            for (const auto& filepath : *state.modified_files) {
+            const auto selected = std::clamp(
+                state.selected_file, 0,
+                static_cast<int>(state.modified_files->size()) - 1);
+            if (selected >= 0) {
+                const auto& filepath = (*state.modified_files)[selected];
                 // Get cached diff content (optimized)
-                std::string content = get_file_diff(filepath);
+                const auto& content =
+                    get_file_diff(filepath, *state.files_revision);
                 
                 // Count additions/deletions
                 int additions = 0;
@@ -492,7 +635,6 @@ ftxui::Element render_view(
                 }) | borderLight | color(accent(theme));
                 
                 file_blocks.push_back(file_block);
-                file_blocks.push_back(text(""));
             }
             
             // Same real-line-index treatment as the chat tab (shared scroll_line).

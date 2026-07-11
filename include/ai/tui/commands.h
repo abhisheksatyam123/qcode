@@ -58,7 +58,7 @@ bool handle_slash_command(
     bool& enable_tools,
     std::string& system_prompt,
     ChatState& state,
-    std::shared_ptr<std::vector<std::thread>> background_threads,
+    std::shared_ptr<std::jthread> compaction_thread,
     bus::BusPort& bus
 );
 
@@ -71,7 +71,7 @@ void run_compaction(
     int selected_provider,
     int selected_model,
     int keep,
-    std::shared_ptr<std::vector<std::thread>> background_threads,
+    std::shared_ptr<std::jthread> compaction_thread,
     bus::BusPort& bus
 );
 

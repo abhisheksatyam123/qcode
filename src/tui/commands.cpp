@@ -17,9 +17,16 @@
 #include <cctype>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace ai {
 namespace tui {
+
+namespace {
+void append_system_message(ChatState& state, std::string text) {
+    state.messages_history->emplace_back(ai::Message::system(std::move(text)));
+}
+}  // namespace
 
 std::vector<ModelEntry> build_model_entries(
     const std::vector<ProviderInfo>& providers
@@ -49,7 +56,7 @@ bool handle_slash_command(
     bool& enable_tools,
     std::string& system_prompt,
     ChatState& state,
-    std::shared_ptr<std::vector<std::thread>> background_threads,
+    std::shared_ptr<std::jthread> compaction_thread,
     bus::BusPort& bus
 ) {
     std::string cmd = raw_cmd.substr(1);
@@ -81,7 +88,7 @@ bool handle_slash_command(
                 m << "  " << e.model_id;
             m << "\n";
         }
-        state.chat_history->push_back({"System", m.str()});
+        append_system_message(state, m.str());
         return true;
     }
 
@@ -89,7 +96,7 @@ bool handle_slash_command(
         LOG_DEBUG("Commands: /theme args='{}'", args);
         if (args.empty()) {
             std::string cur = state.theme ? *state.theme : "orange";
-            state.chat_history->push_back({"System", "Available themes:\n  /theme orange (Classic)\n  /theme green (Forest Green)\n  /theme blue (Deep Blue)\n  /theme purple (Cyberpunk Purple)\n  /theme monochrome (Monochrome)\n\nCurrent theme: " + cur});
+            append_system_message(state, "Available themes:\n  /theme orange (Classic)\n  /theme green (Forest Green)\n  /theme blue (Deep Blue)\n  /theme purple (Cyberpunk Purple)\n  /theme monochrome (Monochrome)\n\nCurrent theme: " + cur);
             return true;
         }
         std::string new_theme = args;
@@ -105,9 +112,9 @@ bool handle_slash_command(
             if (state.theme) {
                 *state.theme = new_theme;
             }
-            state.chat_history->push_back({"System", "Theme changed to: " + new_theme});
+            append_system_message(state, "Theme changed to: " + new_theme);
         } else {
-            state.chat_history->push_back({"System", "Unknown theme: '" + new_theme + "'. Supported: orange, green, blue, purple, monochrome"});
+            append_system_message(state, "Unknown theme: '" + new_theme + "'. Supported: orange, green, blue, purple, monochrome");
         }
         return true;
     }
@@ -122,12 +129,11 @@ bool handle_slash_command(
         }));
         std::string new_id = db::create_new_session(prov, mod, ws);
         *state.session_id = new_id;
-        state.chat_history->clear();
         state.messages_history->clear();
         if (!ws.empty()) {
-            state.chat_history->push_back({"System", "Started new session: " + new_id + " (workspace: " + ws + ")"});
+            append_system_message(state, "Started new session: " + new_id + " (workspace: " + ws + ")");
         } else {
-            state.chat_history->push_back({"System", "Started new persistent session: " + new_id});
+            append_system_message(state, "Started new persistent session: " + new_id);
         }
         return true;
     }
@@ -142,12 +148,12 @@ bool handle_slash_command(
         }).base(), target_id.end());
 
         if (target_id.empty()) {
-            state.chat_history->push_back({"System", "Usage: /session <session_id>"});
+            append_system_message(state, "Usage: /session <session_id>");
             return true;
         }
 
         if (!db::is_valid_session_id(target_id)) {
-            state.chat_history->push_back({"System", "Invalid session id: " + target_id});
+            append_system_message(state, "Invalid session id: " + target_id);
             return true;
         }
 
@@ -163,9 +169,9 @@ bool handle_slash_command(
         if (found) {
             *state.session_id = target_id;
             db::reload_session_history(target_id, state);
-            state.chat_history->push_back({"System", "Loaded persistent session: " + target_id});
+            append_system_message(state, "Loaded persistent session: " + target_id);
         } else {
-            state.chat_history->push_back({"System", "Session ID not found: " + target_id});
+            append_system_message(state, "Session ID not found: " + target_id);
         }
         return true;
     }
@@ -177,13 +183,13 @@ bool handle_slash_command(
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.back()))) lvl.pop_back();
         if (lvl.empty()) lvl = "off";
         if (lvl != "off" && lvl != "low" && lvl != "medium" && lvl != "high") {
-            state.chat_history->push_back(
-                {"System", "Reasoning: invalid level '" + lvl +
-                 "'. Use off|low|medium|high."});
+            append_system_message(
+                state, "Reasoning: invalid level '" + lvl +
+                           "'. Use off|low|medium|high.");
             return true;
         }
         *state.reasoning_mode = lvl;
-        state.chat_history->push_back({"System", "Reasoning mode: " + lvl});
+        append_system_message(state, "Reasoning mode: " + lvl);
         LOG_DEBUG("Commands: reasoning mode set to '{}'", lvl);
         return true;
     }
@@ -192,7 +198,7 @@ bool handle_slash_command(
         LOG_DEBUG("Commands: /compact");
         int keep = 4;
         run_compaction(state, providers_list, selected_provider, selected_model,
-                       keep, background_threads, bus);
+                       keep, compaction_thread, bus);
         return true;
     }
 
@@ -205,15 +211,15 @@ bool handle_slash_command(
         if (args.empty()) {
             enable_tools = !enable_tools;
             std::string status = enable_tools ? "ENABLED (observability mode)" : "DISABLED (real-time streaming mode)";
-            state.chat_history->push_back({"System", "Tools " + status});
+            append_system_message(state, "Tools " + status);
         } else if (args == "on") {
             enable_tools = true;
-            state.chat_history->push_back({"System", "Tools ENABLED (observability mode)"});
+            append_system_message(state, "Tools ENABLED (observability mode)");
         } else if (args == "off") {
             enable_tools = false;
-            state.chat_history->push_back({"System", "Tools DISABLED (real-time streaming mode)"});
+            append_system_message(state, "Tools DISABLED (real-time streaming mode)");
         } else {
-            state.chat_history->push_back({"System", "Usage: /tools [on|off]"});
+            append_system_message(state, "Usage: /tools [on|off]");
         }
         return true;
     }
@@ -230,10 +236,10 @@ bool handle_slash_command(
           << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
           << "  /help             - show this help\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
-        state.chat_history->push_back({"System", h.str()});
+        append_system_message(state, h.str());
         return true;
     }
-    state.chat_history->push_back({"System", "Unknown command: /" + cmd});
+    append_system_message(state, "Unknown command: /" + cmd);
     return true;
 }
 
@@ -244,12 +250,13 @@ void run_compaction(
     int selected_provider,
     int selected_model,
     int keep,
-    std::shared_ptr<std::vector<std::thread>> background_threads,
+    std::shared_ptr<std::jthread> compaction_thread,
     bus::BusPort& bus
 ) {
     const auto& hist = *state.messages_history;
     if (hist.size() <= 2) {
-        state.chat_history->push_back({"System", "Nothing to compact: conversation is too short."});
+        append_system_message(
+            state, "Nothing to compact: conversation is too short.");
         return;
     }
 
@@ -268,7 +275,10 @@ void run_compaction(
         .session_id = sid,
         .status = "generating"});
 
-    std::thread compact_thread([providers_copy, sp, sm, snapshot, keep, sid, &bus]() mutable {
+    if (compaction_thread->joinable()) compaction_thread->join();
+    *compaction_thread = std::jthread(
+        [providers_copy, sp, sm, snapshot, keep, sid,
+         &bus](std::stop_token) mutable {
         ai::tui::contract::CompactionResult::Payload result;
         result.keep = keep;
         result.original_size = snapshot.size();
@@ -375,8 +385,7 @@ void run_compaction(
         result.todo_path = std::move(todo_path);
         result.wrote = wrote;
         bus.publish<ai::tui::contract::CompactionResult>(result);
-    });
-    background_threads->push_back(std::move(compact_thread));
+        });
 }
 } // namespace tui
 } // namespace ai

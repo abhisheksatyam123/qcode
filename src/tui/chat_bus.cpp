@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <future>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -33,12 +34,15 @@ static void run_tools_generation_bus(ai::Client& client,
   auto assistant_msg_idx = std::make_shared<int>(-1);
   auto tool_starts       = std::make_shared<
       std::map<std::string, std::chrono::steady_clock::time_point>>();
+  auto callback_mutex    = std::make_shared<std::mutex>();
   auto step_counter      = std::make_shared<std::atomic<int>>(0);
   int  max_steps         = options.max_steps;
 
   // ── Step finished: emit MessageDelta ──
   options.on_step_finish =
-      [&bus, &ctx, assistant_text](const ai::GenerateStep& step) {
+      [&bus, &ctx, assistant_text,
+       callback_mutex](const ai::GenerateStep& step) {
+        std::lock_guard<std::mutex> lock(*callback_mutex);
         LOG_DEBUG("chat_bus: on_step_finish text_len={}", step.text.size());
         if (step.text.empty()) return;
         if (*assistant_text == "  \u23f3 Working...") {
@@ -46,16 +50,19 @@ static void run_tools_generation_bus(ai::Client& client,
         } else {
           *assistant_text += step.text;
         }
+        if (step.text == "  \u23f3 Working...") return;
         bus.publish<MessageDelta>({
             .session_id = ctx.session_id,
-            .text = *assistant_text,
+            .text = step.text,
             .done = false
         });
       };
 
   // ── Tool call started: emit ToolCallStarted ──
   options.on_tool_call_start =
-      [&bus, &ctx, tool_starts, step_counter, max_steps](const ai::ToolCall& call) {
+      [&bus, &ctx, tool_starts, step_counter, max_steps,
+       callback_mutex](const ai::ToolCall& call) {
+        std::lock_guard<std::mutex> lock(*callback_mutex);
         LOG_DEBUG("chat_bus: on_tool_call_start tool={} step={}/{}", call.tool_name, (int)*step_counter, max_steps);
         auto now = std::chrono::steady_clock::now();
         (*tool_starts)[call.id] = now;
@@ -71,7 +78,9 @@ static void run_tools_generation_bus(ai::Client& client,
 
   // ── Tool call finished: emit ToolCallCompleted ──
   options.on_tool_call_finish =
-      [&bus, &ctx, assistant_text, tool_starts](const ai::ToolResult& res) {
+      [&bus, &ctx, assistant_text, tool_starts,
+       callback_mutex](const ai::ToolResult& res) {
+        std::lock_guard<std::mutex> lock(*callback_mutex);
         double duration_s = 0.0;
         {
           auto start_it_tmp = tool_starts->find(res.tool_call_id);
@@ -121,9 +130,6 @@ static void run_tools_generation_bus(ai::Client& client,
 
   int step = 0;
   bool finished = false;
-  // Track whether the previous step had tool calls so we know when the model
-  // is done using tools and wants to produce a final text-only response.
-  bool prev_step_had_tool_calls = false;
 
   LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", options.max_steps);
   while (step < options.max_steps && !finished) {
@@ -137,57 +143,7 @@ static void run_tools_generation_bus(ai::Client& client,
     LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, step_messages.size());
     step_opts.max_steps = 1;
 
-    // Only enter the final (tools-cleared) streaming path when the model
-    // stopped requesting tool calls after previously using them — i.e. the
-    // model wants to give its final text answer after all tool work is done.
-    bool is_final_step = (step > 0 && !prev_step_had_tool_calls);
-
-    if (is_final_step) {
-      ai::StreamOptions stream_opts(step_opts);
-      stream_opts.tools.clear();
-
-      LOG_DEBUG("run_tools_generation_bus: step={} streaming with tools_cleared=true", step);
-      auto stream = client.stream_text(stream_opts);
-      if (stream.has_error()) {
-        LOG_ERROR("run_tools_generation_bus: step={} stream error: {}", step, stream.error_message());
-        is_final_step = false;
-      } else {
-        std::string final_step_text;
-        for (const auto& event : stream) {
-          if (ctx.abort_flag && ctx.abort_flag->load()) {
-            LOG_DEBUG("run_tools_generation_bus final stream: abort requested");
-            break;
-          }
-          if (event.is_text_delta()) {
-            final_step_text += event.text_delta;
-            if (*assistant_text == "  \u23f3 Working...") {
-              *assistant_text = event.text_delta;
-            } else {
-              *assistant_text += event.text_delta;
-            }
-            bus.publish<MessageDelta>({
-                .session_id = ctx.session_id,
-                .text = *assistant_text,
-                .done = false
-            });
-          } else if (event.is_finish()) {
-            if (event.usage.has_value()) {
-              auto u = event.usage.value();
-              gen_result.usage.prompt_tokens += u.prompt_tokens;
-              gen_result.usage.completion_tokens += u.completion_tokens;
-              gen_result.usage.total_tokens += u.total_tokens;
-            }
-          }
-        }
-        LOG_DEBUG("run_tools_generation_bus: step={} stream finished text_len={}", step, final_step_text.size());
-        gen_result.text += final_step_text;
-        response_messages.push_back(ai::Message::assistant(final_step_text));
-        finished = true;
-        break;
-      }
-    }
-
-    if (!is_final_step) {
+    {
       LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);
       ai::GenerateResult step_res = client.generate_text(step_opts);
       if (!step_res.is_success()) {
@@ -246,8 +202,6 @@ static void run_tools_generation_bus(ai::Client& client,
         finished = true;
       }
 
-      // Update tracking for the next iteration's is_final_step decision
-      prev_step_had_tool_calls = step_res.has_tool_calls();
     }
     step++;
   }
@@ -256,11 +210,7 @@ static void run_tools_generation_bus(ai::Client& client,
            step, gen_result.text.size(), gen_result.tool_calls.size());
   gen_result.response_messages = response_messages;
 
-  bus.publish<SessionStatusChanged>({
-      .session_id = ctx.session_id,
-      .status = "idle"
-  });
-
+  bool fatal_error = false;
   if (gen_result.is_success()) {
     std::string final_text;
     if (!assistant_text->empty()) final_text = *assistant_text;
@@ -286,7 +236,7 @@ static void run_tools_generation_bus(ai::Client& client,
       if (!is_placeholder && !final_text.empty()) {
         bus.publish<MessageDelta>({
             .session_id = ctx.session_id,
-            .text = final_text,
+            .text = assistant_text->empty() ? final_text : std::string{},
             .done = true
         });
       }
@@ -294,7 +244,7 @@ static void run_tools_generation_bus(ai::Client& client,
       LOG_DEBUG("run_tools_generation_bus: publishing final MessageDelta text_len={}", final_text.size());
       bus.publish<MessageDelta>({
           .session_id = ctx.session_id,
-          .text = final_text,
+          .text = assistant_text->empty() ? final_text : std::string{},
           .done = true
       });
     } else if (!final_text.empty() && is_placeholder) {
@@ -323,10 +273,11 @@ static void run_tools_generation_bus(ai::Client& client,
     else final_text = gen_result.text;
     bus.publish<MessageDelta>({
         .session_id = ctx.session_id,
-        .text = final_text,
+        .text = assistant_text->empty() ? final_text : std::string{},
         .done = true
     });
   } else {
+    fatal_error = true;
     std::string err_str = "Error: " + gen_result.error_message();
     if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
       err_str += "\n[Response] " + gen_result.provider_metadata.value().substr(0, 500);
@@ -343,6 +294,12 @@ static void run_tools_generation_bus(ai::Client& client,
       .completion_tokens = gen_result.usage.completion_tokens,
       .total_tokens = gen_result.usage.total_tokens
   });
+  if (!fatal_error) {
+    bus.publish<SessionStatusChanged>({
+        .session_id = ctx.session_id,
+        .status = "idle"
+    });
+  }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -366,37 +323,36 @@ static void run_stream_generation_bus(ai::Client& client,
     return;
   }
 
-  std::string text_buffer;        // per-flush throttle accumulator
-  std::string full_text;           // complete assistant transcript (never cleared)
-  auto last_flush = std::chrono::steady_clock::now();
-  constexpr auto FLUSH_INTERVAL = std::chrono::milliseconds(33);
+  std::string text_buffer;
+  size_t text_size = 0;
+  auto last_text_flush = std::chrono::steady_clock::now();
+  constexpr auto kFlushInterval = std::chrono::milliseconds(33);
 
   auto flush_text = [&]() {
     if (text_buffer.empty()) return;
     LOG_DEBUG("ChatBus: flush_text buffer_size={}", text_buffer.size());
-    std::string snap = full_text;
-    text_buffer.clear();
     bus.publish<MessageDelta>({
         .session_id = ctx.session_id,
-        .text = snap,
+        .text = std::move(text_buffer),
         .done = false
     });
+    text_buffer.clear();
   };
 
-  std::string reasoning_buffer;     // per-flush throttle accumulator
-  std::string full_reasoning;       // complete reasoning transcript (never cleared)
+  std::string reasoning_buffer;
+  bool has_reasoning = false;
   std::string last_reasoning_signature;
+  auto last_reasoning_flush = std::chrono::steady_clock::now();
   auto flush_reasoning = [&]() {
     if (reasoning_buffer.empty()) return;
     LOG_DEBUG("ChatBus: flush_reasoning buffer_size={}", reasoning_buffer.size());
-    std::string snap = full_reasoning;
-    reasoning_buffer.clear();
     bus.publish<ReasoningDelta>({
         .session_id = ctx.session_id,
-        .text = snap,
+        .text = std::move(reasoning_buffer),
         .signature = last_reasoning_signature,
         .done = false
     });
+    reasoning_buffer.clear();
   };
 
   for (const auto& event : stream) {
@@ -406,12 +362,12 @@ static void run_stream_generation_bus(ai::Client& client,
     }
     if (event.is_text_delta()) {
       text_buffer += event.text_delta;
-      full_text   += event.text_delta;
+      text_size += event.text_delta.size();
       LOG_DEBUG("run_stream_generation_bus: text_delta buffer_size={}", text_buffer.size());
       auto now = std::chrono::steady_clock::now();
-      if (now - last_flush >= FLUSH_INTERVAL) {
+      if (now - last_text_flush >= kFlushInterval) {
         flush_text();
-        last_flush = now;
+        last_text_flush = now;
       }
     } else if (event.is_reasoning_delta()) {
       // OpenRouter encrypts reasoning as [REDACTED]; drop those chunks.
@@ -420,15 +376,15 @@ static void run_stream_generation_bus(ai::Client& client,
         LOG_DEBUG("ChatBus: dropping redacted reasoning chunk");
       } else {
         reasoning_buffer += chunk;
-        full_reasoning  += chunk;
+        has_reasoning = true;
         if (event.metadata.has_value() && !event.metadata->empty()) {
           last_reasoning_signature = *event.metadata;
         }
         LOG_DEBUG("ChatBus: reasoning_delta buffer_size={}", reasoning_buffer.size());
         auto now = std::chrono::steady_clock::now();
-        if (now - last_flush >= FLUSH_INTERVAL) {
+        if (now - last_reasoning_flush >= kFlushInterval) {
           flush_reasoning();
-          last_flush = now;
+          last_reasoning_flush = now;
         }
       }
     } else if (event.is_error()) {
@@ -452,17 +408,19 @@ static void run_stream_generation_bus(ai::Client& client,
     }
   }
 
-  LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={}", full_text.size());
+  flush_text();
+  flush_reasoning();
+  LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={}", text_size);
   bus.publish<MessageDelta>({
       .session_id = ctx.session_id,
-      .text = full_text,
+      .text = "",
       .done = true
   });
 
-  if (!full_reasoning.empty()) {
+  if (has_reasoning) {
     bus.publish<ReasoningDelta>({
         .session_id = ctx.session_id,
-        .text = full_reasoning,
+        .text = "",
         .signature = last_reasoning_signature,
         .done = true
     });

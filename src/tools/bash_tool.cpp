@@ -253,84 +253,122 @@ static std::string get_tool_output_dir() {
     return "/tmp/qcode-tool-output";
 }
 
-std::string BashTool::apply_output_budget(const std::string& output,
-                                           std::optional<int> max_chars,
-                                           std::optional<int> max_lines) {
-  // Match opencode's default MAX_CHARS = 4096
-  int limit = max_chars.value_or(4096);
-  
-  bool needs_truncation = false;
-  size_t truncate_index = output.size();
-  
-  if (static_cast<int>(output.size()) > limit) {
-    needs_truncation = true;
-    truncate_index = limit;
+static void trim_incomplete_utf8_suffix(std::string& text) {
+  if (text.empty()) return;
+  auto lead = text.size() - 1;
+  while (lead > 0 &&
+         (static_cast<unsigned char>(text[lead]) & 0xC0U) == 0x80U) {
+    --lead;
   }
-  
-  if (max_lines.has_value() && max_lines.value() > 0) {
-    int line_count = 0;
-    for (size_t i = 0; i < output.size(); ++i) {
-      if (output[i] == '\n') {
-        line_count++;
-        if (line_count >= max_lines.value()) {
-          if (i < truncate_index) {
-            needs_truncation = true;
-            truncate_index = i;
-          }
-          break;
-        }
-      }
-    }
-  }
-  
-  if (!needs_truncation) {
-    return output;
-  }
-  
-  // Perform truncation: write full output to truncation directory
-  std::string dir_path = get_tool_output_dir();
-  std::error_code ec;
-  std::filesystem::create_directories(dir_path, ec);
-  
-  std::string file_id = generate_unique_tool_file_name();
-  std::string file_path = dir_path + "/" + file_id;
-  
-  std::ofstream out_file(file_path, std::ios::out | std::ios::binary);
-  if (out_file.is_open()) {
-    out_file.write(output.data(), output.size());
-    out_file.close();
-  } else {
-    LOG_ERROR("BashTool: failed to write full output to {}", file_path);
-  }
-  
-  std::string prefix = output.substr(0, truncate_index);
-  
-  std::string msg = prefix + "\n\n" +
-      "[Output truncated at " + std::to_string(truncate_index) + " characters (total " + std::to_string(output.size()) + "). Full output saved to " + file_path + "]\n" +
-      "Inspect the saved output with targeted range reads (for example: nl -ba " + file_path + " | sed -n '<start>,<end>p') or a one-pass rg/python summarizer; avoid raw full-file dumps. " +
-      "If you truly need more inline text, request the smallest useful output budget (for bash, max_output_chars); large values can bloat context.";
-      
-  return msg;
+  const auto first = static_cast<unsigned char>(text[lead]);
+  size_t expected = 1;
+  if ((first & 0xE0U) == 0xC0U) expected = 2;
+  else if ((first & 0xF0U) == 0xE0U) expected = 3;
+  else if ((first & 0xF8U) == 0xF0U) expected = 4;
+  if (lead + expected > text.size()) text.resize(lead);
 }
 
-std::string BashTool::run_shell(const std::string& command, const std::string& cwd,
-                                 int /*timeout_ms*/, int& exit_code) {
-  exit_code = -1;
-  std::string cmd = "cd -- " + shell_quote_literal(cwd) + " 2>/dev/null; " + command;
+std::string BashTool::run_shell(const std::string& command,
+                                const std::string& cwd, int /*timeout_ms*/,
+                                std::optional<int> max_chars,
+                                std::optional<int> max_lines, int& exit_code) {
+  constexpr size_t kReadBufferSize = 4096;
+  const auto char_limit = static_cast<size_t>(max_chars.value_or(4096));
+  const auto line_limit = max_lines.value_or(0);
 
-  std::array<char, 128> buffer;
-  std::string result;
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+  exit_code = -1;
+  const auto cmd =
+      "cd -- " + shell_quote_literal(cwd) + " 2>/dev/null; " + command;
+
+  const auto dir_path = get_tool_output_dir();
+  std::error_code ec;
+  std::filesystem::create_directories(dir_path, ec);
+  const auto file_path =
+      dir_path + "/" + generate_unique_tool_file_name();
+  std::ofstream output_file(file_path, std::ios::out | std::ios::binary);
+
+  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"),
+                                                pclose);
   if (!pipe) {
-    exit_code = -1;
+    output_file.close();
+    std::filesystem::remove(file_path, ec);
     return "Error: Failed to execute command";
   }
-  while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-    result += buffer.data();
+
+  std::array<char, kReadBufferSize> buffer;
+  std::string inline_output;
+  size_t total_size = 0;
+  size_t line_count = 0;
+  std::optional<size_t> truncate_index;
+  std::optional<size_t> line_boundary;
+
+  while (const auto bytes_read =
+             std::fread(buffer.data(), 1, buffer.size(), pipe.get())) {
+    if (output_file.is_open()) {
+      output_file.write(buffer.data(),
+                        static_cast<std::streamsize>(bytes_read));
+    }
+
+    auto chunk_inline_size = bytes_read;
+    if (!truncate_index.has_value()) {
+      if (total_size + bytes_read > char_limit) {
+        truncate_index = char_limit;
+      }
+
+      if (line_limit > 0 && !line_boundary.has_value()) {
+        for (size_t i = 0; i < bytes_read; ++i) {
+          if (buffer[i] != '\n') continue;
+          ++line_count;
+          if (line_count == static_cast<size_t>(line_limit)) {
+            line_boundary = total_size + i + 1;
+            break;
+          }
+        }
+      }
+
+      if (line_boundary.has_value() &&
+          total_size + bytes_read > line_boundary.value() &&
+          (!truncate_index.has_value() ||
+           line_boundary.value() < truncate_index.value())) {
+        truncate_index = line_boundary;
+      }
+      if (truncate_index.has_value()) {
+        chunk_inline_size =
+            truncate_index.value() > total_size
+                ? std::min(bytes_read,
+                           truncate_index.value() - total_size)
+                : 0;
+      } else if (line_boundary.has_value()) {
+        chunk_inline_size = std::min(
+            bytes_read, line_boundary.value() - total_size);
+      }
+      inline_output.append(buffer.data(), chunk_inline_size);
+    }
+    total_size += bytes_read;
   }
+
   exit_code = pclose(pipe.release());
-  if (exit_code != 0 && WIFEXITED(exit_code)) exit_code = WEXITSTATUS(exit_code);
-  return result;
+  if (exit_code != 0 && WIFEXITED(exit_code)) {
+    exit_code = WEXITSTATUS(exit_code);
+  }
+  output_file.close();
+
+  if (!truncate_index.has_value()) {
+    std::filesystem::remove(file_path, ec);
+    return inline_output;
+  }
+
+  trim_incomplete_utf8_suffix(inline_output);
+  if (!output_file) {
+    LOG_ERROR("BashTool: failed to write full output to {}", file_path);
+  }
+
+  return inline_output + "\n\n" +
+      "[Output truncated at " + std::to_string(truncate_index.value()) +
+      " characters (total " + std::to_string(total_size) +
+      "). Full output saved to " + file_path + "]\n" +
+      "Inspect the saved output with targeted range reads (for example: nl -ba " + file_path + " | sed -n '<start>,<end>p') or a one-pass rg/python summarizer; avoid raw full-file dumps. " +
+      "If you truly need more inline text, request the smallest useful output budget (for bash, max_output_chars); large values can bloat context.";
 }
 
 JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& context) {
@@ -360,18 +398,17 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
   std::string cwd = resolve_cwd(args.value("workdir", ""));
   int timeout = args.value("timeout", 120000);
 
-  int exit_code = 0;
-  std::string output = run_shell(command, cwd, timeout, exit_code);
-
   std::optional<int> max_chars, max_lines;
   if (args.contains("max_output_chars")) max_chars = args["max_output_chars"].get<int>();
   if (args.contains("max_output_lines")) max_lines = args["max_output_lines"].get<int>();
 
-  std::string bounded = apply_output_budget(output, max_chars, max_lines);
+  int exit_code = 0;
+  auto output =
+      run_shell(command, cwd, timeout, max_chars, max_lines, exit_code);
 
   JsonValue result;
   result["title"] = desc;
-  result["output"] = bounded;
+  result["output"] = output;
   result["metadata"]["exit"] = exit_code;
   result["metadata"]["description"] = desc;
   result["metadata"]["backgrounded"] = false;
