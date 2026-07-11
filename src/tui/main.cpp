@@ -337,11 +337,7 @@ int main() {
                 model_query = "";
                 return true;
             }
-            if (e == Event::Escape) {
-                show_model_select = false;
-                model_query = "";
-                return true;
-            }
+
             if (e == Event::Backspace || e == Event::Special("\x7f")) {
                 if (!model_query.empty()) {
                     model_query.pop_back();
@@ -392,11 +388,7 @@ int main() {
                 session_query = "";
                 return true;
             }
-            if (e == Event::Escape) {
-                show_session_select = false;
-                session_query = "";
-                return true;
-            }
+
             if (e == Event::Special(std::string(1, '\x04'))) { // Ctrl-D
                 if (!filtered_session_entries.empty()) {
                     std::string sid = filtered_session_entries[session_select_idx].id;
@@ -463,11 +455,7 @@ int main() {
                 theme_query = "";
                 return true;
             }
-            if (e == Event::Escape) {
-                show_theme_select = false;
-                theme_query = "";
-                return true;
-            }
+
             if (e == Event::Backspace || e == Event::Special("\x7f")) {
                 if (!theme_query.empty()) {
                     theme_query.pop_back();
@@ -587,7 +575,7 @@ int main() {
                         state.slash_suggestion_idx = (state.slash_suggestion_idx + 1) % (max_idx + 1);
                         return true;
                     }
-                    if (e == Event::Escape) { state.slash_suggestion_mode = false; state.slash_suggestion_idx = 0; return true; }
+
                     if (e == Event::Backspace && prompt_input.size() <= 1) { state.slash_suggestion_mode = false; state.slash_suggestion_idx = 0; }
                 }
             }
@@ -639,6 +627,22 @@ int main() {
             }
             screen.Post(Event::Custom);
             return true;
+        }
+        // ── Global Escape: close popups, dismiss suggestions, clear input ──
+        if (e == Event::Escape) {
+            if (show_model_select) { show_model_select = false; model_query = ""; return true; }
+            if (show_session_select) { show_session_select = false; session_query = ""; return true; }
+            if (show_theme_select) { show_theme_select = false; theme_query = ""; return true; }
+            if (state.slash_suggestion_mode) {
+                state.slash_suggestion_mode = false;
+                state.slash_suggestion_idx = 0;
+                return true;
+            }
+            if (!prompt_input.empty()) {
+                prompt_input.clear();
+                return true;
+            }
+            // Nothing to dismiss — fall through
         }
         // ── Tool block keyboard navigation ──
         // ArrowUp/ArrowDown (or k/j) move focus between tool blocks.

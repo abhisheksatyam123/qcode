@@ -35,7 +35,7 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
 //    │   [+15 more lines]
 //
 //  ▸ Bash · Check project structure · 142ms        ✓ success
-//  ▸ │ [collapsed - press 'c' to expand]
+//  ▸ │ …
 
 Element ToolBlock(const std::string& icon,
                    const std::string& title,
@@ -113,7 +113,7 @@ Element ToolBlock(const std::string& icon,
 
     // Collapsed hint
     if (collapsed && collapsible) {
-        header_parts.push_back(text(" [collapsed - press 'c' to expand]") | dim | color(Color::GrayDark));
+        header_parts.push_back(text(" …") | dim | color(Color::GrayDark));
     }
 
     // ── Build the block with accent-colored left border ──
@@ -508,7 +508,7 @@ Element render_message(const ai::Message& msg, const ChatState& state,
                 const auto* result_part = result_it->second;
                 
                 // Check collapse state
-                bool collapsed = false;
+                bool collapsed = true;  // collapsed by default
                 if (state.tool_collapse_state && state.tool_collapse_state->count(tool_part->id)) {
                     collapsed = (*state.tool_collapse_state)[tool_part->id];
                 }

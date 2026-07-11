@@ -661,6 +661,7 @@ ftxui::Element build_session_popup(
     const std::vector<db::SessionInfo>& entries,
     int select_idx,
     const std::string& active_session_id,
+    const std::string& query,
     const std::string& theme
 ) {
     Elements lines;
