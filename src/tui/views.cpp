@@ -154,15 +154,70 @@ ftxui::Element build_model_popup(
     int select_idx,
     int selected_provider,
     int selected_model,
+    const std::string& query,
     const std::string& theme
 );
 ftxui::Element build_session_popup(
     const std::vector<db::SessionInfo>& entries,
     int select_idx,
     const std::string& active_session_id,
+    const std::string& query,
+    const std::string& theme
+);
+ftxui::Element build_theme_popup(
+    const std::vector<ThemeEntry>& entries,
+    int select_idx,
+    const std::string& active_theme,
+    const std::string& query,
     const std::string& theme
 );
 
+
+
+
+// ── Theme selector popup ──
+ftxui::Element build_theme_popup(
+    const std::vector<ThemeEntry>& entries,
+    int select_idx,
+    const std::string& active_theme,
+    const std::string& query,
+    const std::string& theme
+) {
+    Elements lines;
+    lines.push_back(text(" Select Theme") | bold | color(accent2(theme)));
+    lines.push_back(separatorLight());
+
+    // Search bar
+    lines.push_back(hbox({
+        text(" Find: ") | bold | color(accent(theme)),
+        text(query) | color(Color::White)
+    }));
+    lines.push_back(separatorLight());
+
+    if (entries.empty()) {
+        lines.push_back(text("  (no matches)") | dim);
+    } else {
+        for (int i = 0; i < static_cast<int>(entries.size()); i++) {
+            const auto& e = entries[i];
+            bool active = (e.name == active_theme);
+            std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
+            std::string line_text = marker + e.name + " (" + e.description + ")";
+
+            auto line = text(line_text);
+            if (i == select_idx)
+                line = line | bgcolor(bg_popup()) | bold;
+            else if (active)
+                line = line | color(accent2(theme));
+            lines.push_back(line);
+        }
+    }
+
+    lines.push_back(separatorLight());
+    lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
+
+    return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
+           size(WIDTH, EQUAL, 72) | hcenter;
+}
 
 // ── Basic markdown rendering (code blocks, bold, inline code, lists) ──
 static std::vector<std::string> split_lines(const std::string& s) {
@@ -190,9 +245,15 @@ ftxui::Element render_view(
     bool show_model_select,
     int model_select_idx,
     const std::vector<ModelEntry>& model_entries,
+    const std::string& model_query,
     bool show_session_select,
     int session_select_idx,
     const std::vector<db::SessionInfo>& session_entries,
+    const std::string& session_query,
+    bool show_theme_select,
+    int theme_select_idx,
+    const std::vector<ThemeEntry>& theme_entries,
+    const std::string& theme_query,
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
     const std::shared_ptr<int>& scroll_line,
@@ -371,11 +432,15 @@ ftxui::Element render_view(
             chat_scroll->ComputeRequirement();
             {
                 const int content_height = std::max(0, chat_scroll->requirement().min_y);
-                if (state.auto_scroll) {
+                if (*state.auto_scroll) {
                     *state.scroll_line = std::max(0, content_height - 1);
                 } else {
                     *state.scroll_line =
                         std::clamp(*state.scroll_line, 0, std::max(0, content_height - 1));
+                    // Re-engage auto-scroll when user scrolls back to the bottom
+                    if (*state.scroll_line >= content_height - 1) {
+                        *state.auto_scroll = true;
+                    }
                 }
             }
             body = vbox({
@@ -435,11 +500,14 @@ ftxui::Element render_view(
             file_scroll->ComputeRequirement();
             {
                 const int content_height = std::max(0, file_scroll->requirement().min_y);
-                if (state.auto_scroll) {
+                if (*state.auto_scroll) {
                     *state.scroll_line = std::max(0, content_height - 1);
                 } else {
                     *state.scroll_line =
                         std::clamp(*state.scroll_line, 0, std::max(0, content_height - 1));
+                    if (*state.scroll_line >= content_height - 1) {
+                        *state.auto_scroll = true;
+                    }
                 }
             }
             body = vbox({
@@ -515,13 +583,19 @@ ftxui::Element render_view(
     if (show_model_select) {
         return dbox({
             main_layout,
-            clear_under(build_model_popup(model_entries, model_select_idx, selected_provider, selected_model, theme)) | center
+            clear_under(build_model_popup(model_entries, model_select_idx, selected_provider, selected_model, model_query, theme)) | center
         });
     }
     if (show_session_select) {
         return dbox({
             main_layout,
-            clear_under(build_session_popup(session_entries, session_select_idx, *state.session_id, theme)) | center
+            clear_under(build_session_popup(session_entries, session_select_idx, *state.session_id, session_query, theme)) | center
+        });
+    }
+    if (show_theme_select) {
+        return dbox({
+            main_layout,
+            clear_under(build_theme_popup(theme_entries, theme_select_idx, *state.theme, theme_query, theme)) | center
         });
     }
 
@@ -534,33 +608,45 @@ ftxui::Element build_model_popup(
     int select_idx,
     int selected_provider,
     int selected_model,
+    const std::string& query,
     const std::string& theme
 ) {
     Elements lines;
     lines.push_back(text(" Select Model") | bold | color(accent2(theme)));
     lines.push_back(separatorLight());
 
-    std::string last_cat;
-    for (int i = 0; i < static_cast<int>(entries.size()); i++) {
-        auto& e = entries[i];
-        if (e.category != last_cat) {
-            if (!last_cat.empty()) lines.push_back(text(""));
-            lines.push_back(text(" " + e.category) | bold | color(accent2(theme)));
-            last_cat = e.category;
+    // Search bar
+    lines.push_back(hbox({
+        text(" Find: ") | bold | color(accent(theme)),
+        text(query) | color(Color::White)
+    }));
+    lines.push_back(separatorLight());
+
+    if (entries.empty()) {
+        lines.push_back(text("  (no matches)") | dim);
+    } else {
+        std::string last_cat;
+        for (int i = 0; i < static_cast<int>(entries.size()); i++) {
+            auto& e = entries[i];
+            if (e.category != last_cat) {
+                if (!last_cat.empty()) lines.push_back(text(""));
+                lines.push_back(text(" " + e.category) | bold | color(accent2(theme)));
+                last_cat = e.category;
+            }
+
+            bool active = (e.provider_idx == selected_provider && e.model_idx == selected_model);
+            std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
+            std::string line_text = marker + e.model_name;
+            if (e.model_id != e.model_name)
+                line_text += "  " + e.model_id;
+
+            auto line = text(line_text);
+            if (i == select_idx)
+                line = line | bgcolor(bg_popup()) | bold;
+            else if (active)
+                line = line | color(accent2(theme));
+            lines.push_back(line);
         }
-
-        bool active = (e.provider_idx == selected_provider && e.model_idx == selected_model);
-        std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
-        std::string line_text = marker + e.model_name;
-        if (e.model_id != e.model_name)
-            line_text += "  " + e.model_id;
-
-        auto line = text(line_text);
-        if (i == select_idx)
-            line = line | bgcolor(bg_popup()) | bold;
-        else if (active)
-            line = line | color(accent2(theme));
-        lines.push_back(line);
     }
 
     lines.push_back(separatorLight());

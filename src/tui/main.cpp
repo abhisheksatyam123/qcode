@@ -33,6 +33,18 @@
 using namespace ftxui;
 using namespace ai::tui::contract;
 
+static bool matches_query(const std::string& target, const std::string& query) {
+    if (query.empty()) return true;
+    auto it = std::search(
+        target.begin(), target.end(),
+        query.begin(), query.end(),
+        [](unsigned char ch1, unsigned char ch2) {
+            return std::tolower(ch1) == std::tolower(ch2);
+        }
+    );
+    return it != target.end();
+}
+
 int main() {
     ai::install_file_logger("/tmp/qcode.log", ai::logger::LogLevel::kLogLevelDebug);
     ai::logger::set_thread_name("main");
@@ -100,11 +112,24 @@ int main() {
     // ── Popups state ──
     bool show_model_select = false;
     int model_select_idx = 0;
+    std::string model_query = "";
     auto model_entries = ai::tui::build_model_entries(providers_list);
 
     bool show_session_select = false;
     int session_select_idx = 0;
+    std::string session_query = "";
     std::vector<ai::tui::db::SessionInfo> session_entries;
+
+    bool show_theme_select = false;
+    int theme_select_idx = 0;
+    std::string theme_query = "";
+    std::vector<ai::tui::ThemeEntry> theme_entries = {
+        {"orange", "Classic Orange"},
+        {"green", "Forest Green"},
+        {"blue", "Deep Blue"},
+        {"purple", "Cyberpunk Purple"},
+        {"monochrome", "Monochrome"}
+    };
 
     bool show_slash = false;
     int slash_idx = 0;
@@ -138,7 +163,7 @@ int main() {
     std::function<void(const std::string&)> spawn_generation;
     spawn_generation = [&](const std::string& p) {
         store.set_generating(true);
-        state.auto_scroll = true;
+        *state.auto_scroll = true;
         store.append_chat_message("User", p);
         ai::tui::db::save_message(store.session_id(), "User", p);
         LOG_INFO("Main: spawn_generation prompt_len={} queue_remaining={} provider={} model={}",
@@ -231,6 +256,7 @@ int main() {
                 if (!session_entries.empty()) {
                     show_session_select = true;
                     session_select_idx = 0;
+                    session_query = "";
                     for (int i = 0; i < static_cast<int>(session_entries.size()); i++) {
                         if (session_entries[i].id == store.session_id()) {
                             session_select_idx = i;
@@ -239,6 +265,21 @@ int main() {
                     }
                 } else {
                     store.append_chat_message("System", "No saved sessions found.");
+                }
+                return;
+            }
+
+            if (cmd == "theme" || cmd == "themes") {
+                prompt_input = "";
+                show_theme_select = true;
+                theme_select_idx = 0;
+                theme_query = "";
+                std::string cur = state.theme ? *state.theme : "orange";
+                for (int i = 0; i < static_cast<int>(theme_entries.size()); i++) {
+                    if (theme_entries[i].name == cur) {
+                        theme_select_idx = i;
+                        break;
+                    }
                 }
                 return;
             }
@@ -264,42 +305,179 @@ int main() {
     input |= CatchEvent([&](Event e) {
         // ── Model select popup ──
         if (show_model_select) {
-            if (e == Event::ArrowDown || e == Event::Character('j')) { model_select_idx = std::min(model_select_idx + 1, (int)model_entries.size() - 1); return true; }
-            if (e == Event::ArrowUp || e == Event::Character('k')) { model_select_idx = std::max(model_select_idx - 1, 0); return true; }
-            if (e == Event::Return) {
-                auto& entry = model_entries[model_select_idx];
-                selected_provider = entry.provider_idx;
-                selected_model = entry.model_idx;
-                system_prompt = ai::tui::SystemPrompt::build_default(tool_cfg);
-                show_model_select = false;
+            std::vector<ai::tui::ModelEntry> filtered_model_entries;
+            for (const auto& entry : model_entries) {
+                if (matches_query(entry.model_name, model_query) ||
+                    matches_query(entry.model_id, model_query) ||
+                    matches_query(entry.category, model_query)) {
+                    filtered_model_entries.push_back(entry);
+                }
+            }
+
+            if (e == Event::ArrowDown) {
+                if (!filtered_model_entries.empty()) {
+                    model_select_idx = std::min(model_select_idx + 1, (int)filtered_model_entries.size() - 1);
+                }
                 return true;
             }
-            if (e == Event::Escape) { show_model_select = false; return true; }
+            if (e == Event::ArrowUp) {
+                if (!filtered_model_entries.empty()) {
+                    model_select_idx = std::max(model_select_idx - 1, 0);
+                }
+                return true;
+            }
+            if (e == Event::Return) {
+                if (!filtered_model_entries.empty()) {
+                    auto& entry = filtered_model_entries[model_select_idx];
+                    selected_provider = entry.provider_idx;
+                    selected_model = entry.model_idx;
+                    system_prompt = ai::tui::SystemPrompt::build_default(tool_cfg);
+                }
+                show_model_select = false;
+                model_query = "";
+                return true;
+            }
+            if (e == Event::Escape) {
+                show_model_select = false;
+                model_query = "";
+                return true;
+            }
+            if (e == Event::Backspace || e == Event::Special("\x7f")) {
+                if (!model_query.empty()) {
+                    model_query.pop_back();
+                    model_select_idx = 0;
+                }
+                return true;
+            }
+            if (e.is_character()) {
+                model_query += e.character();
+                model_select_idx = 0;
+                return true;
+            }
             return true;
         }
 
         // ── Session select popup ──
         if (show_session_select) {
-            if (e == Event::ArrowDown || e == Event::Character('j')) { session_select_idx = std::min(session_select_idx + 1, (int)session_entries.size() - 1); return true; }
-            if (e == Event::ArrowUp || e == Event::Character('k')) { session_select_idx = std::max(session_select_idx - 1, 0); return true; }
-            if (e == Event::Return) {
-                std::string sid = session_entries[session_select_idx].id;
-                store.set_session_id(sid);
-                state.chat_history->clear();
-                state.messages_history->clear();
-                ai::tui::db::reload_session_history(sid, state);
-                show_session_select = false;
+            std::vector<ai::tui::db::SessionInfo> filtered_session_entries;
+            for (const auto& entry : session_entries) {
+                if (matches_query(entry.title, session_query) ||
+                    matches_query(entry.id, session_query) ||
+                    matches_query(entry.workspace, session_query)) {
+                    filtered_session_entries.push_back(entry);
+                }
+            }
+
+            if (e == Event::ArrowDown) {
+                if (!filtered_session_entries.empty()) {
+                    session_select_idx = std::min(session_select_idx + 1, (int)filtered_session_entries.size() - 1);
+                }
                 return true;
             }
-            if (e == Event::Escape) { show_session_select = false; return true; }
-            if (e == Event::Character('d') || e == Event::Special("\x7f")) {
-                // Delete session
-                if (!session_entries.empty()) {
-                    std::string sid = session_entries[session_select_idx].id;
+            if (e == Event::ArrowUp) {
+                if (!filtered_session_entries.empty()) {
+                    session_select_idx = std::max(session_select_idx - 1, 0);
+                }
+                return true;
+            }
+            if (e == Event::Return) {
+                if (!filtered_session_entries.empty()) {
+                    std::string sid = filtered_session_entries[session_select_idx].id;
+                    store.set_session_id(sid);
+                    state.chat_history->clear();
+                    state.messages_history->clear();
+                    ai::tui::db::reload_session_history(sid, state);
+                }
+                show_session_select = false;
+                session_query = "";
+                return true;
+            }
+            if (e == Event::Escape) {
+                show_session_select = false;
+                session_query = "";
+                return true;
+            }
+            if (e == Event::Special(std::string(1, '\x04'))) { // Ctrl-D
+                if (!filtered_session_entries.empty()) {
+                    std::string sid = filtered_session_entries[session_select_idx].id;
                     ai::tui::db::delete_session(sid);
                     session_entries = ai::tui::db::list_sessions_full();
-                    session_select_idx = std::min(session_select_idx, (int)session_entries.size() - 1);
+                    filtered_session_entries.clear();
+                    for (const auto& entry : session_entries) {
+                        if (matches_query(entry.title, session_query) ||
+                            matches_query(entry.id, session_query) ||
+                            matches_query(entry.workspace, session_query)) {
+                            filtered_session_entries.push_back(entry);
+                        }
+                    }
+                    session_select_idx = std::max(0, std::min(session_select_idx, (int)filtered_session_entries.size() - 1));
                 }
+                return true;
+            }
+            if (e == Event::Backspace || e == Event::Special("\x7f")) {
+                if (!session_query.empty()) {
+                    session_query.pop_back();
+                    session_select_idx = 0;
+                }
+                return true;
+            }
+            if (e.is_character()) {
+                session_query += e.character();
+                session_select_idx = 0;
+                return true;
+            }
+            return true;
+        }
+
+        // ── Theme select popup ──
+        if (show_theme_select) {
+            std::vector<ai::tui::ThemeEntry> filtered_theme_entries;
+            for (const auto& entry : theme_entries) {
+                if (matches_query(entry.name, theme_query) ||
+                    matches_query(entry.description, theme_query)) {
+                    filtered_theme_entries.push_back(entry);
+                }
+            }
+
+            if (e == Event::ArrowDown) {
+                if (!filtered_theme_entries.empty()) {
+                    theme_select_idx = std::min(theme_select_idx + 1, (int)filtered_theme_entries.size() - 1);
+                }
+                return true;
+            }
+            if (e == Event::ArrowUp) {
+                if (!filtered_theme_entries.empty()) {
+                    theme_select_idx = std::max(theme_select_idx - 1, 0);
+                }
+                return true;
+            }
+            if (e == Event::Return) {
+                if (!filtered_theme_entries.empty()) {
+                    std::string new_theme = filtered_theme_entries[theme_select_idx].name;
+                    if (state.theme) {
+                        *state.theme = new_theme;
+                    }
+                    store.append_chat_message("System", "Theme changed to: " + new_theme);
+                }
+                show_theme_select = false;
+                theme_query = "";
+                return true;
+            }
+            if (e == Event::Escape) {
+                show_theme_select = false;
+                theme_query = "";
+                return true;
+            }
+            if (e == Event::Backspace || e == Event::Special("\x7f")) {
+                if (!theme_query.empty()) {
+                    theme_query.pop_back();
+                    theme_select_idx = 0;
+                }
+                return true;
+            }
+            if (e.is_character()) {
+                theme_query += e.character();
+                theme_select_idx = 0;
                 return true;
             }
             return true;
@@ -351,6 +529,7 @@ int main() {
                             if (!session_entries.empty()) {
                                 show_session_select = true;
                                 session_select_idx = 0;
+                                session_query = "";
                                 for (int i = 0; i < static_cast<int>(session_entries.size()); i++) {
                                     if (session_entries[i].id == store.session_id()) {
                                         session_select_idx = i;
@@ -363,10 +542,22 @@ int main() {
                         } else if (cmd_name == "model") {
                             show_model_select = true;
                             model_select_idx = 0;
+                            model_query = "";
                             for (int i = 0; i < static_cast<int>(model_entries.size()); i++) {
                                 if (model_entries[i].provider_idx == selected_provider &&
                                     model_entries[i].model_idx == selected_model) {
                                     model_select_idx = i;
+                                    break;
+                                }
+                            }
+                        } else if (cmd_name == "theme") {
+                            show_theme_select = true;
+                            theme_select_idx = 0;
+                            theme_query = "";
+                            std::string cur = state.theme ? *state.theme : "orange";
+                            for (int i = 0; i < static_cast<int>(theme_entries.size()); i++) {
+                                if (theme_entries[i].name == cur) {
+                                    theme_select_idx = i;
                                     break;
                                 }
                             }
@@ -466,9 +657,8 @@ int main() {
             if (navigate_tool(1)) return true;
         }
 
-        // Toggle collapse/expand for tool blocks ('c' or Enter on focused block)
-        if (e == Event::Character('c') || e == Event::Return) {
-            // If a specific tool block is focused, toggle just that one.
+        // Enter toggles a focused tool block — otherwise let it reach the input
+        if (e == Event::Return) {
             if (state.tool_block_order && *state.focused_tool_index >= 0 &&
                 *state.focused_tool_index < static_cast<int>(state.tool_block_order->size())) {
                 const std::string& id = (*state.tool_block_order)[*state.focused_tool_index];
@@ -480,18 +670,7 @@ int main() {
                 (*state.tool_collapse_state)[id] = !cur;
                 return true;
             }
-            // Otherwise toggle all: if any are collapsed, expand all; else collapse all
-            if (state.tool_collapse_state && !state.tool_collapse_state->empty()) {
-                bool any_collapsed = false;
-                for (const auto& [id, collapsed] : *state.tool_collapse_state) {
-                    if (collapsed) { any_collapsed = true; break; }
-                }
-                bool new_state = any_collapsed ? false : true;  // opposite of current
-                for (auto& [id, collapsed] : *state.tool_collapse_state) {
-                    collapsed = new_state;
-                }
-            }
-            return true;
+            // No tool block focused — fall through so input's CatchEvent can submit
         }
         if (e == Event::Tab) {
             if (state.tab_selected == 1) {
@@ -505,12 +684,12 @@ int main() {
         }
         constexpr int kLinesPerWheel = 3;
         constexpr int kLinesPerPage = 20;
-        if (e == Event::PageUp) { state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerPage); return true; }
+        if (e == Event::PageUp) { *state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerPage); return true; }
         if (e == Event::PageDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerPage); return true; }
-        if (e == Event::End) { state.auto_scroll = true; *state.scroll_line = INT_MAX; return true; }
-        if (e == Event::Home) { state.auto_scroll = false; *state.scroll_line = 0; return true; }
+        if (e == Event::End) { *state.auto_scroll = true; *state.scroll_line = INT_MAX; return true; }
+        if (e == Event::Home) { *state.auto_scroll = false; *state.scroll_line = 0; return true; }
         if (e.is_mouse()) {
-            if (e.mouse().button == Mouse::WheelUp) { state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
+            if (e.mouse().button == Mouse::WheelUp) { *state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
             if (e.mouse().button == Mouse::WheelDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerWheel); return true; }
         }
         if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
@@ -540,12 +719,42 @@ int main() {
         
         // Status rendered inline in header strip
         
+        // ── Filter models dynamically for display ──
+        std::vector<ai::tui::ModelEntry> filtered_model_entries;
+        for (const auto& e : model_entries) {
+            if (matches_query(e.model_name, model_query) ||
+                matches_query(e.model_id, model_query) ||
+                matches_query(e.category, model_query)) {
+                filtered_model_entries.push_back(e);
+            }
+        }
+
+        // ── Filter sessions dynamically for display ──
+        std::vector<ai::tui::db::SessionInfo> filtered_session_entries;
+        for (const auto& e : session_entries) {
+            if (matches_query(e.title, session_query) ||
+                matches_query(e.id, session_query) ||
+                matches_query(e.workspace, session_query)) {
+                filtered_session_entries.push_back(e);
+            }
+        }
+
+        // ── Filter themes dynamically for display ──
+        std::vector<ai::tui::ThemeEntry> filtered_theme_entries;
+        for (const auto& e : theme_entries) {
+            if (matches_query(e.name, theme_query) ||
+                matches_query(e.description, theme_query)) {
+                filtered_theme_entries.push_back(e);
+            }
+        }
+
         auto main_view = ai::tui::render_view(
             state, providers_list, selected_provider, selected_model,
             enable_tools, prompt_input,
             show_slash, slash_idx, slash_commands,
-            show_model_select, model_select_idx, model_entries,
-            show_session_select, session_select_idx, session_entries,
+            show_model_select, model_select_idx, filtered_model_entries, model_query,
+            show_session_select, session_select_idx, filtered_session_entries, session_query,
+            show_theme_select, theme_select_idx, filtered_theme_entries, theme_query,
             tab_toggle, files_menu, state.scroll_line, input);
         
         // Everything is in the header strip now — no separate footer

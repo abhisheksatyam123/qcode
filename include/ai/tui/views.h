@@ -35,6 +35,11 @@ inline ftxui::Color bg_popup()   { return ftxui::Color::RGB(0x22, 0x22, 0x22); }
 
 ftxui::Element render_logo();
 
+struct ThemeEntry {
+    std::string name;
+    std::string description;
+};
+
 ftxui::Element render_view(
     const ChatState& state,
     const std::vector<ProviderInfo>& providers_list,
@@ -48,9 +53,15 @@ ftxui::Element render_view(
     bool show_model_select,
     int model_select_idx,
     const std::vector<ModelEntry>& model_entries,
+    const std::string& model_query,
     bool show_session_select,
     int session_select_idx,
     const std::vector<db::SessionInfo>& session_entries,
+    const std::string& session_query,
+    bool show_theme_select,
+    int theme_select_idx,
+    const std::vector<ThemeEntry>& theme_entries,
+    const std::string& theme_query,
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
     const std::shared_ptr<int>& scroll_line,
