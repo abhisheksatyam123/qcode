@@ -193,20 +193,22 @@ int main() {
             };
 
             // ── Context window management ──
-            // Prune old tool results if we're approaching the model's limit.
+            // Build a (possibly pruned) copy of messages to fit the model's context.
+            ai::Messages gen_messages = *state_ptr->messages_history;
             size_t ctx_window = providers_copy[sel_prov].models[sel_mod].context_window;
             if (ctx_window > 0) {
                 size_t sys_tok = ai::tui::estimate_system_tokens(sys_prompt);
-                size_t msg_tok = ai::tui::estimate_tokens(*state_ptr->messages_history);
+                size_t msg_tok = ai::tui::estimate_tokens(gen_messages);
                 size_t total = sys_tok + msg_tok;
                 size_t budget = (ctx_window * 4) / 5;  // 80%
                 if (total > budget) {
                     LOG_WARN("Context approaching limit: estimated {} tokens / {} (80%={})",
                              total, ctx_window, budget);
-                    size_t pruned = ai::tui::prune_context(*state_ptr->messages_history, ctx_window);
-                    if (pruned > 0) {
-                        store.add_toast("Pruned " + std::to_string(pruned) +
-                            " old tool results to fit context window", "warning", 4000);
+                    gen_messages = ai::tui::prune_context(gen_messages, ctx_window);
+                    size_t after = sys_tok + ai::tui::estimate_tokens(gen_messages);
+                    if (after < total) {
+                        store.add_toast("Context pruned: " + std::to_string(total) +
+                            " → " + std::to_string(after) + " tokens", "warning", 4000);
                     }
                 }
             }
@@ -214,7 +216,7 @@ int main() {
             backend.run_generation(
                 providers_copy[sel_prov].id,
                 providers_copy[sel_prov].models[sel_mod].id,
-                sys_prompt, *state_ptr->messages_history, tools_enabled,
+                sys_prompt, gen_messages, tools_enabled,
                 ctx);
             // Sync counters back to ChatState for stats tab
             *state_ptr->tool_call_count = ctx.tool_call_count;
