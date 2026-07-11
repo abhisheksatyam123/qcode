@@ -1,3 +1,4 @@
+#include <ai/tui/db.h>
 #pragma once
 #include <ai/tui/markdown.h>  // render_markdown
 #include <ftxui/component/component.hpp>
@@ -49,7 +50,7 @@ ftxui::Element render_view(
     const std::vector<ModelEntry>& model_entries,
     bool show_session_select,
     int session_select_idx,
-    const std::vector<std::pair<std::string, std::string>>& session_entries,
+    const std::vector<db::SessionInfo>& session_entries,
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
     const std::shared_ptr<int>& scroll_line,

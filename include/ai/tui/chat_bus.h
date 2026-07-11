@@ -24,6 +24,7 @@ struct ProviderInfo;
 struct GenerationContext {
     std::string session_id;
     std::string reasoning_mode = "off";
+    std::string workspace;
 
     // Tool observability counters (updated by backend during generation)
     int tool_call_count = 0;

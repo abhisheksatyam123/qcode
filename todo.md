@@ -1,53 +1,69 @@
-# QCode UI Improvement — OpenCode-style TUI
+# QCode — Terminal Access + Workspace-per-Session
+
+## Goal
+1. Workspace (cwd) tracked per session in DB ✅
+2. Terminal access in Web UI (HTTP streaming) ✅
+3. New-session UI with workspace directory picker ✅
+4. Status bar showing session + workspace ✅
+5. Resumable sessions: full history persisted (User+Assistant) & reloaded on resume ✅
+6. Server self-bootstraps SQLite schema (init_database) — no TUI dependency ✅
+7. Markdown: unordered/ordered lists, blockquote, hr, inline ✅
+8. Auto-restore last session (+history) on page load ✅
 
 ## Systems
 
-### Architecture (Current)
-- **TUI**: Bus → Store → FTXUI render (OpenCode-style tool rendering)
-- **Server**: qcode-server with HTTP/NDJSON API + built-in Web UI
-- **CLI**: qcode-cli for scripting
-- Shared backend: `chat_bus.cpp`, `GenerationContext`, `BackendService`
+### Build
+- Toolchain: `/home/abhi/envs/toolchain/bin/{cmake,ninja,g++}`
+- `export PATH="/home/abhi/envs/toolchain/bin:$PATH" && cd build && ninja -j$(nproc)`
+- **BUILD: OK**
 
-### GenerationContext
-```
-struct GenerationContext {
-    std::string session_id;
-    std::string reasoning_mode = "off";
-    int tool_call_count = 0;
-    double total_tool_time_ms = 0.0;
-};
-```
+### Changed Files (13 files, +1526 / -426 lines)
 
-### How to Build & Run
-```
-# Build everything
-cd build && cmake .. -DQCODE_BUILD_SERVER=ON && make -j$(nproc)
+| File | Change |
+|------|--------|
+| `include/ai/tui/db.h` | workspace param, `SessionInfo` struct, `list_sessions_full()`, `get_session_workspace()` |
+| `include/ai/tui/chat_bus.h` | `workspace` field in `GenerationContext` |
+| `include/ai/tui/views.h` | `db::SessionInfo` type for render_view |
+| `src/tui/db.cpp` | Schema v2 migration (workspace column), workspace in create/list queries |
+| `src/tui/commands.cpp` | `/new [workspace]` accepts optional workspace |
+| `src/tui/views.cpp` | Session popup shows workspace `[path]` |
+| `src/tui/main.cpp` | Uses `list_sessions_full()`, `SessionInfo` type |
+| `src/server/server_main.cpp` | PTY manager, terminal CRUD endpoints, POST /sessions, GET /session/:id, workspace in /generate |
+| `src/server/webui/index.html` | Terminal panel, status bar, new session btn, xterm.js CDN |
+| `src/server/webui/app.js` | Terminal (xterm + HTTP polling), new session modal, status bar, session picker w/ workspace |
+| `src/server/webui/style.css` | Status bar, terminal panel, sidebar actions, modal styles |
 
-# TUI
-./src/tui/qcode-tui
+### API Endpoints (new/updated)
+- `POST /sessions` — create session `{provider, model, workspace}`
+- `GET /sessions` — includes workspace field
+- `GET /session/<id>` — session info with workspace
+- `GET /session/<id>/messages` — full message history `[{role,content}]`
+- `GET /session/last` — last active session + its history (client auto-restore)
+- `POST /terminal/create` — create PTY `{workspace}`
+- `POST /terminal/<id>/input` — send keystrokes `{data}`
+- `GET /terminal/<id>/stream` — read terminal output
+- `DELETE /terminal/<id>` — kill PTY
 
-# Server + Web UI (open http://localhost:9080)
-./src/server/qcode-server --port 9080
+### Web UI Features
+- **Status bar**: session title + workspace path below QCode header
+- **"+ New Session" button**: modal with title + workspace path inputs
+- **"Terminal" button**: toggles terminal panel (xterm.js, HTTP polling to PTY)
+- **Session picker**: shows workspace path alongside session title
+- **/new** slash command opens new session modal
+- **/rename** opens rename dialog (shows current title)
+- **Session resume**: loading a session via picker or `/session` restores its full chat history
+- **Auto-restore**: page reload re-opens the last active session with its history
+- **Markdown**: proper bullet/numbered lists, blockquotes, horizontal rules, inline code
 
-# CLI
-./src/server/qcode-cli --prompt "Hello" --verbose
-```
+### Fixes (this pass)
+- **Server now calls `db::init_database()` at startup** so sessions/messages tables always exist
+  (previously relied on the TUI having created the schema first; fresh DB → all session I/O silently failed).
+- **Multi-turn was broken after the first reply**: `generation_started` was never reset, so the 2nd+
+  `/generate` on an in-memory session never started a new generation thread. Now reset per request.
+- **History reload on resume**: when `/generate` targets a session that exists in DB but not in memory
+  (server restart / switched client), prior User+Assistant turns are loaded so the model keeps context.
+- **Assistant replies now persisted** to DB on `generation.complete` (only `User` was saved before).
 
-## Tasks
-
-### Phase 1 & 1b: Tool Rendering ✅
-- Tool blocks, per-tool renderers, collapse/expand, 'c' toggle
-
-### Phase 2: Backend Decoupling ✅
-- GenerationContext, db::save_message in store handlers, BackendService
-
-### Phase 3: Multi-Frontend ✅
-- HTTP server (POST /generate, GET /health, /providers)
-- Web UI (chat, markdown, multi-turn sessions, tool blocks)
-- CLI client (--prompt, --session, --verbose)
-
-### Phase 3 Enhancements ✅
-- Real-time NDJSON streaming (background thread)
-- Multi-turn sessions (session_id persistence)
-- Markdown rendering in Web UI
-- TUI per-block keyboard nav (Up/Down to focus, c/Enter to toggle)
+### TUI Features
+- `/new /path/to/workspace` — creates session with workspace
+- Session popup shows `[workspace]` next to session titles

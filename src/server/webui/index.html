@@ -5,13 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>QCode Chat</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 </head>
 <body>
 <div id="app">
   <aside id="sidebar">
     <div class="sidebar-header">
       <h1>QCode</h1>
-      <div class="version">v0.1</div>
+      <div class="version">v0.2</div>
+    </div>
+    <div class="status-bar" id="status-bar">
+      <div class="status-session" id="status-session">No session</div>
+      <div class="status-workspace" id="status-workspace"></div>
     </div>
     <div class="sidebar-controls">
       <label>Provider</label>
@@ -26,20 +31,35 @@
         <option value="high">High</option>
       </select>
     </div>
+    <div class="sidebar-actions">
+      <button id="new-session-btn" class="sidebar-btn">+ New Session</button>
+      <button id="toggle-terminal-btn" class="sidebar-btn">Terminal</button>
+    </div>
     <div class="sidebar-footer">
       <button id="clear-btn">Clear Chat</button>
     </div>
   </aside>
-  <main id="main">
-    <div id="chat-container">
-      <div id="messages"></div>
+  <div id="main-area">
+    <main id="main">
+      <div id="chat-container">
+        <div id="messages"></div>
+      </div>
+      <div id="input-area">
+        <textarea id="prompt-input" placeholder="Type your message..." rows="3"></textarea>
+        <button id="send-btn">Send</button>
+      </div>
+    </main>
+    <div id="terminal-panel" class="hidden">
+      <div class="terminal-header">
+        <span>Terminal</span>
+        <button id="terminal-close-btn" class="terminal-x">&times;</button>
+      </div>
+      <div id="terminal-container"></div>
     </div>
-    <div id="input-area">
-      <textarea id="prompt-input" placeholder="Type your message..." rows="3"></textarea>
-      <button id="send-btn">Send</button>
-    </div>
-  </main>
+  </div>
+  <div id="modal-overlay"></div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -157,7 +157,7 @@ ftxui::Element build_model_popup(
     const std::string& theme
 );
 ftxui::Element build_session_popup(
-    const std::vector<std::pair<std::string, std::string>>& entries,
+    const std::vector<db::SessionInfo>& entries,
     int select_idx,
     const std::string& active_session_id,
     const std::string& theme
@@ -192,7 +192,7 @@ ftxui::Element render_view(
     const std::vector<ModelEntry>& model_entries,
     bool show_session_select,
     int session_select_idx,
-    const std::vector<std::pair<std::string, std::string>>& session_entries,
+    const std::vector<db::SessionInfo>& session_entries,
     const ftxui::Component& tab_toggle,
     const ftxui::Component& files_menu,
     const std::shared_ptr<int>& scroll_line,
@@ -572,7 +572,7 @@ ftxui::Element build_model_popup(
 
 // ── Session selector popup ──
 ftxui::Element build_session_popup(
-    const std::vector<std::pair<std::string, std::string>>& entries,
+    const std::vector<db::SessionInfo>& entries,
     int select_idx,
     const std::string& active_session_id,
     const std::string& theme
@@ -582,12 +582,14 @@ ftxui::Element build_session_popup(
     lines.push_back(separatorLight());
 
     for (int i = 0; i < static_cast<int>(entries.size()); i++) {
-        auto& e = entries[i];
-        bool active = (e.first == active_session_id);
+        const auto& e = entries[i];
+        bool active = (e.id == active_session_id);
         std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
-        std::string line_text = marker + e.second;
-        if (e.first != e.second)
-            line_text += "  (" + e.first.substr(0, 8) + "...)";
+        std::string line_text = marker + e.title;
+        if (e.id != e.title)
+            line_text += "  (" + e.id.substr(0, 8) + "...)";
+        if (!e.workspace.empty())
+            line_text += "  [" + e.workspace + "]";
 
         auto line = text(line_text);
         if (i == select_idx)

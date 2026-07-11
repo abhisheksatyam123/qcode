@@ -76,7 +76,7 @@ void init_database() {
             sqlite3_finalize(vstmt);
         }
     }
-    const int kSchemaVersion = 1;
+    const int kSchemaVersion = 2;
     if (user_version < kSchemaVersion) {
         char* err_msg = nullptr;
         if (sqlite3_exec(db, "BEGIN;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
@@ -90,7 +90,8 @@ void init_database() {
             "  title TEXT,"
             "  provider TEXT,"
             "  model TEXT,"
-            "  created_at INTEGER"
+            "  created_at INTEGER,"
+            "  workspace TEXT DEFAULT ''"
             ");";
         if (sqlite3_exec(db, schema_sessions, nullptr, nullptr, &err_msg) != SQLITE_OK) {
             LOG_ERROR("SQLite: create sessions table error: {}", err_msg ? err_msg : "unknown");
@@ -121,11 +122,21 @@ void init_database() {
         }
     }
 
+    // ── Migration v1 → v2: add workspace column ──
+    if (user_version < 2) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN workspace TEXT DEFAULT '';",
+                     nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 2;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    }
+
     LOG_INFO("SQLite: database opened successfully at {}", path);
     sqlite3_close(db);
 }
 
-std::string create_new_session(const std::string& provider, const std::string& model) {
+std::string create_new_session(const std::string& provider, const std::string& model,
+                               const std::string& workspace) {
     std::string path;
     sqlite3* db = open_database(path);
     if (!db) {
@@ -139,7 +150,7 @@ std::string create_new_session(const std::string& provider, const std::string& m
     // Default title is "Session - <model_name>"
     std::string title = "Session - " + model;
 
-    const char* sql = "INSERT INTO sessions (id, title, provider, model, created_at) VALUES (?, ?, ?, ?, ?);";
+    const char* sql = "INSERT INTO sessions (id, title, provider, model, created_at, workspace) VALUES (?, ?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
         sqlite3_bind_text(stmt, 1, uuid.c_str(), -1, SQLITE_STATIC);
@@ -147,6 +158,7 @@ std::string create_new_session(const std::string& provider, const std::string& m
         sqlite3_bind_text(stmt, 3, provider.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 4, model.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_int64(stmt, 5, created_at);
+        sqlite3_bind_text(stmt, 6, workspace.c_str(), -1, SQLITE_STATIC);
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
@@ -266,6 +278,31 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
     sqlite3_close(db);
 }
 
+std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
+    std::vector<std::pair<std::string, std::string>> out;
+    if (session_id.empty() || !is_valid_session_id(session_id)) return out;
+
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return out;
+
+    const char* sql = "SELECT sender, content FROM messages WHERE session_id = ? ORDER BY id ASC;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char* sender_txt = sqlite3_column_text(stmt, 0);
+            const unsigned char* content_txt = sqlite3_column_text(stmt, 1);
+            std::string sender = sender_txt ? reinterpret_cast<const char*>(sender_txt) : "";
+            std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
+            out.emplace_back(std::move(sender), std::move(content));
+        }
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
+    return out;
+}
+
 std::vector<std::pair<std::string, std::string>> list_sessions() {
     std::vector<std::pair<std::string, std::string>> sessions;
     std::string path;
@@ -290,6 +327,81 @@ std::vector<std::pair<std::string, std::string>> list_sessions() {
 
     sqlite3_close(db);
     return sessions;
+}
+
+
+std::vector<SessionInfo> list_sessions_full() {
+    std::vector<SessionInfo> sessions;
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) {
+        return sessions;
+    }
+
+    const char* sql = "SELECT id, title, COALESCE(workspace, '') FROM sessions ORDER BY created_at DESC;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            SessionInfo info;
+            const unsigned char* id_txt = sqlite3_column_text(stmt, 0);
+            const unsigned char* title_txt = sqlite3_column_text(stmt, 1);
+            const unsigned char* ws_txt = sqlite3_column_text(stmt, 2);
+            info.id = id_txt ? reinterpret_cast<const char*>(id_txt) : "";
+            info.title = title_txt ? reinterpret_cast<const char*>(title_txt) : "";
+            info.workspace = ws_txt ? reinterpret_cast<const char*>(ws_txt) : "";
+            sessions.push_back(std::move(info));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    sqlite3_close(db);
+    return sessions;
+}
+
+std::string get_session_workspace(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return "";
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return "";
+
+    std::string result;
+    const char* sql = "SELECT COALESCE(workspace, '') FROM sessions WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char* val = sqlite3_column_text(stmt, 0);
+            result = val ? reinterpret_cast<const char*>(val) : "";
+        }
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
+    return result;
+}
+
+
+void rename_session(const std::string& session_id, const std::string& new_title) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) {
+        LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
+        return;
+    }
+
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) {
+        return;
+    }
+
+    const char* sql = "UPDATE sessions SET title = ? WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, new_title.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    sqlite3_close(db);
 }
 
 void delete_session(const std::string& session_id) {

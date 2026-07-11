@@ -104,7 +104,7 @@ int main() {
 
     bool show_session_select = false;
     int session_select_idx = 0;
-    std::vector<std::pair<std::string, std::string>> session_entries;
+    std::vector<ai::tui::db::SessionInfo> session_entries;
 
     bool show_slash = false;
     int slash_idx = 0;
@@ -227,12 +227,12 @@ int main() {
 
             if (cmd == "session" || cmd == "list") {
                 prompt_input = "";
-                session_entries = ai::tui::db::list_sessions();
+                session_entries = ai::tui::db::list_sessions_full();
                 if (!session_entries.empty()) {
                     show_session_select = true;
                     session_select_idx = 0;
                     for (int i = 0; i < static_cast<int>(session_entries.size()); i++) {
-                        if (session_entries[i].first == store.session_id()) {
+                        if (session_entries[i].id == store.session_id()) {
                             session_select_idx = i;
                             break;
                         }
@@ -283,7 +283,7 @@ int main() {
             if (e == Event::ArrowDown || e == Event::Character('j')) { session_select_idx = std::min(session_select_idx + 1, (int)session_entries.size() - 1); return true; }
             if (e == Event::ArrowUp || e == Event::Character('k')) { session_select_idx = std::max(session_select_idx - 1, 0); return true; }
             if (e == Event::Return) {
-                std::string sid = session_entries[session_select_idx].first;
+                std::string sid = session_entries[session_select_idx].id;
                 store.set_session_id(sid);
                 state.chat_history->clear();
                 state.messages_history->clear();
@@ -295,9 +295,9 @@ int main() {
             if (e == Event::Character('d') || e == Event::Special("\x7f")) {
                 // Delete session
                 if (!session_entries.empty()) {
-                    std::string sid = session_entries[session_select_idx].first;
+                    std::string sid = session_entries[session_select_idx].id;
                     ai::tui::db::delete_session(sid);
-                    session_entries = ai::tui::db::list_sessions();
+                    session_entries = ai::tui::db::list_sessions_full();
                     session_select_idx = std::min(session_select_idx, (int)session_entries.size() - 1);
                 }
                 return true;
@@ -347,12 +347,12 @@ int main() {
                         state.slash_suggestion_idx = 0;
 
                         if (cmd_name == "session" || cmd_name == "list") {
-                            session_entries = ai::tui::db::list_sessions();
+                            session_entries = ai::tui::db::list_sessions_full();
                             if (!session_entries.empty()) {
                                 show_session_select = true;
                                 session_select_idx = 0;
                                 for (int i = 0; i < static_cast<int>(session_entries.size()); i++) {
-                                    if (session_entries[i].first == store.session_id()) {
+                                    if (session_entries[i].id == store.session_id()) {
                                         session_select_idx = i;
                                         break;
                                     }

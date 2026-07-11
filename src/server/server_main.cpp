@@ -25,6 +25,12 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <termios.h>
+#include <unistd.h>
 
 using namespace ai::tui::contract;
 
@@ -44,11 +50,94 @@ struct GenSession {
     std::atomic<bool> done{false};
     std::atomic<bool> generation_started{false};
     std::string error;
+    std::string assistant_text;  // accumulated (cumulative) assistant reply, for DB persistence
     std::shared_ptr<std::vector<ai::tui::bus::Subscription>> subs;
 };
 
 static std::mutex g_sessions_mutex;
 static std::unordered_map<std::string, std::shared_ptr<GenSession>> g_sessions;
+
+// ── Terminal PTY manager ──────────────────────────────────────────
+struct TerminalSession {
+    std::string id;
+    int master_fd = -1;
+    pid_t child_pid = -1;
+    std::string workspace;
+    bool alive = true;
+};
+
+static std::mutex g_terminal_mutex;
+static std::unordered_map<std::string, std::shared_ptr<TerminalSession>> g_terminals;
+
+static std::string generate_terminal_id() {
+    static thread_local std::mt19937 eng{std::random_device{}()};
+    static thread_local std::uniform_int_distribution<uint64_t> dist;
+    uint64_t v = dist(eng);
+    char buf[17];
+    snprintf(buf, sizeof(buf), "%016llx", (unsigned long long)v);
+    return std::string(buf);
+}
+
+static std::shared_ptr<TerminalSession> create_terminal(const std::string& workspace) {
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master < 0) return nullptr;
+    grantpt(master);
+    unlockpt(master);
+    char* sname = ptsname(master);
+    if (!sname) { close(master); return nullptr; }
+
+    pid_t pid = fork();
+    if (pid < 0) { close(master); return nullptr; }
+
+    if (pid == 0) {
+        // Child process
+        setsid();
+        int slave = open(sname, O_RDWR);
+        if (slave < 0) _exit(1);
+        dup2(slave, STDIN_FILENO);
+        dup2(slave, STDOUT_FILENO);
+        dup2(slave, STDERR_FILENO);
+        if (slave > 2) close(slave);
+        close(master);
+        if (!workspace.empty()) chdir(workspace.c_str());
+        setenv("TERM", "xterm-256color", 1);
+        const char* shell = getenv("SHELL");
+        if (!shell) shell = "/bin/sh";
+        execlp(shell, shell, nullptr);
+        _exit(1);
+    }
+
+    // Parent: master fd stays open
+    auto session = std::make_shared<TerminalSession>();
+    session->id = generate_terminal_id();
+    session->master_fd = master;
+    session->child_pid = pid;
+    session->workspace = workspace;
+    session->alive = true;
+
+    std::lock_guard<std::mutex> lock(g_terminal_mutex);
+    g_terminals[session->id] = session;
+    return session;
+}
+
+static void destroy_terminal(const std::string& id) {
+    std::shared_ptr<TerminalSession> ts;
+    {
+        std::lock_guard<std::mutex> lock(g_terminal_mutex);
+        auto it = g_terminals.find(id);
+        if (it == g_terminals.end()) return;
+        ts = it->second;
+        g_terminals.erase(it);
+    }
+    if (ts->alive) {
+        ts->alive = false;
+        if (ts->master_fd >= 0) close(ts->master_fd);
+        if (ts->child_pid > 0) {
+            kill(ts->child_pid, SIGHUP);
+            waitpid(ts->child_pid, nullptr, WNOHANG);
+        }
+    }
+}
 
 // ── Event collector: subscribes to bus and queues events for a session ──
 static std::vector<ai::tui::bus::Subscription> subscribe_session(
@@ -136,6 +225,10 @@ int main(int argc, char* argv[]) {
     register_all_events(*g_bus);
     ai::providers::register_tui_providers();
 
+    // Ensure the SQLite schema (sessions + messages) exists. The server owns
+    // its DB so all session state is durably persisted, independent of the TUI.
+    ai::tui::db::init_database();
+
     // Load providers
     auto providers_list = ai::tui::load_providers_from_config();
     if (providers_list.empty()) {
@@ -220,6 +313,7 @@ int main(int argc, char* argv[]) {
         // ── Resolve or create session for multi-turn ──
         std::string session_id = body.value("session_id", "");
         std::shared_ptr<GenSession> session;
+        bool created_this_request = false;
 
         {
             std::lock_guard<std::mutex> lock(g_sessions_mutex);
@@ -229,19 +323,44 @@ int main(int argc, char* argv[]) {
             }
             if (!session) {
                 session = std::make_shared<GenSession>();
-                session->id = session_id.empty() ? ai::utils::generate_uuid() : session_id;
-                {
-                    std::lock_guard<std::mutex> lock2(g_sessions_mutex);
-                    g_sessions[session->id] = session;
-                }
+                session->id = session_id.empty()
+                    ? ai::tui::db::create_new_session(provider, model)
+                    : session_id;
+                g_sessions[session->id] = session;
+                created_this_request = true;
+            }
+        }
+
+        // Reset per-turn state so each /generate starts a fresh generation
+        // thread (fixes broken multi-turn after the first reply).
+        session->generation_started = false;
+        session->done = false;
+        session->error.clear();
+        session->assistant_text.clear();
+        {
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
+            session->event_queue.clear();
+        }
+
+        // If this session has prior history in the DB (resumed after a server
+        // restart or loaded from another client), restore it so the model keeps
+        // full context.
+        if (created_this_request && !session_id.empty()) {
+            for (const auto& [sender, content] : ai::tui::db::load_session_messages(session_id)) {
+                if (sender == "User") session->messages.push_back(ai::Message::user(content));
+                else if (sender == "Assistant") session->messages.push_back(ai::Message::assistant(content));
             }
         }
 
         // Set up generation context (reasoning mode can change per request)
-        session->ctx = ai::tui::GenerationContext{
-            .session_id = session->id,
-            .reasoning_mode = reasoning_mode
-        };
+        {
+            auto ws = ai::tui::db::get_session_workspace(session->id);
+            session->ctx = ai::tui::GenerationContext{
+                .session_id = session->id,
+                .reasoning_mode = reasoning_mode,
+                .workspace = ws
+            };
+        }
 
         // Subscribe to bus events for this session (once)
         if (!session->subs) {
@@ -293,6 +412,9 @@ int main(int argc, char* argv[]) {
                     gen_thread.detach();
                 }
 
+                // Dispatch bus events to subscribers (bus requires explicit drain)
+                g_bus->drain();
+
                 // Drain queued events
                 std::vector<nlohmann::json> events;
                 {
@@ -301,6 +423,9 @@ int main(int argc, char* argv[]) {
                 }
 
                 for (const auto& evt : events) {
+                    if (evt.value("type", "") == "backend.message.delta") {
+                        session->assistant_text = evt.value("text", session->assistant_text);
+                    }
                     std::string chunk = evt.dump() + "\n";
                     if (!sink.write(chunk.data(), chunk.size())) {
                         return false;
@@ -309,6 +434,24 @@ int main(int argc, char* argv[]) {
 
                 // If generation is done and queue is drained, send final event
                 if (session->done && events.empty()) {
+                    // One final drain to catch events queued between our drain and done becoming true
+                    g_bus->drain();
+                    {
+                        std::lock_guard<std::mutex> lock(session->queue_mutex);
+                        events.swap(session->event_queue);
+                    }
+                    for (const auto& evt : events) {
+                        std::string chunk = evt.dump() + "\n";
+                        if (!sink.write(chunk.data(), chunk.size())) {
+                            return false;
+                        }
+                    }
+                }
+                if (session->done && events.empty()) {
+                    // Persist the assistant reply so the session is resumable.
+                    if (!session->assistant_text.empty()) {
+                        ai::tui::db::save_message(session->id, "Assistant", session->assistant_text);
+                    }
                     nlohmann::json final_msg = {
                         {"type", "generation.complete"},
                         {"session_id", session->id},
@@ -328,6 +471,184 @@ int main(int argc, char* argv[]) {
                 return true;
             }
         );
+    });
+
+    // ── List sessions ──
+    svr.Get("/sessions", [](const httplib::Request&, httplib::Response& res) {
+        auto list = ai::tui::db::list_sessions_full();
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& s : list) {
+            j.push_back({{"id", s.id}, {"title", s.title}, {"workspace", s.workspace}});
+        }
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    // ── Create session ──
+    svr.Post("/sessions", [](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); } catch (...) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid JSON"})", "application/json");
+            return;
+        }
+        std::string provider = body.value("provider", "");
+        std::string model = body.value("model", "");
+        std::string workspace = body.value("workspace", "");
+        if (provider.empty() || model.empty()) {
+            res.status = 400;
+            res.set_content(R"({"error":"provider and model required"})", "application/json");
+            return;
+        }
+        auto id = ai::tui::db::create_new_session(provider, model, workspace);
+        res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}}).dump(), "application/json");
+    });
+
+    // ── Rename session ──
+    svr.Post("/rename", [](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); } catch (...) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid JSON"})", "application/json");
+            return;
+        }
+        std::string session_id = body.value("session_id", "");
+        std::string new_title = body.value("title", "");
+        if (session_id.empty() || !ai::tui::db::is_valid_session_id(session_id)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+        if (new_title.empty()) {
+            res.status = 400;
+            res.set_content(R"({"error":"title is required"})", "application/json");
+            return;
+        }
+        ai::tui::db::rename_session(session_id, new_title);
+        res.set_content(R"({"ok":true})", "application/json");
+    });
+
+    // ── Terminal: create ──
+    svr.Post("/terminal/create", [](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); } catch (...) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid JSON"})", "application/json");
+            return;
+        }
+        std::string workspace = body.value("workspace", "");
+        auto ts = create_terminal(workspace);
+        if (!ts) {
+            res.status = 500;
+            res.set_content(R"({"error":"failed to create terminal"})", "application/json");
+            return;
+        }
+        res.set_content(nlohmann::json({{"id", ts->id}, {"workspace", workspace}}).dump(), "application/json");
+    });
+
+    // ── Terminal: destroy ──
+    svr.Delete("/terminal/([a-f0-9]+)", [](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        destroy_terminal(id);
+        res.set_content(R"({"ok":true})", "application/json");
+    });
+
+    // ── Terminal: input (send keystrokes to PTY) ──
+    svr.Post("/terminal/([a-f0-9]+)/input", [](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); } catch (...) {
+            res.status = 400; res.set_content(R"({"error":"invalid JSON"})", "application/json"); return;
+        }
+        std::string data = body.value("data", "");
+        std::shared_ptr<TerminalSession> ts;
+        {
+            std::lock_guard<std::mutex> lock(g_terminal_mutex);
+            auto it = g_terminals.find(id);
+            if (it == g_terminals.end()) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
+            ts = it->second;
+        }
+        if (ts->master_fd >= 0 && ts->alive) {
+            write(ts->master_fd, data.c_str(), data.size());
+        }
+        res.set_content(R"({"ok":true})", "application/json");
+    });
+
+    // ── Terminal: output stream (long-poll read from PTY) ──
+    svr.Get("/terminal/([a-f0-9]+)/stream", [](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        std::shared_ptr<TerminalSession> ts;
+        {
+            std::lock_guard<std::mutex> lock(g_terminal_mutex);
+            auto it = g_terminals.find(id);
+            if (it == g_terminals.end()) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
+            ts = it->second;
+        }
+        // Non-blocking read from PTY master, return available data
+        std::string output;
+        char buf[4096];
+        // Set non-blocking
+        int flags = fcntl(ts->master_fd, F_GETFL, 0);
+        fcntl(ts->master_fd, F_SETFL, flags | O_NONBLOCK);
+        while (true) {
+            ssize_t n = read(ts->master_fd, buf, sizeof(buf));
+            if (n <= 0) break;
+            output.append(buf, n);
+        }
+        // Restore blocking
+        fcntl(ts->master_fd, F_SETFL, flags);
+        res.set_header("Content-Type", "text/plain; charset=utf-8");
+        res.set_content(output, "text/plain");
+    });
+
+    // ── Get session info ──
+    svr.Get("/session/([a-f0-9-]+)", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = req.matches[1];
+        auto list = ai::tui::db::list_sessions_full();
+        for (const auto& s : list) {
+            if (s.id == sid) {
+                res.set_content(nlohmann::json({{"id", s.id}, {"title", s.title}, {"workspace", s.workspace}}).dump(), "application/json");
+                return;
+            }
+        }
+        res.status = 404;
+        res.set_content(R"({"error":"session not found"})", "application/json");
+    });
+
+    // ── Get session message history ──
+    svr.Get("/session/([a-f0-9-]+)/messages", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+        auto hist = ai::tui::db::load_session_messages(sid);
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& [sender, content] : hist) {
+            std::string role = sender == "User" ? "user" : (sender == "Assistant" ? "assistant" : "system");
+            j.push_back({{"role", role}, {"content", content}});
+        }
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    // ── Get last active session (with history) for client auto-restore ──
+    svr.Get("/session/last", [](const httplib::Request&, httplib::Response& res) {
+        std::string sid = ai::tui::db::get_last_active_session();
+        if (sid.empty()) {
+            res.set_content(R"({"id":""})", "application/json");
+            return;
+        }
+        nlohmann::json info = {{"id", sid}};
+        for (const auto& s : ai::tui::db::list_sessions_full()) {
+            if (s.id == sid) { info["title"] = s.title; info["workspace"] = s.workspace; break; }
+        }
+        nlohmann::json msgs = nlohmann::json::array();
+        for (const auto& [sender, content] : ai::tui::db::load_session_messages(sid)) {
+            std::string role = sender == "User" ? "user" : (sender == "Assistant" ? "assistant" : "system");
+            msgs.push_back({{"role", role}, {"content", content}});
+        }
+        info["messages"] = std::move(msgs);
+        res.set_content(info.dump(2), "application/json");
     });
 
     // ── Start server ──

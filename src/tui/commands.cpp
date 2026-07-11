@@ -115,11 +115,20 @@ bool handle_slash_command(
     if (cmd == "new") {
         std::string prov = providers_list[selected_provider].name;
         std::string mod = providers_list[selected_provider].models[selected_model].name;
-        std::string new_id = db::create_new_session(prov, mod);
+        // /new [workspace_path] — optional workspace directory for this session
+        std::string ws = args;
+        ws.erase(ws.begin(), std::find_if(ws.begin(), ws.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        std::string new_id = db::create_new_session(prov, mod, ws);
         *state.session_id = new_id;
         state.chat_history->clear();
         state.messages_history->clear();
-        state.chat_history->push_back({"System", "Started new persistent session: " + new_id});
+        if (!ws.empty()) {
+            state.chat_history->push_back({"System", "Started new session: " + new_id + " (workspace: " + ws + ")"});
+        } else {
+            state.chat_history->push_back({"System", "Started new persistent session: " + new_id});
+        }
         return true;
     }
 
