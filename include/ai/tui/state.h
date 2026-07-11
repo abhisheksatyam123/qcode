@@ -85,6 +85,12 @@ struct ChatState {
     std::shared_ptr<std::unordered_map<std::string, bool>> tool_collapse_state =
         std::make_shared<std::unordered_map<std::string, bool>>();
 
+    // Context estimation calibration: our heuristic estimate vs the API's
+    // actual prompt_tokens from the last generation. Used to correct the
+    // chars÷4 heuristic (which is wrong for JSON-heavy tool results).
+    std::shared_ptr<int> last_actual_prompt_tokens = std::make_shared<int>(0);
+    std::shared_ptr<int> last_estimated_tokens = std::make_shared<int>(0);
+
     // Context management: how many consecutive generations needed pruning.
     // Drives auto-compaction when the conversation is persistently too long.
     std::shared_ptr<int> consecutive_prunes = std::make_shared<int>(0);

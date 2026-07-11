@@ -311,6 +311,9 @@ void AppStore::wire() {
         *state_.total_prompt_tokens = p.prompt_tokens;
         *state_.total_completion_tokens = p.completion_tokens;
         *state_.total_tokens = p.total_tokens;
+        // Calibration anchor: remember the actual prompt token count so the
+        // next heuristic estimate can be corrected against ground truth.
+        *state_.last_actual_prompt_tokens = p.prompt_tokens;
     }));
 }
 

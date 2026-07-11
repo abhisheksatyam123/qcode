@@ -199,7 +199,13 @@ int main() {
             if (ctx_window > 0) {
                 size_t sys_tok = ai::tui::estimate_system_tokens(sys_prompt);
                 size_t msg_tok = ai::tui::estimate_tokens(gen_messages);
-                size_t total = sys_tok + msg_tok;
+                size_t heuristic = sys_tok + msg_tok;
+                // Calibrate heuristic against actual token count from last gen
+                size_t total = ai::tui::calibrate_estimate(
+                    heuristic,
+                    *state_ptr->last_actual_prompt_tokens,
+                    *state_ptr->last_estimated_tokens);
+                *state_ptr->last_estimated_tokens = static_cast<int>(heuristic);
                 size_t warn_at = (ctx_window * 7) / 10;   // 70%
                 size_t prune_at = (ctx_window * 85) / 100; // 85%
                 if (total > prune_at) {

@@ -115,3 +115,20 @@ ai::Messages prune_context(const ai::Messages& messages,
 
 } // namespace tui
 } // namespace ai
+
+// ── Calibration ──────────────────────────────────────────────────
+namespace ai {
+namespace tui {
+
+size_t calibrate_estimate(size_t heuristic,
+                          size_t last_actual,
+                          size_t last_estimated) {
+    if (last_actual == 0 || last_estimated == 0) return heuristic;
+    double ratio = (double)last_actual / (double)last_estimated;
+    if (ratio < 0.5) ratio = 0.5;
+    if (ratio > 2.0) ratio = 2.0;
+    return (size_t)(heuristic * ratio);
+}
+
+} // namespace tui
+} // namespace ai

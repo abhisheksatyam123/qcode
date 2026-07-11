@@ -19,5 +19,14 @@ ai::Messages prune_context(const ai::Messages& messages,
                            size_t context_window,
                            size_t keep_recent = 8);
 
+// Calibrate a heuristic estimate against the API's actual token count.
+// Uses the ratio actual/estimated from the previous generation and applies
+// it to the current estimate, clamped to sane bounds. This corrects for
+// JSON-heavy tool results and uncounted tool schemas.
+// Returns `heuristic` unchanged if no calibration data is available yet.
+size_t calibrate_estimate(size_t heuristic,
+                          size_t last_actual,
+                          size_t last_estimated);
+
 } // namespace tui
 } // namespace ai
