@@ -85,6 +85,10 @@ struct ChatState {
     std::shared_ptr<std::unordered_map<std::string, bool>> tool_collapse_state =
         std::make_shared<std::unordered_map<std::string, bool>>();
 
+    // Context management: how many consecutive generations needed pruning.
+    // Drives auto-compaction when the conversation is persistently too long.
+    std::shared_ptr<int> consecutive_prunes = std::make_shared<int>(0);
+
     // Copy mode: when true, mouse tracking is disabled so the terminal
     // emulator can do native text selection (clean copy/paste).
     std::shared_ptr<bool> copy_mode = std::make_shared<bool>(false);

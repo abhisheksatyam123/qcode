@@ -189,148 +189,15 @@ bool handle_slash_command(
     }
 
     if (cmd == "compact") {
-        LOG_DEBUG("Commands: /compact args='{}'", args);
+        LOG_DEBUG("Commands: /compact");
         int keep = 4;
-        if (!args.empty()) {
-            try { keep = std::stoi(args); } catch (...) { keep = 4; }
-        }
-        if (keep < 0) keep = 0;
-
-        const auto& hist = *state.messages_history;
-        if (hist.size() <= 2) {
-            state.chat_history->push_back({"System", "Nothing to compact: conversation is too short."});
-            return true;
-        }
-
-        // Snapshot the conversation for the worker thread.
-        ai::Messages snapshot = hist;
-        auto providers_copy = providers_list;
-        int sp = selected_provider;
-        int sm = selected_model;
-        std::string sid = *state.session_id;
-
-        bus.publish<ai::tui::contract::ToastRequested>({
-            .message = "Compacting conversation...",
-            .variant = "info",
-            .duration_ms = 0});
-        bus.publish<ai::tui::contract::SessionStatusChanged>({
-            .session_id = sid,
-            .status = "generating"});
-
-        std::thread compact_thread([providers_copy, sp, sm, snapshot, keep, sid, &bus]() mutable {
-            ai::tui::contract::CompactionResult::Payload result;
-            result.keep = keep;
-            result.original_size = snapshot.size();
-
-            auto fail = [&](const std::string& msg) {
-                result.error = msg;
-                bus.publish<ai::tui::contract::CompactionResult>(result);
-            };
-
-            if (sp < 0 || sp >= static_cast<int>(providers_copy.size())) {
-                fail("Invalid provider selection");
-                return;
-            }
-            if (sm < 0 || sm >= static_cast<int>(providers_copy[sp].models.size())) {
-                fail("Invalid model selection");
-                return;
-            }
-
-            std::ostringstream transcript;
-            for (const auto& m : snapshot) {
-                std::string role_str;
-                if (m.role == ai::kMessageRoleUser) role_str = "User";
-                else if (m.role == ai::kMessageRoleAssistant) role_str = "Assistant";
-                else if (m.role == ai::kMessageRoleSystem) role_str = "System";
-                else role_str = "Message";
-                std::string text;
-                for (const auto& part : m.content) {
-                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
-                        text += tp->text + "\n";
-                    } else if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) {
-                        text += "[Tool call: " + tcp->tool_name + "]\n";
-                    } else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
-                        text += "[Tool result]\n";
-                    } else if (const auto* rcp = std::get_if<ai::ReasoningContentPart>(&part)) {
-                        if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";
-                    }
-                }
-                transcript << role_str << ": " << text << "\n";
-            }
-
-            const std::string compaction_instruction =
-                "Tools are available when needed, including bash for bounded read-only "
-                "inspection. Do not modify files or create notes while generating the "
-                "handoff summary.\n\n"
-                "Summarize the following conversation into a concise handoff packet so a "
-                "fresh session can take over. Preserve the next actionable task, verified "
-                "evidence, blockers, and concise facts about the code, APIs, data "
-                "structures, files, and user preferences that matter for the request.\n\n"
-                "Keep only task state and concise facts.\n\n"
-                "Output only:\n"
-                "## Tasks\n"
-                "## Systems\n\n"
-                "Use tools only when they improve summary accuracy; otherwise answer directly.";
-
-            const auto& sel = providers_copy[sp];
-            ai::providers::register_tui_providers();
-            ai::providers::ProviderOptions provider_options;
-            provider_options.base_url = sel.api_url;
-            provider_options.api_key = sel.api_key;
-            provider_options.headers = sel.headers;
-            provider_options.protocol = sel.protocol;
-            provider_options.project_id = sel.project_id;
-            auto resolution = ai::providers::ProviderRegistry::instance().resolve(
-                sel.id, provider_options);
-            if (!resolution.ok()) {
-                fail("Compaction failed: " + resolution.error);
-                return;
-            }
-            ai::Client client = std::move(resolution.client);
-
-            ai::GenerateOptions opts;
-            opts.model = providers_copy[sp].models[sm].id;
-            opts.system = compaction_instruction;
-            opts.messages = {ai::Message::user(transcript.str())};
-
-            ai::GenerateResult res = client.generate_text(opts);
-            if (res.error && !res.error->empty()) {
-                fail("Compaction failed: " + *res.error);
-                return;
-            }
-            std::string summary = res.text;
-            if (summary.empty()) {
-                fail("Compaction failed: empty summary from model.");
-                return;
-            }
-
-            std::string notes_root = ai::tui::get_notes_root();
-
-            std::error_code ec;
-            std::filesystem::create_directories(
-                notes_root + "/scratchpad/task/qcode-tui/active", ec);
-            std::string todo_path = notes_root +
-                                    "/scratchpad/task/qcode-tui/active/todo-" + sid + ".md";
-            bool wrote = false;
-            if (!ec) {
-                std::ofstream out(todo_path);
-                if (out) {
-                    out << "# qcode compacted handoff\n\n" << summary << "\n";
-                    wrote = true;
-                }
-            }
-
-            result.summary = std::move(summary);
-            result.todo_path = std::move(todo_path);
-            result.wrote = wrote;
-            bus.publish<ai::tui::contract::CompactionResult>(result);
-        });
-        // Track the compaction thread so it is joined at shutdown (before the
-        // bus is torn down), avoiding a detached use-after-free.
-        background_threads->push_back(std::move(compact_thread));
-
+        run_compaction(state, providers_list, selected_provider, selected_model,
+                       keep, background_threads, bus);
         return true;
     }
+
+
+
 
 
     if (cmd == "tools") {
@@ -370,5 +237,146 @@ bool handle_slash_command(
     return true;
 }
 
+
+void run_compaction(
+    ChatState& state,
+    const std::vector<ProviderInfo>& providers_list,
+    int selected_provider,
+    int selected_model,
+    int keep,
+    std::shared_ptr<std::vector<std::thread>> background_threads,
+    bus::BusPort& bus
+) {
+    const auto& hist = *state.messages_history;
+    if (hist.size() <= 2) {
+        state.chat_history->push_back({"System", "Nothing to compact: conversation is too short."});
+        return;
+    }
+
+    // Snapshot the conversation for the worker thread.
+    ai::Messages snapshot = hist;
+    auto providers_copy = providers_list;
+    int sp = selected_provider;
+    int sm = selected_model;
+    std::string sid = *state.session_id;
+
+    bus.publish<ai::tui::contract::ToastRequested>({
+        .message = "Compacting conversation...",
+        .variant = "info",
+        .duration_ms = 0});
+    bus.publish<ai::tui::contract::SessionStatusChanged>({
+        .session_id = sid,
+        .status = "generating"});
+
+    std::thread compact_thread([providers_copy, sp, sm, snapshot, keep, sid, &bus]() mutable {
+        ai::tui::contract::CompactionResult::Payload result;
+        result.keep = keep;
+        result.original_size = snapshot.size();
+
+        auto fail = [&](const std::string& msg) {
+            result.error = msg;
+            bus.publish<ai::tui::contract::CompactionResult>(result);
+        };
+
+        if (sp < 0 || sp >= static_cast<int>(providers_copy.size())) {
+            fail("Invalid provider selection");
+            return;
+        }
+        if (sm < 0 || sm >= static_cast<int>(providers_copy[sp].models.size())) {
+            fail("Invalid model selection");
+            return;
+        }
+
+        std::ostringstream transcript;
+        for (const auto& m : snapshot) {
+            std::string role_str;
+            if (m.role == ai::kMessageRoleUser) role_str = "User";
+            else if (m.role == ai::kMessageRoleAssistant) role_str = "Assistant";
+            else if (m.role == ai::kMessageRoleSystem) role_str = "System";
+            else role_str = "Message";
+            std::string text;
+            for (const auto& part : m.content) {
+                if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                    text += tp->text + "\n";
+                } else if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) {
+                    text += "[Tool call: " + tcp->tool_name + "]\n";
+                } else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
+                    text += "[Tool result]\n";
+                } else if (const auto* rcp = std::get_if<ai::ReasoningContentPart>(&part)) {
+                    if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";
+                }
+            }
+            transcript << role_str << ": " << text << "\n";
+        }
+
+        const std::string compaction_instruction =
+            "Tools are available when needed, including bash for bounded read-only "
+            "inspection. Do not modify files or create notes while generating the "
+            "handoff summary.\n\n"
+            "Summarize the following conversation into a concise handoff packet so a "
+            "fresh session can take over. Preserve the next actionable task, verified "
+            "evidence, blockers, and concise facts about the code, APIs, data "
+            "structures, files, and user preferences that matter for the request.\n\n"
+            "Keep only task state and concise facts.\n\n"
+            "Output only:\n"
+            "## Tasks\n"
+            "## Systems\n\n"
+            "Use tools only when they improve summary accuracy; otherwise answer directly.";
+
+        const auto& sel = providers_copy[sp];
+        ai::providers::register_tui_providers();
+        ai::providers::ProviderOptions provider_options;
+        provider_options.base_url = sel.api_url;
+        provider_options.api_key = sel.api_key;
+        provider_options.headers = sel.headers;
+        provider_options.protocol = sel.protocol;
+        provider_options.project_id = sel.project_id;
+        auto resolution = ai::providers::ProviderRegistry::instance().resolve(
+            sel.id, provider_options);
+        if (!resolution.ok()) {
+            fail("Compaction failed: " + resolution.error);
+            return;
+        }
+        ai::Client client = std::move(resolution.client);
+
+        ai::GenerateOptions opts;
+        opts.model = providers_copy[sp].models[sm].id;
+        opts.system = compaction_instruction;
+        opts.messages = {ai::Message::user(transcript.str())};
+
+        ai::GenerateResult res = client.generate_text(opts);
+        if (res.error && !res.error->empty()) {
+            fail("Compaction failed: " + *res.error);
+            return;
+        }
+        std::string summary = res.text;
+        if (summary.empty()) {
+            fail("Compaction failed: empty summary from model.");
+            return;
+        }
+
+        std::string notes_root = ai::tui::get_notes_root();
+
+        std::error_code ec;
+        std::filesystem::create_directories(
+            notes_root + "/scratchpad/task/qcode-tui/active", ec);
+        std::string todo_path = notes_root +
+                                "/scratchpad/task/qcode-tui/active/todo-" + sid + ".md";
+        bool wrote = false;
+        if (!ec) {
+            std::ofstream out(todo_path);
+            if (out) {
+                out << "# qcode compacted handoff\n\n" << summary << "\n";
+                wrote = true;
+            }
+        }
+
+        result.summary = std::move(summary);
+        result.todo_path = std::move(todo_path);
+        result.wrote = wrote;
+        bus.publish<ai::tui::contract::CompactionResult>(result);
+    });
+    background_threads->push_back(std::move(compact_thread));
+}
 } // namespace tui
 } // namespace ai

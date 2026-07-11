@@ -183,7 +183,7 @@ int main() {
 
         std::thread llm_thread([bus_ptr, state_ptr, p, providers_copy, app_running,
                                 sel_prov, sel_mod, sys_prompt, tools_enabled,
-                                &store, &spawn_generation]() {
+                                &store, &spawn_generation, background_threads]() {
             ai::logger::set_thread_name("llm");
             auto gen_start = std::chrono::steady_clock::now();
             ai::tui::BackendService backend{*bus_ptr, providers_copy};
@@ -200,16 +200,33 @@ int main() {
                 size_t sys_tok = ai::tui::estimate_system_tokens(sys_prompt);
                 size_t msg_tok = ai::tui::estimate_tokens(gen_messages);
                 size_t total = sys_tok + msg_tok;
-                size_t budget = (ctx_window * 4) / 5;  // 80%
-                if (total > budget) {
-                    LOG_WARN("Context approaching limit: estimated {} tokens / {} (80%={})",
-                             total, ctx_window, budget);
+                size_t warn_at = (ctx_window * 7) / 10;   // 70%
+                size_t prune_at = (ctx_window * 85) / 100; // 85%
+                if (total > prune_at) {
+                    LOG_WARN("Context over limit: estimated {} tokens / {} (prune>={})",
+                             total, ctx_window, prune_at);
                     gen_messages = ai::tui::prune_context(gen_messages, ctx_window);
                     size_t after = sys_tok + ai::tui::estimate_tokens(gen_messages);
                     if (after < total) {
                         store.add_toast("Context pruned: " + std::to_string(total) +
                             " → " + std::to_string(after) + " tokens", "warning", 4000);
+                        *state_ptr->consecutive_prunes = *state_ptr->consecutive_prunes + 1;
                     }
+                } else if (total > warn_at) {
+                    store.add_toast("Context at " + std::to_string(total) + "/" +
+                        std::to_string(ctx_window) + " tokens — run /compact soon", "info", 3000);
+                    *state_ptr->consecutive_prunes = 0;
+                } else {
+                    *state_ptr->consecutive_prunes = 0;
+                }
+
+                // Auto-compact after repeated pruning (conversation persistently too long)
+                if (*state_ptr->consecutive_prunes >= 3) {
+                    *state_ptr->consecutive_prunes = 0;
+                    LOG_WARN("Auto-compacting after {} consecutive pruned turns", 3);
+                    store.add_toast("Auto-compacting conversation...", "info", 4000);
+                    ai::tui::run_compaction(*state_ptr, providers_copy, sel_prov, sel_mod,
+                                           4, background_threads, *bus_ptr);
                 }
             }
 

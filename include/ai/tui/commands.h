@@ -62,5 +62,18 @@ bool handle_slash_command(
     bus::BusPort& bus
 );
 
+// Run conversation compaction (used by /compact and auto-triggered pruning).
+// Summarizes messages_history into a handoff packet and replaces it.
+// keep = number of recent messages to preserve verbatim.
+void run_compaction(
+    ChatState& state,
+    const std::vector<ProviderInfo>& providers_list,
+    int selected_provider,
+    int selected_model,
+    int keep,
+    std::shared_ptr<std::vector<std::thread>> background_threads,
+    bus::BusPort& bus
+);
+
 } // namespace tui
 } // namespace ai
