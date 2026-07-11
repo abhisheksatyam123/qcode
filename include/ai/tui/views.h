@@ -1,6 +1,8 @@
-#include <ai/tui/db.h>
 #pragma once
+
+#include <ai/tui/db.h>
 #include <ai/tui/markdown.h>  // render_markdown
+#include <ai/tui/themes.h>
 #include <ftxui/component/component.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/color.hpp>
@@ -14,31 +16,7 @@
 namespace ai {
 namespace tui {
 
-// Colour palette
-inline ftxui::Color accent(const std::string& theme = "orange") {
-    if (theme == "green") return ftxui::Color::RGB(0x22, 0xBB, 0x88);
-    if (theme == "blue") return ftxui::Color::RGB(0x16, 0xB8, 0xF3);
-    if (theme == "purple") return ftxui::Color::RGB(0xD8, 0x50, 0xE0);
-    if (theme == "monochrome") return ftxui::Color::RGB(0xAA, 0xAA, 0xAA);
-    return ftxui::Color::RGB(0xEC, 0x5B, 0x2B);
-}
-inline ftxui::Color accent2(const std::string& theme = "orange") {
-    if (theme == "green") return ftxui::Color::RGB(0x44, 0xDD, 0xAA);
-    if (theme == "blue") return ftxui::Color::RGB(0x48, 0x7C, 0xFF);
-    if (theme == "purple") return ftxui::Color::RGB(0xEE, 0x80, 0xF8);
-    if (theme == "monochrome") return ftxui::Color::RGB(0xDD, 0xDD, 0xDD);
-    return ftxui::Color::RGB(0xEE, 0x79, 0x48);
-}
-inline ftxui::Color user_green() { return ftxui::Color::RGB(0x22, 0xBB, 0x88); }
-inline ftxui::Color dim_gray()   { return ftxui::Color::GrayDark; }
-inline ftxui::Color bg_popup()   { return ftxui::Color::RGB(0x22, 0x22, 0x22); }
-
 ftxui::Element render_logo();
-
-struct ThemeEntry {
-    std::string name;
-    std::string description;
-};
 
 ftxui::Element render_view(
     const ChatState& state,
@@ -68,8 +46,6 @@ ftxui::Element render_view(
     const ftxui::Component& input
 );
 
-// Markdown
-
 // Toast overlay
 ftxui::Element render_toast_overlay(
     const std::vector<Toast>& toasts,
@@ -85,5 +61,5 @@ ftxui::Element render_dynamic_footer(
     const std::string& status
 );
 
-} // namespace tui
-} // namespace ai
+}  // namespace tui
+}  // namespace ai

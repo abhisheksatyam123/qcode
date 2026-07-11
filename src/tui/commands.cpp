@@ -2,6 +2,7 @@
 #include <ai/tui/db.h>
 #include <ai/tui/config.h>
 #include <ai/tui/contract/event.h>
+#include <ai/tui/themes.h>
 #include <ai/logger.h>
 #include <ai/types/client.h>
 #include "ai/registry.h"
@@ -96,7 +97,14 @@ bool handle_slash_command(
         LOG_DEBUG("Commands: /theme args='{}'", args);
         if (args.empty()) {
             std::string cur = state.theme ? *state.theme : "orange";
-            append_system_message(state, "Available themes:\n  /theme orange (Classic)\n  /theme green (Forest Green)\n  /theme blue (Deep Blue)\n  /theme purple (Cyberpunk Purple)\n  /theme monochrome (Monochrome)\n\nCurrent theme: " + cur);
+            std::ostringstream list;
+            list << "Available themes:\n";
+            for (const auto& entry : builtin_theme_entries()) {
+                list << "  /theme " << entry.name << " (" << entry.description
+                     << ")\n";
+            }
+            list << "\nCurrent theme: " << cur;
+            append_system_message(state, list.str());
             return true;
         }
         std::string new_theme = args;
@@ -108,13 +116,16 @@ bool handle_slash_command(
             return !std::isspace(ch);
         }).base(), new_theme.end());
 
-        if (new_theme == "orange" || new_theme == "green" || new_theme == "blue" || new_theme == "purple" || new_theme == "monochrome") {
+        if (is_known_theme(new_theme)) {
             if (state.theme) {
                 *state.theme = new_theme;
             }
             append_system_message(state, "Theme changed to: " + new_theme);
         } else {
-            append_system_message(state, "Unknown theme: '" + new_theme + "'. Supported: orange, green, blue, purple, monochrome");
+            append_system_message(
+                state,
+                "Unknown theme: '" + new_theme +
+                    "'. Use /theme to list supported themes.");
         }
         return true;
     }
@@ -228,7 +239,7 @@ bool handle_slash_command(
         std::ostringstream h;
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
-          << "  /theme [name]     - set UI theme (orange/green/blue/purple/monochrome)\n"
+          << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
           << "  /new              - start a new persistent session\n"
           << "  /session <id>     - load a persistent session by id\n"
           << "  /reasoning [on|off|<0..1>] - set reasoning effort\n"

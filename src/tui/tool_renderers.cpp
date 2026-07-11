@@ -10,10 +10,29 @@ namespace tui {
 
 using namespace ftxui;
 
-// ── Tool icon mapping ──
+namespace {
+
+Color prompt_green() { return Color::RGB(0x4E, 0xC9, 0xB0); }
+Color command_fg() { return Color::RGB(0xE5, 0xE5, 0xE5); }
+Color muted_fg() { return Color::RGB(0x6A, 0x6A, 0x6A); }
+Color success_fg() { return Color::RGB(0x7F, 0xDB, 0x8C); }
+
+std::string json_str(const nlohmann::json& j,
+                     std::initializer_list<const char*> keys,
+                     const std::string& fallback = "") {
+    for (const auto& key : keys) {
+        if (j.contains(key) && j[key].is_string()) {
+            return j[key].get<std::string>();
+        }
+    }
+    return fallback;
+}
+
+}  // namespace
+
 std::string tool_icon(const std::string& tool_name) {
     if (tool_name == "bash" || tool_name == "shell" || tool_name == "run_command")
-        return "⚡";
+        return "$";
     if (tool_name == "read_file" || tool_name == "view_file")
         return "📄";
     if (tool_name == "write_file" || tool_name == "edit_file")
@@ -24,10 +43,9 @@ std::string tool_icon(const std::string& tool_name) {
         return "🤖";
     if (tool_name == "list_files" || tool_name == "ls")
         return "📁";
-    return "🔧";
+    return "⚙";
 }
 
-// ── Tool display name ──
 std::string tool_display_name(const std::string& tool_name) {
     if (tool_name == "bash" || tool_name == "shell" || tool_name == "run_command")
         return "Bash";
@@ -46,264 +64,200 @@ std::string tool_display_name(const std::string& tool_name) {
     return tool_name;
 }
 
-// ── Helper: extract string from JSON with fallback keys ──
-static std::string json_str(const nlohmann::json& j,
-                              std::initializer_list<const char*> keys,
-                              const std::string& fallback = "") {
-    for (const auto& key : keys) {
-        if (j.contains(key) && j[key].is_string()) {
-            return j[key].get<std::string>();
-        }
-    }
-    return fallback;
-}
-
-// ── Bash result renderer ──
 Element RenderBashResult(const nlohmann::json& args,
                           const nlohmann::json& result,
-                          bool is_error, double duration_ms,
+                          bool is_error, double /*duration_ms*/,
                           const std::string& theme) {
     Elements content;
 
-    // Extract command from args
-    std::string command = json_str(args, {"command", "cmd", "script"});
-    std::string description = json_str(args, {"description"});
-    std::string workdir = json_str(args, {"workdir"});
+    const std::string command = json_str(args, {"command", "cmd", "script"});
+    const std::string workdir = json_str(args, {"workdir"});
 
-    // Command line
     if (!command.empty()) {
-        Elements cmd_line;
-        cmd_line.push_back(text("$ ") | color(Color::RGB(120, 120, 255)));
-        // Truncate very long commands
-        std::string display_cmd = command;
-        if (display_cmd.size() > 200) {
-            display_cmd = display_cmd.substr(0, 197) + "...";
-        }
-        cmd_line.push_back(text(display_cmd) | bold);
-        content.push_back(hbox(std::move(cmd_line)));
-    }
-
-    // Working directory
-    if (!workdir.empty()) {
         content.push_back(hbox({
-            text("  in ") | dim,
-            text(workdir) | dim | color(Color::RGB(150, 150, 200)),
+            text("$ ") | bold | color(prompt_green()),
+            text(command.size() > 200 ? command.substr(0, 197) + "..." : command) |
+                bold | color(command_fg()),
         }));
     }
 
-    // Extract output from result
+    if (!workdir.empty()) {
+        content.push_back(hbox({
+            text("in ") | dim | color(muted_fg()),
+            text(workdir) | dim | color(Color::RGB(0x7A, 0xA2, 0xF7)),
+        }));
+    }
+
     std::string output;
     int exit_code = 0;
     bool has_exit = false;
-
     if (result.is_object()) {
         output = json_str(result, {"output"});
-        if (result.contains("metadata") && result["metadata"].is_object()) {
-            auto& meta = result["metadata"];
-            if (meta.contains("exit")) {
-                exit_code = meta["exit"].get<int>();
-                has_exit = true;
-            }
+        if (result.contains("metadata") && result["metadata"].is_object() &&
+            result["metadata"].contains("exit")) {
+            exit_code = result["metadata"]["exit"].get<int>();
+            has_exit = true;
         }
     } else if (result.is_string()) {
         output = result.get<std::string>();
     }
 
-    // Exit code
+    if (!output.empty()) {
+        content.push_back(text(""));
+        content.push_back(render_truncated_output(output, 28, theme, is_error));
+    }
+
     if (has_exit) {
-        Color exit_color = (exit_code == 0) ? Color::Green : Color::Red;
-        content.push_back(text(""));  // spacing
+        const auto exit_color = exit_code == 0 ? success_fg() : Color::Red;
+        content.push_back(text(""));
         content.push_back(hbox({
-            text("  ") | dim,
             text(exit_code == 0 ? "✓" : "✗") | color(exit_color) | bold,
             text(" exit " + std::to_string(exit_code)) | color(exit_color),
         }));
     }
 
-    // Output (truncated)
-    if (!output.empty()) {
-        content.push_back(text(""));  // spacing
-        content.push_back(render_truncated_output(output, 25, theme));
-    }
-
     return vbox(std::move(content));
 }
 
-// ── Task result renderer ──
 Element RenderTaskResult(const nlohmann::json& args,
                           const nlohmann::json& result,
-                          bool is_error, double duration_ms,
+                          bool is_error, double /*duration_ms*/,
                           const std::string& theme) {
     Elements content;
-
-    std::string desc = json_str(args, {"description", "prompt", "task"});
+    const std::string desc = json_str(args, {"description", "prompt", "task"});
     if (!desc.empty()) {
         content.push_back(hbox({
-            text("  ") | dim,
-            text(desc) | dim,
+            text("$ ") | bold | color(prompt_green()),
+            text("task " + desc) | color(command_fg()),
         }));
     }
 
-    // Show result summary
     std::string output;
-    if (result.is_string()) {
-        output = result.get<std::string>();
-    } else if (result.is_object()) {
+    if (result.is_string()) output = result.get<std::string>();
+    else if (result.is_object()) {
         output = json_str(result, {"output", "result", "summary"});
     }
-
     if (!output.empty()) {
         content.push_back(text(""));
-        content.push_back(render_truncated_output(output, 15, theme));
+        content.push_back(render_truncated_output(output, 18, theme, is_error));
     }
-
     return vbox(std::move(content));
 }
 
-// ── File result renderer ──
 Element RenderFileResult(const std::string& tool_name,
                           const nlohmann::json& args,
                           const nlohmann::json& result,
-                          bool is_error, double duration_ms,
+                          bool is_error, double /*duration_ms*/,
                           const std::string& theme) {
     Elements content;
-
-    std::string path = json_str(args, {"path", "file", "file_path", "filename"});
-
+    const std::string path =
+        json_str(args, {"path", "file", "file_path", "filename"});
     if (!path.empty()) {
         content.push_back(hbox({
-            text("  ") | dim,
-            text(path) | color(Color::RGB(150, 200, 255)),
+            text("$ ") | bold | color(prompt_green()),
+            text(tool_name + " " + path) | color(command_fg()),
         }));
     }
 
-    // Show line count or content preview for read
-    if (result.is_object()) {
-        std::string output = json_str(result, {"output", "content"});
-        if (!output.empty()) {
-            // Count lines
-            int line_count = 1;
-            for (char c : output) {
-                if (c == '\n') line_count++;
-            }
-            content.push_back(hbox({
-                text("  ") | dim,
-                text(std::to_string(line_count) + " lines") | dim,
-            }));
-            content.push_back(text(""));
-            content.push_back(render_truncated_output(output, 10, theme));
-        }
-    } else if (result.is_string()) {
-        std::string r = result.get<std::string>();
-        if (!r.empty()) {
-            content.push_back(text(""));
-            content.push_back(render_truncated_output(r, 10, theme));
-        }
-    }
-
-    return vbox(std::move(content));
-}
-
-// ── Search result renderer ──
-Element RenderSearchResult(const nlohmann::json& args,
-                            const nlohmann::json& result,
-                            bool is_error, double duration_ms,
-                            const std::string& theme) {
-    Elements content;
-
-    std::string query = json_str(args, {"query", "pattern", "search"});
-    std::string path = json_str(args, {"path", "directory", "dir"});
-
-    if (!query.empty()) {
-        content.push_back(hbox({
-            text("  ") | dim,
-            text("\"" + query + "\"") | color(Color::RGB(255, 200, 100)),
-        }));
-    }
-    if (!path.empty()) {
-        content.push_back(hbox({
-            text("  in ") | dim,
-            text(path) | dim | color(Color::RGB(150, 150, 200)),
-        }));
-    }
-
-    // Show results
     std::string output;
-    if (result.is_string()) {
-        output = result.get<std::string>();
-    } else if (result.is_object()) {
-        output = json_str(result, {"output", "matches", "results"});
-    }
-
+    if (result.is_object()) output = json_str(result, {"output", "content"});
+    else if (result.is_string()) output = result.get<std::string>();
     if (!output.empty()) {
         content.push_back(text(""));
-        content.push_back(render_truncated_output(output, 20, theme));
+        content.push_back(render_truncated_output(output, 16, theme, is_error));
     }
-
     return vbox(std::move(content));
 }
 
-// ── Generic result renderer (fallback) ──
+Element RenderSearchResult(const nlohmann::json& args,
+                            const nlohmann::json& result,
+                            bool is_error, double /*duration_ms*/,
+                            const std::string& theme) {
+    Elements content;
+    const std::string query = json_str(args, {"query", "pattern", "search"});
+    const std::string path = json_str(args, {"path", "directory", "dir"});
+    if (!query.empty()) {
+        content.push_back(hbox({
+            text("$ ") | bold | color(prompt_green()),
+            text("rg \"" + query + "\"" + (path.empty() ? "" : " " + path)) |
+                color(command_fg()),
+        }));
+    }
+
+    std::string output;
+    if (result.is_string()) output = result.get<std::string>();
+    else if (result.is_object()) {
+        output = json_str(result, {"output", "matches", "results"});
+    }
+    if (!output.empty()) {
+        content.push_back(text(""));
+        content.push_back(render_truncated_output(output, 22, theme, is_error));
+    }
+    return vbox(std::move(content));
+}
+
 Element RenderGenericResult(const std::string& tool_name,
                              const nlohmann::json& args,
                              const nlohmann::json& result,
-                             bool is_error, double duration_ms,
+                             bool is_error, double /*duration_ms*/,
                              const std::string& theme) {
     Elements content;
-
-    // Show first string argument as description
+    std::string summary = tool_name;
     if (args.is_object()) {
         for (auto it = args.begin(); it != args.end(); ++it) {
+            if (it.key() == "description" || it.key() == "desc") continue;
             if (it.value().is_string()) {
-                std::string val = it.value().get<std::string>();
-                if (val.size() > 120) val = val.substr(0, 117) + "...";
-                content.push_back(hbox({
-                    text("  " + it.key() + ": ") | dim,
-                    text(val) | dim,
-                }));
+                auto val = it.value().get<std::string>();
+                if (val.size() > 100) val = val.substr(0, 97) + "...";
+                summary += " " + val;
                 break;
             }
         }
     }
+    content.push_back(hbox({
+        text("$ ") | bold | color(prompt_green()),
+        text(summary) | color(command_fg()),
+    }));
 
-    // Show result
     std::string output;
-    if (result.is_string()) {
-        output = result.get<std::string>();
-    } else if (result.is_object()) {
+    if (result.is_string()) output = result.get<std::string>();
+    else if (result.is_object()) {
         output = json_str(result, {"output", "result"});
-        if (output.empty()) {
-            output = result.dump(2);
-        }
+        if (output.empty()) output = result.dump(2);
     }
-
     if (!output.empty()) {
         content.push_back(text(""));
-        content.push_back(render_truncated_output(output, 15, theme));
+        content.push_back(render_truncated_output(output, 18, theme, is_error));
     }
-
     return vbox(std::move(content));
 }
 
-// ── Legacy API ──
 Element BashToolRender(const std::string& command, const std::string& output,
                         int exit_code, bool is_running,
                         const std::string& workdir) {
     Elements content;
     content.push_back(hbox({
-        text("$ ") | color(Color::RGB(100, 100, 255)),
-        text(command) | bold,
+        text("$ ") | bold | color(prompt_green()),
+        text(command) | bold | color(command_fg()),
     }));
-    if (!output.empty()) {
-        content.push_back(text(output) | dim);
+    if (!workdir.empty()) {
+        content.push_back(hbox({
+            text("in ") | dim | color(muted_fg()),
+            text(workdir) | dim,
+        }));
     }
-    std::string status =
+    if (!output.empty()) {
+        content.push_back(text(""));
+        content.push_back(render_truncated_output(output, 28, "orange",
+                                                 exit_code != 0));
+    }
+    const std::string status =
         is_running ? "running" : (exit_code == 0 ? "success" : "failed");
-    Color status_color =
+    const Color status_color =
         is_running ? Color::Yellow
-                   : (exit_code == 0 ? Color::Green : Color::Red);
-    return BlockTool("Bash", vbox(std::move(content)), is_running, status,
-                      status_color);
+                   : (exit_code == 0 ? success_fg() : Color::Red);
+    return ToolBlock("$", "Bash", "", vbox(std::move(content)), is_running,
+                      status, status_color, 0.0, false, true, false, command);
 }
 
 } // namespace tui

@@ -128,13 +128,8 @@ int main() {
     bool show_theme_select = false;
     int theme_select_idx = 0;
     std::string theme_query = "";
-    std::vector<ai::tui::ThemeEntry> theme_entries = {
-        {"orange", "Classic Orange"},
-        {"green", "Forest Green"},
-        {"blue", "Deep Blue"},
-        {"purple", "Cyberpunk Purple"},
-        {"monochrome", "Monochrome"}
-    };
+    std::vector<ai::tui::ThemeEntry> theme_entries =
+        ai::tui::builtin_theme_entries();
 
     bool show_slash = false;
     int slash_idx = 0;
@@ -726,20 +721,47 @@ int main() {
             if (navigate_tool(1)) return true;
         }
 
-        // Enter toggles a focused tool block — otherwise let it reach the input
+        // Tool expand/collapse: l/→ expand (full output), h/← collapse (3-line
+        // preview). Enter still toggles for convenience.
+        auto set_focused_tool_collapsed = [&](bool collapsed) -> bool {
+            if (!state.tool_block_order || *state.focused_tool_index < 0 ||
+                *state.focused_tool_index >=
+                    static_cast<int>(state.tool_block_order->size())) {
+                return false;
+            }
+            const std::string& id =
+                (*state.tool_block_order)[*state.focused_tool_index];
+            if (!state.tool_collapse_state) {
+                state.tool_collapse_state =
+                    std::make_shared<std::unordered_map<std::string, bool>>();
+            }
+            (*state.tool_collapse_state)[id] = collapsed;
+            return true;
+        };
+        if (e == Event::ArrowLeft || e == Event::Character('h')) {
+            if (set_focused_tool_collapsed(true)) return true;
+        }
+        if (e == Event::ArrowRight || e == Event::Character('l')) {
+            if (set_focused_tool_collapsed(false)) return true;
+        }
         if (e == Event::Return) {
             if (state.tool_block_order && *state.focused_tool_index >= 0 &&
-                *state.focused_tool_index < static_cast<int>(state.tool_block_order->size())) {
-                const std::string& id = (*state.tool_block_order)[*state.focused_tool_index];
+                *state.focused_tool_index <
+                    static_cast<int>(state.tool_block_order->size())) {
+                const std::string& id =
+                    (*state.tool_block_order)[*state.focused_tool_index];
                 if (!state.tool_collapse_state) {
                     state.tool_collapse_state =
                         std::make_shared<std::unordered_map<std::string, bool>>();
                 }
-                bool cur = (*state.tool_collapse_state)[id];
-                (*state.tool_collapse_state)[id] = !cur;
+                // Missing keys mean collapsed (the render default).
+                const bool currently_collapsed =
+                    !state.tool_collapse_state->count(id) ||
+                    (*state.tool_collapse_state)[id];
+                (*state.tool_collapse_state)[id] = !currently_collapsed;
                 return true;
             }
-            // No tool block focused — fall through so input's CatchEvent can submit
+            // No tool block focused — fall through so input can submit
         }
         if (e == Event::Tab) {
             if (state.tab_selected == 1) {

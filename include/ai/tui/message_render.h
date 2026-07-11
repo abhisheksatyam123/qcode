@@ -6,13 +6,12 @@
 namespace ai {
 namespace tui {
 
-// ── ToolBlock: OpenCode-style tool rendering block ──
-// Renders a tool call/result as a styled block with:
-//   - Collapse/expand indicator (▼/▸)
-//   - Icon + tool name + description + duration in header
-//   - Accent-colored left border
-//   - Status badge (running/success/failed)
-//   - Content area with optional truncation and collapse/expand
+// OpenCode-inspired shell session block:
+//   ▸ $ find . -maxdepth 3                     ✓ 142ms
+// Expanded:
+//   ▾ $ find . -maxdepth 3                     ✓ 142ms
+//     ./src
+//     ./include
 ftxui::Element ToolBlock(const std::string& icon,
                           const std::string& title,
                           const std::string& description,
@@ -23,7 +22,8 @@ ftxui::Element ToolBlock(const std::string& icon,
                           double duration_ms = 0.0,
                           bool collapsed = false,
                           bool collapsible = true,
-                          bool focused = false);
+                          bool focused = false,
+                          const std::string& shell_command = "");
 
 // ── Legacy BlockTool (compatibility) ──
 ftxui::Element BlockTool(const std::string& title, ftxui::Element content,
@@ -39,11 +39,11 @@ ftxui::Element render_message(const ai::Message& msg,
                                const std::string& theme,
                                const ai::Message* adjacent_tool_results = nullptr);
 
-// ── Output truncation helper ──
-// Splits output into lines, renders up to max_lines, adds "[+N more]" hint
+// Colored, truncated shell-style stdout/stderr.
 ftxui::Element render_truncated_output(const std::string& output,
                                         int max_lines = 20,
-                                        const std::string& theme = "orange");
+                                        const std::string& theme = "orange",
+                                        bool is_error = false);
 
 } // namespace tui
 } // namespace ai
