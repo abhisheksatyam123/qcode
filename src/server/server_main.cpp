@@ -337,6 +337,9 @@ int main(int argc, char* argv[]) {
         session->done = false;
         session->error.clear();
         session->assistant_text.clear();
+        if (session->ctx.abort_flag) {
+            session->ctx.abort_flag->store(false);
+        }
         {
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.clear();
@@ -527,6 +530,33 @@ int main(int argc, char* argv[]) {
         }
         ai::tui::db::rename_session(session_id, new_title);
         res.set_content(R"({"ok":true})", "application/json");
+    });
+
+    // ── Cancel session generation ──
+    svr.Post("/session/cancel", [](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); } catch (...) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid JSON"})", "application/json");
+            return;
+        }
+        std::string session_id = body.value("session_id", "");
+        if (session_id.empty()) {
+            res.status = 400;
+            res.set_content(R"({"error":"session_id is required"})", "application/json");
+            return;
+        }
+        std::lock_guard<std::mutex> lock(g_sessions_mutex);
+        auto it = g_sessions.find(session_id);
+        if (it != g_sessions.end()) {
+            if (it->second->ctx.abort_flag) {
+                it->second->ctx.abort_flag->store(true);
+            }
+            res.set_content(R"({"status":"cancelled"})", "application/json");
+        } else {
+            res.status = 404;
+            res.set_content(R"({"error":"session not found"})", "application/json");
+        }
     });
 
     // ── Terminal: create ──

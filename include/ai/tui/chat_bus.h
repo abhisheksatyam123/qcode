@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <memory>
 
 #include <ai/tui/bus/port.h>
 #include <ai/tui/state.h>
@@ -25,6 +27,7 @@ struct GenerationContext {
     std::string session_id;
     std::string reasoning_mode = "off";
     std::string workspace;
+    std::shared_ptr<std::atomic<bool>> abort_flag = std::make_shared<std::atomic<bool>>(false);
 
     // Tool observability counters (updated by backend during generation)
     int tool_call_count = 0;

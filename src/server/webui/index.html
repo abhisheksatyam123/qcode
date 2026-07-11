@@ -40,21 +40,35 @@
     </div>
   </aside>
   <div id="main-area">
-    <main id="main">
-      <div id="chat-container">
-        <div id="messages"></div>
+    <div class="main-tabs">
+      <button class="main-tab-btn active" id="tab-chat-btn">
+        <span class="tab-icon">💬</span> Chat
+      </button>
+      <button class="main-tab-btn" id="tab-terminal-btn">
+        <span class="tab-icon">⚡</span> Terminal
+      </button>
+      <div class="main-tabs-spacer"></div>
+      <button class="layout-toggle-btn" id="layout-toggle-btn" title="Toggle Split View">
+        <span class="layout-icon">🔲</span> Split View
+      </button>
+    </div>
+    <div class="main-content-wrapper" id="main-content-wrapper">
+      <main id="main">
+        <div id="chat-container">
+          <div id="messages"></div>
+        </div>
+        <div id="input-area">
+          <textarea id="prompt-input" placeholder="Type your message..." rows="3"></textarea>
+          <button id="send-btn">Send</button>
+        </div>
+      </main>
+      <div id="terminal-panel" class="hidden">
+        <div class="terminal-header">
+          <span>Terminal</span>
+          <button id="terminal-close-btn" class="terminal-x">&times;</button>
+        </div>
+        <div id="terminal-container"></div>
       </div>
-      <div id="input-area">
-        <textarea id="prompt-input" placeholder="Type your message..." rows="3"></textarea>
-        <button id="send-btn">Send</button>
-      </div>
-    </main>
-    <div id="terminal-panel" class="hidden">
-      <div class="terminal-header">
-        <span>Terminal</span>
-        <button id="terminal-close-btn" class="terminal-x">&times;</button>
-      </div>
-      <div id="terminal-container"></div>
     </div>
   </div>
   <div id="modal-overlay"></div>

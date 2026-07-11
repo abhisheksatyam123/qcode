@@ -127,6 +127,10 @@ static void run_tools_generation_bus(ai::Client& client,
 
   LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", options.max_steps);
   while (step < options.max_steps && !finished) {
+    if (ctx.abort_flag && ctx.abort_flag->load()) {
+      LOG_DEBUG("run_tools_generation_bus: abort requested");
+      break;
+    }
     step_messages.erase(std::next(step_messages.begin(), initial_count), step_messages.end());
     step_messages.insert(step_messages.end(), response_messages.begin(), response_messages.end());
     step_opts.messages = step_messages;
@@ -150,6 +154,10 @@ static void run_tools_generation_bus(ai::Client& client,
       } else {
         std::string final_step_text;
         for (const auto& event : stream) {
+          if (ctx.abort_flag && ctx.abort_flag->load()) {
+            LOG_DEBUG("run_tools_generation_bus final stream: abort requested");
+            break;
+          }
           if (event.is_text_delta()) {
             final_step_text += event.text_delta;
             if (*assistant_text == "  \u23f3 Working...") {
@@ -392,6 +400,10 @@ static void run_stream_generation_bus(ai::Client& client,
   };
 
   for (const auto& event : stream) {
+    if (ctx.abort_flag && ctx.abort_flag->load()) {
+      LOG_DEBUG("run_stream_generation_bus: abort requested");
+      break;
+    }
     if (event.is_text_delta()) {
       text_buffer += event.text_delta;
       full_text   += event.text_delta;

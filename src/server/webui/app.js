@@ -4,12 +4,15 @@ const state = {
   model: '',
   reasoning: 'off',
   toolsEnabled: true,
-  messages: [],
-  generating: false,
+  openSessions: [], // Array of { id, title, workspace, messages, generating, reader, provider, model }
   providers: [],
-  sessionId: null,
+  sessionId: null,  // Active session ID
   sessionTitle: '',
-  sessionWorkspace: ''
+  sessionWorkspace: '',
+  // UI Tabs & layout state
+  activeTab: 'chat', // 'chat' or 'terminal'
+  layoutMode: 'tab', // 'tab' or 'split'
+  terminalOpen: false
 };
 
 // ── DOM refs ──
@@ -29,6 +32,13 @@ const toggleTerminalBtn = document.getElementById('toggle-terminal-btn');
 const terminalPanel = document.getElementById('terminal-panel');
 const terminalContainer = document.getElementById('terminal-container');
 const terminalCloseBtn = document.getElementById('terminal-close-btn');
+
+// New DOM refs for tabs & layout toggle
+const mainEl = document.getElementById('main');
+const mainContentWrapperEl = document.getElementById('main-content-wrapper');
+const tabTerminalBtn = document.getElementById('tab-terminal-btn');
+const layoutToggleBtn = document.getElementById('layout-toggle-btn');
+const sessionTabsContainer = document.getElementById('session-tabs-container');
 
 // ── Modal state ──
 let pickerCleanup = null;
@@ -64,21 +74,13 @@ async function init() {
     if (res.ok) {
       const data = await res.json();
       if (data && data.id) {
-        state.sessionId = data.id;
-        state.sessionTitle = data.title || '';
-        state.sessionWorkspace = data.workspace || '';
-        if (data.provider && data.model) applyProviderModel(data.provider, data.model);
-        if (Array.isArray(data.messages)) {
-          for (const m of data.messages) {
-            const role = m.role === 'assistant' ? 'assistant' : (m.role === 'user' ? 'user' : 'system');
-            state.messages.push({ role, content: m.content });
-          }
-        }
-        updateStatusBar();
+        await loadSessionById(data.id);
+        return;
       }
     }
   } catch (e) {}
-  renderMessages();
+  // If no last session, create a default session
+  await createNewSession();
 }
 init();
 
@@ -131,18 +133,28 @@ function setupEventListeners() {
   sendBtn.addEventListener('click', sendMessage);
   promptInput.addEventListener('keydown', handleInputKeydown);
   clearBtn.addEventListener('click', () => {
-    state.messages = [];
-    state.sessionId = null;
-    state.sessionTitle = '';
-    state.sessionWorkspace = '';
-    renderMessages();
-    updateStatusBar();
+    const session = state.openSessions.find(s => s.id === state.sessionId);
+    if (session) {
+      session.messages = [];
+      renderMessages();
+    }
   });
   reasoningSelect.addEventListener('change', () => {
     state.reasoning = reasoningSelect.value;
   });
   modelSelect.addEventListener('change', () => {
     state.model = modelSelect.value;
+    const session = state.openSessions.find(s => s.id === state.sessionId);
+    if (session) {
+      session.model = state.model;
+    }
+  });
+  providerSelect.addEventListener('change', () => {
+    const session = state.openSessions.find(s => s.id === state.sessionId);
+    if (session) {
+      session.provider = state.provider;
+      session.model = state.model;
+    }
   });
   promptInput.addEventListener('input', () => {
     updateSlashMenu();
@@ -153,8 +165,30 @@ function setupEventListeners() {
     }
   });
   newSessionBtn.addEventListener('click', showNewSessionModal);
+  
+  // Tab '+' button listener
+  const newTabBtn = document.getElementById('new-tab-btn');
+  if (newTabBtn) {
+    newTabBtn.addEventListener('click', showNewSessionModal);
+  }
+
   toggleTerminalBtn.addEventListener('click', toggleTerminal);
   terminalCloseBtn.addEventListener('click', closeTerminal);
+  
+  // Tab and layout event listeners
+  tabTerminalBtn.addEventListener('click', () => switchTab('terminal'));
+  layoutToggleBtn.addEventListener('click', toggleLayoutMode);
+
+  // Escape key cancels active generation
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const activeSession = state.openSessions.find(s => s.id === state.sessionId);
+      if (activeSession && activeSession.generating) {
+        showToast('Cancelling generation...');
+        cancelSession(activeSession.id);
+      }
+    }
+  });
 }
 
 // ── Status Bar ──
@@ -191,39 +225,7 @@ function showNewSessionModal() {
   async function doCreate() {
     const title = document.getElementById('ns-title').value.trim();
     const workspace = document.getElementById('ns-workspace').value.trim();
-    try {
-      const res = await fetch('/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: state.provider, model: state.model, workspace })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        state.sessionId = data.id;
-        state.sessionTitle = title || 'Session - ' + state.model;
-        state.sessionWorkspace = workspace || '';
-        state.messages = [];
-        renderMessages();
-        updateStatusBar();
-        // Rename if title provided
-        if (title) {
-          await fetch('/rename', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: data.id, title })
-          });
-        }
-        showToast('New session created');
-        // Also start terminal in workspace if terminal is open
-        if (!terminalPanel.classList.contains('hidden') && workspace) {
-          await startTerminal(workspace);
-        }
-      } else {
-        showToast('Failed: ' + await res.text());
-      }
-    } catch (e) {
-      showToast('Error: ' + e.message);
-    }
+    await createNewSession(title, workspace);
     close();
   }
 
@@ -245,10 +247,15 @@ function showNewSessionModal() {
 // ═══════════════════════════════════════════════════════════════════
 
 function toggleTerminal() {
-  if (terminalPanel.classList.contains('hidden')) {
-    terminalPanel.classList.remove('hidden');
+  if (!state.terminalOpen) {
+    state.terminalOpen = true;
     const ws = state.sessionWorkspace || '';
     startTerminal(ws);
+    if (state.layoutMode === 'tab') {
+      switchTab('terminal');
+    } else {
+      updateLayoutUI();
+    }
   } else {
     closeTerminal();
   }
@@ -301,18 +308,72 @@ async function startTerminal(workspace) {
 
   } catch (e) {
     showToast('Terminal error: ' + e.message);
-    terminalPanel.classList.add('hidden');
+    state.terminalOpen = false;
+    updateLayoutUI();
   }
 }
 
 async function closeTerminal() {
-  terminalPanel.classList.add('hidden');
+  state.terminalOpen = false;
   if (termPollTimer) { clearInterval(termPollTimer); termPollTimer = null; }
   if (term) { term.dispose(); term = null; }
   if (termId) {
     try { await fetch('/terminal/' + termId, { method: 'DELETE' }); } catch(e) {}
     termId = null;
   }
+  if (state.layoutMode === 'tab') {
+    switchTab('chat');
+  } else {
+    updateLayoutUI();
+  }
+}
+
+function switchTab(tab) {
+  if (state.layoutMode === 'split') {
+    state.layoutMode = 'tab';
+  }
+  state.activeTab = tab;
+  if (tab === 'terminal' && !state.terminalOpen) {
+    state.terminalOpen = true;
+    const ws = state.sessionWorkspace || '';
+    startTerminal(ws);
+  }
+  updateLayoutUI();
+}
+
+function toggleLayoutMode() {
+  state.layoutMode = state.layoutMode === 'tab' ? 'split' : 'tab';
+  if (state.layoutMode === 'split' && !state.terminalOpen) {
+    state.terminalOpen = true;
+    const ws = state.sessionWorkspace || '';
+    startTerminal(ws);
+  }
+  updateLayoutUI();
+}
+
+function updateLayoutUI() {
+  if (state.layoutMode === 'split') {
+    mainContentWrapperEl.classList.add('split-view');
+    mainEl.classList.remove('hidden');
+    terminalPanel.classList.remove('hidden');
+    
+    tabTerminalBtn.classList.add('active');
+    layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Tab View';
+  } else {
+    mainContentWrapperEl.classList.remove('split-view');
+    layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Split View';
+    
+    if (state.activeTab === 'chat') {
+      mainEl.classList.remove('hidden');
+      terminalPanel.classList.add('hidden');
+      tabTerminalBtn.classList.remove('active');
+    } else {
+      mainEl.classList.add('hidden');
+      terminalPanel.classList.remove('hidden');
+      tabTerminalBtn.classList.add('active');
+    }
+  }
+  renderSessionTabs();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -517,7 +578,16 @@ function showRenameModal() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: state.sessionId, title })
       });
-      if (res.ok) { state.sessionTitle = title; updateStatusBar(); showToast('Renamed to: ' + title); }
+      if (res.ok) {
+        state.sessionTitle = title;
+        const session = state.openSessions.find(s => s.id === state.sessionId);
+        if (session) {
+          session.title = title;
+        }
+        updateStatusBar();
+        renderSessionTabs();
+        showToast('Renamed to: ' + title);
+      }
       else showToast('Failed: ' + await res.text());
     } catch (e) { showToast('Failed: ' + e.message); }
     closeModal();
@@ -580,7 +650,16 @@ function showSlashMenu(matches) {
 function updateSlashMenuSelection(items) { items.forEach((el, i) => { el.classList.toggle('active', i === slashActiveIdx); }); }
 function closeSlashMenu() { if (slashMenuEl) { slashMenuEl.style.display = 'none'; slashMenuEl.innerHTML = ''; } slashActiveIdx = -1; }
 
-function addSystemMessage(text) { state.messages.push({ role: 'system', content: text }); renderMessages(); scrollToBottom(); }
+function addSystemMessage(text) {
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (session) {
+    session.messages.push({ role: 'system', content: text });
+    if (session.id === state.sessionId) {
+      renderMessages();
+      scrollToBottom();
+    }
+  }
+}
 
 // ── Slash command dispatch ──
 function handleSlashCommand(text) {
@@ -658,19 +737,36 @@ async function handleSessionCommand(args) {
 }
 
 async function loadSessionById(id) {
-  state.sessionId = id;
-  state.messages = [];
-  // Fetch session info (title, workspace, model)
+  // Check if already open
+  let session = state.openSessions.find(s => s.id === id);
+  if (session) {
+    switchSession(id);
+    return;
+  }
+
+  // If not open, fetch info and messages
+  session = {
+    id: id,
+    title: '',
+    workspace: '',
+    messages: [],
+    generating: false,
+    reader: null,
+    provider: '',
+    model: ''
+  };
+
   try {
     const res = await fetch('/session/' + id);
     if (res.ok) {
       const info = await res.json();
-      state.sessionTitle = info.title || '';
-      state.sessionWorkspace = info.workspace || '';
-      if (info.provider && info.model) applyProviderModel(info.provider, info.model);
+      session.title = info.title || '';
+      session.workspace = info.workspace || '';
+      session.provider = info.provider || '';
+      session.model = info.model || '';
     }
   } catch (e) {}
-  // Fetch and render message history so the conversation is resumed
+
   try {
     const res = await fetch('/session/' + id + '/messages');
     if (res.ok) {
@@ -678,14 +774,14 @@ async function loadSessionById(id) {
       if (Array.isArray(msgs)) {
         for (const m of msgs) {
           const role = m.role === 'assistant' ? 'assistant' : (m.role === 'user' ? 'user' : 'system');
-          state.messages.push({ role, content: m.content });
+          session.messages.push({ role, content: m.content });
         }
       }
     }
   } catch (e) {}
-  renderMessages();
-  updateStatusBar();
-  showToast('Loaded session: ' + (state.sessionTitle || id.substring(0,8)));
+
+  state.openSessions.push(session);
+  switchSession(id);
 }
 
 function handleNewCommand() { showNewSessionModal(); }
@@ -721,58 +817,123 @@ function handleCompactCommand() { addSystemMessage('Compact: not yet implemented
 async function sendMessage() {
   if (isModalOpen()) return;
   const text = promptInput.value.trim();
-  if (!text || state.generating) return;
+  if (!text) return;
   if (text.startsWith('/')) { promptInput.value = ''; handleSlashCommand(text); return; }
 
-  addMessage('user', text);
-  state.messages.push({ role: 'user', content: text });
-  promptInput.value = '';
-  state.generating = true; setGenerating(true);
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (!session || session.generating) return;
 
+  promptInput.value = '';
+  
+  session.messages.push({ role: 'user', content: text });
+  
   const assistantMsg = { role: 'assistant', content: '', toolEvents: [] };
-  state.messages.push(assistantMsg);
-  renderMessages(); scrollToBottom();
+  session.messages.push(assistantMsg);
+
+  if (session.id === state.sessionId) {
+    renderMessages();
+    scrollToBottom();
+    setGenerating(true);
+  }
+  
+  session.generating = true;
+  renderSessionTabs();
 
   try {
-    const body = JSON.stringify({ text, provider: state.provider, model: state.model, reasoning_mode: state.reasoning, ...(state.sessionId ? { session_id: state.sessionId } : {}) });
+    const body = JSON.stringify({
+      text,
+      provider: session.provider || state.provider,
+      model: session.model || state.model,
+      reasoning_mode: state.reasoning,
+      session_id: session.id
+    });
+    
     const res = await fetch('/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
     if (!res.ok) throw new Error(await res.text());
+    
     const reader = res.body.getReader();
+    session.reader = reader;
     const decoder = new TextDecoder();
     let buffer = '';
+    
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n'); buffer = lines.pop() || '';
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
       for (const line of lines) {
         if (!line.trim()) continue;
-        try { handleEvent(JSON.parse(line), assistantMsg); } catch (e) {}
+        try {
+          handleEvent(JSON.parse(line), assistantMsg, session);
+        } catch (e) {}
       }
     }
-  } catch (e) { showToast('Error: ' + e.message); assistantMsg.content = 'Error: ' + e.message; }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      showToast('Error: ' + e.message);
+      assistantMsg.content = 'Error: ' + e.message;
+    }
+  }
 
-  state.generating = false; setGenerating(false);
-  renderMessages(); scrollToBottom();
+  session.generating = false;
+  session.reader = null;
+  renderSessionTabs();
+
+  if (session.id === state.sessionId) {
+    setGenerating(false);
+    renderMessages();
+    scrollToBottom();
+  }
 }
 
-function handleEvent(evt, msg) {
+function handleEvent(evt, msg, session) {
   switch (evt.type) {
     case 'session.started':
       msg.sessionId = evt.session_id;
-      state.sessionId = evt.session_id;
-      updateStatusBar();
+      session.id = evt.session_id;
+      if (session.id === state.sessionId) {
+        state.sessionId = evt.session_id;
+        updateStatusBar();
+        renderSessionTabs();
+      }
       break;
-    case 'backend.message.delta': msg.content = evt.text; renderMessages(); scrollToBottom(); break;
-    case 'backend.reasoning.delta': if (!msg.reasoning) msg.reasoning = ''; msg.reasoning = evt.text; break;
+    case 'backend.message.delta':
+      msg.content = evt.text;
+      if (session.id === state.sessionId) {
+        renderMessages();
+        scrollToBottom();
+      }
+      break;
+    case 'backend.reasoning.delta':
+      if (!msg.reasoning) msg.reasoning = '';
+      msg.reasoning = evt.text;
+      break;
     case 'backend.tool.call.started':
       if (!msg.toolEvents) msg.toolEvents = [];
       msg.toolEvents.push({ type: 'tool_call', tool_call_id: evt.tool_call_id, tool_name: evt.tool_name, arguments: evt.arguments, status: 'running' });
-      renderMessages(); scrollToBottom(); break;
+      if (session.id === state.sessionId) {
+        renderMessages();
+        scrollToBottom();
+      }
+      break;
     case 'backend.tool.call.completed':
-      if (msg.toolEvents) { const tc = msg.toolEvents.find(t => t.tool_call_id === evt.tool_call_id); if (tc) { tc.status = evt.is_error ? 'error' : 'success'; tc.result = evt.result; tc.duration_ms = evt.duration_ms; } }
-      renderMessages(); scrollToBottom(); break;
-    case 'backend.error.occurred': showToast(evt.message); break;
+      if (msg.toolEvents) {
+        const tc = msg.toolEvents.find(t => t.tool_call_id === evt.tool_call_id);
+        if (tc) {
+          tc.status = evt.is_error ? 'error' : 'success';
+          tc.result = evt.result;
+          tc.duration_ms = evt.duration_ms;
+        }
+      }
+      if (session.id === state.sessionId) {
+        renderMessages();
+        scrollToBottom();
+      }
+      break;
+    case 'backend.error.occurred':
+      showToast(evt.message);
+      break;
   }
 }
 
@@ -780,7 +941,14 @@ function handleEvent(evt, msg) {
 //  RENDERING
 // ═══════════════════════════════════════════════════════════════════
 
-function renderMessages() { messagesEl.innerHTML = ''; for (const msg of state.messages) messagesEl.appendChild(renderMessage(msg)); }
+function renderMessages() {
+  messagesEl.innerHTML = '';
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (!session) return;
+  for (const msg of session.messages) {
+    messagesEl.appendChild(renderMessage(msg));
+  }
+}
 
 function renderMessage(msg) {
   const div = document.createElement('div'); div.className = 'message ' + msg.role;
@@ -797,7 +965,12 @@ function renderMessage(msg) {
   if (msg.content) {
     const textEl = document.createElement('div'); textEl.className = 'md-content';
     textEl.innerHTML = renderMarkdown(msg.content);
-    if (state.generating && msg === state.messages[state.messages.length - 1]) textEl.className += ' streaming-cursor';
+    
+    const activeSession = state.openSessions.find(s => s.id === state.sessionId);
+    const isGenerating = activeSession && activeSession.generating;
+    const isLastMsg = activeSession && msg === activeSession.messages[activeSession.messages.length - 1];
+    
+    if (isGenerating && isLastMsg) textEl.className += ' streaming-cursor';
     content.appendChild(textEl);
   }
   div.appendChild(content); return div;
@@ -809,12 +982,12 @@ function renderToolBlock(tc) {
   const statusIcons = { running: '⏳', success: '✅', error: '❌' };
   const block = document.createElement('div'); block.className = 'tool-block';
   const header = document.createElement('div'); header.className = 'tool-header';
-  header.innerHTML = `<span class="tool-chevron">▼</span><span class="tool-icon">${icon}</span><span class="tool-name">${capitalize(tc.tool_name)}</span>${tc.duration_ms ? '<span class="tool-duration">' + Math.round(tc.duration_ms) + 'ms</span>' : ''}<span class="tool-status ${tc.status}">${statusIcons[tc.status] || ''} ${tc.status}</span>`;
+  header.innerHTML = `<span class="tool-chevron">↓</span><span class="tool-icon">${icon}</span><span class="tool-name">${capitalize(tc.tool_name)}</span>${tc.duration_ms ? '<span class="tool-duration">' + Math.round(tc.duration_ms) + 'ms</span>' : ''}<span class="tool-status ${tc.status}">${statusIcons[tc.status] || ''} ${tc.status}</span>`;
   const body = document.createElement('div'); body.className = 'tool-body collapsed';
   if (tc.arguments) { const a = typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2); body.innerHTML += '<div class="input-label">Input:</div>' + esc(a); }
   if (tc.result) { const r = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2); body.innerHTML += '\n\n' + esc(r); }
   let expanded = false;
-  header.addEventListener('click', () => { expanded = !expanded; body.classList.toggle('collapsed', !expanded); header.querySelector('.tool-chevron').textContent = expanded ? '▲' : '▼'; });
+  header.addEventListener('click', () => { expanded = !expanded; body.classList.toggle('collapsed', !expanded); header.querySelector('.tool-chevron').textContent = expanded ? '↑' : '↓'; });
   block.appendChild(header); block.appendChild(body); return block;
 }
 
@@ -860,3 +1033,157 @@ function scrollToBottom() { document.getElementById('chat-container').scrollTop 
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 4000); }
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  MULTI-SESSION TABS HELPERS
+// ═══════════════════════════════════════════════════════════════════
+
+async function createNewSession(title = '', workspace = '') {
+  try {
+    const res = await fetch('/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: state.provider, model: state.model, workspace })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const newSession = {
+        id: data.id,
+        title: title || 'Session - ' + state.model,
+        workspace: workspace || '',
+        messages: [],
+        generating: false,
+        reader: null,
+        provider: state.provider,
+        model: state.model
+      };
+      
+      if (title) {
+        await fetch('/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: data.id, title })
+        });
+      }
+
+      state.openSessions.push(newSession);
+      switchSession(data.id);
+      showToast('New session created');
+      if (state.terminalOpen && workspace) {
+        await startTerminal(workspace);
+      }
+    }
+  } catch (e) {
+    showToast('Failed to create session: ' + e.message);
+  }
+}
+
+async function cancelSession(id) {
+  const session = state.openSessions.find(s => s.id === id);
+  if (!session) return;
+
+  if (session.reader) {
+    try {
+      await session.reader.cancel();
+    } catch (e) {}
+    session.reader = null;
+  }
+
+  try {
+    await fetch('/session/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: id })
+    });
+  } catch (e) {}
+
+  session.generating = false;
+  renderSessionTabs();
+
+  if (id === state.sessionId) {
+    setGenerating(false);
+    renderMessages();
+  }
+}
+
+async function switchSession(id) {
+  if (id === 'terminal') {
+    switchTab('terminal');
+    return;
+  }
+
+  if (state.layoutMode === 'tab') {
+    switchTab('chat');
+  }
+
+  const session = state.openSessions.find(s => s.id === id);
+  if (!session) return;
+
+  state.sessionId = id;
+  state.sessionTitle = session.title || '';
+  state.sessionWorkspace = session.workspace || '';
+  if (session.provider && session.model) {
+    applyProviderModel(session.provider, session.model);
+  }
+
+  setGenerating(session.generating);
+  renderMessages();
+  renderSessionTabs();
+  updateStatusBar();
+}
+
+async function closeSessionTab(id) {
+  const index = state.openSessions.findIndex(s => s.id === id);
+  if (index === -1) return;
+
+  const session = state.openSessions[index];
+  if (session.generating) {
+    await cancelSession(session.id);
+  }
+
+  state.openSessions.splice(index, 1);
+
+  if (state.sessionId === id) {
+    if (state.openSessions.length > 0) {
+      const nextIndex = Math.min(index, state.openSessions.length - 1);
+      switchSession(state.openSessions[nextIndex].id);
+    } else {
+      state.sessionId = null;
+      await createNewSession();
+    }
+  } else {
+    renderSessionTabs();
+  }
+}
+
+function renderSessionTabs() {
+  if (!sessionTabsContainer) return;
+
+  sessionTabsContainer.innerHTML = state.openSessions.map(session => {
+    const activeClass = session.id === state.sessionId && state.activeTab === 'chat' ? 'active' : '';
+    const title = session.title || 'Session';
+    const genIndicator = session.generating ? '<span class="session-gen-indicator">⏳</span> ' : '';
+    return `
+      <div class="session-tab-wrapper ${activeClass ? 'active-wrapper' : ''}">
+        <button class="session-tab ${activeClass}" data-id="${session.id}">
+          💬 ${genIndicator}${esc(title)}
+        </button>
+        <span class="close-session-btn" data-id="${session.id}">&times;</span>
+      </div>
+    `;
+  }).join('');
+
+  sessionTabsContainer.querySelectorAll('.session-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      switchSession(btn.dataset.id);
+    });
+  });
+
+  sessionTabsContainer.querySelectorAll('.close-session-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeSessionTab(btn.dataset.id);
+    });
+  });
+}

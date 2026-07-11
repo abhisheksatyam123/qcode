@@ -54,7 +54,7 @@ Element ToolBlock(const std::string& icon,
 
     // Collapse/expand indicator
     if (collapsible) {
-        std::string collapse_icon = collapsed ? "▸ " : "▼ ";
+        std::string collapse_icon = collapsed ? "↓ " : "↑ ";
         header_parts.push_back(text(collapse_icon) | color(accent_color) | bold);
     } else if (!icon.empty()) {
         // Add spacing if not collapsible but has icon
