@@ -189,8 +189,10 @@ int main() {
             ai::tui::BackendService backend{*bus_ptr, providers_copy};
             ai::tui::GenerationContext ctx{
                 .session_id = *state_ptr->session_id,
-                .reasoning_mode = *state_ptr->reasoning_mode
+                .reasoning_mode = *state_ptr->reasoning_mode,
+                .abort_flag = state_ptr->abort_flag
             };
+            *state_ptr->abort_flag = false;
 
             // ── Context window management ──
             // Build a (possibly pruned) copy of messages to fit the model's context.
@@ -686,6 +688,12 @@ int main() {
             }
             if (!prompt_input.empty()) {
                 prompt_input.clear();
+                return true;
+            }
+            // Not in a popup and input is empty: pause/abort an active generation.
+            if (*state.is_generating) {
+                *state.abort_flag = true;
+                store.add_toast("Stopping generation… (press Esc again to force)", "warning", 3000);
                 return true;
             }
             // Nothing to dismiss — fall through

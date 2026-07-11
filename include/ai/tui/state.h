@@ -91,6 +91,11 @@ struct ChatState {
     std::shared_ptr<int> last_actual_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> last_estimated_tokens = std::make_shared<int>(0);
 
+    // Abort/pause flag for the current generation. Set by Escape; checked by
+    // the backend generation loop. Resets to false on each new spawn.
+    std::shared_ptr<std::atomic<bool>> abort_flag =
+        std::make_shared<std::atomic<bool>>(false);
+
     // Context management: how many consecutive generations needed pruning.
     // Drives auto-compaction when the conversation is persistently too long.
     std::shared_ptr<int> consecutive_prunes = std::make_shared<int>(0);
