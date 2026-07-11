@@ -13,6 +13,7 @@ add_executable(qcode-tui
     message_render.cpp
     tool_renderers.cpp
     store.cpp
+    context_manager.cpp
     bus/impl.cpp
 )
 

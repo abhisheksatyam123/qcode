@@ -25,6 +25,7 @@
 #include <ai/tui/store.h>
 #include <ai/tui/bus/impl.h>
 #include <ai/tui/contract/event.h>
+#include <ai/tui/context_manager.h>
 #include <ai/tui/contract/identity.h>
 #include <atomic>
 #include <chrono>
@@ -190,6 +191,26 @@ int main() {
                 .session_id = *state_ptr->session_id,
                 .reasoning_mode = *state_ptr->reasoning_mode
             };
+
+            // ── Context window management ──
+            // Prune old tool results if we're approaching the model's limit.
+            size_t ctx_window = providers_copy[sel_prov].models[sel_mod].context_window;
+            if (ctx_window > 0) {
+                size_t sys_tok = ai::tui::estimate_system_tokens(sys_prompt);
+                size_t msg_tok = ai::tui::estimate_tokens(*state_ptr->messages_history);
+                size_t total = sys_tok + msg_tok;
+                size_t budget = (ctx_window * 4) / 5;  // 80%
+                if (total > budget) {
+                    LOG_WARN("Context approaching limit: estimated {} tokens / {} (80%={})",
+                             total, ctx_window, budget);
+                    size_t pruned = ai::tui::prune_context(*state_ptr->messages_history, ctx_window);
+                    if (pruned > 0) {
+                        store.add_toast("Pruned " + std::to_string(pruned) +
+                            " old tool results to fit context window", "warning", 4000);
+                    }
+                }
+            }
+
             backend.run_generation(
                 providers_copy[sel_prov].id,
                 providers_copy[sel_prov].models[sel_mod].id,
