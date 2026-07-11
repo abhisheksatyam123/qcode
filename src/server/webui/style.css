@@ -539,6 +539,11 @@ body {
   border-color: #7c4dff;
   outline: none;
 }
+
+/* Fuzzy finder popup */
+.fuzzy-input { margin: 12px 18px 4px; }
+.picker-empty { padding: 24px 18px; color: #8b949e; text-align: center; font-size: 13px; }
+.fuzzy-picker .picker-body { padding-bottom: 4px; }
 .rename-message {
   padding: 12px 18px;
   color: #ffab00;

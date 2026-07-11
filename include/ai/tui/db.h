@@ -43,11 +43,17 @@ struct SessionInfo {
     std::string id;
     std::string title;
     std::string workspace;
+    std::string provider;
+    std::string model;
 };
 std::vector<SessionInfo> list_sessions_full();
 
 // Rename a session title
 void rename_session(const std::string& session_id, const std::string& new_title);
+
+// Update the provider/model associated with a session (keeps the stored
+// selection in sync with what was actually used for generation)
+void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model);
 
 // Delete a session and its associated messages
 void delete_session(const std::string& session_id);

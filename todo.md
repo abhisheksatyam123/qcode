@@ -56,6 +56,16 @@
 - **Markdown**: proper bullet/numbered lists, blockquotes, horizontal rules, inline code
 
 ### Fixes (this pass)
+- **`/model` and `/session` now open a fuzzy-find popup**: instead of a static arrow-key list, typing `/model` (or `/session`) opens a command-palette modal with a live text input. As you type, items are filtered by subsequence fuzzy match (scored with consecutive/word-boundary bonuses) across name/id/provider/workspace, with ↑↓ navigation, Enter to select, Esc to cancel. `/model gpt` pre-fills the filter; clicking an item also selects.
+
+
+- **`/model` (and other slash commands) didn't run on Enter**: the slash-menu autocomplete consumed the first Enter (it just inserted `/model ` into the box) instead of executing the command, so the model picker never opened. Now Enter/Tab on an active slash suggestion executes the command directly (opens the picker/modal), and clicking a suggestion does the same.
+
+
+- **Model picker was broken**: `selectModel()` set `state.model` then called `onProviderChange()`, which clobbered it back to the first model and never restored the choice; `onProviderChange` also added a duplicate `change` listener on every call. Now a single `applyProviderModel()` handles dropdown + state consistently, and the model `change` listener is registered once.
+- **Session load didn't restore the model**: session endpoints didn't expose provider/model, so loading/resuming a session couldn't switch the active model. Now `/sessions`, `/session/<id>`, and `/session/last` return `provider`+`model`, the server keeps them in sync on each `/generate` (`set_session_provider_model`), and `loadSessionById`/auto-restore apply them via `applyProviderModel()`.
+
+
 - **Server now calls `db::init_database()` at startup** so sessions/messages tables always exist
   (previously relied on the TUI having created the schema first; fresh DB → all session I/O silently failed).
 - **Multi-turn was broken after the first reply**: `generation_started` was never reset, so the 2nd+

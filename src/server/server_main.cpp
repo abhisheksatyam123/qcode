@@ -369,6 +369,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Save user message and add to history
+        ai::tui::db::set_session_provider_model(session->id, provider, model);
         ai::tui::db::save_message(session->id, "User", text);
         session->messages.push_back(ai::Message::user(text));
 
@@ -478,7 +479,8 @@ int main(int argc, char* argv[]) {
         auto list = ai::tui::db::list_sessions_full();
         nlohmann::json j = nlohmann::json::array();
         for (const auto& s : list) {
-            j.push_back({{"id", s.id}, {"title", s.title}, {"workspace", s.workspace}});
+            j.push_back({{"id", s.id}, {"title", s.title}, {"workspace", s.workspace},
+                         {"provider", s.provider}, {"model", s.model}});
         }
         res.set_content(j.dump(2), "application/json");
     });
@@ -606,7 +608,8 @@ int main(int argc, char* argv[]) {
         auto list = ai::tui::db::list_sessions_full();
         for (const auto& s : list) {
             if (s.id == sid) {
-                res.set_content(nlohmann::json({{"id", s.id}, {"title", s.title}, {"workspace", s.workspace}}).dump(), "application/json");
+                res.set_content(nlohmann::json({{"id", s.id}, {"title", s.title},
+                    {"workspace", s.workspace}, {"provider", s.provider}, {"model", s.model}}).dump(), "application/json");
                 return;
             }
         }
@@ -640,7 +643,13 @@ int main(int argc, char* argv[]) {
         }
         nlohmann::json info = {{"id", sid}};
         for (const auto& s : ai::tui::db::list_sessions_full()) {
-            if (s.id == sid) { info["title"] = s.title; info["workspace"] = s.workspace; break; }
+            if (s.id == sid) {
+                info["title"] = s.title;
+                info["workspace"] = s.workspace;
+                info["provider"] = s.provider;
+                info["model"] = s.model;
+                break;
+            }
         }
         nlohmann::json msgs = nlohmann::json::array();
         for (const auto& [sender, content] : ai::tui::db::load_session_messages(sid)) {

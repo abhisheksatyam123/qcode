@@ -338,7 +338,7 @@ std::vector<SessionInfo> list_sessions_full() {
         return sessions;
     }
 
-    const char* sql = "SELECT id, title, COALESCE(workspace, '') FROM sessions ORDER BY created_at DESC;";
+    const char* sql = "SELECT id, title, COALESCE(workspace, ''), COALESCE(provider, ''), COALESCE(model, '') FROM sessions ORDER BY created_at DESC;";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -346,9 +346,13 @@ std::vector<SessionInfo> list_sessions_full() {
             const unsigned char* id_txt = sqlite3_column_text(stmt, 0);
             const unsigned char* title_txt = sqlite3_column_text(stmt, 1);
             const unsigned char* ws_txt = sqlite3_column_text(stmt, 2);
+            const unsigned char* prov_txt = sqlite3_column_text(stmt, 3);
+            const unsigned char* model_txt = sqlite3_column_text(stmt, 4);
             info.id = id_txt ? reinterpret_cast<const char*>(id_txt) : "";
             info.title = title_txt ? reinterpret_cast<const char*>(title_txt) : "";
             info.workspace = ws_txt ? reinterpret_cast<const char*>(ws_txt) : "";
+            info.provider = prov_txt ? reinterpret_cast<const char*>(prov_txt) : "";
+            info.model = model_txt ? reinterpret_cast<const char*>(model_txt) : "";
             sessions.push_back(std::move(info));
         }
         sqlite3_finalize(stmt);
@@ -397,6 +401,31 @@ void rename_session(const std::string& session_id, const std::string& new_title)
     if (prepare_stmt(db, sql, &stmt)) {
         sqlite3_bind_text(stmt, 1, new_title.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 2, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    sqlite3_close(db);
+}
+
+void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) {
+        LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
+        return;
+    }
+
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) {
+        return;
+    }
+
+    const char* sql = "UPDATE sessions SET provider = ?, model = ? WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, provider.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, model.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, session_id.c_str(), -1, SQLITE_STATIC);
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }

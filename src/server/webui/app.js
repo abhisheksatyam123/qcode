@@ -67,6 +67,7 @@ async function init() {
         state.sessionId = data.id;
         state.sessionTitle = data.title || '';
         state.sessionWorkspace = data.workspace || '';
+        if (data.provider && data.model) applyProviderModel(data.provider, data.model);
         if (Array.isArray(data.messages)) {
           for (const m of data.messages) {
             const role = m.role === 'assistant' ? 'assistant' : (m.role === 'user' ? 'user' : 'system');
@@ -109,9 +110,21 @@ function onProviderChange(idx) {
     `<option value="${m.id}">${m.name}</option>`
   ).join('');
   if (p.models.length > 0) state.model = p.models[0].id;
-  modelSelect.addEventListener('change', () => {
-    state.model = modelSelect.value;
-  });
+}
+
+// Apply a provider/model selection to both the dropdowns and state.
+// Used by the model picker and when restoring a session.
+function applyProviderModel(providerId, modelId) {
+  const pidx = state.providers.findIndex(p => p.id === providerId);
+  if (pidx < 0) { state.provider = providerId; state.model = modelId; return false; }
+  const p = state.providers[pidx];
+  providerSelect.value = pidx;
+  onProviderChange(pidx);
+  const midx = p.models.findIndex(m => m.id === modelId);
+  if (midx >= 0) modelSelect.value = modelId;
+  state.provider = providerId;
+  state.model = midx >= 0 ? modelId : (p.models.length > 0 ? p.models[0].id : modelId);
+  return true;
 }
 
 function setupEventListeners() {
@@ -127,6 +140,9 @@ function setupEventListeners() {
   });
   reasoningSelect.addEventListener('change', () => {
     state.reasoning = reasoningSelect.value;
+  });
+  modelSelect.addEventListener('change', () => {
+    state.model = modelSelect.value;
   });
   promptInput.addEventListener('input', () => {
     updateSlashMenu();
@@ -365,6 +381,103 @@ function showPickerModal(title, items, activeId, onSelect) {
   pickerCleanup = () => document.removeEventListener('keydown', onKey);
 }
 
+// ── Fuzzy finder ──
+// Subsequence match with light scoring (consecutive + word-boundary bonuses).
+function fuzzyScore(query, text) {
+  query = query.toLowerCase();
+  text = text.toLowerCase();
+  if (!query) return 0;            // empty query -> keep all items
+  let qi = 0, score = 0, prev = -2;
+  for (let ti = 0; ti < text.length && qi < query.length; ti++) {
+    if (text[ti] === query[qi]) {
+      score += 1;
+      if (ti === prev + 1) score += 2;                       // consecutive
+      const c = text[ti - 1];
+      if (ti === 0 || c === ' ' || c === '/' || c === '-' || c === '_' || c === '.') score += 3; // word start
+      prev = ti;
+      qi++;
+    }
+  }
+  return qi === query.length ? score : -1;  // -1 => not a subsequence
+}
+
+function fuzzyFilter(query, items) {
+  if (!query) return items.slice();
+  const out = [];
+  for (const it of items) {
+    const hay = [it.label, it.sublabel || '', it.category || '', it.workspace || ''].join(' ');
+    const s = fuzzyScore(query, hay);
+    if (s >= 0) out.push({ it, s });
+  }
+  out.sort((a, b) => b.s - a.s);
+  return out.map(x => x.it);
+}
+
+// Command-palette style picker with live fuzzy filtering via a text input.
+function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQuery) {
+  let query = initialQuery || '';
+  let filtered = fuzzyFilter(query, items);
+  let cursorIdx = Math.max(0, filtered.findIndex(i => i.id === activeId));
+  if (cursorIdx < 0) cursorIdx = 0;
+
+  modalOverlay.innerHTML = `
+    <div class="picker-modal fuzzy-picker">
+      <div class="picker-header">${esc(title)}</div>
+      <input class="rename-input fuzzy-input" id="fuzzy-input" type="text"
+             placeholder="${esc(placeholder || 'Type to filter...')}" value="${esc(query)}" autofocus />
+      <div class="picker-body" id="fuzzy-body"></div>
+      <div class="picker-footer">Type to filter &middot; &uarr;&darr; navigate &middot; Enter select &middot; Esc cancel</div>
+    </div>`;
+  modalOverlay.classList.add('active');
+  const input = document.getElementById('fuzzy-input');
+  const body = document.getElementById('fuzzy-body');
+
+  function renderBody() {
+    filtered = fuzzyFilter(query, items);
+    if (cursorIdx >= filtered.length) cursorIdx = Math.max(0, filtered.length - 1);
+    if (cursorIdx < 0) cursorIdx = 0;
+    if (filtered.length === 0) {
+      body.innerHTML = '<div class="picker-empty">No matches</div>';
+      return;
+    }
+    let html = '';
+    let lastCat = '';
+    for (let i = 0; i < filtered.length; i++) {
+      const it = filtered[i];
+      if (it.category && it.category !== lastCat) {
+        lastCat = it.category;
+        html += `<div class="picker-category">${esc(lastCat)}</div>`;
+      }
+      const cls = i === cursorIdx ? 'picker-item selected' : 'picker-item';
+      const marker = i === cursorIdx ? '▶' : (it.isActive ? '●' : '');
+      html += `<div class="${cls}" data-idx="${i}">`;
+      html += `<span class="marker">${marker}</span>`;
+      html += `<span class="item-label">${esc(it.label)}</span>`;
+      if (it.sublabel) html += `<span class="item-id">${esc(it.sublabel)}</span>`;
+      if (it.workspace) html += `<span class="item-id" title="${esc(it.workspace)}">📁 ${esc(shortPath(it.workspace))}</span>`;
+      html += `</div>`;
+    }
+    body.innerHTML = html;
+    const sel = body.querySelector('.picker-item.selected');
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+    body.querySelectorAll('.picker-item').forEach(el => {
+      el.addEventListener('click', () => { const idx = parseInt(el.dataset.idx); closeModal(); onSelect(filtered[idx]); });
+    });
+  }
+
+  renderBody();
+
+  input.addEventListener('input', (e) => { query = e.target.value; cursorIdx = 0; renderBody(); });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); cursorIdx = Math.min(cursorIdx + 1, Math.max(0, filtered.length - 1)); renderBody(); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); cursorIdx = Math.max(cursorIdx - 1, 0); renderBody(); }
+    else if (ev.key === 'Enter') { ev.preventDefault(); if (filtered[cursorIdx]) { closeModal(); onSelect(filtered[cursorIdx]); } }
+    else if (ev.key === 'Escape') { ev.preventDefault(); closeModal(); }
+  });
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function shortPath(p) {
   if (!p) return '';
   return p.length > 30 ? '…' + p.slice(-28) : p;
@@ -431,7 +544,12 @@ function handleInputKeydown(e) {
     if (e.key === 'ArrowUp') { e.preventDefault(); slashActiveIdx = Math.max(slashActiveIdx - 1, 0); updateSlashMenuSelection(items); return; }
     if (e.key === 'Tab' || (e.key === 'Enter' && slashActiveIdx >= 0)) {
       e.preventDefault();
-      if (slashActiveIdx >= 0 && slashActiveIdx < items.length) selectSlashCommand(items[slashActiveIdx].dataset.cmd);
+      if (slashActiveIdx >= 0 && slashActiveIdx < items.length) {
+        const cmd = items[slashActiveIdx].dataset.cmd;
+        promptInput.value = '';
+        closeSlashMenu();
+        handleSlashCommand(cmd);
+      }
       return;
     }
     if (e.key === 'Escape') { closeSlashMenu(); return; }
@@ -454,11 +572,12 @@ function showSlashMenu(matches) {
     `<div class="slash-menu-item${i === 0 ? ' active' : ''}" data-cmd="${m.name}"><span class="cmd-name">${m.name}</span><span class="cmd-desc">${m.desc}</span></div>`
   ).join('');
   slashMenuEl.style.display = 'block';
-  slashMenuEl.querySelectorAll('.slash-menu-item').forEach(el => { el.addEventListener('click', () => selectSlashCommand(el.dataset.cmd)); });
+  slashMenuEl.querySelectorAll('.slash-menu-item').forEach(el => {
+    el.addEventListener('click', () => { const cmd = el.dataset.cmd; promptInput.value = ''; closeSlashMenu(); handleSlashCommand(cmd); });
+  });
 }
 
 function updateSlashMenuSelection(items) { items.forEach((el, i) => { el.classList.toggle('active', i === slashActiveIdx); }); }
-function selectSlashCommand(cmd) { promptInput.value = cmd + ' '; closeSlashMenu(); promptInput.focus(); }
 function closeSlashMenu() { if (slashMenuEl) { slashMenuEl.style.display = 'none'; slashMenuEl.innerHTML = ''; } slashActiveIdx = -1; }
 
 function addSystemMessage(text) { state.messages.push({ role: 'system', content: text }); renderMessages(); scrollToBottom(); }
@@ -498,16 +617,6 @@ function handleHelpCommand() {
 
 // ── /model ──
 function handleModelCommand(args) {
-  if (args && args !== 'list') {
-    const lower = args.toLowerCase();
-    for (const p of state.providers) {
-      for (const m of p.models) {
-        if (m.id.toLowerCase() === lower || m.name.toLowerCase() === lower) { selectModel(p, m); return; }
-      }
-    }
-    addSystemMessage('Model not found: ' + args);
-    return;
-  }
   const items = [];
   for (const p of state.providers) {
     for (const m of p.models) {
@@ -515,7 +624,7 @@ function handleModelCommand(args) {
     }
   }
   if (items.length === 0) { addSystemMessage('No models available.'); return; }
-  showPickerModal('Select Model', items, state.provider + '||' + state.model, (chosen) => {
+  showFuzzyPicker('Select Model', items, state.provider + '||' + state.model, (chosen) => {
     const parts = chosen.id.split('||');
     const pid = parts[0], mid = parts.slice(1).join('||');
     for (const p of state.providers) {
@@ -525,45 +634,40 @@ function handleModelCommand(args) {
         }
       }
     }
-  });
+  }, 'Type a model name to filter…', args || '');
 }
 
 function selectModel(provider, model) {
-  state.provider = provider.id;
-  state.model = model.id;
-  const pidx = state.providers.indexOf(provider);
-  if (pidx >= 0) { providerSelect.value = pidx; onProviderChange(pidx); modelSelect.value = model.id; }
+  applyProviderModel(provider.id, model.id);
   showToast('Model: ' + provider.name + ' / ' + model.name);
 }
 
 // ── /session ──
 async function handleSessionCommand(args) {
-  if (args && args !== 'list') {
-    await loadSessionById(args);
-    return;
-  }
   let sessions;
   try { const res = await fetch('/sessions'); sessions = await res.json(); } catch (e) { showToast('Failed: ' + e.message); return; }
   if (!sessions || sessions.length === 0) { showToast('No saved sessions'); return; }
   const items = sessions.map(s => ({
-    id: s.id, label: s.title || '(untitled)', sublabel: s.id.substring(0, 12) + '…',
+    id: s.id, label: s.title || '(untitled)',
+    sublabel: s.model ? s.model : s.id.substring(0, 12) + '…',
     workspace: s.workspace || '', isActive: s.id === state.sessionId
   }));
-  showPickerModal('Select Session', items, state.sessionId || '', async (chosen) => {
-    await loadSessionById(chosen.id);
-  });
+  showFuzzyPicker('Select Session', items, state.sessionId || '', (chosen) => {
+    loadSessionById(chosen.id);
+  }, 'Type a title or workspace to filter…', args || '');
 }
 
 async function loadSessionById(id) {
   state.sessionId = id;
   state.messages = [];
-  // Fetch session info (title, workspace)
+  // Fetch session info (title, workspace, model)
   try {
     const res = await fetch('/session/' + id);
     if (res.ok) {
       const info = await res.json();
       state.sessionTitle = info.title || '';
       state.sessionWorkspace = info.workspace || '';
+      if (info.provider && info.model) applyProviderModel(info.provider, info.model);
     }
   } catch (e) {}
   // Fetch and render message history so the conversation is resumed
