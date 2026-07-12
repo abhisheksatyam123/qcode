@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(nlohmann_json 3.10)
+find_dependency(OpenSSL)
+
+include("${CMAKE_CURRENT_LIST_DIR}/qcode-core-targets.cmake")
+
+set(qcode_core_FOUND TRUE)

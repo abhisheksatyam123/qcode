@@ -6,7 +6,7 @@
 #     "rich>=13.0.0",
 # ]
 # ///
-"""Build script for AI SDK C++
+"""Build script for QCode
 
 Usage: 
     uv run scripts/build.py [OPTIONS]
@@ -59,6 +59,71 @@ def run_command(cmd: list[str], cwd: Optional[Path] = None, check: bool = True) 
         sys.exit(1)
 
 
+def check_uv():
+    """Check if uv is available."""
+    try:
+        subprocess.run(["uv", "--version"], check=True, capture_output=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def check_node():
+    """Check if node/npm is available for webui build."""
+    try:
+        subprocess.run(["node", "--version"], check=True, capture_output=True)
+        subprocess.run(["npm", "--version"], check=True, capture_output=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def build_webui(project_root: Path, build_dir: Path):
+    """Build the WebUI frontend."""
+    webui_src = project_root / "apps" / "webui"
+    webui_dist = build_dir / "webui" / "dist"
+    
+    if not (webui_src / "package.json").exists():
+        console.print("[yellow]WebUI package.json not found, skipping WebUI build[/yellow]")
+        return False
+    
+    console.print("[bold blue]Building WebUI...[/bold blue]")
+    
+    # Install dependencies
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Installing npm dependencies...", total=None)
+        result = subprocess.run(["npm", "ci"], cwd=webui_src, capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print(f"[red]npm ci failed:[/red] {result.stderr}")
+            return False
+        progress.update(task, completed=True)
+    
+    # Build
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Building WebUI...", total=None)
+        result = subprocess.run(["npm", "run", "build"], cwd=webui_src, capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print(f"[red]npm build failed:[/red] {result.stderr}")
+            return False
+        progress.update(task, completed=True)
+    
+    # Copy to build directory
+    if (webui_src / "dist").exists():
+        webui_dist.parent.mkdir(parents=True, exist_ok=True)
+        if webui_dist.exists():
+            shutil.rmtree(webui_dist)
+        shutil.copytree(webui_src / "dist", webui_dist)
+        console.print(f"[green]✓[/green] WebUI built to {webui_dist}")
+        return True
+    return False
 
 
 @click.command()
@@ -94,8 +159,29 @@ def run_command(cmd: list[str], cwd: Optional[Path] = None, check: bool = True) 
     default=None,
     help="Number of parallel build jobs (default: CPU count)"
 )
-def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_commands: bool, jobs: Optional[int]):
-    """Build AI SDK C++ with modern tooling."""
+@click.option(
+    "--no-tui",
+    is_flag=True,
+    help="Skip TUI build"
+)
+@click.option(
+    "--no-server",
+    is_flag=True,
+    help="Skip server build"
+)
+@click.option(
+    "--no-cli",
+    is_flag=True,
+    help="Skip CLI build"
+)
+@click.option(
+    "--no-webui",
+    is_flag=True,
+    help="Skip WebUI build"
+)
+def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_commands: bool, 
+         jobs: Optional[int], no_tui: bool, no_server: bool, no_cli: bool, no_webui: bool):
+    """Build QCode with modern tooling."""
     
     # Get project paths
     script_dir = Path(__file__).parent
@@ -114,9 +200,18 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     config_table.add_row("Clean build", "✓" if clean else "✗")
     config_table.add_row("Export compile commands", "✓" if export_compile_commands else "✗")
     config_table.add_row("Parallel jobs", str(jobs or os.cpu_count() or 4))
+    config_table.add_row("Build TUI", "✗" if no_tui else "✓")
+    config_table.add_row("Build Server", "✗" if no_server else "✓")
+    config_table.add_row("Build CLI", "✗" if no_cli else "✓")
+    config_table.add_row("Build WebUI", "✗" if no_webui else "✓")
     
     console.print(config_table)
     console.print()
+    
+    # Check uv
+    if not check_uv():
+        console.print("[red]Error: 'uv' not found. Please install uv from https://github.com/astral-sh/uv[/red]")
+        sys.exit(1)
     
     # Clean build directory if requested
     if clean and build_dir.exists():
@@ -133,99 +228,67 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     # Create build directory
     build_dir.mkdir(exist_ok=True)
     
-    console.print("[green]✓[/green] Dependencies configured via git submodules")
-    console.print()
+    # Build WebUI first (if requested)
+    if not no_webui and check_node():
+        console.print()
+        build_webui(project_root, build_dir)
+    elif not no_webui:
+        console.print("[yellow]Node.js not found, skipping WebUI build[/yellow]")
     
     # Configure CMake
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Configuring with CMake...", total=None)
-        
-        cmake_args = [
-            'cmake',
-            str(project_root),
-            '-G', 'Ninja',
-            f'-DCMAKE_BUILD_TYPE={mode.title()}',
-        ]
-        
-        # Add export compile commands option
-        if export_compile_commands:
-            cmake_args.append('-DCMAKE_EXPORT_COMPILE_COMMANDS=ON')
-        
-        # Add test option
-        cmake_args.append(f'-DBUILD_TESTS={"ON" if tests else "OFF"}')
-        
-        # Always build examples for now
-        cmake_args.append('-DBUILD_EXAMPLES=ON')
-        
-        run_command(cmake_args, cwd=build_dir)
-        progress.update(task, completed=True)
+    cmake_args = [
+        "cmake",
+        "-B", str(build_dir),
+        "-S", str(project_root),
+        f"-DCMAKE_BUILD_TYPE={mode.capitalize()}",
+        f"-DBUILD_TESTS={'ON' if tests else 'OFF'}",
+        f"-DCMAKE_EXPORT_COMPILE_COMMANDS={'ON' if export_compile_commands else 'OFF'}",
+        f"-DQCODE_BUILD_TUI={'OFF' if no_tui else 'ON'}",
+        f"-DQCODE_BUILD_SERVER={'OFF' if no_server else 'ON'}",
+        f"-DQCODE_BUILD_CLI={'OFF' if no_cli else 'ON'}",
+    ]
     
-    console.print("[green]✓[/green] CMake configuration completed")
+    console.print("[bold blue]Configuring with CMake...[/bold blue]")
+    run_command(cmake_args, cwd=project_root)
     
     # Build
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,  
-    ) as progress:
-        task = progress.add_task("Building...", total=None)
-        
-        build_args = ['cmake', '--build', '.']
-        
-        if verbose:
-            build_args.append('--verbose')
-        
-        # Add parallel build option
-        parallel_jobs = jobs or os.cpu_count() or 4
-        build_args.extend(['--parallel', str(parallel_jobs)])
-        
-        run_command(build_args, cwd=build_dir)
-        progress.update(task, completed=True)
+    build_args = ["cmake", "--build", str(build_dir)]
+    if jobs:
+        build_args.extend(["--parallel", str(jobs)])
+    if verbose:
+        build_args.append("--verbose")
     
-    console.print("[green]✓[/green] Build completed successfully!")
+    console.print("[bold blue]Building...[/bold blue]")
+    run_command(build_args, cwd=project_root)
     
-    # Copy compile commands if requested
+    # Copy compile_commands.json to project root if requested
     if export_compile_commands:
-        compile_commands_src = build_dir / "compile_commands.json"
-        compile_commands_dst = project_root / "compile_commands.json"
-        
-        if compile_commands_src.exists():
-            shutil.copy2(compile_commands_src, compile_commands_dst)
-            console.print(f"[green]✓[/green] Exported compile commands to [cyan]{compile_commands_dst}[/cyan]")
-        else:
-            console.print("[yellow]⚠ Warning: compile_commands.json not generated[/yellow]")
+        compile_commands = build_dir / "compile_commands.json"
+        if compile_commands.exists():
+            shutil.copy2(compile_commands, project_root / "compile_commands.json")
+            console.print("[green]✓[/green] compile_commands.json copied to project root")
     
+    # Success message
     console.print()
-    
-    # Display build results
-    results_panel = Panel.fit(
-        f"""[bold green]Build Results[/bold green]
-
-[bold]Built targets:[/bold]
-  📚 Library: {build_dir}/libai-sdk-cpp.a (or .lib on Windows)
-  🎯 Examples: {build_dir}/examples/
-{f"  🧪 Tests: {build_dir}/tests/" if tests else ""}
-
-[bold]To run examples (after setting API keys):[/bold]
-  [cyan]export OPENAI_API_KEY=your_openai_key[/cyan]
-  [cyan]export ANTHROPIC_API_KEY=your_anthropic_key[/cyan]
-  [cyan]{build_dir}/examples/basic_chat[/cyan]
-  [cyan]{build_dir}/examples/streaming_chat[/cyan]
-
-{"""[bold]To run tests:[/bold]
-  [cyan]cd build && ctest[/cyan]
-  [cyan]cd build && ctest --verbose[/cyan]
-  [cyan]cd build && ctest -R "test_types"[/cyan] (run specific test)""" if tests else ""}""",
-        title="🎉 Success",
+    console.print(Panel.fit(
+        f"[green]Build successful![/green]\n\n"
+        f"Binaries in: [cyan]{build_dir}[/cyan]",
+        title="✓ Complete",
         border_style="green"
-    )
+    ))
     
-    console.print(results_panel)
+    # List built targets
+    console.print("[bold]Built targets:[/bold]")
+    targets = ["qcode-tui", "qcode-server", "qcode-cli"]
+    for target in targets:
+        binary = build_dir / "apps" / target.replace("qcode-", "") / target
+        if not binary.exists():
+            binary = build_dir / "src" / target.replace("qcode-", "") / target
+        if binary.exists():
+            console.print(f"  ✓ {target} -> {binary}")
+        else:
+            console.print(f"  ✗ {target} (not found)")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -1,0 +1,40 @@
+#pragma once
+
+#ifndef AI_SDK_HAS_CURSOR
+#error \
+    "Cursor component not available. Link with ai::cursor or ai::sdk to use Cursor functionality."
+#endif
+
+#include "types/client.h"
+
+#include <string>
+
+namespace ai {
+namespace cursor {
+
+// Cursor service endpoints. Both authenticate with the same access token; the
+// resolver in the TUI fills these in from defaults (or the config `api` field).
+struct Options {
+  std::string aiserver_base_url = "https://api2.cursor.sh";
+  std::string agent_base_url = "https://agentn.global.api5.cursor.sh";
+};
+
+// Create a Cursor client with an explicit access token.
+// @param access_token Cursor access token (from get_cursor_access_token()).
+Client create_client(const std::string& access_token);
+
+// Create a Cursor client with an explicit access token and session token.
+Client create_client(const std::string& access_token,
+                     const std::string& session_token);
+
+// Create a Cursor client overriding the default service base URLs.
+Client create_client(const std::string& access_token,
+                     const std::string& session_token,
+                     const std::string& aiserver_base_url,
+                     const std::string& agent_base_url);
+
+// Create a Cursor client from an Options struct.
+Client create_client(const std::string& access_token, const Options& options);
+
+}  // namespace cursor
+}  // namespace ai

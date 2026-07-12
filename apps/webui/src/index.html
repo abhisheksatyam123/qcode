@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QCode Chat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+</head>
+<body>
+<div id="app">
+  <!-- Mobile Sidebar Overlay -->
+  <div id="sidebar-overlay"></div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-brand">
+        <h1>QCode</h1>
+        <div class="version">v0.2</div>
+      </div>
+      <button id="sidebar-close-btn" class="sidebar-close-btn" title="Close Menu">&times;</button>
+    </div>
+
+    <!-- Views Selection -->
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Views</div>
+      <nav class="sidebar-nav">
+        <button class="sidebar-nav-btn active" id="tab-chat-btn">
+          <span class="nav-icon">💬</span> Chat
+        </button>
+        <button class="sidebar-nav-btn" id="tab-terminal-btn">
+          <span class="nav-icon">⚡</span> Terminal
+        </button>
+        <button class="sidebar-nav-btn" id="tab-files-btn">
+          <span class="nav-icon">📁</span> Working Tree
+        </button>
+        <button class="sidebar-nav-btn" id="tab-stats-btn">
+          <span class="nav-icon">📊</span> Session Stats
+        </button>
+      </nav>
+    </div>
+
+    <!-- Sessions Section -->
+    <div class="sidebar-section flex-grow">
+      <div class="sidebar-section-header">
+        <div class="sidebar-section-title">Sessions</div>
+        <button id="new-session-btn" class="session-add-btn" title="New Session">+</button>
+      </div>
+      <div id="session-tabs-container" class="session-tabs-container"></div>
+    </div>
+
+    <!-- Settings Section -->
+    <div class="sidebar-section sidebar-settings">
+      <div class="sidebar-section-title">Settings</div>
+      <div class="sidebar-controls">
+        <div class="control-group">
+          <label for="provider-select">Provider</label>
+          <select id="provider-select"></select>
+        </div>
+        <div class="control-group">
+          <label for="model-select">Model</label>
+          <select id="model-select"></select>
+        </div>
+        <div class="control-group">
+          <label for="reasoning-select">Reasoning</label>
+          <select id="reasoning-select">
+            <option value="off">Off</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button id="clear-btn">Clear Chat</button>
+    </div>
+  </aside>
+
+  <!-- Main Content Area -->
+  <div id="main-area">
+    <!-- Header replacing the old main-tabs -->
+    <header id="main-header">
+      <button id="menu-toggle-btn" class="menu-toggle-btn" title="Toggle Menu">☰</button>
+      <div class="header-session-info">
+        <div class="header-session-title" id="header-session-title">No session</div>
+        <div class="header-session-workspace" id="header-session-workspace"></div>
+      </div>
+      <div class="header-actions">
+        <button class="layout-toggle-btn" id="layout-toggle-btn" title="Toggle Split View">
+          <span class="layout-icon">🔲</span> Split View
+        </button>
+      </div>
+    </header>
+
+    <div class="main-content-wrapper" id="main-content-wrapper">
+      <main id="main">
+        <div id="chat-container">
+          <div id="messages"></div>
+        </div>
+        <div id="input-area">
+          <div class="input-wrapper">
+            <textarea id="prompt-input" placeholder="Type your message..." rows="3"></textarea>
+            <div class="input-actions">
+              <span class="input-info">Shift+Enter for newline</span>
+              <button id="send-btn">Send</button>
+            </div>
+          </div>
+        </div>
+      </main>
+      <div id="terminal-panel" class="hidden">
+        <div class="terminal-header">
+          <span>Terminal</span>
+          <button id="terminal-close-btn" class="terminal-x">&times;</button>
+        </div>
+        <div id="terminal-container"></div>
+      </div>
+      <div id="files-panel" class="side-tab-panel hidden">
+        <div class="side-tab-header">
+          <span>📁 Working Tree</span>
+          <button id="files-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+        </div>
+        <div id="files-content"></div>
+      </div>
+      <div id="stats-panel" class="side-tab-panel hidden">
+        <div class="side-tab-header">
+          <span>📊 Session Stats</span>
+          <button id="stats-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+        </div>
+        <div id="stats-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-overlay"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

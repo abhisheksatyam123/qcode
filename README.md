@@ -32,34 +32,34 @@ cd qcode
 ### Build
 
 ```bash
-# Debug build (default) — builds the SDK, examples, and qcode-tui
+# Debug build (default) — builds libqcode and qcode-tui
 uv run scripts/build.py
 
 # Release build
 uv run scripts/build.py --mode release
 ```
 
-The headless server is opt-in. Enable it when configuring CMake, then build:
+Or with CMake directly:
 
 ```bash
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQCODE_BUILD_SERVER=ON
-cmake --build build --parallel
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel --target qcode-tui
 ```
 
-Or reconfigure an existing build directory:
+Server and CLI are also on by default (`QCODE_BUILD_SERVER` / `QCODE_BUILD_CLI`). Disable them if you only want the TUI:
 
 ```bash
-cmake -B build -DQCODE_BUILD_SERVER=ON
-uv run scripts/build.py
+cmake -B build -G Ninja -DQCODE_BUILD_SERVER=OFF -DQCODE_BUILD_CLI=OFF
+cmake --build build --parallel --target qcode-tui
 ```
 
 Binaries land at:
 
 | Target | Path |
 |--------|------|
-| TUI | `build/src/tui/qcode-tui` |
-| Server | `build/src/server/qcode-server` |
-| CLI client | `build/src/server/qcode-cli` |
+| TUI | `build/apps/tui/qcode-tui` |
+| Server | `build/apps/server/qcode-server` |
+| CLI client | `build/apps/cli/qcode-cli` |
 
 ### Configuration
 
@@ -75,7 +75,7 @@ Set provider API keys via environment variables (e.g. `OPENAI_API_KEY`, `ANTHROP
 ### Start the TUI
 
 ```bash
-./build/src/tui/qcode-tui
+./build/apps/tui/qcode-tui
 ```
 
 Logs go to `/tmp/qcode.log`.
@@ -84,16 +84,16 @@ Logs go to `/tmp/qcode.log`.
 
 ```bash
 # Default port 9080
-./build/src/server/qcode-server
+./build/apps/server/qcode-server
 
 # Custom port
-./build/src/server/qcode-server --port 9080
+./build/apps/server/qcode-server --port 9080
 ```
 
 Then open `http://localhost:9080` for the Web UI, or use the CLI client:
 
 ```bash
-./build/src/server/qcode-cli --prompt "Hello"
+./build/apps/cli/qcode-cli --prompt "Hello"
 ```
 
 Server logs go to `/tmp/qcode-server.log`.
