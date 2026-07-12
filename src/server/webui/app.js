@@ -1,3 +1,18 @@
+
+function openMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (sidebar) sidebar.classList.add('active');
+  if (overlay) overlay.classList.add('active');
+}
+
+function closeMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (sidebar) sidebar.classList.remove('active');
+  if (overlay) overlay.classList.remove('active');
+}
+
 // ── QCode Web UI ──────────────────────────────────────────────────
 const state = {
   provider: '',
@@ -25,8 +40,8 @@ const modelSelect = document.getElementById('model-select');
 const reasoningSelect = document.getElementById('reasoning-select');
 const modalOverlay = document.getElementById('modal-overlay');
 const statusBar = document.getElementById('status-bar');
-const statusSession = document.getElementById('status-session');
-const statusWorkspace = document.getElementById('status-workspace');
+const statusSession = document.getElementById('header-session-title');
+const statusWorkspace = document.getElementById('header-session-workspace');
 const newSessionBtn = document.getElementById('new-session-btn');
 const toggleTerminalBtn = document.getElementById('toggle-terminal-btn');
 const terminalPanel = document.getElementById('terminal-panel');
@@ -37,6 +52,7 @@ const terminalCloseBtn = document.getElementById('terminal-close-btn');
 const mainEl = document.getElementById('main');
 const mainContentWrapperEl = document.getElementById('main-content-wrapper');
 const tabTerminalBtn = document.getElementById('tab-terminal-btn');
+const tabChatBtn = document.getElementById('tab-chat-btn');
 const layoutToggleBtn = document.getElementById('layout-toggle-btn');
 const sessionTabsContainer = document.getElementById('session-tabs-container');
 
@@ -45,6 +61,7 @@ let pickerCleanup = null;
 
 // ── Terminal state ──
 let term = null;       // xterm instance
+let fitAddon = null;   // xterm fit addon
 let termId = null;     // server terminal session id
 let termPollTimer = null;
 
@@ -164,7 +181,9 @@ function setupEventListeners() {
       closeSlashMenu();
     }
   });
-  newSessionBtn.addEventListener('click', showNewSessionModal);
+  if (newSessionBtn) {
+    newSessionBtn.addEventListener('click', showNewSessionModal);
+  }
   
   // Tab '+' button listener
   const newTabBtn = document.getElementById('new-tab-btn');
@@ -172,12 +191,37 @@ function setupEventListeners() {
     newTabBtn.addEventListener('click', showNewSessionModal);
   }
 
-  toggleTerminalBtn.addEventListener('click', toggleTerminal);
-  terminalCloseBtn.addEventListener('click', closeTerminal);
+  if (toggleTerminalBtn) {
+    toggleTerminalBtn.addEventListener('click', toggleTerminal);
+  }
+  if (terminalCloseBtn) {
+    terminalCloseBtn.addEventListener('click', closeTerminal);
+  }
   
   // Tab and layout event listeners
-  tabTerminalBtn.addEventListener('click', () => switchTab('terminal'));
-  layoutToggleBtn.addEventListener('click', toggleLayoutMode);
+  if (tabChatBtn) {
+    tabChatBtn.addEventListener('click', () => switchTab('chat'));
+  }
+  if (tabTerminalBtn) {
+    tabTerminalBtn.addEventListener('click', () => switchTab('terminal'));
+  }
+  if (layoutToggleBtn) {
+    layoutToggleBtn.addEventListener('click', toggleLayoutMode);
+  }
+
+  // Mobile sidebar event listeners
+  const menuToggleBtn = document.getElementById('menu-toggle-btn');
+  if (menuToggleBtn) {
+    menuToggleBtn.addEventListener('click', openMobileSidebar);
+  }
+  const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
+  if (sidebarCloseBtn) {
+    sidebarCloseBtn.addEventListener('click', closeMobileSidebar);
+  }
+  const sidebarOverlay = document.getElementById('sidebar-overlay');
+  if (sidebarOverlay) {
+    sidebarOverlay.addEventListener('click', closeMobileSidebar);
+  }
 
   // Escape key cancels active generation
   document.addEventListener('keydown', (e) => {
@@ -281,9 +325,28 @@ async function startTerminal(workspace) {
     const data = await res.json();
     termId = data.id;
 
-    // Create xterm
-    term = new Terminal({ theme: { background: '#0d1117', foreground: '#c9d1d9', cursor: '#64ffda' } });
+    // Create xterm with Fira Code and fit addon
+    term = new Terminal({
+      fontFamily: 'Fira Code, "DejaVu Sans Mono", "Segoe UI Emoji", monospace',
+      fontSize: 14,
+      theme: { background: '#0d1117', foreground: '#c9d1d9', cursor: '#64ffda' }
+    });
+    fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
     term.open(terminalContainer);
+    
+    setTimeout(() => {
+      if (fitAddon) {
+        try {
+          fitAddon.fit();
+          sendResize(term.cols, term.rows);
+        } catch (e) {}
+      }
+    }, 50);
+
+    term.onResize(size => {
+      sendResize(size.cols, size.rows);
+    });
 
     // Send input to server
     term.onData((data) => {
@@ -339,6 +402,7 @@ function switchTab(tab) {
     startTerminal(ws);
   }
   updateLayoutUI();
+  closeMobileSidebar();
 }
 
 function toggleLayoutMode() {
@@ -353,27 +417,38 @@ function toggleLayoutMode() {
 
 function updateLayoutUI() {
   if (state.layoutMode === 'split') {
-    mainContentWrapperEl.classList.add('split-view');
-    mainEl.classList.remove('hidden');
-    terminalPanel.classList.remove('hidden');
+    if (mainContentWrapperEl) mainContentWrapperEl.classList.add('split-view');
+    if (mainEl) mainEl.classList.remove('hidden');
+    if (terminalPanel) terminalPanel.classList.remove('hidden');
     
-    tabTerminalBtn.classList.add('active');
-    layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Tab View';
+    if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
+    if (tabChatBtn) tabChatBtn.classList.add('active');
+    if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Tab View';
   } else {
-    mainContentWrapperEl.classList.remove('split-view');
-    layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Split View';
+    if (mainContentWrapperEl) mainContentWrapperEl.classList.remove('split-view');
+    if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Split View';
     
     if (state.activeTab === 'chat') {
-      mainEl.classList.remove('hidden');
-      terminalPanel.classList.add('hidden');
-      tabTerminalBtn.classList.remove('active');
+      if (mainEl) mainEl.classList.remove('hidden');
+      if (terminalPanel) terminalPanel.classList.add('hidden');
+      if (tabChatBtn) tabChatBtn.classList.add('active');
+      if (tabTerminalBtn) tabTerminalBtn.classList.remove('active');
     } else {
-      mainEl.classList.add('hidden');
-      terminalPanel.classList.remove('hidden');
-      tabTerminalBtn.classList.add('active');
+      if (mainEl) mainEl.classList.add('hidden');
+      if (terminalPanel) terminalPanel.classList.remove('hidden');
+      if (tabChatBtn) tabChatBtn.classList.remove('active');
+      if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
     }
   }
   renderSessionTabs();
+  
+  if (term && fitAddon && state.terminalOpen) {
+    setTimeout(() => {
+      try {
+        fitAddon.fit();
+      } catch (e) {}
+    }, 50);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -544,8 +619,11 @@ function shortPath(p) {
   return p.length > 30 ? '…' + p.slice(-28) : p;
 }
 
-function showRenameModal() {
-  if (!state.sessionId) {
+function showRenameModal(targetSessionId, currentTitle) {
+  const sessionIdToRename = targetSessionId || state.sessionId;
+  const initialTitle = currentTitle !== undefined ? currentTitle : (state.sessionId === sessionIdToRename ? state.sessionTitle : '');
+
+  if (!sessionIdToRename) {
     modalOverlay.innerHTML = `
       <div class="picker-modal">
         <div class="picker-header">Rename Session</div>
@@ -560,7 +638,7 @@ function showRenameModal() {
   modalOverlay.innerHTML = `
     <div class="picker-modal">
       <div class="picker-header">Rename Session</div>
-      <input class="rename-input" id="rename-input" type="text" placeholder="Enter new title..." value="${esc(state.sessionTitle || '')}" autofocus />
+      <input class="rename-input" id="rename-input" type="text" placeholder="Enter new title..." value="${esc(initialTitle)}" autofocus />
       <div class="modal-actions">
         <button class="modal-btn secondary" id="rename-cancel-btn">Cancel</button>
         <button class="modal-btn primary" id="rename-ok-btn">Rename</button>
@@ -576,15 +654,17 @@ function showRenameModal() {
     try {
       const res = await fetch('/rename', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: state.sessionId, title })
+        body: JSON.stringify({ session_id: sessionIdToRename, title })
       });
       if (res.ok) {
-        state.sessionTitle = title;
-        const session = state.openSessions.find(s => s.id === state.sessionId);
+        if (state.sessionId === sessionIdToRename) {
+          state.sessionTitle = title;
+          updateStatusBar();
+        }
+        const session = state.openSessions.find(s => s.id === sessionIdToRename);
         if (session) {
           session.title = title;
         }
-        updateStatusBar();
         renderSessionTabs();
         showToast('Renamed to: ' + title);
       }
@@ -907,8 +987,18 @@ function handleEvent(evt, msg, session) {
       break;
     case 'backend.reasoning.delta':
       if (!msg.reasoning) msg.reasoning = '';
-      msg.reasoning = evt.text;
+      if (evt.text) msg.reasoning += evt.text;
+      if (session.id === state.sessionId && !evt.done) { renderMessages(); scrollToBottom(); }
       break;
+    case 'backend.token.usage.updated': {
+      const parts = [];
+      if (evt.prompt_tokens != null) parts.push('prompt ' + evt.prompt_tokens);
+      if (evt.completion_tokens != null) parts.push('completion ' + evt.completion_tokens);
+      if (evt.total_tokens != null) parts.push('total ' + evt.total_tokens);
+      msg.usage = parts.length ? 'Tokens — ' + parts.join(' · ') : '';
+      if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+      break;
+    }
     case 'backend.tool.call.started':
       if (!msg.toolEvents) msg.toolEvents = [];
       msg.toolEvents.push({ type: 'tool_call', tool_call_id: evt.tool_call_id, tool_name: evt.tool_name, arguments: evt.arguments, status: 'running' });
@@ -962,6 +1052,18 @@ function renderMessage(msg) {
     for (const t of msg.toolEvents) tc.appendChild(renderToolBlock(t));
     content.appendChild(tc);
   }
+  if (msg.reasoning) {
+    const rc = document.createElement('div'); rc.className = 'reasoning-block';
+    const rl = document.createElement('div'); rl.className = 'reasoning-label'; rl.textContent = 'Thinking';
+    const rt = document.createElement('div'); rt.className = 'reasoning-text'; rt.textContent = msg.reasoning;
+    rc.appendChild(rl); rc.appendChild(rt);
+    content.appendChild(rc);
+  }
+  if (msg.usage) {
+    const uc = document.createElement('div'); uc.className = 'usage-block';
+    uc.textContent = msg.usage;
+    content.appendChild(uc);
+  }
   if (msg.content) {
     const textEl = document.createElement('div'); textEl.className = 'md-content';
     textEl.innerHTML = renderMarkdown(msg.content);
@@ -984,8 +1086,22 @@ function renderToolBlock(tc) {
   const header = document.createElement('div'); header.className = 'tool-header';
   header.innerHTML = `<span class="tool-chevron">↓</span><span class="tool-icon">${icon}</span><span class="tool-name">${capitalize(tc.tool_name)}</span>${tc.duration_ms ? '<span class="tool-duration">' + Math.round(tc.duration_ms) + 'ms</span>' : ''}<span class="tool-status ${tc.status}">${statusIcons[tc.status] || ''} ${tc.status}</span>`;
   const body = document.createElement('div'); body.className = 'tool-body collapsed';
-  if (tc.arguments) { const a = typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2); body.innerHTML += '<div class="input-label">Input:</div>' + esc(a); }
-  if (tc.result) { const r = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2); body.innerHTML += '\n\n' + esc(r); }
+  if (tc.arguments) {
+    const a = typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2);
+    const inputWrap = document.createElement('div'); inputWrap.className = 'tool-section';
+    const lbl = document.createElement('div'); lbl.className = 'tool-section-title'; lbl.textContent = 'Input';
+    const pre = document.createElement('pre'); pre.className = 'tool-code'; pre.textContent = a;
+    inputWrap.appendChild(lbl); inputWrap.appendChild(pre);
+    body.appendChild(inputWrap);
+  }
+  if (tc.result) {
+    const r = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2);
+    const outWrap = document.createElement('div'); outWrap.className = 'tool-section';
+    const lbl = document.createElement('div'); lbl.className = 'tool-section-title' + (tc.status === 'error' ? ' error' : ' success'); lbl.textContent = 'Output';
+    const pre = document.createElement('pre'); pre.className = 'tool-code' + (tc.status === 'error' ? ' error' : ''); pre.textContent = r;
+    outWrap.appendChild(lbl); outWrap.appendChild(pre);
+    body.appendChild(outWrap);
+  }
   let expanded = false;
   header.addEventListener('click', () => { expanded = !expanded; body.classList.toggle('collapsed', !expanded); header.querySelector('.tool-chevron').textContent = expanded ? '↑' : '↓'; });
   block.appendChild(header); block.appendChild(body); return block;
@@ -995,9 +1111,19 @@ function addMessage(role, content) { const div = renderMessage({ role, content }
 
 function renderMarkdown(text) {
   let html = esc(text);
-  // Fenced code blocks
+  // Fenced code blocks with language tag and Copy button
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g,
-    (m, lang, code) => '<pre class="md-code"><code>' + code.replace(/\n$/, '') + '</code></pre>');
+    (m, lang, code) => {
+      const displayLang = lang || 'code';
+      const cleanCode = code.replace(/\n$/, '');
+      return `<div class="code-block-container">
+        <div class="code-block-header">
+          <span class="code-block-lang">${displayLang}</span>
+          <button class="copy-code-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').innerText).then(() => { this.innerText = 'Copied!'; setTimeout(() => this.innerText = 'Copy', 2000); })">Copy</button>
+        </div>
+        <pre class="md-code"><code>${cleanCode}</code></pre>
+      </div>`;
+    });
   // Headings
   html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>')
              .replace(/^## (.*)$/gm, '<h2>$1</h2>')
@@ -1131,6 +1257,7 @@ async function switchSession(id) {
   renderMessages();
   renderSessionTabs();
   updateStatusBar();
+  closeMobileSidebar();
 }
 
 async function closeSessionTab(id) {
@@ -1161,22 +1288,39 @@ function renderSessionTabs() {
   if (!sessionTabsContainer) return;
 
   sessionTabsContainer.innerHTML = state.openSessions.map(session => {
-    const activeClass = session.id === state.sessionId && state.activeTab === 'chat' ? 'active' : '';
+    const isActive = session.id === state.sessionId;
+    const activeClass = isActive && state.activeTab === 'chat' ? 'active' : '';
     const title = session.title || 'Session';
     const genIndicator = session.generating ? '<span class="session-gen-indicator">⏳</span> ' : '';
+    const ws = session.workspace ? shortPath(session.workspace) : '';
+    
     return `
-      <div class="session-tab-wrapper ${activeClass ? 'active-wrapper' : ''}">
-        <button class="session-tab ${activeClass}" data-id="${session.id}">
-          💬 ${genIndicator}${esc(title)}
-        </button>
-        <span class="close-session-btn" data-id="${session.id}">&times;</span>
+      <div class="session-item-wrapper ${activeClass ? 'active' : ''}" data-id="${session.id}">
+        <div class="session-item-main" data-id="${session.id}">
+          <div class="session-item-title-row">
+            <span class="session-icon">💬</span>
+            <span class="session-title-text" title="${esc(title)}">${genIndicator}${esc(title)}</span>
+          </div>
+          ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">📁 ${esc(ws)}</div>` : ''}
+        </div>
+        <div class="session-item-actions">
+          <button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">✏️</button>
+          <button class="session-action-btn close-session-btn" data-id="${session.id}" title="Close">&times;</button>
+        </div>
       </div>
     `;
   }).join('');
 
-  sessionTabsContainer.querySelectorAll('.session-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      switchSession(btn.dataset.id);
+  sessionTabsContainer.querySelectorAll('.session-item-main').forEach(el => {
+    el.addEventListener('click', () => {
+      switchSession(el.dataset.id);
+    });
+  });
+
+  sessionTabsContainer.querySelectorAll('.rename-session-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showRenameModal(btn.dataset.id, btn.dataset.title);
     });
   });
 
@@ -1187,3 +1331,23 @@ function renderSessionTabs() {
     });
   });
 }
+
+
+async function sendResize(cols, rows) {
+  if (!termId) return;
+  try {
+    await fetch('/terminal/' + termId + '/resize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cols, rows })
+    });
+  } catch (e) {}
+}
+
+window.addEventListener('resize', () => {
+  if (term && fitAddon && state.terminalOpen) {
+    try {
+      fitAddon.fit();
+    } catch (e) {}
+  }
+});

@@ -134,6 +134,7 @@ target_sources(ai-sdk-cpp-antigravity PRIVATE ${ANTIGRAVITY_SOURCES})
 # Cursor (Cursor CLI / aiserver + agent services) provider
 set(CURSOR_SOURCES
     src/providers/cursor/cursor_proto.cpp
+    src/providers/cursor/cursor_http2.cpp
     src/providers/cursor/cursor_client.cpp
     src/providers/cursor/cursor_request_builder.cpp
     src/providers/cursor/cursor_response_parser.cpp
@@ -141,6 +142,8 @@ set(CURSOR_SOURCES
     src/providers/cursor/cursor_factory.cpp
 )
 target_sources(ai-sdk-cpp-cursor PRIVATE ${CURSOR_SOURCES})
+find_package(CURL REQUIRED)
+target_link_libraries(ai-sdk-cpp-cursor PRIVATE CURL::libcurl)
 # Provider registry (central dispatch)
 set(REGISTRY_SOURCES
     src/providers/registry.cpp

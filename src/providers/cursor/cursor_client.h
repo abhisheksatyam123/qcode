@@ -43,6 +43,8 @@ class CursorClient : public providers::BaseProviderClient {
 
   std::string access_token_;
   std::string session_token_;
+  std::string aiserver_base_url_;
+  std::string agent_base_url_;
   std::unique_ptr<http::HttpRequestHandler> aiserver_handler_;
   std::unique_ptr<http::HttpRequestHandler> agent_handler_;
   CursorRequestBuilder* cursor_request_builder_ = nullptr;

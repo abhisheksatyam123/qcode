@@ -57,6 +57,15 @@ nlohmann::json error_occurred_to_json(const ErrorOccurred::Payload& p) {
     };
 }
 
+nlohmann::json token_usage_to_json(const TokenUsageUpdated::Payload& p) {
+    return {
+        {"type", TokenUsageUpdated::type},
+        {"prompt_tokens", p.prompt_tokens},
+        {"completion_tokens", p.completion_tokens},
+        {"total_tokens", p.total_tokens}
+    };
+}
+
 nlohmann::json reasoning_delta_to_json(const ReasoningDelta::Payload& p) {
     return {
         {"type", ReasoningDelta::type},
@@ -86,6 +95,9 @@ std::optional<nlohmann::json> serialize_event(
     }
     if (event_type == ErrorOccurred::type) {
         return error_occurred_to_json(std::any_cast<const ErrorOccurred::Payload&>(payload));
+    }
+    if (event_type == TokenUsageUpdated::type) {
+        return token_usage_to_json(std::any_cast<const TokenUsageUpdated::Payload&>(payload));
     }
     if (event_type == ReasoningDelta::type) {
         return reasoning_delta_to_json(std::any_cast<const ReasoningDelta::Payload&>(payload));

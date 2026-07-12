@@ -2,27 +2,37 @@
 
 #include "ai/types/stream_result.h"
 
+#include <condition_variable>
 #include <mutex>
 #include <queue>
 #include <string>
+#include <thread>
 
 namespace ai {
 namespace cursor {
 
-// Minimal buffered stream: feeds the whole (already-decoded) assistant text as a
-// single text delta followed by a finish event. True incremental SSE streaming is
-// deferred -- the Cursor client currently reads the full RunSSE body and decodes it.
 class CursorBufferedStream : public internal::StreamResultImpl {
  public:
-  explicit CursorBufferedStream(std::string text);
+  CursorBufferedStream();
+  ~CursorBufferedStream() override;
 
   StreamEvent get_next_event() override;
   bool has_more_events() const override;
   void stop_stream() override;
 
+  void push_event(StreamEvent event);
+  void mark_done();
+  bool is_stopped() const;
+
+  void start_thread(std::thread thread);
+
  private:
   mutable std::mutex mutex_;
+  mutable std::condition_variable cv_;
   std::queue<StreamEvent> events_;
+  bool done_ = false;
+  bool stopped_ = false;
+  std::thread thread_;
 };
 
 }  // namespace cursor

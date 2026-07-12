@@ -200,6 +200,14 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
         }
     ));
 
+    subs.push_back(bus.subscribe<TokenUsageUpdated>(
+        [session](const TokenUsageUpdated::Payload& p) {
+            auto j = ai::server::token_usage_to_json(p);
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
+            session->event_queue.push_back(std::move(j));
+        }
+    ));
+
     return subs;
 }
 

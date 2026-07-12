@@ -35,7 +35,6 @@ void register_tui_providers() {
           return ClientResolution{
               ai::antigravity::create_client(token, client_options)};
         });
-  });
 
     // Cursor auth (access token) lives in the TUI (reads
     // ~/.config/cursor/auth.json), so it is registered here rather than in the
@@ -57,6 +56,7 @@ void register_tui_providers() {
           return ClientResolution{
               ai::cursor::create_client(token, cursor_options)};
         });
+  });
 }
 
 }  // namespace providers

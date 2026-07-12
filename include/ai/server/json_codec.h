@@ -34,6 +34,7 @@ nlohmann::json tool_call_completed_to_json(const ai::tui::contract::ToolCallComp
 nlohmann::json session_status_to_json(const ai::tui::contract::SessionStatusChanged::Payload& p);
 nlohmann::json error_occurred_to_json(const ai::tui::contract::ErrorOccurred::Payload& p);
 nlohmann::json reasoning_delta_to_json(const ai::tui::contract::ReasoningDelta::Payload& p);
+nlohmann::json token_usage_to_json(const ai::tui::contract::TokenUsageUpdated::Payload& p);
 
 } // namespace server
 } // namespace ai
