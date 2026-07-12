@@ -17,6 +17,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <cstdio>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -25,6 +26,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include <map>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -52,6 +54,10 @@ struct GenSession {
     std::string error;
     std::string assistant_text;  // accumulated (cumulative) assistant reply, for DB persistence
     std::shared_ptr<std::vector<ai::tui::bus::Subscription>> subs;
+    // Live token accounting (accumulated from TokenUsageUpdated during generation).
+    std::atomic<int> live_prompt_tokens{0};
+    std::atomic<int> live_completion_tokens{0};
+    std::atomic<int> live_total_tokens{0};
 };
 
 static std::mutex g_sessions_mutex;
@@ -65,6 +71,48 @@ struct TerminalSession {
     std::string workspace;
     bool alive = true;
 };
+
+// ── Small shell/string helpers (used by the /files endpoint) ──
+static std::string shell_quote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += "'";
+    return out;
+}
+
+static std::string exec_capture(const std::string& cmd) {
+    std::string result;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return result;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), pipe) != nullptr) result += buf;
+    pclose(pipe);
+    return result;
+}
+
+static std::string expand_tilde(const std::string& s) {
+    if (s == "~" || s.rfind("~/", 0) == 0) {
+        const char* home = std::getenv("HOME");
+        std::string base = home ? std::string(home) : "";
+        if (s.size() == 1) return base;
+        return base + s.substr(1);
+    }
+    return s;
+}
+
+static std::vector<std::string> split_lines(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == '\n') { out.push_back(cur); cur.clear(); }
+        else if (c != '\r') cur += c;
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
 
 static std::mutex g_terminal_mutex;
 static std::unordered_map<std::string, std::shared_ptr<TerminalSession>> g_terminals;
@@ -202,6 +250,9 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<TokenUsageUpdated>(
         [session](const TokenUsageUpdated::Payload& p) {
+            session->live_prompt_tokens = p.prompt_tokens;
+            session->live_completion_tokens = p.completion_tokens;
+            session->live_total_tokens = p.total_tokens;
             auto j = ai::server::token_usage_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
@@ -668,6 +719,193 @@ int main(int argc, char* argv[]) {
         for (const auto& [sender, content] : hist) {
             j.push_back({{"role", sender}, {"content", content}});
         }
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    // ── Get aggregate session statistics ──
+    svr.Get("/session/([a-f0-9-]+)/stats", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+        // Pull live counters from an in-memory generation session, if present.
+        int live_tool_calls = 0;
+        double live_tool_time_ms = 0.0;
+        int live_prompt = 0, live_completion = 0, live_total = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_sessions_mutex);
+            auto it = g_sessions.find(sid);
+            if (it != g_sessions.end()) {
+                live_tool_calls = it->second->ctx.tool_call_count;
+                live_tool_time_ms = it->second->ctx.total_tool_time_ms;
+                live_prompt = it->second->live_prompt_tokens.load();
+                live_completion = it->second->live_completion_tokens.load();
+                live_total = it->second->live_total_tokens.load();
+            }
+        }
+        auto st = ai::tui::db::get_session_stats(sid, live_tool_calls, live_tool_time_ms,
+                                                 live_prompt, live_completion, live_total);
+        nlohmann::json j = {
+            {"id", st.id}, {"title", st.title}, {"workspace", st.workspace},
+            {"provider", st.provider}, {"model", st.model},
+            {"created_at", st.created_at}, {"message_count", st.message_count},
+            {"user_messages", st.user_messages}, {"assistant_messages", st.assistant_messages},
+            {"tool_calls", st.tool_calls}, {"prompt_tokens", st.prompt_tokens},
+            {"completion_tokens", st.completion_tokens}, {"total_tokens", st.total_tokens},
+            {"total_tool_time_ms", st.total_tool_time_ms}
+        };
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    // ── Get git working-tree status for a session's workspace ──
+    // Returns the unified diff of all modified/new files plus a file list with
+    // change type + insertion/deletion counts.
+    svr.Get("/session/([a-f0-9-]+)/files", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+        std::string ws = ai::tui::db::get_session_workspace(sid);
+        if (!ws.empty()) ws = expand_tilde(ws);
+        if (ws.empty()) {
+            // Fall back to the server's current working directory.
+            char cwd[4096] = {0};
+            if (getcwd(cwd, sizeof(cwd))) ws = cwd;
+        }
+
+        nlohmann::json j;
+        j["workspace"] = ws;
+        j["is_git_repo"] = false;
+        j["files"] = nlohmann::json::array();
+        j["diff"] = "";
+
+        if (ws.empty()) {
+            res.set_content(j.dump(2), "application/json");
+            return;
+        }
+
+        // Detect a git repository (walk up to find .git).
+        bool is_git = false;
+        std::string probe = ws;
+        for (int i = 0; i < 64; i++) {
+            std::string dotgit = probe + "/.git";
+            struct stat st;
+            if (stat(dotgit.c_str(), &st) == 0) { is_git = true; break; }
+            auto pos = probe.find_last_of('/');
+            if (pos == std::string::npos) break;
+            probe = probe.substr(0, pos);
+        }
+        j["is_git_repo"] = is_git;
+
+        if (is_git) {
+            // Porcelain status: type, insertions, deletions, file path.
+            std::string status_cmd = "cd " + shell_quote(ws) +
+                " && git -c core.quotepath=false status --porcelain=v1 --branch 2>/dev/null";
+            std::string status_out = exec_capture(status_cmd);
+            int insertions = 0, deletions = 0, untracked = 0, modified = 0, staged = 0;
+            for (const auto& line : split_lines(status_out)) {
+                if (line.empty()) continue;
+                // Skip the "## branch..." header line.
+                if (line.rfind("## ", 0) == 0) continue;
+                std::string xy = line.substr(0, 2);
+                std::string path = line.substr(3);
+                // Handle renamed "R  old -> new".
+                std::string fname = path;
+                auto arrow = path.find(" -> ");
+                if (arrow != std::string::npos) fname = path.substr(arrow + 4);
+                std::string type = "modified";
+                if (xy[0] == '?' && xy[1] == '?') { type = "untracked"; untracked++; }
+                else if (xy[0] == 'A' || xy[1] == 'A') { type = "added"; staged++; }
+                else if (xy[0] == 'M' || xy[1] == 'M') { type = "modified"; modified++; }
+                else if (xy[0] == 'D' || xy[1] == 'D') { type = "deleted"; }
+                else if (xy[0] == 'R') { type = "renamed"; }
+                nlohmann::json fobj = {{"path", fname}, {"type", type},
+                                       {"x", std::string(1, xy[0])}, {"y", std::string(1, xy[1])}};
+                j["files"].push_back(fobj);
+            }
+
+            // Per-file insertion/deletion counts (ignores chmod noise).
+            std::string numstat_cmd = "cd " + shell_quote(ws) +
+                " && git --no-pager add -N . >/dev/null 2>&1; "
+                "git --no-pager diff HEAD --numstat -- . 2>/dev/null";
+            std::map<std::string, std::pair<int,int>> per_file;
+            for (const auto& line : split_lines(exec_capture(numstat_cmd))) {
+                if (line.empty()) continue;
+                // Format: "<add>\t<del>\t<path>" (binary shows '-' for counts).
+                auto t1 = line.find('\t');
+                if (t1 == std::string::npos) continue;
+                auto t2 = line.find('\t', t1 + 1);
+                if (t2 == std::string::npos) continue;
+                std::string add_s = line.substr(0, t1);
+                std::string del_s = line.substr(t1 + 1, t2 - t1 - 1);
+                std::string fpath = line.substr(t2 + 1);
+                int a = (add_s == "-" || add_s.empty()) ? 0 : std::atoi(add_s.c_str());
+                int d = (del_s == "-" || del_s.empty()) ? 0 : std::atoi(del_s.c_str());
+                per_file[fpath] = {a, d};
+                insertions += a;
+                deletions += d;
+            }
+
+            // Attach counts to the file list.
+            for (auto& fobj : j["files"]) {
+                std::string fp = fobj.value("path", "");
+                auto it = per_file.find(fp);
+                if (it != per_file.end()) {
+                    fobj["insertions"] = it->second.first;
+                    fobj["deletions"] = it->second.second;
+                }
+            }
+
+            // Unified diff of all changes (tracked + untracked), with stat summary.
+            // Split into per-file sections and drop sections that have no real
+            // content (pure chmod / mode-only changes) so the diff stays useful.
+            std::string diff_cmd = "cd " + shell_quote(ws) +
+                " && git --no-pager add -N . >/dev/null 2>&1; "
+                "git --no-pager diff HEAD -- . 2>/dev/null";
+            std::string raw_diff = exec_capture(diff_cmd);
+
+            std::vector<std::vector<std::string>> sections;
+            std::vector<std::string> cur;
+            for (const auto& line : split_lines(raw_diff)) {
+                if (line.rfind("diff --git ", 0) == 0) {
+                    if (!cur.empty()) sections.push_back(cur);
+                    cur.clear();
+                }
+                // Skip chmod-only noise lines entirely.
+                if (line.rfind("old mode ", 0) == 0) continue;
+                if (line.rfind("new mode ", 0) == 0) continue;
+                if (line.rfind("new file mode ", 0) == 0) continue;
+                if (line.rfind("deleted file mode ", 0) == 0) continue;
+                cur.push_back(line);
+            }
+            if (!cur.empty()) sections.push_back(cur);
+
+            std::string filtered_diff;
+            for (const auto& sec : sections) {
+                // A section is "real" if it has a hunk header (@@) or a +/- line.
+                bool has_content = false;
+                for (const auto& l : sec) {
+                    if (l.rfind("@@", 0) == 0) { has_content = true; break; }
+                    if (l.rfind("+", 0) == 0 && l.rfind("+++", 0) != 0) { has_content = true; break; }
+                    if (l.rfind("-", 0) == 0 && l.rfind("---", 0) != 0) { has_content = true; break; }
+                }
+                if (!has_content) continue;  // skip mode-only file sections
+                for (const auto& l : sec) filtered_diff += l + "\n";
+            }
+            j["diff"] = filtered_diff;
+            j["insertions"] = insertions;
+            j["deletions"] = deletions;
+            j["untracked"] = untracked;
+            j["modified"] = modified;
+            j["staged"] = staged;
+        } else {
+            j["diff"] = "";
+        }
+
         res.set_content(j.dump(2), "application/json");
     });
 

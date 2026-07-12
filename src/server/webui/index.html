@@ -35,6 +35,12 @@
         <button class="sidebar-nav-btn" id="tab-terminal-btn">
           <span class="nav-icon">⚡</span> Terminal
         </button>
+        <button class="sidebar-nav-btn" id="tab-files-btn">
+          <span class="nav-icon">📁</span> Files
+        </button>
+        <button class="sidebar-nav-btn" id="tab-stats-btn">
+          <span class="nav-icon">📊</span> Stats
+        </button>
       </nav>
     </div>
 
@@ -113,6 +119,20 @@
           <button id="terminal-close-btn" class="terminal-x">&times;</button>
         </div>
         <div id="terminal-container"></div>
+      </div>
+      <div id="files-panel" class="side-tab-panel hidden">
+        <div class="side-tab-header">
+          <span>📁 Files &mdash; Working Tree</span>
+          <button id="files-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+        </div>
+        <div id="files-content"></div>
+      </div>
+      <div id="stats-panel" class="side-tab-panel hidden">
+        <div class="side-tab-header">
+          <span>📊 Session Stats</span>
+          <button id="stats-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+        </div>
+        <div id="stats-content"></div>
       </div>
     </div>
   </div>

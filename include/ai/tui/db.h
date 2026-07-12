@@ -55,6 +55,33 @@ void rename_session(const std::string& session_id, const std::string& new_title)
 // selection in sync with what was actually used for generation)
 void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model);
 
+// Aggregate statistics for a session (computed from messages + live counters).
+struct SessionStats {
+    std::string id;
+    std::string title;
+    std::string workspace;
+    std::string provider;
+    std::string model;
+    long long created_at = 0;
+    int message_count = 0;
+    int user_messages = 0;
+    int assistant_messages = 0;
+    int tool_calls = 0;
+    int prompt_tokens = 0;
+    int completion_tokens = 0;
+    int total_tokens = 0;
+    double total_tool_time_ms = 0.0;
+};
+// Compute aggregate statistics for a session (token/tool totals come from the
+// per-generation live counters; historical totals are accumulated from any
+// stored counters, so the latest generation dominates).
+SessionStats get_session_stats(const std::string& session_id,
+                               int live_tool_calls = 0,
+                               double live_tool_time_ms = 0.0,
+                               int live_prompt_tokens = 0,
+                               int live_completion_tokens = 0,
+                               int live_total_tokens = 0);
+
 // Delete a session and its associated messages
 void delete_session(const std::string& session_id);
 

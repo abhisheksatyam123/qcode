@@ -25,7 +25,7 @@ const state = {
   sessionTitle: '',
   sessionWorkspace: '',
   // UI Tabs & layout state
-  activeTab: 'chat', // 'chat' or 'terminal'
+  activeTab: 'chat', // 'chat' | 'terminal' | 'files' | 'stats'
   layoutMode: 'tab', // 'tab' or 'split'
   terminalOpen: false
 };
@@ -47,6 +47,14 @@ const toggleTerminalBtn = document.getElementById('toggle-terminal-btn');
 const terminalPanel = document.getElementById('terminal-panel');
 const terminalContainer = document.getElementById('terminal-container');
 const terminalCloseBtn = document.getElementById('terminal-close-btn');
+const filesPanel = document.getElementById('files-panel');
+const filesContent = document.getElementById('files-content');
+const filesRefreshBtn = document.getElementById('files-refresh-btn');
+const statsPanel = document.getElementById('stats-panel');
+const statsContent = document.getElementById('stats-content');
+const statsRefreshBtn = document.getElementById('stats-refresh-btn');
+const tabFilesBtn = document.getElementById('tab-files-btn');
+const tabStatsBtn = document.getElementById('tab-stats-btn');
 
 // New DOM refs for tabs & layout toggle
 const mainEl = document.getElementById('main');
@@ -204,6 +212,18 @@ function setupEventListeners() {
   }
   if (tabTerminalBtn) {
     tabTerminalBtn.addEventListener('click', () => switchTab('terminal'));
+  }
+  if (tabFilesBtn) {
+    tabFilesBtn.addEventListener('click', () => switchTab('files'));
+  }
+  if (tabStatsBtn) {
+    tabStatsBtn.addEventListener('click', () => switchTab('stats'));
+  }
+  if (filesRefreshBtn) {
+    filesRefreshBtn.addEventListener('click', () => loadFilesTab());
+  }
+  if (statsRefreshBtn) {
+    statsRefreshBtn.addEventListener('click', () => loadStatsTab());
   }
   if (layoutToggleBtn) {
     layoutToggleBtn.addEventListener('click', toggleLayoutMode);
@@ -401,6 +421,8 @@ function switchTab(tab) {
     const ws = state.sessionWorkspace || '';
     startTerminal(ws);
   }
+  if (tab === 'files') loadFilesTab();
+  if (tab === 'stats') loadStatsTab();
   updateLayoutUI();
   closeMobileSidebar();
 }
@@ -428,16 +450,27 @@ function updateLayoutUI() {
     if (mainContentWrapperEl) mainContentWrapperEl.classList.remove('split-view');
     if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Split View';
     
+    // Reset all views/buttons to hidden/inactive first.
+    if (mainEl) mainEl.classList.add('hidden');
+    if (terminalPanel) terminalPanel.classList.add('hidden');
+    if (filesPanel) filesPanel.classList.add('hidden');
+    if (statsPanel) statsPanel.classList.add('hidden');
+    [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn].forEach(b => {
+      if (b) b.classList.remove('active');
+    });
+
     if (state.activeTab === 'chat') {
       if (mainEl) mainEl.classList.remove('hidden');
-      if (terminalPanel) terminalPanel.classList.add('hidden');
       if (tabChatBtn) tabChatBtn.classList.add('active');
-      if (tabTerminalBtn) tabTerminalBtn.classList.remove('active');
-    } else {
-      if (mainEl) mainEl.classList.add('hidden');
+    } else if (state.activeTab === 'terminal') {
       if (terminalPanel) terminalPanel.classList.remove('hidden');
-      if (tabChatBtn) tabChatBtn.classList.remove('active');
       if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
+    } else if (state.activeTab === 'files') {
+      if (filesPanel) filesPanel.classList.remove('hidden');
+      if (tabFilesBtn) tabFilesBtn.classList.add('active');
+    } else if (state.activeTab === 'stats') {
+      if (statsPanel) statsPanel.classList.remove('hidden');
+      if (tabStatsBtn) tabStatsBtn.classList.add('active');
     }
   }
   renderSessionTabs();
@@ -1096,6 +1129,137 @@ function handleEvent(evt, msg, session) {
 //  RENDERING
 // ═══════════════════════════════════════════════════════════════════
 
+async function loadFilesTab() {
+  if (!state.sessionId) {
+    filesContent.innerHTML = '<div class="files-empty">No active session.</div>';
+    return;
+  }
+  filesContent.innerHTML = '<div class="files-empty">Loading working tree…</div>';
+  try {
+    const res = await fetch('/session/' + state.sessionId + '/files');
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    renderFilesTab(data);
+  } catch (e) {
+    filesContent.innerHTML = '<div class="files-empty">Failed to load files: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderFilesTab(data) {
+  const ws = data.workspace || '';
+  let html = '';
+  html += '<div class="files-workspace">📁 ' + esc(ws) + '</div>';
+
+  if (!data.is_git_repo) {
+    html += '<div class="files-empty">Not a git repository. Initialize one with <code>git init</code> to see working-tree diffs here.</div>';
+    filesContent.innerHTML = html;
+    return;
+  }
+
+  const ins = data.insertions || 0;
+  const del = data.deletions || 0;
+  const untracked = data.untracked || 0;
+  const modified = data.modified || 0;
+  const staged = data.staged || 0;
+  html += '<div class="files-summary">'
+    + '<span class="chip"><span class="add">+' + ins + '</span> / <span class="del">-' + del + '</span></span>'
+    + '<span class="chip">Modified: ' + modified + '</span>'
+    + '<span class="chip">Staged: ' + staged + '</span>'
+    + '<span class="chip">Untracked: ' + untracked + '</span>'
+    + '</div>';
+
+  const files = Array.isArray(data.files) ? data.files : [];
+  if (files.length > 0) {
+    html += '<div class="file-list">';
+    for (const f of files) {
+      const type = f.type || 'modified';
+      const label = type.charAt(0).toUpperCase() + type.slice(1);
+      const ins = f.insertions || 0;
+      const del = f.deletions || 0;
+      const counts = (ins || del)
+        ? ' <span class="file-counts"><span class="add">+' + ins + '</span> <span class="del">-' + del + '</span></span>'
+        : '';
+      html += '<div class="file-row">'
+        + '<span class="file-type ' + esc(type) + '">' + esc(label) + '</span>'
+        + '<span class="file-path">' + esc(f.path || '') + '</span>'
+        + counts
+        + '</div>';
+    }
+    html += '</div>';
+  }
+
+  const diff = data.diff || '';
+  if (diff.trim().length > 0) {
+    html += '<div class="stat-section-title">Unified Diff</div>';
+    html += '<div class="diff-block"><pre>' + esc(diff) + '</pre></div>';
+  } else if (files.length === 0) {
+    html += '<div class="files-empty">Working tree clean — no modified files.</div>';
+  }
+
+  filesContent.innerHTML = html;
+}
+
+async function loadStatsTab() {
+  if (!state.sessionId) {
+    statsContent.innerHTML = '<div class="stats-empty">No active session.</div>';
+    return;
+  }
+  statsContent.innerHTML = '<div class="stats-empty">Loading stats…</div>';
+  try {
+    const res = await fetch('/session/' + state.sessionId + '/stats');
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    renderStatsTab(data);
+  } catch (e) {
+    statsContent.innerHTML = '<div class="stats-empty">Failed to load stats: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderStatsTab(data) {
+  const cards = [];
+  const card = (label, value, accent) =>
+    '<div class="stat-card"><div class="stat-label">' + esc(label) + '</div>'
+    + '<div class="stat-value' + (accent ? ' accent' : '') + '">' + esc(String(value)) + '</div></div>';
+
+  cards.push(card('Title', data.title || '—'));
+  cards.push(card('Provider', data.provider || '—'));
+  cards.push(card('Model', data.model || '—', true));
+
+  let created = '—';
+  if (data.created_at) {
+    try { created = new Date(data.created_at * 1000).toLocaleString(); } catch (e) {}
+  }
+  cards.push(card('Created', created));
+
+  cards.push(card('Messages', data.message_count || 0));
+  cards.push(card('User / Assistant', (data.user_messages || 0) + ' / ' + (data.assistant_messages || 0)));
+  cards.push(card('Tool Calls', data.tool_calls || 0));
+  cards.push(card('Total Tool Time', formatMs(data.total_tool_time_ms || 0)));
+
+  cards.push(card('Prompt Tokens', data.prompt_tokens || 0));
+  cards.push(card('Completion Tokens', data.completion_tokens || 0));
+  cards.push(card('Total Tokens', data.total_tokens || 0, true));
+
+  let html = '<div class="stat-grid">' + cards.join('') + '</div>';
+
+  const ws = data.workspace || '';
+  if (ws) {
+    html += '<div class="stat-section-title">Workspace</div>';
+    html += '<div class="stat-card"><div class="stat-label">Directory</div><div class="stat-value">' + esc(ws) + '</div></div>';
+  }
+
+  statsContent.innerHTML = html;
+}
+
+function formatMs(ms) {
+  ms = Number(ms) || 0;
+  if (ms < 1000) return ms.toFixed(0) + ' ms';
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + ' s';
+  const m = Math.floor(s / 60);
+  return m + 'm ' + (s % 60).toFixed(0) + 's';
+}
+
 function renderMessages() {
   messagesEl.innerHTML = '';
   const session = state.openSessions.find(s => s.id === state.sessionId);
@@ -1423,6 +1587,10 @@ async function switchSession(id) {
   renderSessionTabs();
   updateStatusBar();
   closeMobileSidebar();
+
+  // Refresh the auxiliary tabs for the newly active session.
+  if (state.activeTab === 'files') loadFilesTab();
+  else if (state.activeTab === 'stats') loadStatsTab();
 }
 
 async function closeSessionTab(id) {

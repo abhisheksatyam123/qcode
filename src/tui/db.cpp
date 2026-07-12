@@ -7,6 +7,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <algorithm>
 #include <iostream>
 #include <filesystem>
 #include <mutex>
@@ -519,6 +520,96 @@ std::string get_session_workspace(const std::string& session_id) {
     sqlite3_close(db);
     return result;
 }
+
+SessionStats get_session_stats(const std::string& session_id,
+                               int live_tool_calls,
+                               double live_tool_time_ms,
+                               int live_prompt_tokens,
+                               int live_completion_tokens,
+                               int live_total_tokens) {
+    SessionStats stats;
+    stats.id = session_id;
+    if (session_id.empty() || !is_valid_session_id(session_id)) return stats;
+
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return stats;
+
+    // ── Session metadata ──
+    {
+        const char* sql =
+            "SELECT COALESCE(title, ''), COALESCE(workspace, ''), "
+            "COALESCE(provider, ''), COALESCE(model, ''), "
+            "COALESCE(created_at, 0) FROM sessions WHERE id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (prepare_stmt(db, sql, &stmt)) {
+            sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                const unsigned char* t = sqlite3_column_text(stmt, 0);
+                const unsigned char* w = sqlite3_column_text(stmt, 1);
+                const unsigned char* p = sqlite3_column_text(stmt, 2);
+                const unsigned char* m = sqlite3_column_text(stmt, 3);
+                stats.title = t ? reinterpret_cast<const char*>(t) : "";
+                stats.workspace = w ? reinterpret_cast<const char*>(w) : "";
+                stats.provider = p ? reinterpret_cast<const char*>(p) : "";
+                stats.model = m ? reinterpret_cast<const char*>(m) : "";
+                stats.created_at = sqlite3_column_int64(stmt, 4);
+            }
+            sqlite3_finalize(stmt);
+        }
+    }
+
+    // ── Message counts + token/tool accumulation from stored JSON ──
+    {
+        const char* sql =
+            "SELECT sender, content FROM messages WHERE session_id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (prepare_stmt(db, sql, &stmt)) {
+            sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                const unsigned char* sender_txt = sqlite3_column_text(stmt, 0);
+                const unsigned char* content_txt = sqlite3_column_text(stmt, 1);
+                std::string sender = sender_txt ? reinterpret_cast<const char*>(sender_txt) : "";
+                std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
+                stats.message_count++;
+                if (sender == "User") stats.user_messages++;
+                else if (sender == "Assistant") stats.assistant_messages++;
+                else if (sender == "ToolCall") stats.tool_calls++;
+                else if (sender == "ToolResult") {
+                    // Try to read persisted token/tool counters from a prior run.
+                    try {
+                        auto j = nlohmann::json::parse(content);
+                        if (j.is_object()) {
+                            auto add = [&](const char* key, int& dst) {
+                                if (j.contains(key) && j[key].is_number())
+                                    dst += j[key].get<int>();
+                            };
+                            add("prompt_tokens", stats.prompt_tokens);
+                            add("completion_tokens", stats.completion_tokens);
+                            add("total_tokens", stats.total_tokens);
+                            if (j.contains("duration_ms") && j["duration_ms"].is_number())
+                                stats.total_tool_time_ms += j["duration_ms"].get<double>();
+                        }
+                    } catch (...) {}
+                }
+            }
+            sqlite3_finalize(stmt);
+        }
+    }
+
+    sqlite3_close(db);
+
+    // Live (current generation) counters take precedence / accumulate on top.
+    stats.tool_calls += live_tool_calls;
+    stats.total_tool_time_ms += live_tool_time_ms;
+    // Use the larger of stored vs live token totals (latest generation dominates).
+    stats.prompt_tokens = std::max(stats.prompt_tokens, live_prompt_tokens);
+    stats.completion_tokens = std::max(stats.completion_tokens, live_completion_tokens);
+    stats.total_tokens = std::max(stats.total_tokens, live_total_tokens);
+
+    return stats;
+}
+
 
 
 void rename_session(const std::string& session_id, const std::string& new_title) {
