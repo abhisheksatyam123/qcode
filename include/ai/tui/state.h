@@ -13,6 +13,16 @@
 namespace ai {
 namespace tui {
 
+struct SimpleBox {
+    int x_min = 0;
+    int x_max = 0;
+    int y_min = 0;
+    int y_max = 0;
+    bool Contain(int x, int y) const {
+        return x >= x_min && x <= x_max && y >= y_min && y <= y_max;
+    }
+};
+
 // ── Provider/model types ──
 
 struct ModelInfo {
@@ -114,6 +124,8 @@ struct ChatState {
     std::shared_ptr<std::vector<std::string>> tool_block_order =
         std::make_shared<std::vector<std::string>>();
     std::shared_ptr<int> focused_tool_index = std::make_shared<int>(-1);
+    std::shared_ptr<std::unordered_map<std::string, SimpleBox>> tool_arrow_boxes =
+        std::make_shared<std::unordered_map<std::string, SimpleBox>>();
 };
 
 // Helper to scan for modified files using git status

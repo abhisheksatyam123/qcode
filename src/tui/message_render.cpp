@@ -15,6 +15,35 @@ namespace tui {
 using namespace ftxui;
 
 namespace {
+class ReflectSimple : public ftxui::Node {
+ public:
+  ReflectSimple(ftxui::Element child, SimpleBox& box)
+      : ftxui::Node(unpack(std::move(child))), reflected_box_(box) {}
+
+  void ComputeRequirement() final {
+    ftxui::Node::ComputeRequirement();
+    requirement_ = children_[0]->requirement();
+  }
+
+  void SetBox(ftxui::Box box) final {
+    reflected_box_.x_min = box.x_min;
+    reflected_box_.x_max = box.x_max;
+    reflected_box_.y_min = box.y_min;
+    reflected_box_.y_max = box.y_max;
+    ftxui::Node::SetBox(box);
+    children_[0]->SetBox(box);
+  }
+
+ private:
+  SimpleBox& reflected_box_;
+};
+
+ftxui::Decorator reflect_simple(SimpleBox& box) {
+  return [&](ftxui::Element child) -> ftxui::Element {
+    return std::make_shared<ReflectSimple>(std::move(child), box);
+  };
+}
+
 
 Color prompt_green(const std::string& theme) { return theme_prompt(theme); }
 Color command_fg() { return Color::RGB(0xE5, 0xE5, 0xE5); }
@@ -64,7 +93,8 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
                                 const std::string& theme,
                                 bool collapsed,
                                 bool collapsible,
-                                bool focused = false);
+                                bool focused,
+                                const ChatState& state);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  ToolBlock — OpenCode-style multi-line shell session
@@ -89,14 +119,21 @@ Element ToolBlock(const std::string& icon,
                    bool collapsible,
                    bool focused,
                    const std::string& shell_command,
-                   const std::string& theme) {
+                   const std::string& theme,
+                   ChatState* state,
+                   const std::string& tool_call_id) {
     // ── Title row: ▸ # description · tool          ✓ 4ms ──
     Elements title_row;
     if (collapsible) {
+        auto arrow_el = text(collapsed ? "▸" : "▾") | bold;
+        if (state && !tool_call_id.empty() && state->tool_arrow_boxes) {
+            arrow_el = std::move(arrow_el) | reflect_simple((*state->tool_arrow_boxes)[tool_call_id]);
+        }
         title_row.push_back(
-            text(collapsed ? "▸ " : "▾ ") |
-            color(focused ? accent_color : muted_fg(theme)) |
+            std::move(arrow_el) |
+            color(accent_color) |
             (focused ? bold : nothing));
+        title_row.push_back(text(" "));
     } else {
         title_row.push_back(text("  "));
     }
@@ -115,9 +152,7 @@ Element ToolBlock(const std::string& icon,
         title_row.push_back(text(" · " + title) | dim | color(muted_fg(theme)));
     }
 
-    if (focused && collapsible) {
-        title_row.push_back(text(" [Enter to Toggle]") | dim | color(accent_color));
-    }
+
     title_row.push_back(filler());
 
     const auto timing = format_duration(duration_ms);
@@ -205,7 +240,7 @@ Element render_truncated_output(const std::string& output,
             if (remaining > 0) {
                 lines.push_back(hbox({
                     text("[+" + std::to_string(remaining) +
-                         " more · Enter to Toggle]") |
+                         " more · click arrow to expand") |
                         dim | color(accent(theme)),
                 }));
             }
@@ -321,18 +356,20 @@ static Element render_shell_output(const ai::ToolCallContentPart& call_part,
 }
 
 static Element render_tool_call(const ai::ToolCallContentPart& part,
-                                 const std::string& theme) {
+                                 const std::string& theme,
+                                 const ChatState& state) {
     const auto command = extract_shell_command(part);
     const auto desc = extract_tool_description(part);
     return ToolBlock(tool_icon(part.tool_name),
                       tool_display_name(part.tool_name), desc,
                       text("running…") | dim | color(Color::Yellow), true,
                       "calling", accent(theme), 0.0, false, false, false,
-                      command, theme);
+                      command, theme, const_cast<ChatState*>(&state), part.id);
 }
 
 static Element render_tool_result(const ai::ToolResultContentPart& part,
-                                   const std::string& theme) {
+                                   const std::string& theme,
+                                   const ChatState& state) {
     std::string tool_name;
     if (part.result.is_object()) {
         tool_name = json_string(part.result, {"tool_name", "title"});
@@ -346,7 +383,7 @@ static Element render_tool_result(const ai::ToolResultContentPart& part,
                       false, status,
                       part.is_error ? theme_error(theme) : theme_success(theme),
                       part.duration_ms, false, true, false,
-                      tool_name.empty() ? "tool" : tool_name, theme);
+                      tool_name.empty() ? "tool" : tool_name, theme, const_cast<ChatState*>(&state), part.tool_call_id);
 }
 
 static Element render_reasoning(const ai::ReasoningContentPart& rp,
@@ -471,17 +508,17 @@ Element render_message(const ai::Message& msg, const ChatState& state,
 
                 parts.push_back(render_tool_pair(
                     *tool_part, *result_it->second, theme, collapsed, true,
-                    focused));
+                    focused, state));
                 rendered_tool_results.insert(tool_part->id);
             } else {
-                parts.push_back(render_tool_call(*tool_part, theme));
+                parts.push_back(render_tool_call(*tool_part, theme, state));
             }
         } else if (const auto* result_part =
                        std::get_if<ai::ToolResultContentPart>(&part)) {
             if (rendered_tool_results.count(result_part->tool_call_id)) {
                 continue;
             }
-            parts.push_back(render_tool_result(*result_part, theme));
+            parts.push_back(render_tool_result(*result_part, theme, state));
             rendered_tool_results.insert(result_part->tool_call_id);
         } else if (const auto* reasoning_part =
                        std::get_if<ai::ReasoningContentPart>(&part)) {
@@ -499,7 +536,8 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
                                  const std::string& theme,
                                  bool collapsed,
                                  bool collapsible,
-                                 bool focused) {
+                                 bool focused,
+                                 const ChatState& state) {
     const auto command = extract_shell_command(call_part);
     auto desc = extract_tool_description(call_part);
     if (result_part.result.is_object()) {
@@ -521,7 +559,7 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
         tool_icon(call_part.tool_name), tool_display_name(call_part.tool_name),
         desc, render_shell_output(call_part, result_part, theme, collapsed),
         false, status, status_color, result_part.duration_ms, collapsed,
-        collapsible, focused, command, theme);
+        collapsible, focused, command, theme, const_cast<ChatState*>(&state), call_part.id);
 }
 
 }  // namespace tui

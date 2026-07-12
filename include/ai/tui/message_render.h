@@ -23,7 +23,9 @@ ftxui::Element ToolBlock(const std::string& icon,
                           bool collapsible = true,
                           bool focused = false,
                           const std::string& shell_command = "",
-                          const std::string& theme = "orange");
+                          const std::string& theme = "orange",
+                          ChatState* state = nullptr,
+                          const std::string& tool_call_id = "");
 
 // ── Legacy BlockTool (compatibility) ──
 ftxui::Element BlockTool(const std::string& title, ftxui::Element content,

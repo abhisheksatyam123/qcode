@@ -691,22 +691,7 @@ int main() {
             if (e == Event::ArrowRight || e == Event::Character('l')) {
                 if (set_focused_tool_collapsed(false)) return true;
             }
-            if (e == Event::Return) {
-                if (ensure_tool_focused()) {
-                    const std::string& id =
-                        (*state.tool_block_order)[*state.focused_tool_index];
-                    if (!state.tool_collapse_state) {
-                        state.tool_collapse_state = std::make_shared<
-                            std::unordered_map<std::string, bool>>();
-                    }
-                    const bool currently_collapsed =
-                        !state.tool_collapse_state->count(id) ||
-                        (*state.tool_collapse_state)[id];
-                    (*state.tool_collapse_state)[id] = !currently_collapsed;
-                    screen.Post(Event::Custom);
-                    return true;
-                }
-            }
+
         }
         if (e == Event::Tab) {
             if (state.tab_selected == 1) {
@@ -753,6 +738,24 @@ int main() {
         if (e.is_mouse()) {
             if (e.mouse().button == Mouse::WheelUp) { *state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
             if (e.mouse().button == Mouse::WheelDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerWheel); return true; }
+            if (e.mouse().button == Mouse::Left && e.mouse().motion == Mouse::Pressed) {
+                if (state.tool_arrow_boxes) {
+                    for (const auto& [id, box] : *state.tool_arrow_boxes) {
+                        if (box.Contain(e.mouse().x, e.mouse().y)) {
+                            if (!state.tool_collapse_state) {
+                                state.tool_collapse_state = std::make_shared<
+                                    std::unordered_map<std::string, bool>>();
+                            }
+                            bool currently_collapsed =
+                                !state.tool_collapse_state->count(id) ||
+                                (*state.tool_collapse_state)[id];
+                            (*state.tool_collapse_state)[id] = !currently_collapsed;
+                            screen.Post(Event::Custom);
+                            return true;
+                        }
+                    }
+                }
+            }
         }
         if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
         if (e == Event::Special("\x1b\x32")) { state.tab_selected = 1; return true; }
