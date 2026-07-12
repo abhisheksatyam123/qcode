@@ -12,371 +12,91 @@ C++ developers have long lacked a first-class, convenient way to interact with m
 
 ## Installation
 
-You will need a C++20 compatible compiler and CMake 3.16+ installed on your development machine.
+You will need:
 
-## Usage
+- A C++20 compatible compiler
+- CMake 3.16+
+- [uv](https://docs.astral.sh/uv/) (for the build script)
+- OpenSSL development headers
+- Ninja (used by the build script)
 
-### Core API
+Clone with submodules:
 
-The AI SDK CPP Core module provides a unified API to interact with model providers like OpenAI and Anthropic.
-
-#### OpenAI Integration
-
-```cpp
-#include <ai/openai.h>
-#include <ai/generate.h>
-#include <iostream>
-
-int main() {
-    // Ensure OPENAI_API_KEY environment variable is set
-    auto client = ai::openai::create_client();
-    
-    auto result = client.generate_text({
-        .model = ai::openai::models::kGpt54, // this can also be a string like "gpt-5.4"
-        .system = "You are a friendly assistant!",
-        .prompt = "Why is the sky blue?"
-    });
-    
-    if (result) {
-        std::cout << result->text << std::endl;
-    }
-    
-    return 0;
-}
+```bash
+git clone --recursive <repo-url>
+cd qcode
 ```
 
-#### Anthropic Integration
+## Building & Running
 
-```cpp
-#include <ai/anthropic.h>
-#include <ai/generate.h>
-#include <iostream>
+### Build
 
-int main() {
-    // Ensure ANTHROPIC_API_KEY environment variable is set
-    auto client = ai::anthropic::create_client();
-    auto result = client.generate_text({
-        .model = ai::anthropic::models::kClaudeSonnet46,
-        .system = "You are a helpful assistant.",
-        .prompt = "Explain quantum computing in simple terms."
-    });
+```bash
+# Debug build (default) — builds the SDK, examples, and qcode-tui
+uv run scripts/build.py
 
-    if (result) {
-        std::cout << result->text << std::endl;
-    }
-
-    return 0;
-}
+# Release build
+uv run scripts/build.py --mode release
 ```
 
-#### Streaming Responses
+The headless server is opt-in. Enable it when configuring CMake, then build:
 
-```cpp
-#include <ai/openai.h>
-#include <ai/stream.h>
-#include <iostream>
-
-int main() {
-    auto client = ai::openai::create_client();
-    
-    auto stream = client.stream_text({
-        .model = ai::openai::models::kGpt54, // this can also be a string like "gpt-5.4"
-        .system = "You are a helpful assistant.",
-        .prompt = "Write a short story about a robot."
-    });
-    
-    for (const auto& chunk : stream) {
-        if (chunk.text) {
-            std::cout << chunk.text.value() << std::flush;
-        }
-    }
-    
-    return 0;
-}
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQCODE_BUILD_SERVER=ON
+cmake --build build --parallel
 ```
 
-#### Multi-turn Conversations
+Or reconfigure an existing build directory:
 
-```cpp
-#include <ai/openai.h>
-#include <ai/generate.h>
-#include <iostream>
-
-int main() {
-    auto client = ai::openai::create_client();
-    
-    ai::Messages messages = {
-        {"system", "You are a helpful math tutor."},
-        {"user", "What is 2 + 2?"},
-        {"assistant", "2 + 2 equals 4."},
-        {"user", "Now what is 4 + 4?"}
-    };
-    
-    auto result = client.generate_text({
-        .model = ai::openai::models::kGpt54, // this can also be a string like "gpt-5.4"
-        .messages = messages
-    });
-    
-    if (result) {
-        std::cout << result->text << std::endl;
-    }
-    
-    return 0;
-}
+```bash
+cmake -B build -DQCODE_BUILD_SERVER=ON
+uv run scripts/build.py
 ```
 
-#### Tool Calling
+Binaries land at:
 
-The AI SDK CPP supports function calling, allowing models to interact with external systems and APIs.
+| Target | Path |
+|--------|------|
+| TUI | `build/src/tui/qcode-tui` |
+| Server | `build/src/server/qcode-server` |
+| CLI client | `build/src/server/qcode-cli` |
 
-```cpp
-#include <ai/openai.h>
-#include <ai/generate.h>
-#include <ai/tools.h>
-#include <iostream>
+### Configuration
 
-// Define a tool function
-ai::JsonValue get_weather(const ai::JsonValue& args, const ai::ToolExecutionContext& context) {
-    std::string location = args["location"].get<std::string>();
-    
-    // Your weather API logic here
-    return ai::JsonValue{
-        {"location", location},
-        {"temperature", 72},
-        {"condition", "Sunny"}
-    };
-}
+Both the TUI and server load providers from an OpenCode-style config file. Lookup order:
 
-int main() {
-    auto client = ai::openai::create_client();
-    
-    // Create tools
-    ai::ToolSet tools = {
-        {"weather", ai::create_simple_tool(
-            "weather",
-            "Get current weather for a location", 
-            {{"location", "string"}},
-            get_weather
-        )}
-    };
-    
-    auto result = client.generate_text({
-        .model = ai::openai::models::kGpt54,
-        .prompt = "What's the weather like in San Francisco?",
-        .tools = tools,
-        .max_steps = 3  // Enable multi-step tool calling
-    });
-    
-    if (result) {
-        std::cout << result->text << std::endl;
-        
-        // Inspect tool calls and results
-        for (const auto& call : result->tool_calls) {
-            std::cout << "Tool: " << call.tool_name 
-                      << ", Args: " << call.arguments.dump() << std::endl;
-        }
-    }
-    
-    return 0;
-}
+1. `OPENCODE_CONFIG` (if set)
+2. `$XDG_CONFIG_HOME/opencode/opencode.json`
+3. `~/.config/opencode/opencode.json`
+4. `~/notes/etc/opencode.json`
+
+Set provider API keys via environment variables (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or in the config file’s provider options.
+
+### Start the TUI
+
+```bash
+./build/src/tui/qcode-tui
 ```
 
-#### Async Tool Calling
+Logs go to `/tmp/qcode.log`.
 
-For long-running operations, you can define asynchronous tools:
+### Start the server
 
-```cpp
-#include <future>
-#include <thread>
-#include <chrono>
+```bash
+# Default port 9080
+./build/src/server/qcode-server
 
-// Async tool that returns a future
-std::future<ai::JsonValue> fetch_data_async(const ai::JsonValue& args, const ai::ToolExecutionContext& context) {
-    return std::async(std::launch::async, [args]() {
-        // Simulate async operation
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        
-        return ai::JsonValue{
-            {"data", "Fetched from API"},
-            {"timestamp", std::time(nullptr)}
-        };
-    });
-}
-
-int main() {
-    auto client = ai::openai::create_client();
-    
-    ai::ToolSet tools = {
-        {"fetch_data", ai::create_simple_async_tool(
-            "fetch_data",
-            "Fetch data from external API",
-            {{"endpoint", "string"}},
-            fetch_data_async
-        )}
-    };
-    
-    // Multiple async tools will execute in parallel
-    auto result = client.generate_text({
-        .model = ai::openai::models::kGpt54,
-        .prompt = "Fetch data from the user and product APIs",
-        .tools = tools
-    });
-    
-    return 0;
-}
+# Custom port
+./build/src/server/qcode-server --port 9080
 ```
 
-#### Custom Retry Configuration
+Then open `http://localhost:9080` for the Web UI, or use the CLI client:
 
-Configure retry behavior for handling transient failures:
-
-```cpp
-#include <ai/openai.h>
-#include <ai/retry/retry_policy.h>
-
-int main() {
-    // Configure custom retry behavior
-    ai::retry::RetryConfig retry_config;
-    retry_config.max_retries = 5;        // More retries for unreliable networks
-    retry_config.initial_delay = std::chrono::milliseconds(1000);
-    retry_config.backoff_factor = 1.5;   // Gentler backoff
-    
-    // Create client with custom retry configuration
-    auto client = ai::openai::create_client(
-        "your-api-key",
-        "https://api.openai.com",
-        retry_config
-    );
-    
-    // The client will automatically retry on transient failures:
-    // - Network errors
-    // - HTTP 408, 409, 429 (rate limits), and 5xx errors
-    auto result = client.generate_text({
-        .model = ai::openai::models::kGpt54,
-        .prompt = "Hello, world!"
-    });
-    
-    return 0;
-}
+```bash
+./build/src/server/qcode-cli --prompt "Hello"
 ```
 
-#### Using OpenAI-Compatible APIs (OpenRouter, etc.)
+Server logs go to `/tmp/qcode-server.log`.
 
-The OpenAI client can be used with any OpenAI-compatible API by specifying a custom base URL. This allows you to use alternative providers like OpenRouter, which offers access to multiple models through a unified API.
+For more build options (tests, clean builds, compile commands), see [DEVELOPMENT.md](DEVELOPMENT.md).
 
-```cpp
-#include <ai/openai.h>
-#include <ai/generate.h>
-#include <iostream>
-#include <cstdlib>
-
-int main() {
-    // Get API key from environment variable
-    const char* api_key = std::getenv("OPENROUTER_API_KEY");
-    if (!api_key) {
-        std::cerr << "Please set OPENROUTER_API_KEY environment variable\n";
-        return 1;
-    }
-    
-    // Create client with OpenRouter's base URL
-    auto client = ai::openai::create_client(
-        api_key,
-        "https://openrouter.ai/api"  // OpenRouter's OpenAI-compatible endpoint
-    );
-    
-    // Use any model available on OpenRouter
-    auto result = client.generate_text({
-        .model = "anthropic/claude-sonnet-4-6",  // or "meta-llama/llama-3.1-8b-instruct", etc.
-        .system = "You are a helpful assistant.",
-        .prompt = "What are the benefits of using OpenRouter?"
-    });
-    
-    if (result) {
-        std::cout << result->text << std::endl;
-    }
-    
-    return 0;
-}
-```
-
-This approach works with any OpenAI-compatible API provider. Simply provide:
-1. Your provider's API key
-2. The provider's base URL endpoint
-3. Model names as specified by your provider
-
-See the [OpenRouter example](examples/openrouter_example.cpp) for a complete demonstration.
-
-## Features
-
-### Currently Supported
-
-- ✅ **Text Generation**: Generate text completions with OpenAI and Anthropic models
-- ✅ **Streaming**: Real-time streaming of generated content
-- ✅ **Multi-turn Conversations**: Support for conversation history
-- ✅ **Error Handling**: Comprehensive error handling with optional types
-- ✅ **Tool Calling**: Function calling and tool integration with multi-step support
-- ✅ **Async Tools**: Asynchronous tool execution with parallel processing
-- ✅ **Embeddings**: Text embedding support (Anthropic)
-- ✅ **Reasoning**: Configurable reasoning effort for providers that expose
-  thinking/reasoning tokens (e.g. Anthropic)
-- ✅ **Provider Registry**: Pluggable providers, including the registry-backed
-  **Antigravity** provider and any OpenAI-compatible endpoint (OpenRouter, etc.)
-
-### Recently Added
-
-- ✅ **Configurable Retries**: Customizable retry behavior with exponential backoff
-
-### Configuration & Security
-
-- **Credentials** load from the environment (e.g. `OPENAI_API_KEY`,
-  `ANTHROPIC_API_KEY`) or user configuration; no secrets are compiled into the
-  binary.
-- **Reasoning** is only honored by providers that support thinking/reasoning
-  tokens; others ignore the setting.
-- **Tool execution** runs model-generated shell commands. Each command requires a
-  short description, passes a safety check, and (by default) requests
-  confirmation before running. Treat model-generated commands as untrusted and
-  review them before approving.
-- **Sessions & database**: chat history is persisted to a configurable SQLite
-  database. Reloading a session restores messages, tool calls, and tool results.
-
-### Coming Soon
-
-- 🚧 **Additional Providers**: Google, Cohere, and other providers
-- 🚧 **Image Generation**: Support for image generation models
-
-## Examples
-
-Check out our [examples directory](examples/) for more comprehensive usage examples:
-
-- [Basic Chat Application](examples/basic_chat.cpp)
-- [Streaming Chat](examples/streaming_chat.cpp)
-- [Multi-provider Comparison](examples/multi_provider.cpp)
-- [Error Handling](examples/error_handling.cpp)
-- [Retry Configuration](examples/retry_config_example.cpp)
-- [Basic Tool Calling](examples/tool_calling_basic.cpp)
-- [Multi-Step Tool Workflows](examples/tool_calling_multistep.cpp)
-- [Async Tool Execution](examples/tool_calling_async.cpp)
-- [OpenRouter Integration](examples/openrouter_example.cpp) - Using OpenAI-compatible APIs
-
-
-## Requirements
-
-- **C++ Standard**: C++20 or higher
-- **CMake**: 3.16 or higher
-
-## Dependencies and Modifications
-
-### nlohmann/json (Patched)
-
-This project uses a patched version of nlohmann/json to remove the dependency on `localeconv()`, which is not thread-safe. The patch ensures:
-
-- **Thread Safety**: Eliminates calls to the non-thread-safe `localeconv()` function, allowing downstream users to safely use the library in multi-threaded environments without worrying about locale-related race conditions
-- **Consistent Behavior**: Always uses '.' as the decimal point separator regardless of system locale
-- **Simplified Integration**: Downstream users don't need to implement locale synchronization or worry about thread safety issues
-
-This modification improves both safety and portability of the JSON library in concurrent applications.
-
-## Acknowledgments
-
-Inspired by the excellent [Vercel AI SDK](https://github.com/vercel/ai) for TypeScript/JavaScript developers.
