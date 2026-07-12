@@ -55,6 +55,56 @@ inline ftxui::Color user_green() { return ftxui::Color::RGB(0x22, 0xBB, 0x88); }
 inline ftxui::Color dim_gray() { return ftxui::Color::GrayDark; }
 inline ftxui::Color bg_popup() { return ftxui::Color::RGB(0x22, 0x22, 0x22); }
 
+inline ftxui::Color theme_prompt(const std::string& theme) {
+    return accent2(theme);
+}
+inline ftxui::Color theme_success(const std::string& theme) {
+    if (theme == "sage" || theme == "mint") return ftxui::Color::RGB(0xA2, 0xE8, 0xC4);
+    return ftxui::Color::RGB(0x7F, 0xDB, 0x8C);
+}
+inline ftxui::Color theme_error(const std::string& theme) {
+    if (theme == "coral" || theme == "peach") return ftxui::Color::RGB(0xFF, 0x76, 0x76);
+    return ftxui::Color::RGB(0xF4, 0x87, 0x71);
+}
+inline ftxui::Color theme_muted(const std::string& theme) {
+    return ftxui::Color::RGB(0x8A, 0x8A, 0x8A);
+}
+inline ftxui::Color theme_panel_bg(const std::string& theme) {
+    if (theme == "green") return ftxui::Color::RGB(0x13, 0x1E, 0x18);
+    if (theme == "blue") return ftxui::Color::RGB(0x12, 0x18, 0x24);
+    if (theme == "purple") return ftxui::Color::RGB(0x1A, 0x14, 0x22);
+    if (theme == "monochrome") return ftxui::Color::RGB(0x1A, 0x1A, 0x1A);
+    if (theme == "pastel") return ftxui::Color::RGB(0x22, 0x1A, 0x1E);
+    if (theme == "mint") return ftxui::Color::RGB(0x14, 0x20, 0x1C);
+    if (theme == "lavender") return ftxui::Color::RGB(0x18, 0x15, 0x20);
+    if (theme == "peach") return ftxui::Color::RGB(0x20, 0x18, 0x14);
+    if (theme == "sky") return ftxui::Color::RGB(0x14, 0x1A, 0x20);
+    if (theme == "rose") return ftxui::Color::RGB(0x20, 0x14, 0x18);
+    if (theme == "butter") return ftxui::Color::RGB(0x20, 0x1E, 0x14);
+    if (theme == "coral") return ftxui::Color::RGB(0x22, 0x18, 0x14);
+    if (theme == "lilac") return ftxui::Color::RGB(0x18, 0x14, 0x22);
+    if (theme == "sage") return ftxui::Color::RGB(0x16, 0x1C, 0x14);
+    return ftxui::Color::RGB(0x20, 0x16, 0x12);
+}
+inline ftxui::Color theme_focus_bg(const std::string& theme) {
+    if (theme == "green") return ftxui::Color::RGB(0x1A, 0x2E, 0x22);
+    if (theme == "blue") return ftxui::Color::RGB(0x1D, 0x2A, 0x3D);
+    if (theme == "purple") return ftxui::Color::RGB(0x2B, 0x1C, 0x37);
+    if (theme == "monochrome") return ftxui::Color::RGB(0x2A, 0x2A, 0x2A);
+    if (theme == "pastel") return ftxui::Color::RGB(0x35, 0x22, 0x2B);
+    if (theme == "mint") return ftxui::Color::RGB(0x1D, 0x30, 0x28);
+    if (theme == "lavender") return ftxui::Color::RGB(0x26, 0x1F, 0x30);
+    if (theme == "peach") return ftxui::Color::RGB(0x32, 0x22, 0x1B);
+    if (theme == "sky") return ftxui::Color::RGB(0x1D, 0x29, 0x35);
+    if (theme == "rose") return ftxui::Color::RGB(0x32, 0x1F, 0x24);
+    if (theme == "butter") return ftxui::Color::RGB(0x30, 0x2A, 0x1B);
+    if (theme == "coral") return ftxui::Color::RGB(0x35, 0x22, 0x1B);
+    if (theme == "lilac") return ftxui::Color::RGB(0x26, 0x1F, 0x35);
+    if (theme == "sage") return ftxui::Color::RGB(0x22, 0x2C, 0x1E);
+    return ftxui::Color::RGB(0x32, 0x20, 0x18);
+}
+
+
 inline bool is_known_theme(const std::string& theme) {
     return theme == "orange" || theme == "green" || theme == "blue" ||
            theme == "purple" || theme == "monochrome" || theme == "pastel" ||

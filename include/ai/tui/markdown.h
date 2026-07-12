@@ -11,7 +11,7 @@ namespace tui {
 // Uses the vendored md4c parser (third_party/md4c) for fidelity close to
 // opencode's marked + marked-shiki pipeline (CommonMark + GFM tables,
 // strikethrough, task lists, autolinks).
-ftxui::Elements render_markdown(const std::string& input_text);
+ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme = "orange");
 
 }  // namespace tui
 }  // namespace ai

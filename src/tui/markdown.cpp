@@ -1,5 +1,6 @@
 // GitHub-flavored Markdown rendering for qcode-tui, backed by md4c.
 #include <ai/tui/markdown.h>
+#include <ai/tui/themes.h>
 
 #include <ai/logger.h>
 
@@ -64,6 +65,7 @@ struct Ctx {
   std::string cell_buf;
   std::vector<std::vector<std::string>> table_grid;
   std::vector<std::vector<MD_ALIGN>> table_align;
+  std::string theme = "orange";
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -109,7 +111,8 @@ static int avail_width() {
 // Flush collected inline items into a word-wrapped block. `first_prefix` is
 // rendered on the first line; continuation lines are indented by `hang`.
 static Element flush_inline(const std::vector<IItem>& items, int avail,
-                            const std::string& first_prefix, int hang) {
+                            const std::string& first_prefix, int hang,
+                            const std::string& theme) {
   struct Tok {
     std::string w;
     MStyle s;
@@ -181,14 +184,14 @@ static Element flush_inline(const std::vector<IItem>& items, int avail,
       Element e = text(tk.w);
       if (tk.s.bold) e = e | bold;
       if (tk.s.code)
-        e = e | bgcolor(Color::RGB(0x2D, 0x2D, 0x3D)) |
-            color(Color::RGB(0xEE, 0x99, 0x77));
+        e = e | bgcolor(theme_focus_bg(theme)) |
+            color(accent2(theme));
       if (tk.s.del) e = e | dim;
       if (tk.s.em) e = e | dim;  // italic not available in ftxui
       if (tk.s.dim) e = e | dim;
       if (tk.s.underline) e = e | underlined;
       if (tk.s.mark) e = e | inverted;
-      if (tk.s.link) e = e | color(Color::Blue) | underlined;
+      if (tk.s.link) e = e | color(accent2(theme)) | underlined;
       row.push_back(e);
       if (k + 1 < lines[li].size()) row.push_back(text(" "));
     }
@@ -284,14 +287,14 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
       break;
     }
     case MD_BLOCK_P:
-      el = flush_inline(b.inline_items, avail, "", 0);
+      el = flush_inline(b.inline_items, avail, "", 0, c->theme);
       break;
     case MD_BLOCK_H: {
       auto* d = static_cast<MD_BLOCK_H_DETAIL*>(detail);
-      el = flush_inline(b.inline_items, avail, "", 0) | bold;
-      el = el | (d->level <= 2 ? color(Color::Yellow) : color(Color::Cyan));
+      el = flush_inline(b.inline_items, avail, "", 0, c->theme) | bold;
+      el = el | (d->level <= 2 ? color(accent2(c->theme)) : color(accent(c->theme)));
       if (d->level <= 2)
-        el = vbox({el, separatorLight() | color(Color::Yellow)});
+        el = vbox({el, separatorLight() | color(accent(c->theme))});
       break;
     }
     case MD_BLOCK_CODE: {
@@ -308,7 +311,7 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
     }
     case MD_BLOCK_QUOTE: {
       Element inner = b.children.empty() ? vbox({}) : vbox(std::move(b.children));
-      el = hbox({text(" │ ") | color(Color::GrayLight), inner | dim});
+      el = hbox({text(" │ ") | color(accent2(c->theme)) | dim, inner | dim});
       break;
     }
     case MD_BLOCK_UL:
@@ -316,7 +319,7 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
       el = vbox(std::move(b.children));
       break;
     case MD_BLOCK_LI: {
-      Element para = flush_inline(b.inline_items, avail, b.bullet, b.hang);
+      Element para = flush_inline(b.inline_items, avail, b.bullet, b.hang, c->theme);
       Elements li_children;
       li_children.push_back(para);
       for (auto& ch : b.children)
@@ -330,8 +333,8 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
     case MD_BLOCK_ADMONITION: {
       Element inner = b.children.empty() ? vbox({}) : vbox(std::move(b.children));
       std::string label = b.adm_type.empty() ? "NOTE" : b.adm_type;
-      el = vbox({text("▌ " + label) | bold | color(Color::Yellow),
-                 hbox({text(" │ ") | color(Color::GrayLight), inner | dim})});
+      el = vbox({text("▌ " + label) | bold | color(accent2(c->theme)),
+                 hbox({text(" │ ") | color(accent(c->theme)) | dim, inner | dim})});
       break;
     }
     case MD_BLOCK_TABLE: {
@@ -446,11 +449,12 @@ static int md_text(MD_TEXTTYPE type, const MD_CHAR* txt, MD_SIZE size, void* ud)
 }  // extern "C"
 
 // ── Public entry point ─────────────────────────────────────────────────────
-ftxui::Elements render_markdown(const std::string& input_text) {
+ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme) {
   Elements out;
   if (input_text.empty()) return out;
 
   Ctx ctx;
+  ctx.theme = theme;
   MD_PARSER parser;
   std::memset(&parser, 0, sizeof(parser));
   parser.abi_version = 0;

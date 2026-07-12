@@ -1,4 +1,5 @@
 #include <ai/tui/tool_renderers.h>
+#include <ai/tui/themes.h>
 #include <ai/tui/message_render.h>
 #include <ai/tui/views.h>
 #include <ftxui/dom/elements.hpp>
@@ -12,10 +13,10 @@ using namespace ftxui;
 
 namespace {
 
-Color prompt_green() { return Color::RGB(0x4E, 0xC9, 0xB0); }
+Color prompt_green(const std::string& theme) { return theme_prompt(theme); }
 Color command_fg() { return Color::RGB(0xE5, 0xE5, 0xE5); }
-Color muted_fg() { return Color::RGB(0x6A, 0x6A, 0x6A); }
-Color success_fg() { return Color::RGB(0x7F, 0xDB, 0x8C); }
+Color muted_fg(const std::string& theme) { return theme_muted(theme); }
+Color success_fg(const std::string& theme) { return theme_success(theme); }
 
 std::string json_str(const nlohmann::json& j,
                      std::initializer_list<const char*> keys,
@@ -75,7 +76,7 @@ Element RenderBashResult(const nlohmann::json& args,
 
     if (!command.empty()) {
         content.push_back(hbox({
-            text("$ ") | bold | color(prompt_green()),
+            text("$ ") | bold | color(prompt_green(theme)),
             text(command.size() > 200 ? command.substr(0, 197) + "..." : command) |
                 bold | color(command_fg()),
         }));
@@ -83,7 +84,7 @@ Element RenderBashResult(const nlohmann::json& args,
 
     if (!workdir.empty()) {
         content.push_back(hbox({
-            text("in ") | dim | color(muted_fg()),
+            text("in ") | dim | color(muted_fg(theme)),
             text(workdir) | dim | color(Color::RGB(0x7A, 0xA2, 0xF7)),
         }));
     }
@@ -108,7 +109,7 @@ Element RenderBashResult(const nlohmann::json& args,
     }
 
     if (has_exit) {
-        const auto exit_color = exit_code == 0 ? success_fg() : Color::Red;
+        const auto exit_color = exit_code == 0 ? success_fg(theme) : theme_error(theme);
         content.push_back(text(""));
         content.push_back(hbox({
             text(exit_code == 0 ? "✓" : "✗") | color(exit_color) | bold,
@@ -127,7 +128,7 @@ Element RenderTaskResult(const nlohmann::json& args,
     const std::string desc = json_str(args, {"description", "prompt", "task"});
     if (!desc.empty()) {
         content.push_back(hbox({
-            text("$ ") | bold | color(prompt_green()),
+            text("$ ") | bold | color(prompt_green(theme)),
             text("task " + desc) | color(command_fg()),
         }));
     }
@@ -154,7 +155,7 @@ Element RenderFileResult(const std::string& tool_name,
         json_str(args, {"path", "file", "file_path", "filename"});
     if (!path.empty()) {
         content.push_back(hbox({
-            text("$ ") | bold | color(prompt_green()),
+            text("$ ") | bold | color(prompt_green(theme)),
             text(tool_name + " " + path) | color(command_fg()),
         }));
     }
@@ -178,7 +179,7 @@ Element RenderSearchResult(const nlohmann::json& args,
     const std::string path = json_str(args, {"path", "directory", "dir"});
     if (!query.empty()) {
         content.push_back(hbox({
-            text("$ ") | bold | color(prompt_green()),
+            text("$ ") | bold | color(prompt_green(theme)),
             text("rg \"" + query + "\"" + (path.empty() ? "" : " " + path)) |
                 color(command_fg()),
         }));
@@ -215,7 +216,7 @@ Element RenderGenericResult(const std::string& tool_name,
         }
     }
     content.push_back(hbox({
-        text("$ ") | bold | color(prompt_green()),
+        text("$ ") | bold | color(prompt_green(theme)),
         text(summary) | color(command_fg()),
     }));
 
@@ -235,14 +236,15 @@ Element RenderGenericResult(const std::string& tool_name,
 Element BashToolRender(const std::string& command, const std::string& output,
                         int exit_code, bool is_running,
                         const std::string& workdir) {
+    const std::string theme = "orange";
     Elements content;
     content.push_back(hbox({
-        text("$ ") | bold | color(prompt_green()),
+        text("$ ") | bold | color(prompt_green(theme)),
         text(command) | bold | color(command_fg()),
     }));
     if (!workdir.empty()) {
         content.push_back(hbox({
-            text("in ") | dim | color(muted_fg()),
+            text("in ") | dim | color(muted_fg(theme)),
             text(workdir) | dim,
         }));
     }
@@ -255,7 +257,7 @@ Element BashToolRender(const std::string& command, const std::string& output,
         is_running ? "running" : (exit_code == 0 ? "success" : "failed");
     const Color status_color =
         is_running ? Color::Yellow
-                   : (exit_code == 0 ? success_fg() : Color::Red);
+                   : (exit_code == 0 ? success_fg(theme) : theme_error(theme));
     return ToolBlock("$", "Bash", "", vbox(std::move(content)), is_running,
                       status, status_color, 0.0, false, true, false, command);
 }

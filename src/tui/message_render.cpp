@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <ai/tui/tool_renderers.h>
 #include <ai/tui/message_render.h>
+#include <ai/tui/themes.h>
 #include <ai/tui/views.h>
 #include <nlohmann/json.hpp>
 #include <ai/logger.h>
@@ -15,14 +16,14 @@ using namespace ftxui;
 
 namespace {
 
-Color prompt_green() { return Color::RGB(0x4E, 0xC9, 0xB0); }
+Color prompt_green(const std::string& theme) { return theme_prompt(theme); }
 Color command_fg() { return Color::RGB(0xE5, 0xE5, 0xE5); }
 Color output_fg() { return Color::RGB(0xB0, 0xB0, 0xB0); }
-Color error_fg() { return Color::RGB(0xF4, 0x87, 0x71); }
-Color muted_fg() { return Color::RGB(0x6A, 0x6A, 0x6A); }
-Color success_fg() { return Color::RGB(0x7F, 0xDB, 0x8C); }
-Color panel_bg() { return Color::RGB(0x1C, 0x1C, 0x1C); }
-Color focus_bg() { return Color::RGB(0x2A, 0x2A, 0x2A); }
+Color error_fg(const std::string& theme) { return theme_error(theme); }
+Color muted_fg(const std::string& theme) { return theme_muted(theme); }
+Color success_fg(const std::string& theme) { return theme_success(theme); }
+Color panel_bg(const std::string& theme) { return theme_panel_bg(theme); }
+Color focus_bg(const std::string& theme) { return theme_focus_bg(theme); }
 
 std::string format_duration(double duration_ms) {
     if (duration_ms <= 0) return {};
@@ -87,13 +88,14 @@ Element ToolBlock(const std::string& icon,
                    bool collapsed,
                    bool collapsible,
                    bool focused,
-                   const std::string& shell_command) {
+                   const std::string& shell_command,
+                   const std::string& theme) {
     // ── Title row: ▸ # description · tool          ✓ 4ms ──
     Elements title_row;
     if (collapsible) {
         title_row.push_back(
             text(collapsed ? "▸ " : "▾ ") |
-            color(focused ? accent_color : muted_fg()) |
+            color(focused ? accent_color : muted_fg(theme)) |
             (focused ? bold : nothing));
     } else {
         title_row.push_back(text("  "));
@@ -106,27 +108,27 @@ Element ToolBlock(const std::string& icon,
         title_row.push_back(text(icon + " ") | dim | color(accent_color));
     }
     title_row.push_back(text("# " + truncate_utf8(heading, 64)) | dim |
-                        color(muted_fg()));
+                        color(muted_fg(theme)));
 
     if (!title.empty() && title != heading &&
         description.find(title) == std::string::npos) {
-        title_row.push_back(text(" · " + title) | dim | color(muted_fg()));
+        title_row.push_back(text(" · " + title) | dim | color(muted_fg(theme)));
     }
 
     title_row.push_back(filler());
 
     const auto timing = format_duration(duration_ms);
     if (!timing.empty()) {
-        title_row.push_back(text(timing + " ") | dim | color(muted_fg()));
+        title_row.push_back(text(timing + " ") | dim | color(muted_fg(theme)));
     }
 
     if (is_running || status == "running" || status == "calling") {
         title_row.push_back(text("⠋") | color(Color::Yellow) | bold);
     } else if (status == "failed" || status == "error") {
-        title_row.push_back(text("✗") | color(Color::Red) | bold);
+        title_row.push_back(text("✗") | color(error_fg(theme)) | bold);
     } else if (status == "success" || status == "completed" ||
                !status.empty()) {
-        title_row.push_back(text("✓") | color(success_fg()) | bold);
+        title_row.push_back(text("✓") | color(success_fg(theme)) | bold);
     }
 
     // ── Command row: $ command (always visible) ──
@@ -141,7 +143,7 @@ Element ToolBlock(const std::string& icon,
     Elements body;
     body.push_back(hbox(std::move(title_row)));
     body.push_back(hbox({
-        text("  $ ") | bold | color(prompt_green()),
+        text("  $ ") | bold | color(prompt_green(theme)),
         text(truncate_utf8(std::move(command), 100)) | bold | color(command_fg()),
     }));
 
@@ -158,7 +160,7 @@ Element ToolBlock(const std::string& icon,
         text(" "),
         std::move(block) | flex,
     });
-    block = std::move(block) | bgcolor(focused ? focus_bg() : panel_bg());
+    block = std::move(block) | bgcolor(focused ? focus_bg(theme) : panel_bg(theme));
     return vbox({std::move(block), text("")});
 }
 
@@ -191,7 +193,7 @@ Element render_truncated_output(const std::string& output,
         }
     }
 
-    const Color line_color = is_error ? error_fg() : output_fg();
+    const Color line_color = is_error ? error_fg(theme) : output_fg();
     const bool unlimited = max_lines <= 0;
 
     while (std::getline(stream, line)) {
@@ -285,7 +287,7 @@ static Element render_shell_output(const ai::ToolCallContentPart& call_part,
             json_string(call_part.arguments, {"workdir", "cwd"});
         if (!workdir.empty()) {
             body.push_back(hbox({
-                text("in ") | dim | color(muted_fg()),
+                text("in ") | dim | color(muted_fg(theme)),
                 text(workdir) | dim | color(Color::RGB(0x7A, 0xA2, 0xF7)),
             }));
         }
@@ -304,7 +306,7 @@ static Element render_shell_output(const ai::ToolCallContentPart& call_part,
         result_part.result["metadata"].is_object() &&
         result_part.result["metadata"].contains("exit")) {
         const int exit_code = result_part.result["metadata"]["exit"].get<int>();
-        const auto exit_color = exit_code == 0 ? success_fg() : Color::Red;
+        const auto exit_color = exit_code == 0 ? success_fg(theme) : error_fg(theme);
         body.push_back(hbox({
             text(exit_code == 0 ? "✓" : "✗") | color(exit_color) | bold,
             text(" exit " + std::to_string(exit_code)) | color(exit_color),
@@ -323,7 +325,7 @@ static Element render_tool_call(const ai::ToolCallContentPart& part,
                       tool_display_name(part.tool_name), desc,
                       text("running…") | dim | color(Color::Yellow), true,
                       "calling", accent(theme), 0.0, false, false, false,
-                      command);
+                      command, theme);
 }
 
 static Element render_tool_result(const ai::ToolResultContentPart& part,
@@ -339,15 +341,15 @@ static Element render_tool_result(const ai::ToolResultContentPart& part,
                           ? emptyElement()
                           : render_truncated_output(output, 18, theme, part.is_error),
                       false, status,
-                      part.is_error ? Color::Red : success_fg(),
+                      part.is_error ? theme_error(theme) : theme_success(theme),
                       part.duration_ms, false, true, false,
-                      tool_name.empty() ? "tool" : tool_name);
+                      tool_name.empty() ? "tool" : tool_name, theme);
 }
 
 static Element render_reasoning(const ai::ReasoningContentPart& rp,
                                  const std::string& theme) {
     if (rp.text.empty()) return emptyElement();
-    Elements md = render_markdown(rp.text);
+    Elements md = render_markdown(rp.text, theme);
     Elements indented;
     for (auto& el : md) {
         indented.push_back(hbox({text("  "), std::move(el)}));
@@ -358,7 +360,7 @@ static Element render_reasoning(const ai::ReasoningContentPart& rp,
             text("Thinking") | dim | color(accent(theme)),
         }),
         hbox({
-            text("│") | color(muted_fg()),
+            text("│") | color(muted_fg(theme)),
             text(" "),
             vbox(std::move(indented)) | flex,
         }),
@@ -402,8 +404,8 @@ Element render_message(const ai::Message& msg, const ChatState& state,
         }));
     } else if (msg.role == kMessageRoleSystem) {
         parts.push_back(hbox({
-            text("ℹ ") | dim | color(Color::GrayDark),
-            text("System") | dim | color(Color::GrayDark),
+            text("ℹ ") | dim | color(theme_muted(theme)),
+            text("System") | dim | color(theme_muted(theme)),
         }));
     }
 
@@ -436,7 +438,7 @@ Element render_message(const ai::Message& msg, const ChatState& state,
                 parts.push_back(
                     hbox({text("  "), text(text_part->text) | dim}));
             } else {
-                Elements md = render_markdown(text_part->text);
+                Elements md = render_markdown(text_part->text, theme);
                 Elements indented;
                 for (auto& el : md) {
                     indented.push_back(hbox({text("  "), std::move(el)}));
@@ -510,13 +512,13 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
 
     const std::string status = result_part.is_error ? "failed" : "success";
     const Color status_color =
-        result_part.is_error ? Color::Red : success_fg();
+        result_part.is_error ? theme_error(theme) : theme_success(theme);
 
     return ToolBlock(
         tool_icon(call_part.tool_name), tool_display_name(call_part.tool_name),
         desc, render_shell_output(call_part, result_part, theme, collapsed),
         false, status, status_color, result_part.duration_ms, collapsed,
-        collapsible, focused, command);
+        collapsible, focused, command, theme);
 }
 
 }  // namespace tui
