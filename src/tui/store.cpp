@@ -338,6 +338,13 @@ void AppStore::wire() {
         *state_.last_actual_prompt_tokens = p.prompt_tokens;
         notify();
     }));
+
+    // Per-turn context snapshot (current context sent to the model). This is
+    // distinct from total_tokens, which is the session lifetime total.
+    subs_.push_back(bus_.subscribe<ContextSizeUpdated>([this](const ContextSizeUpdated::Payload& p) {
+        *state_.current_context_tokens = p.context_tokens;
+        notify();
+    }));
 }
 
 void AppStore::notify() {

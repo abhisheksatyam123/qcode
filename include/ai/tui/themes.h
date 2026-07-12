@@ -14,41 +14,41 @@ struct ThemeEntry {
 
 // Colour palette — classic + soft pastel accents (readable on dark terminals).
 inline ftxui::Color accent(const std::string& theme = "orange") {
-    if (theme == "green") return ftxui::Color::RGB(0x22, 0xBB, 0x88);
-    if (theme == "blue") return ftxui::Color::RGB(0x16, 0xB8, 0xF3);
-    if (theme == "purple") return ftxui::Color::RGB(0xD8, 0x50, 0xE0);
-    if (theme == "monochrome") return ftxui::Color::RGB(0xAA, 0xAA, 0xAA);
+    if (theme == "green") return ftxui::Color::RGB(0x1B, 0x8A, 0x5A);     // Forest Green
+    if (theme == "blue") return ftxui::Color::RGB(0x1A, 0x73, 0xE8);      // Electric Blue
+    if (theme == "purple") return ftxui::Color::RGB(0x9B, 0x59, 0xB6);    // Cyberpunk Purple
+    if (theme == "monochrome") return ftxui::Color::RGB(0x70, 0x80, 0x90);// Slate Gray
     // Pastels
-    if (theme == "pastel") return ftxui::Color::RGB(0xF0, 0xA0, 0xC0);
-    if (theme == "mint") return ftxui::Color::RGB(0x7E, 0xD9, 0xB8);
-    if (theme == "lavender") return ftxui::Color::RGB(0xC4, 0xA8, 0xE8);
-    if (theme == "peach") return ftxui::Color::RGB(0xF0, 0xB0, 0x90);
-    if (theme == "sky") return ftxui::Color::RGB(0x8E, 0xC8, 0xF0);
-    if (theme == "rose") return ftxui::Color::RGB(0xE8, 0x90, 0xA8);
-    if (theme == "butter") return ftxui::Color::RGB(0xE8, 0xD0, 0x80);
-    if (theme == "coral") return ftxui::Color::RGB(0xF0, 0x90, 0x80);
-    if (theme == "lilac") return ftxui::Color::RGB(0xC9, 0xB1, 0xFF);
-    if (theme == "sage") return ftxui::Color::RGB(0xA8, 0xC9, 0x98);
-    return ftxui::Color::RGB(0xEC, 0x5B, 0x2B);  // orange (default)
+    if (theme == "pastel") return ftxui::Color::RGB(0xF0, 0xA0, 0xC0);    // Pastel Rose
+    if (theme == "mint") return ftxui::Color::RGB(0x7E, 0xD9, 0xB8);      // Mint Green
+    if (theme == "lavender") return ftxui::Color::RGB(0xC4, 0xA8, 0xE8);  // Lavender
+    if (theme == "peach") return ftxui::Color::RGB(0xF0, 0xB0, 0x90);     // Peach
+    if (theme == "sky") return ftxui::Color::RGB(0x8E, 0xC8, 0xF0);       // Sky Blue
+    if (theme == "rose") return ftxui::Color::RGB(0xE8, 0x90, 0xA8);      // Rose Pink
+    if (theme == "butter") return ftxui::Color::RGB(0xE8, 0xD0, 0x80);     // Butter Yellow
+    if (theme == "coral") return ftxui::Color::RGB(0xF0, 0x90, 0x80);      // Coral Orange
+    if (theme == "lilac") return ftxui::Color::RGB(0xC9, 0xB1, 0xFF);      // Lilac
+    if (theme == "sage") return ftxui::Color::RGB(0xA8, 0xC9, 0x98);      // Sage Green
+    return ftxui::Color::RGB(0xEC, 0x5B, 0x2B);  // Orange
 }
 
 inline ftxui::Color accent2(const std::string& theme = "orange") {
-    if (theme == "green") return ftxui::Color::RGB(0x44, 0xDD, 0xAA);
-    if (theme == "blue") return ftxui::Color::RGB(0x48, 0x7C, 0xFF);
-    if (theme == "purple") return ftxui::Color::RGB(0xEE, 0x80, 0xF8);
-    if (theme == "monochrome") return ftxui::Color::RGB(0xDD, 0xDD, 0xDD);
-    // Pastels (lighter companion)
-    if (theme == "pastel") return ftxui::Color::RGB(0xF8, 0xC0, 0xD8);
-    if (theme == "mint") return ftxui::Color::RGB(0xA8, 0xE8, 0xD0);
-    if (theme == "lavender") return ftxui::Color::RGB(0xDC, 0xC8, 0xF5);
-    if (theme == "peach") return ftxui::Color::RGB(0xFF, 0xD0, 0xB0);
-    if (theme == "sky") return ftxui::Color::RGB(0xB0, 0xDC, 0xF8);
-    if (theme == "rose") return ftxui::Color::RGB(0xF5, 0xB8, 0xC8);
-    if (theme == "butter") return ftxui::Color::RGB(0xF5, 0xE8, 0xA8);
-    if (theme == "coral") return ftxui::Color::RGB(0xFF, 0xB8, 0xA8);
-    if (theme == "lilac") return ftxui::Color::RGB(0xE0, 0xD0, 0xFF);
-    if (theme == "sage") return ftxui::Color::RGB(0xC8, 0xE0, 0xB8);
-    return ftxui::Color::RGB(0xEE, 0x79, 0x48);
+    if (theme == "green") return ftxui::Color::RGB(0xFA, 0xBC, 0x3F);     // Amber Gold (complements Forest Green)
+    if (theme == "blue") return ftxui::Color::RGB(0xFF, 0x8A, 0x65);      // Soft Coral Peach (complements Blue)
+    if (theme == "purple") return ftxui::Color::RGB(0x2E, 0xEC, 0xA8);    // Bright Mint Cyan (complements Purple)
+    if (theme == "monochrome") return ftxui::Color::RGB(0xF5, 0xF5, 0xF5);// Warm Ivory
+    // Pastels (complements)
+    if (theme == "pastel") return ftxui::Color::RGB(0xC3, 0xE2, 0xC4);    // Pale Sage (complements Pastel Rose)
+    if (theme == "mint") return ftxui::Color::RGB(0xE8, 0xA5, 0xC4);      // Soft Mauve (complements Mint)
+    if (theme == "lavender") return ftxui::Color::RGB(0xF5, 0xD0, 0xA9);  // Soft Apricot (complements Lavender)
+    if (theme == "peach") return ftxui::Color::RGB(0x90, 0xC0, 0xD0);     // Soft Teal/Sky (complements Peach)
+    if (theme == "sky") return ftxui::Color::RGB(0xF0, 0xD8, 0xA0);       // Warm Butter (complements Sky Blue)
+    if (theme == "rose") return ftxui::Color::RGB(0xB0, 0xD0, 0xA0);      // Soft Moss Green (complements Rose)
+    if (theme == "butter") return ftxui::Color::RGB(0xA0, 0xB0, 0xE8);     // Soft Lilac/Blue (complements Butter)
+    if (theme == "coral") return ftxui::Color::RGB(0x80, 0xE0, 0xC8);      // Cool Seafoam (complements Coral)
+    if (theme == "lilac") return ftxui::Color::RGB(0xA8, 0xD0, 0xB0);      // Pale Sage (complements Lilac)
+    if (theme == "sage") return ftxui::Color::RGB(0xE8, 0xA0, 0xB5);      // Dusty Pink (complements Sage)
+    return ftxui::Color::RGB(0x00, 0xCE, 0xCB);  // Bright Teal (complements Classic Orange)
 }
 
 inline ftxui::Color user_green() { return ftxui::Color::RGB(0x22, 0xBB, 0x88); }

@@ -3,6 +3,7 @@
 #include <ai/logger.h>
 #include <ai/tui/chat_bus.h>
 #include <ai/tui/context_manager.h>
+#include <ai/tui/contract/event.h>
 #include <ai/tui/db.h>
 
 #include <algorithm>
@@ -149,17 +150,34 @@ void GenerationController::spawn_unlocked(std::string prompt,
                     heuristic, *state_ptr->last_actual_prompt_tokens,
                     *state_ptr->last_estimated_tokens);
                 *state_ptr->last_estimated_tokens = static_cast<int>(heuristic);
+                // Publish the current per-turn context size so the TUI can show
+                // "<current context> / <window>" instead of the session lifetime
+                // total. This grows as tool calls append messages each step.
+                *state_ptr->current_context_tokens = static_cast<int>(total);
+                if (bus_ptr) {
+                    bus_ptr->publish<contract::ContextSizeUpdated>({.context_tokens = static_cast<int>(total)});
+                }
+
                 const size_t warn_at = (ctx_window * 7) / 10;
                 const size_t prune_at = (ctx_window * 85) / 100;
+                const int pct = static_cast<int>(total * 100 / ctx_window);
+                LOG_INFO(
+                    "Context window: {}/{} tokens ({}%)  [sys={} msg={} "
+                    "window={} model={}]",
+                    total, ctx_window, pct, sys_tok, msg_tok, ctx_window,
+                    providers_copy[sel_prov].models[sel_mod].name);
                 if (total > prune_at) {
                     LOG_WARN(
-                        "Context over limit: estimated {} tokens / {} "
-                        "(prune>={})",
-                        total, ctx_window, prune_at);
+                        "Context over window: {}/{} tokens ({}%) >= prune "
+                        "threshold {} — pruning",
+                        total, ctx_window, pct, prune_at);
                     gen_messages = prune_context(gen_messages, ctx_window);
                     const size_t after =
                         sys_tok + estimate_tokens(gen_messages);
                     if (after < total) {
+                        LOG_INFO(
+                            "Context pruned: {} -> {} tokens ({}% of window)",
+                            total, after, static_cast<int>(after * 100 / ctx_window));
                         store_ptr->add_toast(
                             "Context pruned: " + std::to_string(total) +
                                 " → " + std::to_string(after) + " tokens",
@@ -168,6 +186,10 @@ void GenerationController::spawn_unlocked(std::string prompt,
                             *state_ptr->consecutive_prunes + 1;
                     }
                 } else if (total > warn_at) {
+                    LOG_WARN(
+                        "Context near window: {}/{} tokens ({}%) > warn "
+                        "threshold {} — suggest /compact",
+                        total, ctx_window, pct, warn_at);
                     store_ptr->add_toast(
                         "Context at " + std::to_string(total) + "/" +
                             std::to_string(ctx_window) +

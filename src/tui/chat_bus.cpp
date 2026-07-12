@@ -1,5 +1,6 @@
 #include <ai/tui/chat_bus.h>
 #include <ai/tui/config.h>
+#include <ai/tui/context_manager.h>
 #include <ai/tui/tools.h>
 #include <ai/tui/db.h>
 #include <ai/tui/contract/event.h>
@@ -227,7 +228,7 @@ static void run_tools_generation_bus(
         }
         // Models sometimes wedge into identical bash loops; stop early.
         constexpr int kMaxIdenticalRepeats = 3;
-        constexpr int kMaxToolOnlyStreak = 30;
+        constexpr int kMaxToolOnlyStreak = 1000000; // effectively infinite
         if (identical_repeat >= kMaxIdenticalRepeats ||
             tool_only_streak >= kMaxToolOnlyStreak) {
           LOG_WARN(
@@ -252,6 +253,21 @@ static void run_tools_generation_bus(
           gen_result.tool_results.push_back(res);
         }
         response_messages.push_back(ai::Message::tool_results(result_parts));
+
+        // Re-publish the live context size after each tool call so the TUI's
+        // context window updates dynamically as messages are appended.
+        {
+            ai::Messages temp_messages = options.messages;
+            temp_messages.insert(temp_messages.end(), response_messages.begin(), response_messages.end());
+            const size_t sys_tok = estimate_system_tokens(options.system);
+            const size_t msg_tok = estimate_tokens(temp_messages);
+            const size_t live = sys_tok + msg_tok;
+            bus.publish<ContextSizeUpdated>({.context_tokens = static_cast<int>(live)});
+            LOG_INFO(
+                "run_tools_generation_bus: step={} live context={} tokens "
+                "(sys={} msg={})",
+                step, live, sys_tok, msg_tok);
+        }
 
         if (options.on_step_finish) {
           ai::GenerateStep step_data;
@@ -654,7 +670,7 @@ void run_generation_with_bus(
       ai::ToolSet tools = Tools::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
       // Soft cap: runaway sessions previously burned 200 steps with no answer.
-      constexpr int kMaxToolSteps = 50;
+      constexpr int kMaxToolSteps = 1000000; // effectively infinite
       base_opts.max_steps = kMaxToolSteps;
       auto refresh_client = [&](ai::Client& out_client) -> bool {
         // Re-read Antigravity OAuth (force refresh on 401).

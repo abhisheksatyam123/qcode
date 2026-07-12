@@ -128,6 +128,16 @@ struct TokenUsageUpdated {
     };
 };
 
+struct ContextSizeUpdated {
+    static constexpr const char* type = "backend.context.size.updated";
+    struct Payload {
+        // Estimated tokens in the context sent for the CURRENT turn
+        // (system + messages). This is a per-request snapshot that grows as
+        // tool calls append messages; it is NOT the session lifetime total.
+        int context_tokens = 0;
+    };
+};
+
 struct CompactionResult {
     static constexpr const char* type = "backend.compaction.result";
     struct Payload {
@@ -163,6 +173,7 @@ inline void register_all_events(bus::BusPort& bus) {
     bus.register_event<SessionStatusChanged>();
     bus.register_event<ErrorOccurred>();
     bus.register_event<TokenUsageUpdated>();
+    bus.register_event<ContextSizeUpdated>();
     bus.register_event<ReasoningDelta>();
     bus.register_event<CompactionResult>();
     bus.register_event<ToastRequested>();

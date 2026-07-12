@@ -32,6 +32,7 @@ target_sources(qcode-server PRIVATE
     ${CMAKE_SOURCE_DIR}/src/tui/bus/impl.cpp
     ${CMAKE_SOURCE_DIR}/src/tui/store.cpp
     ${CMAKE_SOURCE_DIR}/src/tui/chat_bus.cpp
+    ${CMAKE_SOURCE_DIR}/src/tui/context_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/tui/tools.cpp
     ${CMAKE_SOURCE_DIR}/src/tui/config.cpp
     ${CMAKE_SOURCE_DIR}/src/tui/db.cpp

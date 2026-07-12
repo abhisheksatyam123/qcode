@@ -314,13 +314,19 @@ ftxui::Element render_view(
     // ── Header strip: tabs + model badge + token count + status ──
     std::string hdr_model = providers_list[selected_provider].models[selected_model].name;
     const auto& hdr_model_info = providers_list[selected_provider].models[selected_model];
-    // Always show current context usage against the model's window size.
+    // Show the CURRENT context sent for this turn against the model window.
+    // (state.current_context_tokens is the per-request snapshot; state.total_tokens
+    // is the session lifetime total and is shown in the Stats tab instead.)
     std::string hdr_tokens;
+    int ctx_used = *state.current_context_tokens;
     if (hdr_model_info.context_window > 0) {
-      hdr_tokens = format_tokens(*state.total_tokens) + " / " +
-                   format_tokens(hdr_model_info.context_window) + " tok";
+      if (ctx_used > 0)
+        hdr_tokens = format_tokens(ctx_used) + " / " +
+                     format_tokens(hdr_model_info.context_window) + " tok";
+      else
+        hdr_tokens = format_tokens(hdr_model_info.context_window) + " tok";
     } else {
-      hdr_tokens = format_tokens(*state.total_tokens) + " tok";
+      hdr_tokens = format_tokens(ctx_used > 0 ? ctx_used : *state.total_tokens) + " tok";
     }
     
     // Status (compact, no spinner — spinner is rendered in the header below)
@@ -663,7 +669,7 @@ ftxui::Element render_view(
     // ── Tab 2: Stats ──
     else {
         int hard_limit = 200000;  // fallback; overridden below from model config
-        int used = *state.total_tokens;
+        int used = *state.current_context_tokens > 0 ? *state.current_context_tokens : *state.total_tokens;
         double used_pct = (double)used / hard_limit * 100.0;
         if (used_pct > 100.0) used_pct = 100.0;
 
@@ -907,11 +913,15 @@ ftxui::Element render_dynamic_footer(
     // Right: token count (current usage / context-window size)
     const auto& footer_model = providers_list[selected_provider].models[selected_model];
     std::string token_str;
+    int foot_used = *state.current_context_tokens;
     if (footer_model.context_window > 0) {
-      token_str = format_tokens(*state.total_tokens) + " / " +
-                  format_tokens(footer_model.context_window) + " tok";
+      if (foot_used > 0)
+        token_str = format_tokens(foot_used) + " / " +
+                    format_tokens(footer_model.context_window) + " tok";
+      else
+        token_str = format_tokens(footer_model.context_window) + " tok";
     } else {
-      token_str = format_tokens(*state.total_tokens) + " tok";
+      token_str = format_tokens(foot_used > 0 ? foot_used : *state.total_tokens) + " tok";
     }
     
     std::string session_short = state.session_id->substr(0, 8);

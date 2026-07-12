@@ -47,6 +47,7 @@ struct ChatState {
     std::shared_ptr<int> total_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
+    std::shared_ptr<int> current_context_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
     std::shared_ptr<size_t> files_revision = std::make_shared<size_t>(0);
     std::shared_ptr<int> scroll_line = std::make_shared<int>(INT_MAX);
