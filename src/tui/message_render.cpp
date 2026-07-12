@@ -115,6 +115,9 @@ Element ToolBlock(const std::string& icon,
         title_row.push_back(text(" · " + title) | dim | color(muted_fg(theme)));
     }
 
+    if (focused && collapsible) {
+        title_row.push_back(text(" [Enter to Toggle]") | dim | color(accent_color));
+    }
     title_row.push_back(filler());
 
     const auto timing = format_duration(duration_ms);
@@ -202,7 +205,7 @@ Element render_truncated_output(const std::string& output,
             if (remaining > 0) {
                 lines.push_back(hbox({
                     text("[+" + std::to_string(remaining) +
-                         " more · l/→ expand  h/← collapse]") |
+                         " more · Enter to Toggle]") |
                         dim | color(accent(theme)),
                 }));
             }
