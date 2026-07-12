@@ -29,6 +29,8 @@ inline ftxui::Color accent(const std::string& theme = "orange") {
     if (theme == "coral") return ftxui::Color::RGB(0xF0, 0x90, 0x80);      // Coral Orange
     if (theme == "lilac") return ftxui::Color::RGB(0xC9, 0xB1, 0xFF);      // Lilac
     if (theme == "sage") return ftxui::Color::RGB(0xA8, 0xC9, 0x98);      // Sage Green
+    if (theme == "dracula") return ftxui::Color::RGB(0xBD, 0x93, 0xF9);   // Dracula Purple
+    if (theme == "retro") return ftxui::Color::RGB(0x33, 0xFF, 0x33);     // Retro Phosphor Green
     return ftxui::Color::RGB(0xEC, 0x5B, 0x2B);  // Orange
 }
 
@@ -48,6 +50,8 @@ inline ftxui::Color accent2(const std::string& theme = "orange") {
     if (theme == "coral") return ftxui::Color::RGB(0x80, 0xE0, 0xC8);      // Cool Seafoam (complements Coral)
     if (theme == "lilac") return ftxui::Color::RGB(0xA8, 0xD0, 0xB0);      // Pale Sage (complements Lilac)
     if (theme == "sage") return ftxui::Color::RGB(0xE8, 0xA0, 0xB5);      // Dusty Pink (complements Sage)
+    if (theme == "dracula") return ftxui::Color::RGB(0xFF, 0x79, 0xC6);   // Dracula Pink (complements Purple)
+    if (theme == "retro") return ftxui::Color::RGB(0xFF, 0xB0, 0x00);     // Retro CRT Amber (complements Green)
     return ftxui::Color::RGB(0x00, 0xCE, 0xCB);  // Bright Teal (complements Classic Orange)
 }
 
@@ -60,10 +64,14 @@ inline ftxui::Color theme_prompt(const std::string& theme) {
 }
 inline ftxui::Color theme_success(const std::string& theme) {
     if (theme == "sage" || theme == "mint") return ftxui::Color::RGB(0xA2, 0xE8, 0xC4);
+    if (theme == "dracula") return ftxui::Color::RGB(0x50, 0xFA, 0x7B);   // Dracula Green
+    if (theme == "retro") return ftxui::Color::RGB(0x33, 0xFF, 0x33);     // Phosphor Green
     return ftxui::Color::RGB(0x7F, 0xDB, 0x8C);
 }
 inline ftxui::Color theme_error(const std::string& theme) {
     if (theme == "coral" || theme == "peach") return ftxui::Color::RGB(0xFF, 0x76, 0x76);
+    if (theme == "dracula") return ftxui::Color::RGB(0xFF, 0x55, 0x55);   // Dracula Red
+    if (theme == "retro") return ftxui::Color::RGB(0xFF, 0x33, 0x33);     // Retro Amber Red
     return ftxui::Color::RGB(0xF4, 0x87, 0x71);
 }
 inline ftxui::Color theme_muted(const std::string& theme) {
@@ -84,6 +92,8 @@ inline ftxui::Color theme_panel_bg(const std::string& theme) {
     if (theme == "coral") return ftxui::Color::RGB(0x22, 0x18, 0x14);
     if (theme == "lilac") return ftxui::Color::RGB(0x18, 0x14, 0x22);
     if (theme == "sage") return ftxui::Color::RGB(0x16, 0x1C, 0x14);
+    if (theme == "dracula") return ftxui::Color::RGB(0x28, 0x2A, 0x36);   // Dracula Dark
+    if (theme == "retro") return ftxui::Color::RGB(0x00, 0x0A, 0x00);     // Pitch Dark Green
     return ftxui::Color::RGB(0x20, 0x16, 0x12);
 }
 inline ftxui::Color theme_focus_bg(const std::string& theme) {
@@ -101,6 +111,8 @@ inline ftxui::Color theme_focus_bg(const std::string& theme) {
     if (theme == "coral") return ftxui::Color::RGB(0x35, 0x22, 0x1B);
     if (theme == "lilac") return ftxui::Color::RGB(0x26, 0x1F, 0x35);
     if (theme == "sage") return ftxui::Color::RGB(0x22, 0x2C, 0x1E);
+    if (theme == "dracula") return ftxui::Color::RGB(0x44, 0x47, 0x5A);   // Dracula Current Line
+    if (theme == "retro") return ftxui::Color::RGB(0x00, 0x2A, 0x00);     // CRT Phosphor Highlight
     return ftxui::Color::RGB(0x32, 0x20, 0x18);
 }
 
@@ -110,7 +122,8 @@ inline bool is_known_theme(const std::string& theme) {
            theme == "purple" || theme == "monochrome" || theme == "pastel" ||
            theme == "mint" || theme == "lavender" || theme == "peach" ||
            theme == "sky" || theme == "rose" || theme == "butter" ||
-           theme == "coral" || theme == "lilac" || theme == "sage";
+           theme == "coral" || theme == "lilac" || theme == "sage" ||
+           theme == "dracula" || theme == "retro";
 }
 
 inline std::vector<ThemeEntry> builtin_theme_entries() {
@@ -130,6 +143,8 @@ inline std::vector<ThemeEntry> builtin_theme_entries() {
         {"coral", "Pastel Coral"},
         {"lilac", "Pastel Lilac"},
         {"sage", "Pastel Sage"},
+        {"dracula", "Dracula Dark"},
+        {"retro", "Retro Terminal"},
     };
 }
 
