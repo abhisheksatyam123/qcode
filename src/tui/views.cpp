@@ -457,7 +457,7 @@ ftxui::Element render_view(
             for (size_t i = first; i < last; ++i) {
                 const auto& msg = (*state.messages_history)[i];
                 const ai::Message* adjacent_tool_results = nullptr;
-                if (msg.has_tool_calls() && i + 1 < last &&
+                if (msg.has_tool_calls() && i + 1 < history_size &&
                     (*state.messages_history)[i + 1].has_tool_results()) {
                     adjacent_tool_results =
                         &(*state.messages_history)[i + 1];
@@ -481,7 +481,8 @@ ftxui::Element render_view(
                     msg.role == kMessageRoleAssistant ? accent(theme) :
                     msg.role == kMessageRoleUser ? user_green() :
                     dim_gray()));
-                if (adjacent_tool_results != nullptr) ++i;
+                // Skip the paired result row when it is also inside this window.
+                if (adjacent_tool_results != nullptr && i + 1 < last) ++i;
             }
             if (last < history_size) {
                 msgs.push_back(

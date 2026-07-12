@@ -14,6 +14,7 @@ add_executable(qcode-tui
     tool_renderers.cpp
     store.cpp
     context_manager.cpp
+    generation_controller.cpp
     bus/impl.cpp
 )
 

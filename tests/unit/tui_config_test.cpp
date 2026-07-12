@@ -76,6 +76,32 @@ TEST(TuiConfigTest, LoadsModernOpenCodeProviderOptions) {
   std::filesystem::remove(path);
 }
 
+TEST(TuiConfigTest, DetectsExpiredAntigravityTokenFile) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    "qcode-antigravity-token-test.json";
+  {
+    std::ofstream output(path);
+    output << R"({
+      "token": {
+        "access_token": "stale-token",
+        "refresh_token": "refresh",
+        "expiry": "2020-01-01T00:00:00+00:00",
+        "expires_in": 3599
+      }
+    })";
+  }
+  ScopedEnv api_key("ANTIGRAVITY_API_KEY", "");
+  unsetenv("ANTIGRAVITY_API_KEY");
+  ScopedEnv token_file("ANTIGRAVITY_TOKEN_FILE", path.string());
+  EXPECT_TRUE(antigravity_token_needs_refresh());
+  std::filesystem::remove(path);
+}
+
+TEST(TuiConfigTest, EnvApiKeySkipsAntigravityRefreshCheck) {
+  ScopedEnv api_key("ANTIGRAVITY_API_KEY", "env-token");
+  EXPECT_FALSE(antigravity_token_needs_refresh());
+}
+
 }  // namespace
 }  // namespace tui
 }  // namespace ai

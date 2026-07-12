@@ -7,9 +7,8 @@ namespace ai {
 namespace tui {
 
 // OpenCode-inspired shell session block:
-//   ▸ $ find . -maxdepth 3                     ✓ 142ms
-// Expanded:
-//   ▾ $ find . -maxdepth 3                     ✓ 142ms
+//   ▸ # description                              ✓ 4ms
+//     $ find . -maxdepth 3
 //     ./src
 //     ./include
 ftxui::Element ToolBlock(const std::string& icon,

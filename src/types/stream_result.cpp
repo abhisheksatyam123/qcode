@@ -101,4 +101,10 @@ bool StreamResult::is_complete() const {
   return !stream_result_impl_ || !stream_result_impl_->has_more_events();
 }
 
+void StreamResult::stop() {
+  if (stream_result_impl_) {
+    stream_result_impl_->stop_stream();
+  }
+}
+
 }  // namespace ai

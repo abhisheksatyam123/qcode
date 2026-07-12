@@ -10,8 +10,11 @@
 #include <iostream>
 #include <filesystem>
 #include <mutex>
+#include <cctype>
 
 #include <ai/logger.h>
+#include <ai/types/message.h>
+#include <nlohmann/json.hpp>
 
 namespace ai {
 namespace tui {
@@ -38,6 +41,21 @@ static sqlite3* open_database(std::string& out_path) {
                   db ? sqlite3_errmsg(db) : "unknown error");
         if (db) sqlite3_close(db);
         return nullptr;
+    }
+    // Contended writers (UI + background tool saves) need a real busy timeout
+    // and WAL, otherwise prepare/insert intermittently fail with "database is locked".
+    sqlite3_busy_timeout(db, 5000);
+    char* pragma_err = nullptr;
+    if (sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nullptr, nullptr,
+                     &pragma_err) != SQLITE_OK) {
+        LOG_WARN("SQLite: WAL mode unavailable: {}",
+                 pragma_err ? pragma_err : "unknown");
+        sqlite3_free(pragma_err);
+    }
+    pragma_err = nullptr;
+    if (sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", nullptr, nullptr,
+                     &pragma_err) != SQLITE_OK) {
+        sqlite3_free(pragma_err);
     }
     char* fk_err = nullptr;
     if (sqlite3_exec(db, "PRAGMA foreign_keys = ON;", nullptr, nullptr, &fk_err) != SQLITE_OK) {
@@ -281,24 +299,115 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
 
     const char* sql = "SELECT sender, content FROM messages WHERE session_id = ? ORDER BY id ASC;";
     sqlite3_stmt* stmt = nullptr;
+    int legacy_tool_seq = 0;
     if (prepare_stmt(db, sql, &stmt)) {
         sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             const unsigned char* sender_txt = sqlite3_column_text(stmt, 0);
             const unsigned char* content_txt = sqlite3_column_text(stmt, 1);
-            
+
             std::string sender = sender_txt ? reinterpret_cast<const char*>(sender_txt) : "";
             std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
-            
+
             if (sender == "User") {
                 state.messages_history->push_back(ai::Message::user(content));
-            } else if (sender == "Assistant") {
-                state.messages_history->push_back(ai::Message::assistant(content));
-            } else {
-                // Persisted tool/status rows are display history. They are kept
-                // in the canonical UI list and filtered from model requests.
-                state.messages_history->push_back(ai::Message::system(content));
+                continue;
             }
+            if (sender == "Assistant") {
+                state.messages_history->push_back(ai::Message::assistant(content));
+                continue;
+            }
+
+            // Structured tool rows (and legacy text forms) → pretty ToolBlocks.
+            if (sender == "ToolCall") {
+                try {
+                    auto j = nlohmann::json::parse(content);
+                    if (j.is_object() && j.contains("id") && j.contains("name")) {
+                        auto args = j.value("arguments", nlohmann::json::object());
+                        state.messages_history->push_back(
+                            ai::Message::assistant_with_tools(
+                                "",
+                                {{j.at("id").get<std::string>(),
+                                  j.at("name").get<std::string>(),
+                                  std::move(args)}}));
+                        continue;
+                    }
+                } catch (...) {
+                }
+                // Legacy: bash({"command":"..."})
+                const auto paren = content.find('(');
+                if (paren != std::string::npos && content.back() == ')') {
+                    try {
+                        auto args = nlohmann::json::parse(
+                            content.substr(paren + 1,
+                                           content.size() - paren - 2));
+                        const std::string tool_name = content.substr(0, paren);
+                        const std::string id =
+                            "legacy-call-" + std::to_string(++legacy_tool_seq);
+                        state.messages_history->push_back(
+                            ai::Message::assistant_with_tools(
+                                "", {{id, tool_name, std::move(args)}}));
+                        continue;
+                    } catch (...) {
+                    }
+                }
+                state.messages_history->push_back(ai::Message::system(content));
+                continue;
+            }
+
+            if (sender == "ToolResult") {
+                try {
+                    auto j = nlohmann::json::parse(content);
+                    if (j.is_object() && j.contains("tool_call_id")) {
+                        auto result = j.contains("result") ? j.at("result")
+                                                           : nlohmann::json();
+                        state.messages_history->push_back(ai::Message::tool_results(
+                            {{j.at("tool_call_id").get<std::string>(),
+                              std::move(result),
+                              j.value("is_error", false),
+                              j.value("duration_ms", 0.0)}}));
+                        continue;
+                    }
+                } catch (...) {
+                }
+                // Legacy: "  ✔ bash (4ms)" — pair with previous legacy call if possible.
+                double duration_ms = 0.0;
+                const auto open = content.rfind('(');
+                const auto close = content.rfind(')');
+                if (open != std::string::npos && close != std::string::npos &&
+                    close > open) {
+                    std::string dur = content.substr(open + 1, close - open - 1);
+                    if (dur.size() > 2 &&
+                        dur.compare(dur.size() - 2, 2, "ms") == 0) {
+                        try {
+                            duration_ms = std::stod(dur.substr(0, dur.size() - 2));
+                        } catch (...) {
+                        }
+                    }
+                }
+                std::string call_id;
+                if (!state.messages_history->empty()) {
+                    const auto& prev = state.messages_history->back();
+                    if (prev.has_tool_calls()) {
+                        const auto calls = prev.get_tool_calls();
+                        if (!calls.empty()) call_id = calls.back().id;
+                    }
+                }
+                if (call_id.empty()) {
+                    call_id = "legacy-result-" + std::to_string(++legacy_tool_seq);
+                }
+                const bool is_error =
+                    content.find("failed") != std::string::npos ||
+                    content.find("✖") != std::string::npos ||
+                    content.find("✗") != std::string::npos;
+                state.messages_history->push_back(ai::Message::tool_results(
+                    {{call_id, nlohmann::json::object(), is_error, duration_ms}}));
+                continue;
+            }
+
+            // Persisted tool/status rows are display history. They are kept
+            // in the canonical UI list and filtered from model requests.
+            state.messages_history->push_back(ai::Message::system(content));
         }
         sqlite3_finalize(stmt);
     }

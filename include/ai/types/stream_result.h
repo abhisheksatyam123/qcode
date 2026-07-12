@@ -74,6 +74,9 @@ class StreamResult {
 
   bool is_complete() const;
 
+  // Cooperative cancel for in-flight HTTP streams (Esc / abort).
+  void stop();
+
  private:
   std::unique_ptr<internal::StreamResultImpl> stream_result_impl_;
 };

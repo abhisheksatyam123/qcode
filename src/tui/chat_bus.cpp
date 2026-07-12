@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <functional>
 #include <future>
 #include <mutex>
 #include <string>
@@ -23,13 +24,35 @@ namespace tui {
 
 using namespace contract;
 
+static bool looks_like_auth_error(const std::string& message) {
+  return message.find("401") != std::string::npos ||
+         message.find("authentication") != std::string::npos ||
+         message.find("unauthenticated") != std::string::npos ||
+         message.find("invalid_grant") != std::string::npos ||
+         message.find("access token") != std::string::npos;
+}
+
+static std::string tool_calls_fingerprint(
+    const std::vector<ai::ToolCall>& calls) {
+  std::string fp;
+  for (const auto& call : calls) {
+    fp += call.tool_name;
+    fp += ':';
+    fp += call.arguments.dump();
+    fp += '|';
+  }
+  return fp;
+}
+
 // ──────────────────────────────────────────────────────────────
 //  Tools-enabled generation path (bus version)
 // ──────────────────────────────────────────────────────────────
-static void run_tools_generation_bus(ai::Client& client,
-                                      ai::GenerateOptions options,
-                                      bus::BusPort& bus,
-                                      GenerationContext& ctx) {
+static void run_tools_generation_bus(
+    ai::Client& client,
+    ai::GenerateOptions options,
+    bus::BusPort& bus,
+    GenerationContext& ctx,
+    const std::function<bool(ai::Client&)>& refresh_client) {
   auto assistant_text    = std::make_shared<std::string>();
   auto assistant_msg_idx = std::make_shared<int>(-1);
   auto tool_starts       = std::make_shared<
@@ -130,11 +153,18 @@ static void run_tools_generation_bus(ai::Client& client,
 
   int step = 0;
   bool finished = false;
+  bool aborted = false;
+  bool stuck = false;
+  bool auth_retried = false;
+  int tool_only_streak = 0;
+  int identical_repeat = 0;
+  std::string last_tool_fp;
 
   LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", options.max_steps);
   while (step < options.max_steps && !finished) {
     if (ctx.abort_flag && ctx.abort_flag->load()) {
-      LOG_DEBUG("run_tools_generation_bus: abort requested");
+      LOG_INFO("run_tools_generation_bus: abort requested at step={}", step);
+      aborted = true;
       break;
     }
     step_messages.erase(std::next(step_messages.begin(), initial_count), step_messages.end());
@@ -146,9 +176,31 @@ static void run_tools_generation_bus(ai::Client& client,
     {
       LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);
       ai::GenerateResult step_res = client.generate_text(step_opts);
+      // Abort may have been requested while blocked in generate_text.
+      if (ctx.abort_flag && ctx.abort_flag->load()) {
+        LOG_INFO("run_tools_generation_bus: abort after generate_text step={}",
+                 step);
+        aborted = true;
+        break;
+      }
       if (!step_res.is_success()) {
-        LOG_ERROR("run_tools_generation_bus: step={} generate_text failed: finish_reason={} error=\"{}\" provider_metadata_size={}", step, step_res.finishReasonToString(), step_res.error_message(), step_res.provider_metadata.value_or("").size());
-        gen_result.error = step_res.error;
+        const std::string err = step_res.error_message();
+        LOG_ERROR("run_tools_generation_bus: step={} generate_text failed: finish_reason={} error=\"{}\" provider_metadata_size={}", step, step_res.finishReasonToString(), err, step_res.provider_metadata.value_or("").size());
+        if (!auth_retried && looks_like_auth_error(err) && refresh_client &&
+            refresh_client(client)) {
+          auth_retried = true;
+          LOG_WARN("run_tools_generation_bus: refreshed credentials, retrying step={}",
+                   step);
+          continue;
+        }
+        if (looks_like_auth_error(err)) {
+          gen_result.error =
+              "Authentication failed (401). Re-login with the Antigravity CLI "
+              "or set ANTIGRAVITY_API_KEY, then try again. Original: " +
+              err;
+        } else {
+          gen_result.error = step_res.error;
+        }
         gen_result.provider_metadata = step_res.provider_metadata;
         break;
       }
@@ -165,6 +217,27 @@ static void run_tools_generation_bus(ai::Client& client,
 
       LOG_DEBUG("run_tools_generation_bus: step={} has_tool_calls={} text_len={}", step, step_res.has_tool_calls(), step_res.text.size());
       if (step_res.has_tool_calls()) {
+        ++tool_only_streak;
+        const auto fp = tool_calls_fingerprint(step_res.tool_calls);
+        if (!fp.empty() && fp == last_tool_fp) {
+          ++identical_repeat;
+        } else {
+          last_tool_fp = fp;
+          identical_repeat = 1;
+        }
+        // Models sometimes wedge into identical bash loops; stop early.
+        constexpr int kMaxIdenticalRepeats = 3;
+        constexpr int kMaxToolOnlyStreak = 30;
+        if (identical_repeat >= kMaxIdenticalRepeats ||
+            tool_only_streak >= kMaxToolOnlyStreak) {
+          LOG_WARN(
+              "run_tools_generation_bus: stuck tool loop detected "
+              "(identical_repeat={} tool_only_streak={} step={})",
+              identical_repeat, tool_only_streak, step);
+          stuck = true;
+          // Still record this step's tools so the UI shows what was stuck.
+        }
+
         std::vector<ai::ToolCallContentPart> tool_parts;
         for (const auto& call : step_res.tool_calls) {
           tool_parts.emplace_back(call.id, call.tool_name, call.arguments,
@@ -189,7 +262,11 @@ static void run_tools_generation_bus(ai::Client& client,
           step_data.usage = step_res.usage;
           options.on_step_finish.value()(step_data);
         }
+        if (stuck) break;
       } else {
+        tool_only_streak = 0;
+        identical_repeat = 0;
+        last_tool_fp.clear();
         LOG_DEBUG("run_tools_generation_bus: step={} no tool calls, finishing", step);
         response_messages.push_back(ai::Message::assistant(step_res.text));
         if (options.on_step_finish) {
@@ -206,9 +283,47 @@ static void run_tools_generation_bus(ai::Client& client,
     step++;
   }
 
-  LOG_DEBUG("run_tools_generation_bus: loop complete steps={} total_text_len={} tool_calls={}", 
-           step, gen_result.text.size(), gen_result.tool_calls.size());
+  LOG_DEBUG("run_tools_generation_bus: loop complete steps={} total_text_len={} tool_calls={} aborted={} stuck={}",
+           step, gen_result.text.size(), gen_result.tool_calls.size(), aborted, stuck);
   gen_result.response_messages = response_messages;
+
+  if (aborted) {
+    bus.publish<ErrorOccurred>({
+        .session_id = ctx.session_id,
+        .message = "Generation stopped",
+        .severity = "warning"
+    });
+    bus.publish<MessageDelta>({
+        .session_id = ctx.session_id,
+        .text = "",
+        .done = true
+    });
+    bus.publish<SessionStatusChanged>({
+        .session_id = ctx.session_id,
+        .status = "idle"
+    });
+    return;
+  }
+
+  if (stuck) {
+    bus.publish<ErrorOccurred>({
+        .session_id = ctx.session_id,
+        .message =
+            "Stopped: model was stuck repeating the same tool calls. "
+            "Try a clearer prompt or /compact, then continue.",
+        .severity = "warning"
+    });
+    bus.publish<MessageDelta>({
+        .session_id = ctx.session_id,
+        .text = "",
+        .done = true
+    });
+    bus.publish<SessionStatusChanged>({
+        .session_id = ctx.session_id,
+        .status = "idle"
+    });
+    return;
+  }
 
   bool fatal_error = false;
   if (gen_result.is_success()) {
@@ -355,9 +470,12 @@ static void run_stream_generation_bus(ai::Client& client,
     reasoning_buffer.clear();
   };
 
+  bool aborted = false;
   for (const auto& event : stream) {
     if (ctx.abort_flag && ctx.abort_flag->load()) {
-      LOG_DEBUG("run_stream_generation_bus: abort requested");
+      LOG_INFO("run_stream_generation_bus: abort requested");
+      aborted = true;
+      stream.stop();
       break;
     }
     if (event.is_text_delta()) {
@@ -410,7 +528,15 @@ static void run_stream_generation_bus(ai::Client& client,
 
   flush_text();
   flush_reasoning();
-  LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={}", text_size);
+  if (aborted) {
+    bus.publish<ErrorOccurred>({
+        .session_id = ctx.session_id,
+        .message = "Generation stopped",
+        .severity = "warning"
+    });
+  }
+  LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={} aborted={}",
+            text_size, aborted);
   bus.publish<MessageDelta>({
       .session_id = ctx.session_id,
       .text = "",
@@ -446,6 +572,19 @@ void run_generation_with_bus(
     bus::BusPort& bus,
     GenerationContext& ctx)
 {
+  // Always return the session to idle, even on early auth/resolve failures.
+  struct IdleGuard {
+    bus::BusPort& bus;
+    std::string session_id;
+    ~IdleGuard() {
+      bus.publish<SessionStatusChanged>({
+          .session_id = session_id,
+          .status = "idle",
+      });
+    }
+  } idle_guard{bus, ctx.session_id};
+  (void)idle_guard;
+
   try {
     bus.publish<SessionStatusChanged>({
         .session_id = ctx.session_id,
@@ -514,12 +653,39 @@ void run_generation_with_bus(
     if (enable_tools) {
       ai::ToolSet tools = Tools::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
-      constexpr int kMaxToolSteps = 200;  // bounded safe default (was 99999999)
+      // Soft cap: runaway sessions previously burned 200 steps with no answer.
+      constexpr int kMaxToolSteps = 50;
       base_opts.max_steps = kMaxToolSteps;
-      run_tools_generation_bus(client, std::move(base_opts), bus, ctx);
+      auto refresh_client = [&](ai::Client& out_client) -> bool {
+        // Re-read Antigravity OAuth (force refresh on 401).
+        if (provider_id.find("antigravity") != std::string::npos ||
+            provider_name.find("Antigravity") != std::string::npos) {
+          const auto fresh = get_antigravity_token(/*force_refresh=*/true);
+          if (fresh.empty()) {
+            LOG_ERROR("chat_bus: Antigravity token refresh returned empty");
+            return false;
+          }
+          provider_options.api_key = fresh;
+        }
+        auto resolution =
+            ai::providers::ProviderRegistry::instance().resolve(
+                provider_id, provider_options);
+        if (!resolution.ok()) {
+          LOG_ERROR("chat_bus: credential refresh failed: {}", resolution.error);
+          return false;
+        }
+        out_client = std::move(resolution.client);
+        LOG_INFO("chat_bus: refreshed provider credentials for {}", provider_id);
+        return true;
+      };
+      run_tools_generation_bus(client, std::move(base_opts), bus, ctx,
+                               refresh_client);
     } else {
       run_stream_generation_bus(client, std::move(base_opts), bus, ctx);
     }
+
+    // Nested helpers usually publish idle themselves; a second idle from the
+    // guard is harmless and covers early-return / fatal paths that forget it.
 
   } catch (const std::exception& e) {
     std::string err_msg = e.what();

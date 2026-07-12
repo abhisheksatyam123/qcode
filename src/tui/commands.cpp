@@ -19,6 +19,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <atomic>
 
 namespace ai {
 namespace tui {
@@ -206,8 +207,17 @@ bool handle_slash_command(
     }
 
     if (cmd == "compact") {
-        LOG_DEBUG("Commands: /compact");
+        LOG_DEBUG("Commands: /compact args='{}'", args);
         int keep = 4;
+        if (!args.empty()) {
+            try {
+                keep = std::max(0, std::stoi(args));
+            } catch (...) {
+                append_system_message(
+                    state, "Usage: /compact [keep]  (keep = recent messages to retain)");
+                return true;
+            }
+        }
         run_compaction(state, providers_list, selected_provider, selected_model,
                        keep, compaction_thread, bus);
         return true;
@@ -264,10 +274,21 @@ void run_compaction(
     std::shared_ptr<std::jthread> compaction_thread,
     bus::BusPort& bus
 ) {
+    static std::atomic<bool> compaction_busy{false};
+
     const auto& hist = *state.messages_history;
     if (hist.size() <= 2) {
         append_system_message(
             state, "Nothing to compact: conversation is too short.");
+        return;
+    }
+
+    if (compaction_busy.exchange(true)) {
+        append_system_message(state, "Compaction already in progress.");
+        bus.publish<ai::tui::contract::ToastRequested>({
+            .message = "Compaction already in progress",
+            .variant = "warning",
+            .duration_ms = 2500});
         return;
     }
 
@@ -281,24 +302,37 @@ void run_compaction(
     bus.publish<ai::tui::contract::ToastRequested>({
         .message = "Compacting conversation...",
         .variant = "info",
-        .duration_ms = 0});
+        .duration_ms = 4000});
     bus.publish<ai::tui::contract::SessionStatusChanged>({
         .session_id = sid,
         .status = "generating"});
 
-    if (compaction_thread->joinable()) compaction_thread->join();
+    // Reap a finished prior worker without blocking on an in-flight one
+    // (busy flag prevents overlap).
+    if (compaction_thread->joinable()) {
+        compaction_thread->request_stop();
+        compaction_thread->join();
+    }
     *compaction_thread = std::jthread(
         [providers_copy, sp, sm, snapshot, keep, sid,
-         &bus](std::stop_token) mutable {
+         &bus](std::stop_token stop_token) mutable {
         ai::tui::contract::CompactionResult::Payload result;
         result.keep = keep;
         result.original_size = snapshot.size();
 
+        auto finish_busy = []() { compaction_busy.store(false); };
+
         auto fail = [&](const std::string& msg) {
             result.error = msg;
             bus.publish<ai::tui::contract::CompactionResult>(result);
+            finish_busy();
         };
 
+        try {
+        if (stop_token.stop_requested()) {
+            fail("Compaction cancelled");
+            return;
+        }
         if (sp < 0 || sp >= static_cast<int>(providers_copy.size())) {
             fail("Invalid provider selection");
             return;
@@ -358,6 +392,10 @@ void run_compaction(
             fail("Compaction failed: " + resolution.error);
             return;
         }
+        if (stop_token.stop_requested()) {
+            fail("Compaction cancelled");
+            return;
+        }
         ai::Client client = std::move(resolution.client);
 
         ai::GenerateOptions opts;
@@ -366,8 +404,14 @@ void run_compaction(
         opts.messages = {ai::Message::user(transcript.str())};
 
         ai::GenerateResult res = client.generate_text(opts);
-        if (res.error && !res.error->empty()) {
-            fail("Compaction failed: " + *res.error);
+        if (stop_token.stop_requested()) {
+            fail("Compaction cancelled");
+            return;
+        }
+        if (!res.is_success() || (res.error && !res.error->empty())) {
+            fail("Compaction failed: " +
+                 (res.error && !res.error->empty() ? *res.error
+                                                   : res.error_message()));
             return;
         }
         std::string summary = res.text;
@@ -396,6 +440,12 @@ void run_compaction(
         result.todo_path = std::move(todo_path);
         result.wrote = wrote;
         bus.publish<ai::tui::contract::CompactionResult>(result);
+        finish_busy();
+        } catch (const std::exception& e) {
+            fail(std::string("Compaction failed: ") + e.what());
+        } catch (...) {
+            fail("Compaction failed: unknown error");
+        }
         });
 }
 } // namespace tui

@@ -21,6 +21,8 @@ Color output_fg() { return Color::RGB(0xB0, 0xB0, 0xB0); }
 Color error_fg() { return Color::RGB(0xF4, 0x87, 0x71); }
 Color muted_fg() { return Color::RGB(0x6A, 0x6A, 0x6A); }
 Color success_fg() { return Color::RGB(0x7F, 0xDB, 0x8C); }
+Color panel_bg() { return Color::RGB(0x1C, 0x1C, 0x1C); }
+Color focus_bg() { return Color::RGB(0x2A, 0x2A, 0x2A); }
 
 std::string format_duration(double duration_ms) {
     if (duration_ms <= 0) return {};
@@ -64,17 +66,15 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
                                 bool focused = false);
 
 // ════════════════════════════════════════════════════════════════════════════
-//  ToolBlock — shell-session look with always-visible $ command
+//  ToolBlock — OpenCode-style multi-line shell session
 // ════════════════════════════════════════════════════════════════════════════
 //
-//  Collapsed:
-//    ▸ $ find . -maxdepth 3 -not -path '*/.*'               ✓ 142ms
-//
-//  Expanded:
-//    ▾ $ find . -maxdepth 3 -not -path '*/.*'               ✓ 142ms
-//      ./src
-//      ./include
-//      …
+//  ▸ # Read todo file                                    ✓ 4ms
+//    $ cat path/to/file
+//    line 1 of output
+//    line 2
+//    line 3
+//    [+N more · l/→ expand]
 //
 Element ToolBlock(const std::string& icon,
                    const std::string& title,
@@ -88,92 +88,84 @@ Element ToolBlock(const std::string& icon,
                    bool collapsible,
                    bool focused,
                    const std::string& shell_command) {
-    Elements header;
-
+    // ── Title row: ▸ # description · tool          ✓ 4ms ──
+    Elements title_row;
     if (collapsible) {
-        header.push_back(
+        title_row.push_back(
             text(collapsed ? "▸ " : "▾ ") |
             color(focused ? accent_color : muted_fg()) |
             (focused ? bold : nothing));
     } else {
-        header.push_back(text("  "));
+        title_row.push_back(text("  "));
     }
 
-    // Prefer an explicit shell command; otherwise fall back to title/desc.
-    std::string command = shell_command;
-    if (command.empty()) {
-        if (!description.empty()) {
-            command = description;
-        } else if (!title.empty()) {
-            command = title;
-        } else {
-            command = "tool";
-        }
+    std::string heading = description;
+    if (heading.empty()) heading = title;
+    if (heading.empty()) heading = "tool";
+    if (!icon.empty() && icon != "$") {
+        title_row.push_back(text(icon + " ") | dim | color(accent_color));
     }
-    if (command.rfind("$ ", 0) == 0) {
-        command = command.substr(2);
-    }
+    title_row.push_back(text("# " + truncate_utf8(heading, 64)) | dim |
+                        color(muted_fg()));
 
-    header.push_back(text("$ ") | bold | color(prompt_green()));
-    header.push_back(
-        text(truncate_utf8(std::move(command), 94)) |
-        bold | color(command_fg()));
-
-    // Bash sessions are just `$ command`. Other tools may show a dim label.
-    const bool bash_like =
-        title == "Bash" || title == "Shell" || is_bash_tool(title);
-    if (!bash_like && !title.empty() &&
-        shell_command.find(title) == std::string::npos) {
-        header.push_back(text("  ") | dim);
-        if (!icon.empty()) {
-            header.push_back(text(icon + " ") | dim | color(accent_color));
-        }
-        header.push_back(text(title) | dim | color(muted_fg()));
-    } else if (!bash_like && !description.empty() &&
-               shell_command.find(description) == std::string::npos &&
-               title != description) {
-        header.push_back(text("  · ") | dim | color(muted_fg()));
-        header.push_back(
-            text(truncate_utf8(description, 36)) | dim | color(muted_fg()));
+    if (!title.empty() && title != heading &&
+        description.find(title) == std::string::npos) {
+        title_row.push_back(text(" · " + title) | dim | color(muted_fg()));
     }
 
-    header.push_back(filler());
+    title_row.push_back(filler());
 
     const auto timing = format_duration(duration_ms);
     if (!timing.empty()) {
-        header.push_back(text(timing + " ") | dim | color(muted_fg()));
+        title_row.push_back(text(timing + " ") | dim | color(muted_fg()));
     }
 
     if (is_running || status == "running" || status == "calling") {
-        header.push_back(text("⠋") | color(Color::Yellow) | bold);
+        title_row.push_back(text("⠋") | color(Color::Yellow) | bold);
     } else if (status == "failed" || status == "error") {
-        header.push_back(text("✗") | color(Color::Red) | bold);
-    } else if (status == "success" || status == "completed" || !status.empty()) {
-        header.push_back(text("✓") | color(success_fg()) | bold);
+        title_row.push_back(text("✗") | color(Color::Red) | bold);
+    } else if (status == "success" || status == "completed" ||
+               !status.empty()) {
+        title_row.push_back(text("✓") | color(success_fg()) | bold);
     }
 
-    Elements block;
-    auto header_row = hbox(std::move(header));
-    if (focused) {
-        header_row = header_row | bgcolor(Color::RGB(0x2A, 0x2A, 0x2A));
+    // ── Command row: $ command (always visible) ──
+    std::string command = shell_command;
+    if (command.empty()) {
+        command = !description.empty() ? description
+                  : !title.empty()     ? title
+                                       : "tool";
     }
-    block.push_back(std::move(header_row));
+    if (command.rfind("$ ", 0) == 0) command = command.substr(2);
 
-    // Collapsed and expanded both show body content. Collapse only limits how
-    // many output lines the caller includes (3-line preview vs full dump).
-    block.push_back(hbox({
-        text("  ") | color(prompt_green()),
+    Elements body;
+    body.push_back(hbox(std::move(title_row)));
+    body.push_back(hbox({
+        text("  $ ") | bold | color(prompt_green()),
+        text(truncate_utf8(std::move(command), 100)) | bold | color(command_fg()),
+    }));
+
+    // Output / status body (may be emptyElement → zero height).
+    body.push_back(hbox({
+        text("  "),
         std::move(content) | flex,
     }));
 
-    block.push_back(text(""));
-    return vbox(std::move(block));
+    auto block = vbox(std::move(body));
+    // Soft left rail + panel background (OpenCode BlockTool feel).
+    block = hbox({
+        text("┃") | color(focused ? accent_color : Color::RGB(0x33, 0x33, 0x33)),
+        text(" "),
+        std::move(block) | flex,
+    });
+    block = std::move(block) | bgcolor(focused ? focus_bg() : panel_bg());
+    return vbox({std::move(block), text("")});
 }
 
 Element BlockTool(const std::string& title, Element content,
                    bool is_running, const std::string& status,
                    Color border_color) {
-    return ToolBlock("🔧", title, "", std::move(content),
+    return ToolBlock("⚙", title, "", std::move(content),
                       is_running, status, border_color, 0.0,
                       false, true, false, title);
 }
@@ -214,14 +206,11 @@ Element render_truncated_output(const std::string& output,
             }
             break;
         }
-        // Preserve empty lines so shell output spacing stays intact.
         lines.push_back(text(line.empty() ? " " : line) | color(line_color));
         ++shown;
     }
 
-    if (lines.empty()) {
-        lines.push_back(text("(no output)") | dim | color(muted_fg()));
-    }
+    if (lines.empty()) return emptyElement();
     return vbox(std::move(lines));
 }
 
@@ -231,7 +220,7 @@ Element render_truncated_output(const std::string& output,
 static std::string extract_tool_description(const ai::ToolCallContentPart& part) {
     const auto& args = part.arguments;
     if (!args.is_object()) return "";
-    return truncate_utf8(json_string(args, {"description", "desc", "prompt"}), 60);
+    return truncate_utf8(json_string(args, {"description", "desc", "prompt"}), 72);
 }
 
 static std::string extract_shell_command(const ai::ToolCallContentPart& part) {
@@ -290,8 +279,6 @@ static Element render_shell_output(const ai::ToolCallContentPart& call_part,
     Elements body;
     constexpr int kCollapsedPreviewLines = 3;
 
-    // Soft workdir hint for bash — only in the full expand view so the
-    // collapsed preview stays to exactly three output lines.
     if (!collapsed && is_bash_tool(call_part.tool_name) &&
         call_part.arguments.is_object()) {
         const auto workdir =
@@ -305,9 +292,11 @@ static Element render_shell_output(const ai::ToolCallContentPart& call_part,
     }
 
     const auto output = extract_result_output(result_part);
-    body.push_back(render_truncated_output(
-        output, collapsed ? kCollapsedPreviewLines : 0, theme,
-        result_part.is_error));
+    if (!output.empty()) {
+        body.push_back(render_truncated_output(
+            output, collapsed ? kCollapsedPreviewLines : 0, theme,
+            result_part.is_error));
+    }
 
     if (!collapsed && is_bash_tool(call_part.tool_name) &&
         result_part.result.is_object() &&
@@ -316,19 +305,16 @@ static Element render_shell_output(const ai::ToolCallContentPart& call_part,
         result_part.result["metadata"].contains("exit")) {
         const int exit_code = result_part.result["metadata"]["exit"].get<int>();
         const auto exit_color = exit_code == 0 ? success_fg() : Color::Red;
-        body.push_back(text(""));
         body.push_back(hbox({
             text(exit_code == 0 ? "✓" : "✗") | color(exit_color) | bold,
             text(" exit " + std::to_string(exit_code)) | color(exit_color),
         }));
     }
 
+    if (body.empty()) return emptyElement();
     return vbox(std::move(body));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  In-progress tool call
-// ════════════════════════════════════════════════════════════════════════════
 static Element render_tool_call(const ai::ToolCallContentPart& part,
                                  const std::string& theme) {
     const auto command = extract_shell_command(part);
@@ -340,31 +326,27 @@ static Element render_tool_call(const ai::ToolCallContentPart& part,
                       command);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  Orphan tool result
-// ════════════════════════════════════════════════════════════════════════════
 static Element render_tool_result(const ai::ToolResultContentPart& part,
                                    const std::string& theme) {
     std::string tool_name;
     if (part.result.is_object()) {
-        tool_name = json_string(part.result, {"tool_name"});
+        tool_name = json_string(part.result, {"tool_name", "title"});
     }
     const std::string status = part.is_error ? "failed" : "success";
     const auto output = extract_result_output(part);
     return ToolBlock(tool_icon(tool_name), tool_display_name(tool_name), "",
-                      render_truncated_output(output, 18, theme, part.is_error),
+                      output.empty()
+                          ? emptyElement()
+                          : render_truncated_output(output, 18, theme, part.is_error),
                       false, status,
                       part.is_error ? Color::Red : success_fg(),
                       part.duration_ms, false, true, false,
                       tool_name.empty() ? "tool" : tool_name);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  Reasoning
-// ════════════════════════════════════════════════════════════════════════════
 static Element render_reasoning(const ai::ReasoningContentPart& rp,
                                  const std::string& theme) {
-    if (rp.text.empty()) return Element();
+    if (rp.text.empty()) return emptyElement();
     Elements md = render_markdown(rp.text);
     Elements indented;
     for (auto& el : md) {
@@ -384,9 +366,6 @@ static Element render_reasoning(const ai::ReasoningContentPart& rp,
     });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  Message renderer
-// ════════════════════════════════════════════════════════════════════════════
 Element render_message(const ai::Message& msg, const ChatState& state,
                         const std::vector<ProviderInfo>& providers_list,
                         int selected_provider, int selected_model,
@@ -510,9 +489,6 @@ Element render_message(const ai::Message& msg, const ChatState& state,
     return vbox(std::move(parts));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  Paired tool call + result as expandable shell session
-// ════════════════════════════════════════════════════════════════════════════
 static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
                                  const ai::ToolResultContentPart& result_part,
                                  const std::string& theme,
@@ -543,5 +519,5 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
         collapsible, focused, command);
 }
 
-} // namespace tui
-} // namespace ai
+}  // namespace tui
+}  // namespace ai

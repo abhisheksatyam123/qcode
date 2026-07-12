@@ -60,7 +60,9 @@ GenerateResult BaseProviderClient::generate_text_single_step(
     // Build request JSON using the provider-specific builder
     auto request_json = request_builder_->build_request_json(options);
     std::string json_body = request_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    LOG_DEBUG("Request JSON built: {}", json_body);
+    // Never dump full request bodies — they can be megabytes (tool history) and
+    // previously filled /tmp/qcode.log to hundreds of MB in a single session.
+    LOG_DEBUG("Request JSON built: {} bytes", json_body.size());
 
     // Build headers
     auto headers = request_builder_->build_headers(config_);
@@ -163,7 +165,9 @@ EmbeddingResult BaseProviderClient::embeddings(
     // Build request JSON using the provider-specific builder
     auto request_json = request_builder_->build_request_json(options);
     std::string json_body = request_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    LOG_DEBUG("Request JSON built: {}", json_body);
+    // Never dump full request bodies — they can be megabytes (tool history) and
+    // previously filled /tmp/qcode.log to hundreds of MB in a single session.
+    LOG_DEBUG("Request JSON built: {} bytes", json_body.size());
 
     // Build headers
     auto headers = request_builder_->build_headers(config_);

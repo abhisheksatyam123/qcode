@@ -61,6 +61,11 @@ public:
     bus::Subscription on_change(Callback cb);
     void wire();
 
+    // Wake the UI: notify change subscribers immediately (notify_now) or via the
+    // event loop (notify).
+    void notify();
+    void notify_now();
+
 private:
     ChatState state_;
     bus::BusPort& bus_;
@@ -78,8 +83,6 @@ private:
     std::atomic<uint64_t> next_id_{1};
     bus::BusRuntime* runtime_ = nullptr;
 
-    void notify();
-    void notify_now();
     std::string latest_assistant_text() const;
     void remove_callback(uint64_t id);
 };

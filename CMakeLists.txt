@@ -50,6 +50,7 @@ add_library(ai-sdk-cpp-core)
 add_library(ai-sdk-cpp-openai)
 add_library(ai-sdk-cpp-anthropic)
 add_library(ai-sdk-cpp-antigravity)
+add_library(ai-sdk-cpp-cursor)
 add_library(ai-sdk-cpp-registry)
 add_library(ai-sdk-cpp-langfuse)
 add_library(ai-sdk-cpp INTERFACE)
@@ -60,6 +61,7 @@ add_library(ai::core ALIAS ai-sdk-cpp-core)
 add_library(ai::openai ALIAS ai-sdk-cpp-openai)
 add_library(ai::anthropic ALIAS ai-sdk-cpp-anthropic)
 add_library(ai::antigravity ALIAS ai-sdk-cpp-antigravity)
+add_library(ai::cursor ALIAS ai-sdk-cpp-cursor)
 add_library(ai::registry ALIAS ai-sdk-cpp-registry)
 add_library(ai::langfuse ALIAS ai-sdk-cpp-langfuse)
 
@@ -68,6 +70,7 @@ configure_ai_component(ai-sdk-cpp-core)
 configure_ai_component(ai-sdk-cpp-openai)
 configure_ai_component(ai-sdk-cpp-anthropic)
 configure_ai_component(ai-sdk-cpp-antigravity)
+configure_ai_component(ai-sdk-cpp-cursor)
 configure_ai_component(ai-sdk-cpp-registry)
 configure_ai_component(ai-sdk-cpp-langfuse)
 
@@ -128,6 +131,16 @@ set(ANTIGRAVITY_SOURCES
 
 target_sources(ai-sdk-cpp-anthropic PRIVATE ${ANTHROPIC_SOURCES})
 target_sources(ai-sdk-cpp-antigravity PRIVATE ${ANTIGRAVITY_SOURCES})
+# Cursor (Cursor CLI / aiserver + agent services) provider
+set(CURSOR_SOURCES
+    src/providers/cursor/cursor_proto.cpp
+    src/providers/cursor/cursor_client.cpp
+    src/providers/cursor/cursor_request_builder.cpp
+    src/providers/cursor/cursor_response_parser.cpp
+    src/providers/cursor/cursor_stream.cpp
+    src/providers/cursor/cursor_factory.cpp
+)
+target_sources(ai-sdk-cpp-cursor PRIVATE ${CURSOR_SOURCES})
 # Provider registry (central dispatch)
 set(REGISTRY_SOURCES
     src/providers/registry.cpp
@@ -152,7 +165,7 @@ target_link_libraries(ai-sdk-cpp-core
 )
 
 # Provider components link to core and share common dependencies
-foreach(provider openai anthropic antigravity)
+foreach(provider openai anthropic antigravity cursor)
     target_link_libraries(ai-sdk-cpp-${provider}
         PUBLIC
             ai::core
@@ -218,6 +231,7 @@ target_link_libraries(ai-sdk-cpp
         ai::openai
         ai::anthropic
         ai::antigravity
+        ai::cursor
         ai::langfuse
         ai::registry
 )
@@ -228,6 +242,7 @@ target_compile_definitions(ai-sdk-cpp
         AI_SDK_HAS_OPENAI=1
         AI_SDK_HAS_ANTHROPIC=1
         AI_SDK_HAS_ANTIGRAVITY=1
+        AI_SDK_HAS_CURSOR=1
         AI_SDK_HAS_LANGFUSE=1
         AI_SDK_HAS_REGISTRY=1
 )
@@ -238,6 +253,7 @@ set(COMPONENT_TARGETS
     ai-sdk-cpp-openai
     ai-sdk-cpp-anthropic
     ai-sdk-cpp-antigravity
+    ai-sdk-cpp-cursor
     ai-sdk-cpp-registry
     ai-sdk-cpp-langfuse
 )

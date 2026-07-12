@@ -1,6 +1,7 @@
 #include "ai/tui/provider_registry_init.h"
 
 #include "ai/antigravity.h"
+#include "ai/cursor.h"
 #include "ai/tui/config.h"
 #include "ai/registry.h"
 #include <mutex>
@@ -35,6 +36,27 @@ void register_tui_providers() {
               ai::antigravity::create_client(token, client_options)};
         });
   });
+
+    // Cursor auth (access token) lives in the TUI (reads
+    // ~/.config/cursor/auth.json), so it is registered here rather than in the
+    // core registry -- mirroring the Antigravity pattern.
+    ProviderRegistry::instance().register_provider(
+        "cursor", [](const ProviderOptions& options) {
+          std::string token = ai::tui::get_cursor_access_token();
+          if (token.empty()) {
+            return ClientResolution::fail("Cursor access token failed.");
+          }
+          std::string aiserver = "https://api2.cursor.sh";
+          std::string agent =
+              options.base_url.empty()
+                  ? "https://agentn.global.api5.cursor.sh"
+                  : options.base_url;
+          ai::cursor::Options cursor_options;
+          cursor_options.aiserver_base_url = aiserver;
+          cursor_options.agent_base_url = agent;
+          return ClientResolution{
+              ai::cursor::create_client(token, cursor_options)};
+        });
 }
 
 }  // namespace providers

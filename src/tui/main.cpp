@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <vector>
@@ -23,6 +24,7 @@
 #include <ai/tui/system_prompt.h>
 #include <ai/tui/views.h>
 #include <ai/tui/store.h>
+#include <ai/tui/generation_controller.h>
 #include <ai/tui/bus/impl.h>
 #include <ai/tui/contract/event.h>
 #include <ai/tui/context_manager.h>
@@ -47,6 +49,15 @@ static bool matches_query(const std::string& target, const std::string& query) {
 }
 
 int main() {
+    // Rotate oversized logs so a prior debug flood cannot keep filling the disk.
+    {
+        namespace fs = std::filesystem;
+        const fs::path log_path{"/tmp/qcode.log"};
+        std::error_code ec;
+        if (fs::exists(log_path, ec) && fs::file_size(log_path, ec) > (32ull << 20)) {
+            fs::rename(log_path, "/tmp/qcode.log.old", ec);
+        }
+    }
     // Debug mode serializes complete requests and every stream delta. Keeping it
     // enabled in normal runs produced hundreds of megabytes of logs in minutes.
     ai::install_file_logger("/tmp/qcode.log", ai::logger::LogLevel::kLogLevelInfo);
@@ -55,7 +66,6 @@ int main() {
 
     auto app_running = std::make_shared<std::atomic<bool>>(true);
     auto compaction_thread = std::make_shared<std::jthread>();
-    auto generation_thread = std::make_shared<std::jthread>();
     auto screen = ScreenInteractive::Fullscreen();
 
     // ═══════════════════════════════════════════════════════════
@@ -74,6 +84,8 @@ int main() {
 
     // ── Legacy state access ──
     auto& state = store.state();
+
+    ai::tui::GenerationController generation(store, bus, app_running);
 
     // ── Spinner: advance frame periodically ──
     std::thread spinner_thread([&store, app_running]() {
@@ -99,6 +111,18 @@ int main() {
     auto providers_list = ai::tui::load_providers_from_config();
     int selected_provider = 0;
     int selected_model = 0;
+
+    // Surface expired Antigravity credentials early instead of failing mid-turn.
+    for (const auto& provider : providers_list) {
+        if (provider.id.find("antigravity") == std::string::npos) continue;
+        if (ai::tui::antigravity_token_needs_refresh()) {
+            store.add_toast(
+                "Antigravity token expired — re-login with the Antigravity CLI "
+                "or set ANTIGRAVITY_API_KEY",
+                "warning", 8000);
+        }
+        break;
+    }
 
     ai::tui::db::init_database();
     std::string last_session = ai::tui::db::get_last_active_session();
@@ -155,139 +179,37 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     //  3. Submit handler (uses bus-aware chat)
     // ═══════════════════════════════════════════════════════════
-    // ── Generation spawner + queue drain ──
-    // A generation worker handles the initial prompt and drains queued prompts
-    // itself. The previous implementation spawned and retained one joinable
-    // pthread per turn until process exit.
-    std::function<void(const std::string&)> spawn_generation;
-    spawn_generation = [&](const std::string& p) {
-        if (generation_thread->joinable()) {
-            generation_thread->join();
-        }
-        store.set_generating(true);
-        *state.auto_scroll = true;
-        store.append_chat_message("User", p);
-        ai::tui::db::save_message(store.session_id(), "User", p);
-        LOG_INFO("Main: spawn_generation prompt_len={} queue_remaining={} provider={} model={}",
-                 p.size(), store.queue_size(),
-                 providers_list[selected_provider].name,
-                 providers_list[selected_provider].models[selected_model].name);
-
-        // Capture by value so the worker thread is independent of the UI thread.
-        auto providers_copy = providers_list;
-        int sel_prov = selected_provider;
-        int sel_mod = selected_model;
-        std::string sys_prompt = system_prompt;
-        bool tools_enabled = enable_tools;
-        auto bus_ptr = bus;
-        auto state_ptr = &state;
-
-        *generation_thread = std::jthread(
-            [bus_ptr, state_ptr, providers_copy, app_running, sel_prov,
-             sel_mod, sys_prompt, tools_enabled,
-             &store](std::stop_token stop_token) {
-            ai::logger::set_thread_name("llm");
-            ai::tui::BackendService backend{*bus_ptr, providers_copy};
-            if (app_running->load() && !stop_token.stop_requested()) {
-                const auto gen_start = std::chrono::steady_clock::now();
-                ai::tui::GenerationContext ctx{
-                    .session_id = *state_ptr->session_id,
-                    .reasoning_mode = *state_ptr->reasoning_mode,
-                    .abort_flag = state_ptr->abort_flag
-                };
-                *state_ptr->abort_flag = false;
-
-                // Build a short-lived request snapshot. Canonical history remains
-                // UI-owned and this copy is released at the end of each turn.
-                ai::Messages gen_messages = *state_ptr->messages_history;
-                gen_messages.erase(
-                    std::remove_if(
-                        gen_messages.begin(), gen_messages.end(),
-                        [](const ai::Message& message) {
-                            return message.role == ai::kMessageRoleSystem;
-                        }),
-                    gen_messages.end());
-                const size_t ctx_window =
-                    providers_copy[sel_prov].models[sel_mod].context_window;
-                if (ctx_window > 0) {
-                    const size_t sys_tok = ai::tui::estimate_system_tokens(sys_prompt);
-                    const size_t msg_tok = ai::tui::estimate_tokens(gen_messages);
-                    const size_t heuristic = sys_tok + msg_tok;
-                    const size_t total = ai::tui::calibrate_estimate(
-                        heuristic,
-                        *state_ptr->last_actual_prompt_tokens,
-                        *state_ptr->last_estimated_tokens);
-                    *state_ptr->last_estimated_tokens =
-                        static_cast<int>(heuristic);
-                    const size_t warn_at = (ctx_window * 7) / 10;
-                    const size_t prune_at = (ctx_window * 85) / 100;
-                    if (total > prune_at) {
-                        LOG_WARN("Context over limit: estimated {} tokens / {} (prune>={})",
-                                 total, ctx_window, prune_at);
-                        gen_messages =
-                            ai::tui::prune_context(gen_messages, ctx_window);
-                        const size_t after =
-                            sys_tok + ai::tui::estimate_tokens(gen_messages);
-                        if (after < total) {
-                            store.add_toast(
-                                "Context pruned: " + std::to_string(total) +
-                                " → " + std::to_string(after) + " tokens",
-                                "warning", 4000);
-                            *state_ptr->consecutive_prunes =
-                                *state_ptr->consecutive_prunes + 1;
-                        }
-                    } else if (total > warn_at) {
-                        store.add_toast(
-                            "Context at " + std::to_string(total) + "/" +
-                            std::to_string(ctx_window) +
-                            " tokens — run /compact soon",
-                            "info", 3000);
-                        *state_ptr->consecutive_prunes = 0;
-                    } else {
-                        *state_ptr->consecutive_prunes = 0;
-                    }
-
-                    if (*state_ptr->consecutive_prunes >= 3) {
-                        *state_ptr->consecutive_prunes = 0;
-                        LOG_WARN(
-                            "Context required pruning for three consecutive turns");
-                        store.add_toast(
-                            "Context remains large — run /compact when this "
-                            "turn finishes",
-                            "warning", 5000);
-                    }
-                }
-
-                backend.run_generation(
-                    providers_copy[sel_prov].id,
-                    providers_copy[sel_prov].models[sel_mod].id,
-                    sys_prompt, gen_messages, tools_enabled, ctx);
-
-                const auto duration_ms =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - gen_start)
-                        .count();
-                LOG_INFO(
-                    "Main: generation complete duration_ms={} queue_remaining={}",
-                    duration_ms, store.queue_size());
-
-            }
-        });
+    auto make_generation_request = [&]() -> ai::tui::GenerationRequest {
+        return ai::tui::GenerationRequest{
+            .providers = providers_list,
+            .provider_idx = selected_provider,
+            .model_idx = selected_model,
+            .system_prompt = system_prompt,
+            .tools_enabled = enable_tools,
+        };
     };
 
-    //  3. Submit handler (uses bus-aware chat)
-    // ═══════════════════════════════════════════════════════════
     auto submit = [&] {
         if (prompt_input.empty()) return;
-        if (store.is_generating()) {
+        if (generation.is_active()) {
             if (store.has_queued_prompt()) {
                 store.append_to_last_queued_prompt(prompt_input);
                 store.add_toast("Prompt appended to queue", "info", 1000);
                 LOG_INFO("Main: prompt appended to queue (queue_size={})", store.queue_size());
             } else {
                 store.enqueue_prompt(prompt_input);
-                store.add_toast("Prompt queued", "info", 1000);
+                store.add_toast(
+                    generation.is_busy() && !store.is_generating()
+                        ? "Queued — waiting for previous turn to stop"
+                        : "Prompt queued",
+                    generation.is_busy() && !store.is_generating()
+                        ? "warning"
+                        : "info",
+                    1500);
                 LOG_INFO("Main: prompt queued (queue_size={})", store.queue_size());
+            }
+            if (generation.is_busy() && !store.is_generating()) {
+                generation.request_abort();
             }
             prompt_input = "";
             return;
@@ -347,10 +269,10 @@ int main() {
             return;
         }
 
-        // Normal message — hand off to the spawner (which also drains the queue)
+        // Normal message — hand off to the generation controller.
         std::string p = prompt_input;
         prompt_input = "";
-        spawn_generation(p);
+        generation.spawn(std::move(p), make_generation_request());
     };
 
 
@@ -682,7 +604,7 @@ int main() {
             screen.Post(Event::Custom);
             return true;
         }
-        // ── Global Escape: close popups, dismiss suggestions, clear input ──
+        // ── Global Escape: close popups, abort generation, clear input ──
         if (e == Event::Escape) {
             if (show_model_select) { show_model_select = false; model_query = ""; return true; }
             if (show_session_select) { show_session_select = false; session_query = ""; return true; }
@@ -692,43 +614,60 @@ int main() {
                 state.slash_suggestion_idx = 0;
                 return true;
             }
+            // Abort takes priority over clearing the prompt while a turn runs
+            // (or while a force-stopped worker is still finishing HTTP).
+            if (generation.is_active()) {
+                if (state.abort_flag && state.abort_flag->load()) {
+                    // Second Esc: force-unstick the UI even if the worker is
+                    // blocked inside a sync HTTP/tool call. Never join here.
+                    generation.force_stop_ui();
+                } else {
+                    generation.request_abort();
+                    store.add_toast(
+                        "Stopping… (Esc again to force)", "warning", 3000);
+                }
+                screen.Post(Event::Custom);
+                return true;
+            }
             if (!prompt_input.empty()) {
                 prompt_input.clear();
                 return true;
             }
-            // Not in a popup and input is empty: pause/abort an active generation.
-            if (*state.is_generating) {
-                *state.abort_flag = true;
-                store.add_toast("Stopping generation… (press Esc again to force)", "warning", 3000);
-                return true;
-            }
-            // Nothing to dismiss — fall through
         }
-        // ── Tool block keyboard navigation ──
-        // ArrowUp/ArrowDown (or k/j) move focus between tool blocks.
-        auto navigate_tool = [&](int delta) -> bool {
-            if (!state.tool_block_order || state.tool_block_order->empty()) return false;
-            int n = static_cast<int>(state.tool_block_order->size());
-            int cur = *state.focused_tool_index;
-            cur = std::max(-1, std::min(n - 1, cur + delta));
-            *state.focused_tool_index = cur;
-            return true;
-        };
-        if (e == Event::ArrowUp || e == Event::Character('k')) {
-            if (navigate_tool(-1)) return true;
-        }
-        if (e == Event::ArrowDown || e == Event::Character('j')) {
-            if (navigate_tool(1)) return true;
-        }
-
-        // Tool expand/collapse: l/→ expand (full output), h/← collapse (3-line
-        // preview). Enter still toggles for convenience.
-        auto set_focused_tool_collapsed = [&](bool collapsed) -> bool {
-            if (!state.tool_block_order || *state.focused_tool_index < 0 ||
-                *state.focused_tool_index >=
-                    static_cast<int>(state.tool_block_order->size())) {
+        // ── Tool block keyboard navigation (only when prompt is empty) ──
+        // j/k focus tools, h/← collapse (3 lines), l/→ expand (full), Enter toggles.
+        const bool tool_keys_active =
+            prompt_input.empty() && !show_model_select && !show_session_select &&
+            !show_theme_select && !state.slash_suggestion_mode;
+        auto ensure_tool_focused = [&]() -> bool {
+            if (!state.tool_block_order || state.tool_block_order->empty()) {
                 return false;
             }
+            if (*state.focused_tool_index < 0 ||
+                *state.focused_tool_index >=
+                    static_cast<int>(state.tool_block_order->size())) {
+                *state.focused_tool_index =
+                    static_cast<int>(state.tool_block_order->size()) - 1;
+            }
+            return true;
+        };
+        auto navigate_tool = [&](int delta) -> bool {
+            if (!state.tool_block_order || state.tool_block_order->empty()) {
+                return false;
+            }
+            int n = static_cast<int>(state.tool_block_order->size());
+            int cur = *state.focused_tool_index;
+            if (cur < 0) {
+                cur = delta > 0 ? 0 : n - 1;
+            } else {
+                cur = std::max(0, std::min(n - 1, cur + delta));
+            }
+            *state.focused_tool_index = cur;
+            screen.Post(Event::Custom);
+            return true;
+        };
+        auto set_focused_tool_collapsed = [&](bool collapsed) -> bool {
+            if (!ensure_tool_focused()) return false;
             const std::string& id =
                 (*state.tool_block_order)[*state.focused_tool_index];
             if (!state.tool_collapse_state) {
@@ -736,32 +675,38 @@ int main() {
                     std::make_shared<std::unordered_map<std::string, bool>>();
             }
             (*state.tool_collapse_state)[id] = collapsed;
+            screen.Post(Event::Custom);
             return true;
         };
-        if (e == Event::ArrowLeft || e == Event::Character('h')) {
-            if (set_focused_tool_collapsed(true)) return true;
-        }
-        if (e == Event::ArrowRight || e == Event::Character('l')) {
-            if (set_focused_tool_collapsed(false)) return true;
-        }
-        if (e == Event::Return) {
-            if (state.tool_block_order && *state.focused_tool_index >= 0 &&
-                *state.focused_tool_index <
-                    static_cast<int>(state.tool_block_order->size())) {
-                const std::string& id =
-                    (*state.tool_block_order)[*state.focused_tool_index];
-                if (!state.tool_collapse_state) {
-                    state.tool_collapse_state =
-                        std::make_shared<std::unordered_map<std::string, bool>>();
-                }
-                // Missing keys mean collapsed (the render default).
-                const bool currently_collapsed =
-                    !state.tool_collapse_state->count(id) ||
-                    (*state.tool_collapse_state)[id];
-                (*state.tool_collapse_state)[id] = !currently_collapsed;
-                return true;
+        if (tool_keys_active) {
+            if (e == Event::ArrowUp || e == Event::Character('k')) {
+                if (navigate_tool(-1)) return true;
             }
-            // No tool block focused — fall through so input can submit
+            if (e == Event::ArrowDown || e == Event::Character('j')) {
+                if (navigate_tool(1)) return true;
+            }
+            if (e == Event::ArrowLeft || e == Event::Character('h')) {
+                if (set_focused_tool_collapsed(true)) return true;
+            }
+            if (e == Event::ArrowRight || e == Event::Character('l')) {
+                if (set_focused_tool_collapsed(false)) return true;
+            }
+            if (e == Event::Return) {
+                if (ensure_tool_focused()) {
+                    const std::string& id =
+                        (*state.tool_block_order)[*state.focused_tool_index];
+                    if (!state.tool_collapse_state) {
+                        state.tool_collapse_state = std::make_shared<
+                            std::unordered_map<std::string, bool>>();
+                    }
+                    const bool currently_collapsed =
+                        !state.tool_collapse_state->count(id) ||
+                        (*state.tool_collapse_state)[id];
+                    (*state.tool_collapse_state)[id] = !currently_collapsed;
+                    screen.Post(Event::Custom);
+                    return true;
+                }
+            }
         }
         if (e == Event::Tab) {
             if (state.tab_selected == 1) {
@@ -836,18 +781,8 @@ int main() {
             ai::tui::update_modified_files(state);
         }
 
-        // Start queued work only after the prior turn's complete event batch has
-        // updated canonical history. This keeps context ordering deterministic
-        // and all message-list mutations on the UI thread.
-        if (!store.is_generating() && store.has_queued_prompt()) {
-            auto next = store.dequeue_prompt();
-            const auto remaining = static_cast<int>(store.queue_size());
-            store.add_toast(
-                "Running queued prompt (" + std::to_string(remaining) +
-                " left)",
-                "info", 1500);
-            spawn_generation(next);
-        }
+        // Start queued work only after the prior worker has fully exited.
+        generation.maybe_start_queued(make_generation_request());
         was_generating = store.is_generating();
         if (state.tab_selected == 1 && previous_tab != 1) {
             ai::tui::update_modified_files(state);
@@ -919,10 +854,7 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     LOG_DEBUG("Main: app exiting, signalling threads...");
     *app_running = false;
-    if (generation_thread->joinable()) {
-        generation_thread->request_stop();
-        generation_thread->join();
-    }
+    generation.shutdown();
     if (compaction_thread->joinable()) {
         compaction_thread->request_stop();
         compaction_thread->join();

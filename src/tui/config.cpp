@@ -5,9 +5,11 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 #include <nlohmann/json.hpp>
 #include <httplib.h>
@@ -24,6 +26,23 @@ constexpr const char* kAntigravityOAuthClientId =
     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
 constexpr const char* kAntigravityOAuthClientSecret =
     "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";
+
+// Skip refresh retries for a while after a hard failure (invalid_grant, etc).
+constexpr int kOAuthRefreshBackoffSec = 300;
+
+static bool antigravity_token_expired(const std::string& expiry) {
+    // Format: 2026-07-10T23:01:11.63815062+05:30 — parse wall-clock prefix.
+    if (expiry.size() < 19) return true;
+    std::tm tm{};
+    std::istringstream ss(expiry.substr(0, 19));
+    ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
+    if (ss.fail()) return true;
+    tm.tm_isdst = -1;
+    const auto expiry_time = std::mktime(&tm);
+    if (expiry_time < 0) return true;
+    // Refresh one minute early.
+    return std::time(nullptr) >= (expiry_time - 60);
+}
 
 static std::string normalize_api_url(std::string url) {
     while (!url.empty() && url.back() == '/') url.pop_back();
@@ -70,7 +89,7 @@ static std::string form_encode(std::string_view value) {
     return encoded.str();
 }
 
-std::string get_antigravity_token() {
+std::string get_antigravity_token(bool force_refresh) {
     if (const char* token = std::getenv("ANTIGRAVITY_API_KEY");
         token != nullptr && *token != '\0') {
         return token;
@@ -114,6 +133,22 @@ std::string get_antigravity_token() {
         return access_token;
     }
 
+    // Reuse a still-valid access token unless a forced refresh was requested.
+    const auto expiry = token.value("expiry", "");
+    if (!force_refresh && !expiry.empty() && !antigravity_token_expired(expiry)) {
+        return access_token;
+    }
+
+    static std::mutex refresh_mutex;
+    static std::time_t last_refresh_failure = 0;
+    {
+        std::lock_guard<std::mutex> lock(refresh_mutex);
+        if (!force_refresh && last_refresh_failure > 0 &&
+            std::time(nullptr) - last_refresh_failure < kOAuthRefreshBackoffSec) {
+            return access_token;
+        }
+    }
+
     auto body = "grant_type=refresh_token&refresh_token=" +
                 form_encode(refresh_token) + "&client_id=" +
                 form_encode(client_id);
@@ -121,12 +156,15 @@ std::string get_antigravity_token() {
         body += "&client_secret=" + form_encode(client_secret);
     }
     httplib::Client client("https://oauth2.googleapis.com");
-    client.set_connection_timeout(20);
+    client.set_connection_timeout(5);
+    client.set_read_timeout(10);
     const auto response =
         client.Post("/token", body, "application/x-www-form-urlencoded");
     if (!response || response->status != 200) {
         LOG_ERROR("Antigravity OAuth refresh failed with status {}",
                   response ? response->status : 0);
+        std::lock_guard<std::mutex> lock(refresh_mutex);
+        last_refresh_failure = std::time(nullptr);
         return access_token;
     }
     try {
@@ -136,6 +174,13 @@ std::string get_antigravity_token() {
         token["access_token"] = fresh_token;
         if (refreshed.contains("expires_in")) {
             token["expires_in"] = refreshed["expires_in"];
+            const auto expires_in = refreshed["expires_in"].get<int>();
+            const auto expiry_time = std::time(nullptr) + expires_in;
+            std::tm tm{};
+            localtime_r(&expiry_time, &tm);
+            std::ostringstream expiry_out;
+            expiry_out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S");
+            token["expiry"] = expiry_out.str();
         }
         const auto temporary = token_path.string() + ".tmp";
         {
@@ -145,13 +190,76 @@ std::string get_antigravity_token() {
         std::error_code error;
         std::filesystem::rename(temporary, token_path, error);
         if (error) std::filesystem::remove(temporary);
+        {
+            std::lock_guard<std::mutex> lock(refresh_mutex);
+            last_refresh_failure = 0;
+        }
         return fresh_token;
     } catch (const std::exception& error) {
         LOG_ERROR("Unable to parse Antigravity OAuth response: {}", error.what());
+        std::lock_guard<std::mutex> lock(refresh_mutex);
+        last_refresh_failure = std::time(nullptr);
     }
     return access_token;
 }
 
+bool antigravity_token_needs_refresh() {
+    if (const char* token = std::getenv("ANTIGRAVITY_API_KEY");
+        token != nullptr && *token != '\0') {
+        return false;
+    }
+    std::filesystem::path token_path;
+    if (const char* configured = std::getenv("ANTIGRAVITY_TOKEN_FILE")) {
+        token_path = configured;
+    } else if (const char* home = std::getenv("HOME")) {
+        token_path = std::filesystem::path(home) /
+                     ".gemini/antigravity-cli/antigravity-oauth-token";
+    }
+    if (token_path.empty()) return true;
+    try {
+        std::ifstream input(token_path);
+        if (!input) return true;
+        const auto document = ordered_json::parse(input);
+        if (!document.contains("token") || !document["token"].is_object()) {
+            return true;
+        }
+        const auto& token = document["token"];
+        if (token.value("access_token", "").empty()) return true;
+        return antigravity_token_expired(token.value("expiry", ""));
+    } catch (...) {
+        return true;
+    }
+}
+
+
+std::string get_cursor_access_token() {
+    if (const char* token = std::getenv("CURSOR_API_KEY");
+        token != nullptr && *token != '\0') {
+        return token;
+    }
+    std::filesystem::path token_path;
+    if (const char* configured = std::getenv("CURSOR_AUTH_FILE")) {
+        token_path = configured;
+    } else if (const char* home = std::getenv("HOME")) {
+        token_path = std::filesystem::path(home) / ".config/cursor/auth.json";
+    }
+    if (token_path.empty()) return "";
+
+    ordered_json document;
+    try {
+        std::ifstream input(token_path);
+        if (!input) return "";
+        document = ordered_json::parse(input);
+    } catch (const std::exception& error) {
+        LOG_ERROR("Unable to read Cursor auth file: {}", error.what());
+        return "";
+    }
+    std::string access = document.value("accessToken", "");
+    if (access.empty()) {
+        LOG_ERROR("Cursor auth file has no accessToken");
+    }
+    return access;
+}
 
 std::string config_path() {
     if (const char* p = std::getenv("OPENCODE_CONFIG")) return p;

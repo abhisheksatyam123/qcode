@@ -9,7 +9,14 @@ namespace ai {
 namespace tui {
 
 // Retrieve antigravity API token from env var or keyring.
-std::string get_antigravity_token();
+// When force_refresh is true, always attempt an OAuth refresh (used after 401).
+std::string get_antigravity_token(bool force_refresh = false);
+
+// True when the on-disk Antigravity access token is missing or past expiry.
+bool antigravity_token_needs_refresh();
+
+// Retrieve Cursor access token from env var or ~/.config/cursor/auth.json.
+std::string get_cursor_access_token();
 
 // Resolve the opencode.json config path (OPENCODE_CONFIG env, else default).
 std::string config_path();

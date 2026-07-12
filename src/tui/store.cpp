@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <ai/types/message.h>
 #include <ai/logger.h>
+#include <nlohmann/json.hpp>
 
 namespace ai {
 namespace tui {
@@ -239,6 +240,7 @@ void AppStore::wire() {
     subs_.push_back(bus_.subscribe<CompactionResult>([this](const CompactionResult::Payload& p) {
         if (!p.error.empty()) {
             state_.messages_history->emplace_back(ai::Message::system(p.error));
+            add_toast(p.error, "error", 5000);
             set_status("idle");
             notify();
             return;
@@ -262,8 +264,13 @@ void AppStore::wire() {
         new_messages.insert(
             new_messages.begin(), ai::Message::system(std::move(note)));
         state_.messages_history = std::make_shared<ai::Messages>(new_messages);
+        add_toast("Compaction complete", "success", 3000);
         set_status("idle");
         notify();
+    }));
+
+    subs_.push_back(bus_.subscribe<ToastRequested>([this](const ToastRequested::Payload& p) {
+        add_toast(p.message, p.variant, p.duration_ms > 0 ? p.duration_ms : 3000);
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
@@ -273,29 +280,48 @@ void AppStore::wire() {
         ai::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
         state_.messages_history->emplace_back(
             ai::Message::assistant_with_tools("", {tc_part}));
-        ai::tui::db::save_message(p.session_id, "ToolCall",
-            p.tool_name + "(" + p.arguments.dump() + ")");
+        // Structured JSON so session reload can rebuild pretty tool blocks.
+        nlohmann::json call_json = {
+            {"id", p.tool_call_id},
+            {"name", p.tool_name},
+            {"arguments", p.arguments},
+        };
+        ai::tui::db::save_message(p.session_id, "ToolCall", call_json.dump());
         notify();
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
-        std::string result_str = p.is_error ? "  \u2716 " + p.tool_name + " failed (" + p.result.dump() + ")" : "  \u2714 " + p.tool_name + " (" + std::to_string((int)p.duration_ms) + "ms)";
         state_.messages_history->emplace_back(
             ai::Message::tool_results(
                 {{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
         ++*state_.tool_call_count;
         *state_.total_tool_time_ms += p.duration_ms;
-        ai::tui::db::save_message(p.session_id, "ToolResult", result_str);
+        nlohmann::json result_json = {
+            {"tool_call_id", p.tool_call_id},
+            {"tool_name", p.tool_name},
+            {"result", p.result},
+            {"is_error", p.is_error},
+            {"duration_ms", p.duration_ms},
+        };
+        ai::tui::db::save_message(p.session_id, "ToolResult", result_json.dump());
         notify();
     }));
 
     subs_.push_back(bus_.subscribe<SessionStatusChanged>([this](const SessionStatusChanged::Payload& p) { set_status(p.status); }));
 
     subs_.push_back(bus_.subscribe<ErrorOccurred>([this](const ErrorOccurred::Payload& p) {
+        // Any error/warning must clear the generating flag. Warnings previously
+        // set status to "warn" and left is_generating stuck true, freezing Esc
+        // and queue drain until a later idle event arrived (or never did).
         if (p.severity == "warning") {
             LOG_WARN("Store: warning message={}", p.message);
-            set_status("warn");
+            set_generating(false);
             add_toast("\u26a0 " + p.message, "warning", 6000);
+            if (status_ == "generating") {
+                set_status("idle");
+            } else {
+                notify();
+            }
         } else {
             set_error(p.message);
             append_chat_message("System", "Error: " + p.message);
