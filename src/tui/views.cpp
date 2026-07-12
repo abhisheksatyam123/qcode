@@ -384,7 +384,7 @@ ftxui::Element render_view(
             // Home screen
             auto prompt_bar = hbox({
                 text(" ❯ ") | color(accent2(theme)) | bold,
-                input->Render() | frame | size(HEIGHT, LESS_THAN, 6) | flex,
+                input->Render() | yframe | size(HEIGHT, LESS_THAN, 6) | flex,
             }) | border | color(accent(theme));
 
             body = vbox({
@@ -503,8 +503,8 @@ ftxui::Element render_view(
             // Clean input bar: just prompt prefix + input (model badge moved to header)
             auto prompt_box = hbox({
                 text(" ❯ ") | color(accent2(theme)) | bold,
-                // Wrap input render in a frame constrained to max 6 lines for scrolling
-                input->Render() | frame | size(HEIGHT, LESS_THAN, 6) | flex,
+                // Wrap input render in a vertical frame constrained to max 6 lines for scrolling
+                input->Render() | yframe | size(HEIGHT, LESS_THAN, 6) | flex,
             }) | border | color(accent(theme));
 
             // Dynamic inline slash command / session autocomplete matching opencode
