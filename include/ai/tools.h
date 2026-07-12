@@ -17,7 +17,8 @@ class ToolExecutor {
   /// @return Tool execution result
   static ToolResult execute_tool(const ToolCall& tool_call,
                                  const ToolSet& tools,
-                                 const Messages& messages = {});
+                                 const Messages& messages = {},
+                                 const GenerateOptions* options = nullptr);
 
   /// Execute multiple tool calls (potentially in parallel)
   /// @param tool_calls Vector of tool calls to execute

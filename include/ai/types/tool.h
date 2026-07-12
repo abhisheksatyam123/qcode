@@ -22,6 +22,7 @@ struct ToolExecutionContext {
   std::string tool_call_id;
   Messages messages;
   std::optional<std::function<void()>> abort_signal;
+  std::string workspace;
 };
 
 /// Tool execution function signature

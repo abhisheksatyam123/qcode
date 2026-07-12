@@ -650,6 +650,7 @@ void run_generation_with_bus(
     base_opts.model = model_id;
     base_opts.system = system_prompt;
     base_opts.messages = messages;
+    base_opts.workspace = ctx.workspace;
 
     // ── Opt-in extended thinking / reasoning ──
     const std::string& rm = ctx.reasoning_mode;

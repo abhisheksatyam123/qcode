@@ -13,7 +13,8 @@ namespace ai {
 
 ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
                                       const ToolSet& tools,
-                                      const Messages& messages) {
+                                      const Messages& messages,
+                                      const GenerateOptions* options) {
   LOG_DEBUG("ToolExecutor: execute_tool tool={}", tool_call.tool_name);
   // Validate tool call
   if (!tool_call.is_valid()) {
@@ -54,6 +55,9 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   ToolExecutionContext context;
   context.tool_call_id = tool_call.id;
   context.messages = messages;
+  if (options) {
+    context.workspace = options->workspace;
+  }
 
   try {
     if (tool.is_async()) {
@@ -101,7 +105,7 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
         options->on_tool_call_start.value()(tool_call);
       }
 
-      auto result = execute_tool(tool_call, tools, messages);
+      auto result = execute_tool(tool_call, tools, messages, options);
 
       // Call the on_tool_call_finish callback if provided
       if (options && options->on_tool_call_finish.has_value()) {
@@ -144,7 +148,7 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
       // Capture by VALUE to avoid dangling ref (tool_call is a loop variable)
       batch.emplace_back(
           std::async(std::launch::async, [tool_call, &tools, &messages, options]() {
-            ToolResult result = execute_tool(tool_call, tools, messages);
+            ToolResult result = execute_tool(tool_call, tools, messages, options);
             // Fire on_tool_call_finish callback from the async thread
             if (options && options->on_tool_call_finish.has_value()) {
               options->on_tool_call_finish.value()(result);

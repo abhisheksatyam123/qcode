@@ -151,11 +151,18 @@ static std::string shell_quote_literal(const std::string& s) {
   return out;
 }
 
-static std::string resolve_cwd(const std::string& workdir) {
-  if (workdir.empty()) return std::filesystem::current_path().string();
+static std::string resolve_cwd(const std::string& workdir, const std::string& fallback_workspace = "") {
+  if (workdir.empty()) {
+    if (!fallback_workspace.empty()) return fallback_workspace;
+    return std::filesystem::current_path().string();
+  }
   std::error_code ec;
   auto p = std::filesystem::absolute(workdir, ec);
-  return ec ? std::filesystem::current_path().string() : p.string();
+  if (ec) {
+    if (!fallback_workspace.empty()) return fallback_workspace;
+    return std::filesystem::current_path().string();
+  }
+  return p.string();
 }
 
 static bool is_safe_command(const std::string& command, std::string& warning) {
@@ -395,7 +402,7 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
     return err;
   }
 
-  std::string cwd = resolve_cwd(args.value("workdir", ""));
+  std::string cwd = resolve_cwd(args.value("workdir", ""), context.workspace);
   int timeout = args.value("timeout", 120000);
 
   std::optional<int> max_chars, max_lines;
@@ -439,7 +446,7 @@ JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionCo
   }
 
   std::string task_id = generate_task_id();
-  std::string cwd = resolve_cwd(args.value("workdir", ""));
+  std::string cwd = resolve_cwd(args.value("workdir", ""), context.workspace);
   int timeout = args.value("timeout", 120000);
   (void)timeout;
 
