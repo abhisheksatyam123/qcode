@@ -1,79 +1,27 @@
-# WebUI Improvement Task
+# WebUI & TUI Improvements: Parity, Layouts, Aesthetics, and Navigation
 
 ## Goal
-Improve the WebUI by:
-1. Moving terminal and chat tabs under the left panel (sidebar)
-2. Adding mobile view support
-3. Beautifying the chat window and overall WebUI
+Improve both the QCode WebUI and the TUI:
+1. Fix WebUI text rendering (done).
+2. Upgrade Markdown rendering to marked.js with support for headings, code blocks, lists, etc. (done).
+3. Redesign WebUI tool block rendering to match the TUI exactly (collapsible blocks, status color rails, command/prompt/workdir lines, exit status codes, and tool emoji icon prepending) (done).
+4. Beautify the WebUI chat screen: modern dark palette, smooth animations, gorgeous user gradients, rounded assistant bubble cards, and a sleek floating composer wrapper with focus border glow (done).
+5. Fix the WebUI terminal occupying only half screen in Tab View by stretching it to 100% width via flex rules (done).
+6. Unmap TUI navigation hotkeys `h` and `k` (as well as `j` and `l` for tool blocks/suggestion menu) so keyboard shortcuts do not conflict with text writing or layout navigation since navigation is mouse-based (done).
 
-## Current Architecture Understanding
-
-### Layout Structure:
-- **Layout Context** (`/context/layout.tsx`): Manages layout state (sidebar width, terminal height, session tabs, views)
-- **Layout Page** (`/pages/layout.tsx`): Main layout with sidebar shell, workspace sidebar, project sidebar, session tabs
-- **Sidebar Shell** (`/pages/layout/sidebar-shell.tsx`): Left sidebar rail with project/workspace navigation
-- **Session Page** (`/pages/session.tsx`): Main session view with chat surface, terminal panel, side panel
-- **Session Side Panel** (`/pages/session/session-side-panel.tsx`): Right side panel with tabs (files, tasks, stats, notes, intelgraph, logs, agents, review)
-- **Chat Surface** (`/pages/session/surface-tabs/chat-surface.tsx`): Chat interface with MessageTimeline and Composer
-- **Terminal Panel** (`/pages/session/terminal-panel.tsx`): Terminal tabs panel at bottom of session
-
-### Current Layout Issues:
-1. Terminal tabs and Chat tabs are at the bottom of the session view (bottom panel)
-2. Chat tabs and Terminal tabs should be moved to left panel (sidebar)
-3. No mobile view support
-4. Chat window needs beautification
+## Systems
+- **WebUI Styles**: `style.css` contains deep dark palettes, modern input glow, tool border rails, and terminal container flex stretch.
+- **TUI Keybindings**: `src/tui/main.cpp` handles event routing for arrow keys and suggestions. The standard letter mappings `h`, `j`, `k`, `l` have been stripped out.
+- **History Mapping**: `server_main.cpp` keeps raw message categories (`ToolCall`, `ToolResult`, `Reasoning`) intact for full history reconstruction in `app.js`.
 
 ## Tasks
-
-### Phase 1: Understanding & Planning
-- [x] Understand current layout architecture
-- [x] Identify where terminal tabs and chat tabs are rendered
-- [x] Identify sidebar structure
-- [ ] Plan new layout structure
-- [ ] Plan mobile responsive breakpoints
-
-### Phase 2: Move Terminal and Chat Tabs to Left Panel
-- [ ] Modify sidebar-shell.tsx to add terminal/chat tab sections
-- [ ] Modify session-side-panel.tsx to remove terminal/chat from right panel
-- [ ] Update layout context for new tab state management
-- [ ] Update session.tsx to use new layout
-
-### Phase 3: Mobile View Support
-- [ ] Add mobile breakpoints in breakpoint context
-- [ ] Create mobile layout variants
-- [ ] Add mobile sidebar toggle
-- [ ] Add mobile bottom navigation for tabs
-- [ ] Add responsive CSS for chat and terminal
-
-### Phase 4: Chat Window Beautification
-- [ ] Improve MessageTimeline styling
-- [ ] Improve SessionComposerRegion styling
-- [ ] Add better message bubbles/styling
-- [ ] Add better code block rendering
-- [ ] Improve composer input styling
-- [ ] Add animations/transitions
-
-### Phase 5: General WebUI Beautification
-- [ ] Improve sidebar styling
-- [ ] Improve terminal panel styling
-- [ ] Add consistent spacing/typography
-- [ ] Add animations/transitions
-- [ ] Improve dark/light theme support
-
-### Phase 6: Testing & Polish
-- [ ] Test desktop layout
-- [ ] Test mobile layout
-- [ ] Verify all tabs work correctly
-- [ ] Polish animations and transitions
-
-## Files to Modify
-1. `/src/surface/web/official/packages/app/src/pages/layout/sidebar-shell.tsx` - Add terminal/chat tabs to sidebar
-2. `/src/surface/web/official/packages/app/src/pages/session/session-side-panel.tsx` - Remove terminal/chat tabs from right panel
-3. `/src/surface/web/official/packages/app/src/pages/session.tsx` - Update session layout
-4. `/src/surface/web/official/packages/app/src/context/layout.tsx` - Update layout context for new tabs
-5. `/src/surface/web/official/packages/app/src/pages/session/surface-tabs/chat-surface.tsx` - Beautify chat
-6. `/src/surface/web/official/packages/app/src/pages/session/message-timeline.tsx` - Beautify messages
-7. `/src/surface/web/official/packages/app/src/pages/session/composer.tsx` - Beautify composer
-8. `/src/surface/web/official/packages/app/src/pages/session/terminal-panel.tsx` - Move to sidebar
-9. `/src/surface/web/official/packages/app/src/context/breakpoint.tsx` - Add mobile breakpoints
-10. CSS files for styling improvements
+- [x] Integrate `marked.js` markdown parser in `index.html`
+- [x] Retain raw role types in C++ server history responses
+- [x] Rewrite history parser in `app.js` to group nested tool logs
+- [x] Render tool block icons in the header
+- [x] Design tool blocks to match TUI borders and headers
+- [x] Add `flex: 1` structure to `#terminal-panel` in CSS
+- [x] Redesign layout wrapper, bubbles, code blocks, and input composer styles
+- [x] Strip `h`, `j`, `k`, `l` character event bindings from TUI keyboard mapping (`src/tui/main.cpp`)
+- [x] Compile the project using `ninja` (successful)
+- [x] Run unit tests (`ai_tests` - 170/170 passed)

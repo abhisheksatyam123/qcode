@@ -666,8 +666,7 @@ int main(int argc, char* argv[]) {
         auto hist = ai::tui::db::load_session_messages(sid);
         nlohmann::json j = nlohmann::json::array();
         for (const auto& [sender, content] : hist) {
-            std::string role = sender == "User" ? "user" : (sender == "Assistant" ? "assistant" : "system");
-            j.push_back({{"role", role}, {"content", content}});
+            j.push_back({{"role", sender}, {"content", content}});
         }
         res.set_content(j.dump(2), "application/json");
     });
@@ -691,8 +690,7 @@ int main(int argc, char* argv[]) {
         }
         nlohmann::json msgs = nlohmann::json::array();
         for (const auto& [sender, content] : ai::tui::db::load_session_messages(sid)) {
-            std::string role = sender == "User" ? "user" : (sender == "Assistant" ? "assistant" : "system");
-            msgs.push_back({{"role", role}, {"content", content}});
+            msgs.push_back({{"role", sender}, {"content", content}});
         }
         info["messages"] = std::move(msgs);
         res.set_content(info.dump(2), "application/json");

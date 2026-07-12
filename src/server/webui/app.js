@@ -852,9 +852,71 @@ async function loadSessionById(id) {
     if (res.ok) {
       const msgs = await res.json();
       if (Array.isArray(msgs)) {
+        let currentAssistantMsg = null;
         for (const m of msgs) {
-          const role = m.role === 'assistant' ? 'assistant' : (m.role === 'user' ? 'user' : 'system');
-          session.messages.push({ role, content: m.content });
+          if (m.role === 'User' || m.role === 'user') {
+            currentAssistantMsg = null;
+            session.messages.push({ role: 'user', content: m.content });
+          } else if (m.role === 'Assistant' || m.role === 'assistant') {
+            if (!currentAssistantMsg) {
+              currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+              session.messages.push(currentAssistantMsg);
+            }
+            currentAssistantMsg.content = m.content;
+          } else if (m.role === 'ToolCall') {
+            try {
+              const tc = JSON.parse(m.content);
+              if (!currentAssistantMsg) {
+                currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+                session.messages.push(currentAssistantMsg);
+              }
+              currentAssistantMsg.toolEvents.push({
+                type: 'tool_call',
+                tool_call_id: tc.id,
+                tool_name: tc.name,
+                arguments: tc.arguments,
+                status: 'running'
+              });
+            } catch (e) {}
+          } else if (m.role === 'ToolResult') {
+            try {
+              const tr = JSON.parse(m.content);
+              if (!currentAssistantMsg) {
+                currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+                session.messages.push(currentAssistantMsg);
+              }
+              const tc = currentAssistantMsg.toolEvents.find(t => t.tool_call_id === tr.tool_call_id);
+              if (tc) {
+                tc.status = tr.is_error ? 'error' : 'success';
+                tc.result = tr.result;
+                tc.duration_ms = tr.duration_ms;
+              } else {
+                currentAssistantMsg.toolEvents.push({
+                  type: 'tool_call',
+                  tool_call_id: tr.tool_call_id,
+                  tool_name: 'tool',
+                  arguments: null,
+                  status: tr.is_error ? 'error' : 'success',
+                  result: tr.result,
+                  duration_ms: tr.duration_ms
+                });
+              }
+            } catch (e) {}
+          } else if (m.role === 'Reasoning') {
+            if (!currentAssistantMsg) {
+              currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+              session.messages.push(currentAssistantMsg);
+            }
+            try {
+              const r = JSON.parse(m.content);
+              currentAssistantMsg.reasoning = r.text || '';
+            } catch (e) {
+              currentAssistantMsg.reasoning = m.content;
+            }
+          } else {
+            currentAssistantMsg = null;
+            session.messages.push({ role: 'system', content: m.content });
+          }
         }
       }
     }
@@ -979,7 +1041,10 @@ function handleEvent(evt, msg, session) {
       }
       break;
     case 'backend.message.delta':
-      msg.content = evt.text;
+      // Append (do NOT overwrite): backend sends incremental chunks and a
+      // final empty-text delta with done=true, which would otherwise wipe
+      // the accumulated assistant text (leaving only the token usage line).
+      if (evt.text) msg.content = (msg.content || '') + evt.text;
       if (session.id === state.sessionId) {
         renderMessages();
         scrollToBottom();
@@ -1054,8 +1119,8 @@ function renderMessage(msg) {
   }
   if (msg.reasoning) {
     const rc = document.createElement('div'); rc.className = 'reasoning-block';
-    const rl = document.createElement('div'); rl.className = 'reasoning-label'; rl.textContent = 'Thinking';
-    const rt = document.createElement('div'); rt.className = 'reasoning-text'; rt.textContent = msg.reasoning;
+    const rl = document.createElement('div'); rl.className = 'reasoning-label'; rl.innerHTML = '💭 Thinking';
+    const rt = document.createElement('div'); rt.className = 'reasoning-text'; rt.innerHTML = renderMarkdown(msg.reasoning);
     rc.appendChild(rl); rc.appendChild(rt);
     content.appendChild(rc);
   }
@@ -1079,79 +1144,179 @@ function renderMessage(msg) {
 }
 
 function renderToolBlock(tc) {
-  const icons = { bash: '⚡', task: '🤖', read_file: '📄', write_file: '📝', view_file: '📄', edit_file: '✏️', search: '🔍', grep: '🔍', ripgrep: '🔍' };
-  const icon = icons[tc.tool_name] || '🔧';
-  const statusIcons = { running: '⏳', success: '✅', error: '❌' };
-  const block = document.createElement('div'); block.className = 'tool-block';
-  const header = document.createElement('div'); header.className = 'tool-header';
-  header.innerHTML = `<span class="tool-chevron">↓</span><span class="tool-icon">${icon}</span><span class="tool-name">${capitalize(tc.tool_name)}</span>${tc.duration_ms ? '<span class="tool-duration">' + Math.round(tc.duration_ms) + 'ms</span>' : ''}<span class="tool-status ${tc.status}">${statusIcons[tc.status] || ''} ${tc.status}</span>`;
-  const body = document.createElement('div'); body.className = 'tool-body collapsed';
+  const toolName = tc.tool_name || '';
+  
+  // Extract command
+  let command = toolName;
   if (tc.arguments) {
-    const a = typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2);
-    const inputWrap = document.createElement('div'); inputWrap.className = 'tool-section';
-    const lbl = document.createElement('div'); lbl.className = 'tool-section-title'; lbl.textContent = 'Input';
-    const pre = document.createElement('pre'); pre.className = 'tool-code'; pre.textContent = a;
-    inputWrap.appendChild(lbl); inputWrap.appendChild(pre);
-    body.appendChild(inputWrap);
+    const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments;
+    if (toolName === 'bash' || toolName === 'shell' || toolName === 'run_command') {
+      command = args.command || args.cmd || args.script || '';
+    } else if (['read_file', 'view_file', 'write_file', 'edit_file'].includes(toolName)) {
+      command = toolName + ' ' + (args.path || args.file || args.file_path || args.filename || '');
+    } else if (['search', 'grep', 'ripgrep'].includes(toolName)) {
+      command = toolName + ' "' + (args.query || args.pattern || '') + '"';
+    } else if (toolName === 'task' || toolName === 'dispatch_agent') {
+      command = 'task ' + (args.description || args.prompt || '');
+    } else {
+      command = toolName + ' ' + JSON.stringify(args);
+    }
   }
+
+  // Extract description
+  let desc = '';
+  if (tc.arguments) {
+    const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments;
+    desc = args.description || args.desc || args.prompt || '';
+  }
+
+  // Extract workdir
+  let workdir = '';
+  if (tc.arguments && (toolName === 'bash' || toolName === 'shell' || toolName === 'run_command')) {
+    const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments;
+    workdir = args.workdir || args.cwd || '';
+  }
+
+  // Extract output content
+  let output = '';
+  let exitCode = null;
+  let hasExit = false;
   if (tc.result) {
-    const r = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2);
-    const outWrap = document.createElement('div'); outWrap.className = 'tool-section';
-    const lbl = document.createElement('div'); lbl.className = 'tool-section-title' + (tc.status === 'error' ? ' error' : ' success'); lbl.textContent = 'Output';
-    const pre = document.createElement('pre'); pre.className = 'tool-code' + (tc.status === 'error' ? ' error' : ''); pre.textContent = r;
-    outWrap.appendChild(lbl); outWrap.appendChild(pre);
-    body.appendChild(outWrap);
+    try {
+      const resultObj = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result;
+      if (resultObj && typeof resultObj === 'object') {
+        output = resultObj.output || resultObj.content || resultObj.result || resultObj.summary || resultObj.matches || resultObj.error || '';
+        if (resultObj.metadata && typeof resultObj.metadata === 'object' && 'exit' in resultObj.metadata) {
+          exitCode = resultObj.metadata.exit;
+          hasExit = true;
+        }
+      } else {
+        output = String(tc.result);
+      }
+    } catch(e) {
+      output = String(tc.result);
+    }
   }
+
+  const icons = { bash: '$', task: '🤖', read_file: '📄', write_file: '✏️', view_file: '📄', edit_file: '✏️', search: '🔍', grep: '🔍', ripgrep: '🔍' };
+  const icon = icons[toolName] || '⚙';
+  const displayNames = { bash: 'Bash', task: 'Task', read_file: 'Read File', write_file: 'Write File', view_file: 'Read File', edit_file: 'Edit File', search: 'Search' };
+  const displayName = displayNames[toolName] || capitalize(toolName);
+
+  const block = document.createElement('div');
+  block.className = 'tool-block ' + tc.status; // success, error, running
+  
+  const header = document.createElement('div');
+  header.className = 'tool-header';
+  
+  const chevron = document.createElement('span');
+  chevron.className = 'tool-chevron';
+  chevron.textContent = '▸';
+  
+  const heading = document.createElement('span');
+  heading.className = 'tool-heading';
+  if (icon && icon !== '$') {
+    heading.innerHTML = `<span class="tool-type-icon" style="margin-right: 6px; opacity: 0.8;">${icon}</span># ${desc || displayName}`;
+  } else {
+    heading.textContent = `# ${desc || displayName}`;
+  }
+  
+  const timing = document.createElement('span');
+  timing.className = 'tool-duration';
+  timing.textContent = tc.duration_ms ? `${Math.round(tc.duration_ms)}ms` : '';
+  
+  const statusEl = document.createElement('span');
+  statusEl.className = 'tool-status-icon';
+  if (tc.status === 'running') statusEl.textContent = '⠋';
+  else if (tc.status === 'error') statusEl.textContent = '✗';
+  else statusEl.textContent = '✓';
+
+  header.appendChild(chevron);
+  header.appendChild(heading);
+  header.appendChild(timing);
+  header.appendChild(statusEl);
+
+  const body = document.createElement('div');
+  body.className = 'tool-body collapsed';
+
+  // Command row
+  const cmdRow = document.createElement('div');
+  cmdRow.className = 'tool-cmd-row';
+  cmdRow.innerHTML = `<span class="tool-prompt">$</span> <span class="tool-cmd">${esc(command)}</span>`;
+  body.appendChild(cmdRow);
+
+  // Workdir row
+  if (workdir) {
+    const wdRow = document.createElement('div');
+    wdRow.className = 'tool-wd-row';
+    wdRow.innerHTML = `<span class="tool-in">in</span> <span class="tool-path">${esc(workdir)}</span>`;
+    body.appendChild(wdRow);
+  }
+
+  // Output row
+  if (output) {
+    const outPre = document.createElement('pre');
+    outPre.className = 'tool-output' + (tc.status === 'error' ? ' error' : '');
+    outPre.textContent = output;
+    body.appendChild(outPre);
+  }
+
+  // Exit code row
+  if (hasExit) {
+    const exitRow = document.createElement('div');
+    exitRow.className = 'tool-exit-row ' + (exitCode === 0 ? 'success' : 'error');
+    exitRow.textContent = `${exitCode === 0 ? '✓' : '✗'} exit ${exitCode}`;
+    body.appendChild(exitRow);
+  }
+
   let expanded = false;
-  header.addEventListener('click', () => { expanded = !expanded; body.classList.toggle('collapsed', !expanded); header.querySelector('.tool-chevron').textContent = expanded ? '↑' : '↓'; });
-  block.appendChild(header); block.appendChild(body); return block;
+  header.addEventListener('click', () => {
+    expanded = !expanded;
+    body.classList.toggle('collapsed', !expanded);
+    chevron.textContent = expanded ? '▾' : '▸';
+  });
+
+  block.appendChild(header);
+  block.appendChild(body);
+  return block;
 }
 
 function addMessage(role, content) { const div = renderMessage({ role, content }); messagesEl.appendChild(div); scrollToBottom(); }
 
 function renderMarkdown(text) {
-  let html = esc(text);
-  // Fenced code blocks with language tag and Copy button
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g,
-    (m, lang, code) => {
-      const displayLang = lang || 'code';
-      const cleanCode = code.replace(/\n$/, '');
-      return `<div class="code-block-container">
-        <div class="code-block-header">
-          <span class="code-block-lang">${displayLang}</span>
-          <button class="copy-code-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').innerText).then(() => { this.innerText = 'Copied!'; setTimeout(() => this.innerText = 'Copy', 2000); })">Copy</button>
-        </div>
-        <pre class="md-code"><code>${cleanCode}</code></pre>
-      </div>`;
-    });
-  // Headings
-  html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>')
-             .replace(/^## (.*)$/gm, '<h2>$1</h2>')
-             .replace(/^# (.*)$/gm, '<h1>$1</h1>');
-  // Blockquote (esc converts '>' to '&gt;')
-  html = html.replace(/^&gt; (.*)$/gm, '<blockquote>$1</blockquote>');
-  // Horizontal rule
-  html = html.replace(/^(?:\*\*\*|---|___)$/gm, '<hr>');
-  // Unordered lists (group consecutive "- "/"*" items)
-  html = html.replace(/^(?:-|\*)\s+.*(?:\n(?:-|\*)\s+.*)*/gm, (m) => {
-    const items = m.split('\n').map(l => '<li>' + l.replace(/^[-*]\s+/, '') + '</li>').join('');
-    return '<ul>' + items + '</ul>';
+  if (typeof marked === 'undefined') {
+    return esc(text).replace(/\n/g, '<br>');
+  }
+  
+  const renderer = new marked.Renderer();
+  
+  renderer.code = function(code, lang) {
+    const displayLang = lang || 'code';
+    const codeStr = typeof code === 'object' ? code.text : code;
+    const cleanCode = codeStr.replace(/\n$/, '');
+    return `<div class="code-block-container">
+      <div class="code-block-header">
+        <span class="code-block-lang">${displayLang}</span>
+        <button class="copy-code-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').innerText).then(() => { this.innerText = 'Copied!'; setTimeout(() => this.innerText = 'Copy', 2000); })">Copy</button>
+      </div>
+      <pre class="md-code"><code>${esc(cleanCode)}</code></pre>
+    </div>`;
+  };
+
+  renderer.codespan = function(code) {
+    const text = typeof code === 'object' ? code.text : code;
+    return `<code class="md-inline-code">${esc(text)}</code>`;
+  };
+
+  marked.setOptions({
+    renderer: renderer,
+    gfm: true,
+    breaks: true,
+    headerIds: false,
+    mangle: false
   });
-  // Ordered lists (group consecutive "1. " items)
-  html = html.replace(/^\d+\.\s+.*(?:\n\d+\.\s+.*)*/gm, (m) => {
-    const items = m.split('\n').map(l => '<li>' + l.replace(/^\d+\.\s+/, '') + '</li>').join('');
-    return '<ol>' + items + '</ol>';
-  });
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
-  // Bold / italic
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-             .replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  // Newlines -> <br>
-  html = html.replace(/\n/g, '<br>');
-  return html;
+
+  return marked.parse(text);
 }
 
 function setGenerating(on) { sendBtn.disabled = on; sendBtn.textContent = on ? 'Generating...' : 'Send'; promptInput.disabled = on; }

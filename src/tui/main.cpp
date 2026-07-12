@@ -542,12 +542,12 @@ int main() {
                     return true;
                 }
                 if (state.slash_suggestion_mode) {
-                    if (e == Event::ArrowUp || e == Event::Character('k')) {
+                    if (e == Event::ArrowUp) {
                         if (state.slash_suggestion_idx > 0) state.slash_suggestion_idx--;
                         else state.slash_suggestion_idx = max_idx;
                         return true;
                     }
-                    if (e == Event::ArrowDown || e == Event::Character('j')) {
+                    if (e == Event::ArrowDown) {
                         state.slash_suggestion_idx = (state.slash_suggestion_idx + 1) % (max_idx + 1);
                         return true;
                     }
@@ -679,16 +679,16 @@ int main() {
             return true;
         };
         if (tool_keys_active) {
-            if (e == Event::ArrowUp || e == Event::Character('k')) {
+            if (e == Event::ArrowUp) {
                 if (navigate_tool(-1)) return true;
             }
-            if (e == Event::ArrowDown || e == Event::Character('j')) {
+            if (e == Event::ArrowDown) {
                 if (navigate_tool(1)) return true;
             }
-            if (e == Event::ArrowLeft || e == Event::Character('h')) {
+            if (e == Event::ArrowLeft) {
                 if (set_focused_tool_collapsed(true)) return true;
             }
-            if (e == Event::ArrowRight || e == Event::Character('l')) {
+            if (e == Event::ArrowRight) {
                 if (set_focused_tool_collapsed(false)) return true;
             }
 
