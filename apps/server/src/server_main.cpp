@@ -364,12 +364,12 @@ int main(int argc, char* argv[]) {
         res.set_content(j.dump(2), "application/json");
     });
 
-    // ── Generate endpoint (streaming NDJSON) ──
-    svr.Post("/generate", [&backend, &providers_list](const httplib::Request& req, httplib::Response& res) {
+    // ── Helper to handle generation ──
+    auto handle_generate = [&backend, &providers_list](const std::string& session_id, const std::string& req_body, httplib::Response& res) {
         // Parse request body
         nlohmann::json body;
         try {
-            body = nlohmann::json::parse(req.body);
+            body = nlohmann::json::parse(req_body);
         } catch (...) {
             res.status = 400;
             res.set_content(R"({"error":"invalid JSON"})", "application/json");
@@ -389,24 +389,15 @@ int main(int argc, char* argv[]) {
             ai::tui::SystemPrompt::build_default());
         std::string reasoning_mode = body.value("reasoning_mode", "off");
 
-        // ── Resolve or create session for multi-turn ──
-        std::string session_id = body.value("session_id", "");
         std::shared_ptr<GenSession> session;
-        bool created_this_request = false;
-
         {
             std::lock_guard<std::mutex> lock(g_sessions_mutex);
-            if (!session_id.empty()) {
-                auto it = g_sessions.find(session_id);
-                if (it != g_sessions.end()) session = it->second;
-            }
+            auto it = g_sessions.find(session_id);
+            if (it != g_sessions.end()) session = it->second;
             if (!session) {
                 session = std::make_shared<GenSession>();
-                session->id = session_id.empty()
-                    ? ai::tui::db::create_new_session(provider, model)
-                    : session_id;
+                session->id = session_id;
                 g_sessions[session->id] = session;
-                created_this_request = true;
             }
         }
 
@@ -425,7 +416,7 @@ int main(int argc, char* argv[]) {
             session->event_queue.clear();
         }
 
-                // Load (or reload) the entire session history from the SQLite database
+        // Load (or reload) the entire session history from the SQLite database
         // to ensure we have the complete, up-to-date context (including ToolCall,
         // ToolResult, System, and Assistant messages).
         session->messages = ai::tui::db::load_session_history_parsed(session->id);
@@ -556,6 +547,31 @@ int main(int argc, char* argv[]) {
                 return true;
             }
         );
+    };
+
+    // ── Generate response (Deprecated generic fallback) ──
+    svr.Post("/generate", [handle_generate](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid JSON"})", "application/json");
+            return;
+        }
+        std::string session_id = body.value("session_id", "");
+        if (session_id.empty()) {
+            res.status = 400;
+            res.set_content(R"({"error":"'session_id' field is required"})", "application/json");
+            return;
+        }
+        handle_generate(session_id, req.body, res);
+    });
+
+    // ── Generate response for specific session ──
+    svr.Post("/session/([a-f0-9-]+)/generate", [handle_generate](const httplib::Request& req, httplib::Response& res) {
+        std::string session_id = req.matches[1];
+        handle_generate(session_id, req.body, res);
     });
 
     // ── List sessions ──

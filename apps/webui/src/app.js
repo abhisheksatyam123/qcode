@@ -1104,7 +1104,7 @@ async function sendMessage() {
       session_id: session.id
     });
     
-    const res = await fetch('/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    const res = await fetch(`/session/${session.id}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
     if (!res.ok) throw new Error(await res.text());
     
     const reader = res.body.getReader();
