@@ -772,6 +772,31 @@ int main(int argc, char* argv[]) {
         res.set_content(R"({"ok":true})", "application/json");
     });
 
+    // ── Clear session messages (truncate history) ──
+    svr.Post("/session/([a-f0-9-]+)/clear", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+
+        // Clear in-memory session messages if a live session exists, so an
+        // in-flight generation won't re-persist the old history.
+        {
+            std::lock_guard<std::mutex> lock(g_sessions_mutex);
+            auto it = g_sessions.find(sid);
+            if (it != g_sessions.end()) {
+                it->second->messages.clear();
+            }
+        }
+
+        // Permanently truncate the persisted history in SQLite.
+        ai::tui::db::overwrite_session_history(sid, {});
+
+        res.set_content(R"({"ok":true})", "application/json");
+    });
+
     // ── Get session message history ──
     svr.Get("/session/([a-f0-9-]+)/messages", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = req.matches[1];

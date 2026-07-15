@@ -226,12 +226,22 @@ function applyProviderModel(providerId, modelId) {
 function setupEventListeners() {
   sendBtn.addEventListener('click', sendMessage);
   promptInput.addEventListener('keydown', handleInputKeydown);
-  clearBtn.addEventListener('click', () => {
-    const session = state.openSessions.find(s => s.id === state.sessionId);
-    if (session) {
-      session.messages = [];
-      renderMessages();
+  clearBtn.addEventListener('click', async () => {
+    if (!state.sessionId) { showToast('No active session'); return; }
+    if (!confirm('Clear all messages in this session? This cannot be undone.')) return;
+    try {
+      const res = await fetch('/session/' + state.sessionId + '/clear', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) { showToast('Failed: ' + await res.text()); return; }
+    } catch (e) {
+      showToast('Failed: ' + e.message);
+      return;
     }
+    const session = state.openSessions.find(s => s.id === state.sessionId);
+    if (session) { session.messages = []; }
+    renderMessages();
+    showToast('Chat cleared');
   });
   reasoningSelect.addEventListener('change', () => {
     state.reasoning = reasoningSelect.value;
