@@ -1726,6 +1726,33 @@ async function switchSession(id) {
   else if (state.activeTab === 'stats') loadStatsTab();
 }
 
+async function deleteSessionPermanently(id) {
+  try {
+    const res = await fetch(`/session/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
+    const index = state.openSessions.findIndex(s => s.id === id);
+    if (index !== -1) {
+      state.openSessions.splice(index, 1);
+    }
+    if (state.sessionId === id) {
+      if (state.openSessions.length > 0) {
+        const nextIndex = Math.min(index, state.openSessions.length - 1);
+        switchSession(state.openSessions[nextIndex].id);
+      } else {
+        state.sessionId = null;
+        await createNewSession();
+      }
+    } else {
+      renderSessionTabs();
+    }
+    showToast("Session permanently deleted.");
+  } catch (e) {
+    showToast("Failed to delete session: " + e.message);
+  }
+}
+
 async function closeSessionTab(id) {
   const index = state.openSessions.findIndex(s => s.id === id);
   if (index === -1) return;
@@ -1771,7 +1798,8 @@ function renderSessionTabs() {
         </div>
         <div class="session-item-actions">
           <button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">✏️</button>
-          <button class="session-action-btn close-session-btn" data-id="${session.id}" title="Close">&times;</button>
+          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently">🗑️</button>
+          <button class="session-action-btn close-session-btn" data-id="${session.id}" title="Close sidebar tab">&times;</button>
         </div>
       </div>
     `;
@@ -1787,6 +1815,16 @@ function renderSessionTabs() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       showRenameModal(btn.dataset.id, btn.dataset.title);
+    });
+  });
+
+  sessionTabsContainer.querySelectorAll('.delete-session-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const confirmed = confirm("Are you sure you want to permanently delete this session and all its messages?");
+      if (confirmed) {
+        await deleteSessionPermanently(btn.dataset.id);
+      }
     });
   });
 

@@ -744,6 +744,34 @@ int main(int argc, char* argv[]) {
         res.set_content(R"({"error":"session not found"})", "application/json");
     });
 
+    // ── Delete session ──
+    svr.Delete("/session/([a-f0-9-]+)", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+
+        // Cancel any active generation on that session first
+        {
+            std::lock_guard<std::mutex> lock(g_sessions_mutex);
+            auto it = g_sessions.find(sid);
+            if (it != g_sessions.end()) {
+                auto session = it->second;
+                if (session->ctx.abort_flag) {
+                    session->ctx.abort_flag->store(true);
+                }
+                g_sessions.erase(it);
+            }
+        }
+
+        // Delete from database
+        ai::tui::db::delete_session(sid);
+
+        res.set_content(R"({"ok":true})", "application/json");
+    });
+
     // ── Get session message history ──
     svr.Get("/session/([a-f0-9-]+)/messages", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = req.matches[1];
