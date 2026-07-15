@@ -88,6 +88,46 @@ const SLASH_COMMANDS = [
 let slashMenuEl = null;
 let slashActiveIdx = -1;
 
+// Helper to extract session ID from window.location.hash
+function getSessionIdFromHash() {
+  const hash = window.location.hash;
+  if (hash && hash.startsWith('#/session/')) {
+    const parts = hash.split('/');
+    if (parts.length >= 3) {
+      return parts[2];
+    }
+  }
+  return null;
+}
+
+async function handleHashChange() {
+  const hash = window.location.hash;
+  if (hash === '#/terminal') {
+    if (state.activeTab !== 'terminal') {
+      switchTab('terminal');
+    }
+    return;
+  }
+  
+  const sid = getSessionIdFromHash();
+  if (sid) {
+    if (sid !== state.sessionId) {
+      let session = state.openSessions.find(s => s.id === sid);
+      if (session) {
+        switchSession(sid);
+      } else {
+        session = await loadSessionData(sid);
+        if (session && session.title) {
+          state.openSessions.push(session);
+          switchSession(sid);
+        } else {
+          window.location.hash = '';
+        }
+      }
+    }
+  }
+}
+
 // ── Init ──
 async function init() {
   await loadProviders();
@@ -99,12 +139,14 @@ async function init() {
     if (sessionsRes.ok) {
       const sessions = await sessionsRes.json();
       if (Array.isArray(sessions) && sessions.length > 0) {
-        const lastRes = await fetch('/session/last');
-        let lastId = null;
-        if (lastRes.ok) {
-          const lastData = await lastRes.json();
-          if (lastData && lastData.id) {
-            lastId = lastData.id;
+        let lastId = getSessionIdFromHash();
+        if (!lastId) {
+          const lastRes = await fetch('/session/last');
+          if (lastRes.ok) {
+            const lastData = await lastRes.json();
+            if (lastData && lastData.id) {
+              lastId = lastData.id;
+            }
           }
         }
 
@@ -280,6 +322,8 @@ function setupEventListeners() {
       }
     }
   });
+
+  window.addEventListener('hashchange', handleHashChange);
 }
 
 // ── Status Bar ──
@@ -1645,6 +1689,9 @@ async function cancelSession(id) {
 
 async function switchSession(id) {
   if (id === 'terminal') {
+    if (window.location.hash !== '#/terminal') {
+      window.location.hash = '/terminal';
+    }
     switchTab('terminal');
     return;
   }
@@ -1661,6 +1708,11 @@ async function switchSession(id) {
   state.sessionWorkspace = session.workspace || '';
   if (session.provider && session.model) {
     applyProviderModel(session.provider, session.model);
+  }
+
+  const expectedHash = `#/session/${id}`;
+  if (window.location.hash !== expectedHash) {
+    window.location.hash = `/session/${id}`;
   }
 
   setGenerating(session.generating);
