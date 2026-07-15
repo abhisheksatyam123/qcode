@@ -14,8 +14,8 @@ add_executable(ai_tests
     unit/bash_tool_test.cpp
     unit/tui_config_test.cpp
     unit/tui_bus_test.cpp
-    ../src/tui/config.cpp
-    ../src/tui/bus/impl.cpp
+    ../libqcode/src/config/config.cpp
+    ../libqcode/src/bus/impl.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp
@@ -33,7 +33,7 @@ add_executable(ai_tests
 # Link against the main library and test dependencies
 target_link_libraries(ai_tests
     PRIVATE
-        ai-sdk-cpp
+        qcode-core
         httplib::httplib  # Need direct access to httplib for internal headers
         concurrentqueue   # Need direct access to concurrentqueue
         GTest::gtest
@@ -49,6 +49,9 @@ target_include_directories(ai_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/utils
         ${CMAKE_SOURCE_DIR}/src  # Access to private headers
         ${CMAKE_SOURCE_DIR}/third_party/httplib-header-only
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/libqcode/src
+        ${CMAKE_SOURCE_DIR}/libqcode/include
 )
 
 # Set test properties
@@ -67,6 +70,12 @@ endif()
 # Define preprocessor macros for tests
 target_compile_definitions(ai_tests PRIVATE
     AI_SDK_TESTING=1
+    AI_SDK_HAS_REGISTRY=1
+    AI_SDK_HAS_ANTIGRAVITY=1
+    AI_SDK_HAS_OPENAI=1
+    AI_SDK_HAS_ANTHROPIC=1
+    AI_SDK_HAS_CURSOR=1
+    AI_SDK_HAS_LANGFUSE=1
     $<$<CONFIG:Debug>:AI_SDK_DEBUG_TESTS=1>
     # httplib configuration (must match main library)
     CPPHTTPLIB_OPENSSL_SUPPORT=1

@@ -93,18 +93,38 @@ async function init() {
   await loadProviders();
   setupEventListeners();
   updateStatusBar();
-  // Auto-restore the last active session so a page reload keeps context.
+  
   try {
-    const res = await fetch('/session/last');
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.id) {
-        await loadSessionById(data.id);
+    const sessionsRes = await fetch('/sessions');
+    if (sessionsRes.ok) {
+      const sessions = await sessionsRes.json();
+      if (Array.isArray(sessions) && sessions.length > 0) {
+        const lastRes = await fetch('/session/last');
+        let lastId = null;
+        if (lastRes.ok) {
+          const lastData = await lastRes.json();
+          if (lastData && lastData.id) {
+            lastId = lastData.id;
+          }
+        }
+
+        if (!lastId || !sessions.some(s => s.id === lastId)) {
+          lastId = sessions[0].id;
+        }
+
+        for (const s of sessions) {
+          const session = await loadSessionData(s.id);
+          state.openSessions.push(session);
+        }
+        
+        switchSession(lastId);
         return;
       }
     }
-  } catch (e) {}
-  // If no last session, create a default session
+  } catch (e) {
+    console.error("Failed to load sessions from SQLite:", e);
+  }
+
   await createNewSession();
 }
 init();
@@ -856,16 +876,78 @@ async function handleSessionCommand(args) {
   }, 'Type a title or workspace to filter…', args || '');
 }
 
-async function loadSessionById(id) {
-  // Check if already open
-  let session = state.openSessions.find(s => s.id === id);
-  if (session) {
-    switchSession(id);
-    return;
+function parseMessages(msgs, session) {
+  session.messages = [];
+  let currentAssistantMsg = null;
+  for (const m of msgs) {
+    if (m.role === 'User' || m.role === 'user') {
+      currentAssistantMsg = null;
+      session.messages.push({ role: 'user', content: m.content });
+    } else if (m.role === 'Assistant' || m.role === 'assistant') {
+      if (!currentAssistantMsg) {
+        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+        session.messages.push(currentAssistantMsg);
+      }
+      currentAssistantMsg.content = m.content;
+    } else if (m.role === 'ToolCall') {
+      try {
+        const tc = JSON.parse(m.content);
+        if (!currentAssistantMsg) {
+          currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+          session.messages.push(currentAssistantMsg);
+        }
+        currentAssistantMsg.toolEvents.push({
+          type: 'tool_call',
+          tool_call_id: tc.id,
+          tool_name: tc.name,
+          arguments: tc.arguments,
+          status: 'running'
+        });
+      } catch (e) {}
+    } else if (m.role === 'ToolResult') {
+      try {
+        const tr = JSON.parse(m.content);
+        if (!currentAssistantMsg) {
+          currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+          session.messages.push(currentAssistantMsg);
+        }
+        const tc = currentAssistantMsg.toolEvents.find(t => t.tool_call_id === tr.tool_call_id);
+        if (tc) {
+          tc.status = tr.is_error ? 'error' : 'success';
+          tc.result = tr.result;
+          tc.duration_ms = tr.duration_ms;
+        } else {
+          currentAssistantMsg.toolEvents.push({
+            type: 'tool_call',
+            tool_call_id: tr.tool_call_id,
+            tool_name: 'tool',
+            arguments: null,
+            status: tr.is_error ? 'error' : 'success',
+            result: tr.result,
+            duration_ms: tr.duration_ms
+          });
+        }
+      } catch (e) {}
+    } else if (m.role === 'Reasoning') {
+      if (!currentAssistantMsg) {
+        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+        session.messages.push(currentAssistantMsg);
+      }
+      try {
+        const r = JSON.parse(m.content);
+        currentAssistantMsg.reasoning = r.text || '';
+      } catch (e) {
+        currentAssistantMsg.reasoning = m.content;
+      }
+    } else {
+      currentAssistantMsg = null;
+      session.messages.push({ role: 'system', content: m.content });
+    }
   }
+}
 
-  // If not open, fetch info and messages
-  session = {
+async function loadSessionData(id) {
+  const session = {
     id: id,
     title: '',
     workspace: '',
@@ -892,76 +974,22 @@ async function loadSessionById(id) {
     if (res.ok) {
       const msgs = await res.json();
       if (Array.isArray(msgs)) {
-        let currentAssistantMsg = null;
-        for (const m of msgs) {
-          if (m.role === 'User' || m.role === 'user') {
-            currentAssistantMsg = null;
-            session.messages.push({ role: 'user', content: m.content });
-          } else if (m.role === 'Assistant' || m.role === 'assistant') {
-            if (!currentAssistantMsg) {
-              currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
-              session.messages.push(currentAssistantMsg);
-            }
-            currentAssistantMsg.content = m.content;
-          } else if (m.role === 'ToolCall') {
-            try {
-              const tc = JSON.parse(m.content);
-              if (!currentAssistantMsg) {
-                currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
-                session.messages.push(currentAssistantMsg);
-              }
-              currentAssistantMsg.toolEvents.push({
-                type: 'tool_call',
-                tool_call_id: tc.id,
-                tool_name: tc.name,
-                arguments: tc.arguments,
-                status: 'running'
-              });
-            } catch (e) {}
-          } else if (m.role === 'ToolResult') {
-            try {
-              const tr = JSON.parse(m.content);
-              if (!currentAssistantMsg) {
-                currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
-                session.messages.push(currentAssistantMsg);
-              }
-              const tc = currentAssistantMsg.toolEvents.find(t => t.tool_call_id === tr.tool_call_id);
-              if (tc) {
-                tc.status = tr.is_error ? 'error' : 'success';
-                tc.result = tr.result;
-                tc.duration_ms = tr.duration_ms;
-              } else {
-                currentAssistantMsg.toolEvents.push({
-                  type: 'tool_call',
-                  tool_call_id: tr.tool_call_id,
-                  tool_name: 'tool',
-                  arguments: null,
-                  status: tr.is_error ? 'error' : 'success',
-                  result: tr.result,
-                  duration_ms: tr.duration_ms
-                });
-              }
-            } catch (e) {}
-          } else if (m.role === 'Reasoning') {
-            if (!currentAssistantMsg) {
-              currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
-              session.messages.push(currentAssistantMsg);
-            }
-            try {
-              const r = JSON.parse(m.content);
-              currentAssistantMsg.reasoning = r.text || '';
-            } catch (e) {
-              currentAssistantMsg.reasoning = m.content;
-            }
-          } else {
-            currentAssistantMsg = null;
-            session.messages.push({ role: 'system', content: m.content });
-          }
-        }
+        parseMessages(msgs, session);
       }
     }
   } catch (e) {}
 
+  return session;
+}
+
+async function loadSessionById(id) {
+  let session = state.openSessions.find(s => s.id === id);
+  if (session) {
+    switchSession(id);
+    return;
+  }
+
+  session = await loadSessionData(id);
   state.openSessions.push(session);
   switchSession(id);
 }
@@ -990,7 +1018,46 @@ async function doRenameDirect(title) {
     else showToast('Failed: ' + await res.text());
   } catch (e) { showToast('Failed: ' + e.message); }
 }
-function handleCompactCommand() { addSystemMessage('Compact: not yet implemented.'); }
+async function handleCompactCommand() {
+  if (!state.sessionId) {
+    addSystemMessage("Compact: No active session.");
+    return;
+  }
+  
+  addSystemMessage("Compacting conversation...");
+  try {
+    const res = await fetch('/session/' + state.sessionId + '/compact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keep: 5 })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast("Compaction complete");
+        const session = state.openSessions.find(s => s.id === state.sessionId);
+        if (session) {
+          const msgRes = await fetch('/session/' + state.sessionId + '/messages');
+          if (msgRes.ok) {
+            const msgs = await msgRes.json();
+            if (Array.isArray(msgs)) {
+              parseMessages(msgs, session);
+            }
+          }
+          renderMessages();
+        }
+      } else {
+        addSystemMessage("Compaction failed: " + (data.error || "unknown error"));
+      }
+    } else {
+      const data = await res.json().catch(() => ({}));
+      addSystemMessage("Compaction failed: " + (data.error || res.statusText));
+    }
+  } catch (e) {
+    addSystemMessage("Compaction failed: " + e.message);
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  SEND MESSAGE + STREAMING
@@ -1629,7 +1696,7 @@ function renderSessionTabs() {
 
   sessionTabsContainer.innerHTML = state.openSessions.map(session => {
     const isActive = session.id === state.sessionId;
-    const activeClass = isActive && state.activeTab === 'chat' ? 'active' : '';
+    const activeClass = isActive && (state.layoutMode === 'split' || state.activeTab === 'chat') ? 'active' : '';
     const title = session.title || 'Session';
     const genIndicator = session.generating ? '<span class="session-gen-indicator">⏳</span> ' : '';
     const ws = session.workspace ? shortPath(session.workspace) : '';

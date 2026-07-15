@@ -133,6 +133,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
             // vector while we copy.
             const auto history = state_ptr->messages_history;
             ai::Messages gen_messages = history ? *history : ai::Messages{};
+            gen_messages = ai::apply_compaction_cutoff(gen_messages);
             gen_messages.erase(
                 std::remove_if(gen_messages.begin(), gen_messages.end(),
                                [](const ai::Message& message) {

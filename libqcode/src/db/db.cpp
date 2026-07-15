@@ -284,19 +284,18 @@ void save_message(const std::string& session_id, const std::string& sender, cons
     writer.write(session_id, sender, content, created_at);
 }
 
-void reload_session_history(const std::string& session_id, ChatState& state) {
+std::vector<ai::Message> load_session_history_parsed(const std::string& session_id) {
+    std::vector<ai::Message> history;
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
-        return;
+        return history;
     }
 
     std::string path;
     sqlite3* db = open_database(path);
     if (!db) {
-        return;
+        return history;
     }
-
-    state.messages_history->clear();
 
     const char* sql = "SELECT sender, content FROM messages WHERE session_id = ? ORDER BY id ASC;";
     sqlite3_stmt* stmt = nullptr;
@@ -311,21 +310,21 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
             std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
 
             if (sender == "User") {
-                state.messages_history->push_back(ai::Message::user(content));
+                history.push_back(ai::Message::user(content));
                 continue;
             }
             if (sender == "Assistant") {
-                state.messages_history->push_back(ai::Message::assistant(content));
+                history.push_back(ai::Message::assistant(content));
                 continue;
             }
 
-            // Structured tool rows (and legacy text forms) → pretty ToolBlocks.
+            // Structured tool rows (and legacy text forms) -> pretty ToolBlocks.
             if (sender == "ToolCall") {
                 try {
                     auto j = nlohmann::json::parse(content);
                     if (j.is_object() && j.contains("id") && j.contains("name")) {
                         auto args = j.value("arguments", nlohmann::json::object());
-                        state.messages_history->push_back(
+                        history.push_back(
                             ai::Message::assistant_with_tools(
                                 "",
                                 {{j.at("id").get<std::string>(),
@@ -345,14 +344,14 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
                         const std::string tool_name = content.substr(0, paren);
                         const std::string id =
                             "legacy-call-" + std::to_string(++legacy_tool_seq);
-                        state.messages_history->push_back(
+                        history.push_back(
                             ai::Message::assistant_with_tools(
                                 "", {{id, tool_name, std::move(args)}}));
                         continue;
                     } catch (...) {
                     }
                 }
-                state.messages_history->push_back(ai::Message::system(content));
+                history.push_back(ai::Message::system(content));
                 continue;
             }
 
@@ -362,7 +361,7 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
                     if (j.is_object() && j.contains("tool_call_id")) {
                         auto result = j.contains("result") ? j.at("result")
                                                            : nlohmann::json();
-                        state.messages_history->push_back(ai::Message::tool_results(
+                        history.push_back(ai::Message::tool_results(
                             {{j.at("tool_call_id").get<std::string>(),
                               std::move(result),
                               j.value("is_error", false),
@@ -371,7 +370,7 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
                     }
                 } catch (...) {
                 }
-                // Legacy: "  ✔ bash (4ms)" — pair with previous legacy call if possible.
+                // Legacy: "  ✔ bash (4ms)" - pair with previous legacy call if possible.
                 double duration_ms = 0.0;
                 const auto open = content.rfind('(');
                 const auto close = content.rfind(')');
@@ -387,8 +386,8 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
                     }
                 }
                 std::string call_id;
-                if (!state.messages_history->empty()) {
-                    const auto& prev = state.messages_history->back();
+                if (!history.empty()) {
+                    const auto& prev = history.back();
                     if (prev.has_tool_calls()) {
                         const auto calls = prev.get_tool_calls();
                         if (!calls.empty()) call_id = calls.back().id;
@@ -401,20 +400,150 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
                     content.find("failed") != std::string::npos ||
                     content.find("✖") != std::string::npos ||
                     content.find("✗") != std::string::npos;
-                state.messages_history->push_back(ai::Message::tool_results(
+                history.push_back(ai::Message::tool_results(
                     {{call_id, nlohmann::json::object(), is_error, duration_ms}}));
                 continue;
             }
 
-            // Persisted tool/status rows are display history. They are kept
-            // in the canonical UI list and filtered from model requests.
-            state.messages_history->push_back(ai::Message::system(content));
+            // Persisted tool/status rows are display history.
+            history.push_back(ai::Message::system(content));
         }
         sqlite3_finalize(stmt);
     }
 
     sqlite3_close(db);
+    return history;
 }
+
+void reload_session_history(const std::string& session_id, ChatState& state) {
+    state.messages_history = std::make_shared<ai::Messages>(load_session_history_parsed(session_id));
+}
+
+void overwrite_session_history(const std::string& session_id, const std::vector<ai::Message>& messages) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) {
+        LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
+        return;
+    }
+
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) {
+        return;
+    }
+
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        LOG_ERROR("SQLite: failed to begin transaction: {}", err_msg ? err_msg : "unknown");
+        sqlite3_free(err_msg);
+        sqlite3_close(db);
+        return;
+    }
+
+    const char* delete_sql = "DELETE FROM messages WHERE session_id = ?;";
+    sqlite3_stmt* del_stmt = nullptr;
+    if (prepare_stmt(db, delete_sql, &del_stmt)) {
+        sqlite3_bind_text(del_stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(del_stmt);
+        sqlite3_finalize(del_stmt);
+    }
+
+    const char* insert_sql =
+        "INSERT INTO messages (session_id, sender, content, created_at) "
+        "VALUES (?, ?, ?, ?);";
+    sqlite3_stmt* ins_stmt = nullptr;
+    if (prepare_stmt(db, insert_sql, &ins_stmt)) {
+        auto now = std::chrono::system_clock::now();
+        long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
+        for (const auto& m : messages) {
+            bool has_tools = false;
+            bool has_results = false;
+            for (const auto& part : m.content) {
+                if (std::holds_alternative<ai::ToolCallContentPart>(part)) {
+                    has_tools = true;
+                } else if (std::holds_alternative<ai::ToolResultContentPart>(part)) {
+                    has_results = true;
+                }
+            }
+
+            if (has_tools) {
+                for (const auto& part : m.content) {
+                    if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) {
+                        nlohmann::json call_json = {
+                            {"id", tcp->id},
+                            {"name", tcp->tool_name},
+                            {"arguments", tcp->arguments},
+                        };
+                        std::string content = call_json.dump();
+                        
+                        sqlite3_reset(ins_stmt);
+                        sqlite3_clear_bindings(ins_stmt);
+                        sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(ins_stmt, 2, "ToolCall", -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_int64(ins_stmt, 4, created_at);
+                        if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+                            LOG_ERROR("SQLite: overwrite insert ToolCall failed: {}", sqlite3_errmsg(db));
+                        }
+                    }
+                }
+            } else if (has_results) {
+                for (const auto& part : m.content) {
+                    if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
+                        nlohmann::json result_json = {
+                            {"tool_call_id", trp->tool_call_id},
+                            {"result", trp->result},
+                            {"is_error", trp->is_error},
+                            {"duration_ms", trp->duration_ms},
+                        };
+                        std::string content = result_json.dump();
+
+                        sqlite3_reset(ins_stmt);
+                        sqlite3_clear_bindings(ins_stmt);
+                        sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(ins_stmt, 2, "ToolResult", -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_int64(ins_stmt, 4, created_at);
+                        if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+                            LOG_ERROR("SQLite: overwrite insert ToolResult failed: {}", sqlite3_errmsg(db));
+                        }
+                    }
+                }
+            } else {
+                std::string sender;
+                if (m.role == ai::kMessageRoleUser) sender = "User";
+                else if (m.role == ai::kMessageRoleAssistant) sender = "Assistant";
+                else if (m.role == ai::kMessageRoleSystem) sender = "System";
+
+                std::string content;
+                for (const auto& part : m.content) {
+                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                        content += tp->text;
+                    }
+                }
+
+                sqlite3_reset(ins_stmt);
+                sqlite3_clear_bindings(ins_stmt);
+                sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(ins_stmt, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(ins_stmt, 4, created_at);
+                if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+                    LOG_ERROR("SQLite: overwrite insert regular failed: {}", sqlite3_errmsg(db));
+                }
+            }
+        }
+        sqlite3_finalize(ins_stmt);
+    }
+
+    if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        LOG_ERROR("SQLite: failed to commit transaction: {}", err_msg ? err_msg : "unknown");
+        sqlite3_free(err_msg);
+    }
+
+    sqlite3_close(db);
+}
+
 
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
     std::vector<std::pair<std::string, std::string>> out;

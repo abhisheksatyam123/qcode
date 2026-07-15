@@ -245,25 +245,44 @@ void AppStore::wire() {
             notify();
             return;
         }
-        const auto& hist = *state_.messages_history;
-        ai::Messages new_messages;
+        
         std::string summary_body =
             "This conversation was compacted into a handoff packet" +
             (p.wrote ? (" written to: " + p.todo_path) : "") + ".\n\n" + p.summary;
-        new_messages.emplace_back(ai::Message::user(summary_body));
-        size_t start = (hist.size() > static_cast<size_t>(p.keep))
-                           ? hist.size() - static_cast<size_t>(p.keep)
-                           : 0;
-        for (size_t i = start; i < hist.size(); ++i) {
-            new_messages.push_back(hist[i]);
-        }
 
         std::string note = "Conversation compacted: " + std::to_string(p.original_size) +
                            " messages -> handoff packet";
         note += p.wrote ? ("\nTodo file: " + p.todo_path) : " (todo file write failed)";
-        new_messages.insert(
-            new_messages.begin(), ai::Message::system(std::move(note)));
+
+        // Build the new sequenced message history containing all old messages,
+        // the compaction summary inserted before the 'keep' recent messages,
+        // and the 'keep' recent messages.
+        const auto& hist = *state_.messages_history;
+        ai::Messages new_messages;
+
+        size_t cutoff_idx = (hist.size() > static_cast<size_t>(p.keep))
+                            ? hist.size() - static_cast<size_t>(p.keep)
+                            : 0;
+
+        // Copy older messages
+        for (size_t i = 0; i < cutoff_idx; ++i) {
+            new_messages.push_back(hist[i]);
+        }
+
+        // Insert compaction note and user summary
+        new_messages.push_back(ai::Message::system(note));
+        new_messages.push_back(ai::Message::user(summary_body));
+
+        // Copy keep recent messages
+        for (size_t i = cutoff_idx; i < hist.size(); ++i) {
+            new_messages.push_back(hist[i]);
+        }
+
         state_.messages_history = std::make_shared<ai::Messages>(new_messages);
+
+        // Overwrite history in SQLite database to persist the new sequenced order
+        ai::tui::db::overwrite_session_history(*state_.session_id, *state_.messages_history);
+
         add_toast("Compaction complete", "success", 3000);
         set_status("idle");
         notify();

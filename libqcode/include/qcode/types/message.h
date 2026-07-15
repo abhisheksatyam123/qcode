@@ -213,4 +213,23 @@ struct Message {
 
 using Messages = std::vector<Message>;
 
+// Apply compaction cutoff: discard all messages before the latest compaction summary message.
+inline Messages apply_compaction_cutoff(const Messages& messages) {
+  for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
+    if (it->role == kMessageRoleUser) {
+      std::string text;
+      for (const auto& part : it->content) {
+        if (const auto* tp = std::get_if<TextContentPart>(&part)) {
+          text += tp->text;
+        }
+      }
+      if (text.find("This conversation was compacted into a handoff packet") != std::string::npos) {
+        auto forward_it = (it + 1).base();
+        return Messages(forward_it, messages.end());
+      }
+    }
+  }
+  return messages;
+}
+
 }  // namespace ai

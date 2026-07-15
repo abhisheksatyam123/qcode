@@ -32,6 +32,12 @@ void save_message(const std::string& session_id, const std::string& sender, cons
 // Clear current session messages in state and reload from SQLite
 void reload_session_history(const std::string& session_id, ChatState& state);
 
+// Load all messages parsed into Message objects for a session, oldest first
+std::vector<ai::Message> load_session_history_parsed(const std::string& session_id);
+
+// Overwrite all messages in SQLite database for a session
+void overwrite_session_history(const std::string& session_id, const std::vector<ai::Message>& messages);
+
 // Load saved messages (sender, content) for a session, oldest first
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id);
 

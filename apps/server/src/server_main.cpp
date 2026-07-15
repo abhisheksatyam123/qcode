@@ -1,4 +1,7 @@
 #include <ai/file_logger.h>
+#include <ai/registry.h>
+#include <filesystem>
+#include <fstream>
 #include <ai/tui/chat_bus.h>
 #include <ai/tui/provider_registry_init.h>
 #include <ai/tui/config.h>
@@ -206,6 +209,13 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
     subs.push_back(bus.subscribe<ToolCallStarted>(
         [session](const ToolCallStarted::Payload& p) {
             if (p.session_id != session->ctx.session_id) return;
+            nlohmann::json call_json = {
+                {"id", p.tool_call_id},
+                {"name", p.tool_name},
+                {"arguments", p.arguments},
+            };
+            ai::tui::db::save_message(p.session_id, "ToolCall", call_json.dump());
+
             auto j = ai::server::tool_call_started_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
@@ -215,6 +225,15 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
     subs.push_back(bus.subscribe<ToolCallCompleted>(
         [session](const ToolCallCompleted::Payload& p) {
             if (p.session_id != session->ctx.session_id) return;
+            nlohmann::json result_json = {
+                {"tool_call_id", p.tool_call_id},
+                {"tool_name", p.tool_name},
+                {"result", p.result},
+                {"is_error", p.is_error},
+                {"duration_ms", p.duration_ms},
+            };
+            ai::tui::db::save_message(p.session_id, "ToolResult", result_json.dump());
+
             auto j = ai::server::tool_call_completed_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
@@ -404,15 +423,10 @@ int main(int argc, char* argv[]) {
             session->event_queue.clear();
         }
 
-        // If this session has prior history in the DB (resumed after a server
-        // restart or loaded from another client), restore it so the model keeps
-        // full context.
-        if (created_this_request && !session_id.empty()) {
-            for (const auto& [sender, content] : ai::tui::db::load_session_messages(session_id)) {
-                if (sender == "User") session->messages.push_back(ai::Message::user(content));
-                else if (sender == "Assistant") session->messages.push_back(ai::Message::assistant(content));
-            }
-        }
+                // Load (or reload) the entire session history from the SQLite database
+        // to ensure we have the complete, up-to-date context (including ToolCall,
+        // ToolResult, System, and Assistant messages).
+        session->messages = ai::tui::db::load_session_history_parsed(session->id);
 
         // Set up generation context (reasoning mode can change per request)
         {
@@ -435,8 +449,8 @@ int main(int argc, char* argv[]) {
         ai::tui::db::save_message(session->id, "User", text);
         session->messages.push_back(ai::Message::user(text));
 
-        // Keep a local copy of messages for the generation thread
-        ai::Messages messages = session->messages;
+        // Keep a local copy of messages for the generation thread, applying the compaction cutoff
+        ai::Messages messages = ai::apply_compaction_cutoff(session->messages);
 
         // ── Set up streaming response ──
         // Generation runs in a background thread. The chunked provider
@@ -720,6 +734,207 @@ int main(int argc, char* argv[]) {
             j.push_back({{"role", sender}, {"content", content}});
         }
         res.set_content(j.dump(2), "application/json");
+    });
+
+    // ── Compact session ──
+    svr.Post("/session/([a-f0-9-]+)/compact", [&providers_list](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+
+        nlohmann::json body;
+        try {
+            if (!req.body.empty()) {
+                body = nlohmann::json::parse(req.body);
+            }
+        } catch (...) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid JSON"})", "application/json");
+            return;
+        }
+
+        int keep = body.value("keep", 5);
+
+        // Load conversation messages from DB
+        auto snapshot = ai::tui::db::load_session_history_parsed(sid);
+        if (snapshot.size() <= 2) {
+            res.status = 400;
+            res.set_content(R"({"error":"Nothing to compact: conversation is too short."})", "application/json");
+            return;
+        }
+
+        // Get session info to know which provider/model to use for compaction
+        std::string provider_id = "";
+        std::string model_id = "";
+        for (const auto& s : ai::tui::db::list_sessions_full()) {
+            if (s.id == sid) {
+                provider_id = s.provider;
+                model_id = s.model;
+                break;
+            }
+        }
+
+        if (provider_id.empty() || model_id.empty()) {
+            // Fallback to default provider/model
+            provider_id = providers_list[0].id;
+            model_id = providers_list[0].models[0].id;
+        }
+
+        // Find the ProviderInfo
+        int sp = -1;
+        for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
+            if (providers_list[i].id == provider_id || providers_list[i].name == provider_id) {
+                sp = i;
+                break;
+            }
+        }
+        if (sp == -1) sp = 0;
+
+        int sm = -1;
+        for (int i = 0; i < static_cast<int>(providers_list[sp].models.size()); ++i) {
+            if (providers_list[sp].models[i].id == model_id || providers_list[sp].models[i].name == model_id) {
+                sm = i;
+                break;
+            }
+        }
+        if (sm == -1) sm = 0;
+
+        const auto& sel = providers_list[sp];
+
+        // Format the transcript for compaction
+        std::ostringstream transcript;
+        for (const auto& m : snapshot) {
+            std::string role_str;
+            if (m.role == ai::kMessageRoleUser) role_str = "User";
+            else if (m.role == ai::kMessageRoleAssistant) role_str = "Assistant";
+            else if (m.role == ai::kMessageRoleSystem) role_str = "System";
+            else role_str = "Message";
+            std::string text;
+            for (const auto& part : m.content) {
+                if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                    text += tp->text + "\n";
+                } else if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) {
+                    text += "[Tool call: " + tcp->tool_name + "]\n";
+                } else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
+                    text += "[Tool result]\n";
+                } else if (const auto* rcp = std::get_if<ai::ReasoningContentPart>(&part)) {
+                    if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";
+                }
+            }
+            transcript << role_str << ": " << text << "\n";
+        }
+
+        const std::string compaction_instruction =
+            "Tools are available when needed, including bash for bounded read-only "
+            "inspection. Do not modify files or create notes while generating the "
+            "handoff summary.\n\n"
+            "Summarize the following conversation into a concise handoff packet so a "
+            "fresh session can take over. Preserve the next actionable task, verified "
+            "evidence, blockers, and concise facts about the code, APIs, data "
+            "structures, files, and user preferences that matter for the request.\n\n"
+            "Keep only task state and concise facts.\n\n"
+            "Output only:\n"
+            "## Tasks\n"
+            "## Systems\n\n"
+            "Use tools only when they improve summary accuracy; otherwise answer directly.";
+
+        ai::providers::register_tui_providers();
+        ai::providers::ProviderOptions provider_options;
+        provider_options.base_url = sel.api_url;
+        provider_options.api_key = sel.api_key;
+        provider_options.headers = sel.headers;
+        provider_options.protocol = sel.protocol;
+        provider_options.project_id = sel.project_id;
+        auto resolution = ai::providers::ProviderRegistry::instance().resolve(
+            sel.id, provider_options);
+        if (!resolution.ok()) {
+            res.status = 500;
+            nlohmann::json err_j; err_j["error"] = "Compaction failed: " + resolution.error; res.set_content(err_j.dump(), "application/json");
+            return;
+        }
+
+        ai::Client client = std::move(resolution.client);
+
+        ai::GenerateOptions opts;
+        opts.model = providers_list[sp].models[sm].id;
+        opts.system = compaction_instruction;
+        opts.messages = {ai::Message::user(transcript.str())};
+
+        ai::GenerateResult gen_res = client.generate_text(opts);
+        if (!gen_res.is_success() || (gen_res.error && !gen_res.error->empty())) {
+            res.status = 500;
+            std::string err = gen_res.error && !gen_res.error->empty() ? *gen_res.error : gen_res.error_message();
+            nlohmann::json err_j; err_j["error"] = "Compaction failed: " + err; res.set_content(err_j.dump(), "application/json");
+            return;
+        }
+
+        std::string summary = gen_res.text;
+        if (summary.empty()) {
+            res.status = 500;
+            res.set_content(R"({"error":"Compaction failed: empty summary from model."})", "application/json");
+            return;
+        }
+
+        std::string notes_root = ai::tui::get_notes_root();
+        std::error_code ec;
+        std::filesystem::create_directories(
+            notes_root + "/scratchpad/task/qcode-tui/active", ec);
+        std::string todo_path = notes_root +
+                                "/scratchpad/task/qcode-tui/active/todo-" + sid + ".md";
+        bool wrote = false;
+        if (!ec) {
+            std::ofstream out(todo_path);
+            if (out) {
+                out << "# qcode compacted handoff\n\n" << summary << "\n";
+                wrote = true;
+            }
+        }
+
+        std::string summary_body =
+            "This conversation was compacted into a handoff packet" +
+            (wrote ? (" written to: " + todo_path) : "") + ".\n\n" + summary;
+
+        std::string note = "Conversation compacted: " + std::to_string(snapshot.size()) +
+                           " messages -> handoff packet";
+        note += wrote ? ("\nTodo file: " + todo_path) : " (todo file write failed)";
+
+        // Build the new sequenced message history containing all old messages,
+        // the compaction summary inserted before the 'keep' recent messages,
+        // and the 'keep' recent messages.
+        ai::Messages new_messages;
+
+        size_t cutoff_idx = (snapshot.size() > static_cast<size_t>(keep))
+                            ? snapshot.size() - static_cast<size_t>(keep)
+                            : 0;
+
+        // Copy older messages
+        for (size_t i = 0; i < cutoff_idx; ++i) {
+            new_messages.push_back(snapshot[i]);
+        }
+
+        // Insert compaction note and user summary
+        new_messages.push_back(ai::Message::system(note));
+        new_messages.push_back(ai::Message::user(summary_body));
+
+        // Copy keep recent messages
+        for (size_t i = cutoff_idx; i < snapshot.size(); ++i) {
+            new_messages.push_back(snapshot[i]);
+        }
+
+        // Overwrite history in SQLite database to persist the new sequenced order
+        ai::tui::db::overwrite_session_history(sid, new_messages);
+
+        nlohmann::json res_j;
+        res_j["status"] = "success";
+        res_j["summary"] = summary;
+        res_j["todo_path"] = todo_path;
+        res_j["wrote"] = wrote;
+        res_j["original_size"] = snapshot.size();
+        res_j["keep"] = keep;
+        res.set_content(res_j.dump(), "application/json");
     });
 
     // ── Get aggregate session statistics ──
