@@ -56,6 +56,7 @@ struct GenSession {
     std::atomic<bool> generation_started{false};
     std::string error;
     std::string assistant_text;  // accumulated (cumulative) assistant reply, for DB persistence
+    std::string reasoning_text;  // accumulated reasoning, for DB persistence
     std::shared_ptr<std::vector<ai::tui::bus::Subscription>> subs;
     // Live token accounting (accumulated from TokenUsageUpdated during generation).
     std::atomic<int> live_prompt_tokens{0};
@@ -415,6 +416,7 @@ int main(int argc, char* argv[]) {
         session->done = false;
         session->error.clear();
         session->assistant_text.clear();
+        session->reasoning_text.clear();
         if (session->ctx.abort_flag) {
             session->ctx.abort_flag->store(false);
         }
@@ -501,7 +503,10 @@ int main(int argc, char* argv[]) {
 
                 for (const auto& evt : events) {
                     if (evt.value("type", "") == "backend.message.delta") {
-                        session->assistant_text = evt.value("text", session->assistant_text);
+                        session->assistant_text += evt.value("text", "");
+                    }
+                    if (evt.value("type", "") == "backend.reasoning.delta") {
+                        session->reasoning_text += evt.value("text", "");
                     }
                     std::string chunk = evt.dump() + "\n";
                     if (!sink.write(chunk.data(), chunk.size())) {
@@ -528,6 +533,9 @@ int main(int argc, char* argv[]) {
                     // Persist the assistant reply so the session is resumable.
                     if (!session->assistant_text.empty()) {
                         ai::tui::db::save_message(session->id, "Assistant", session->assistant_text);
+                    }
+                    if (!session->reasoning_text.empty()) {
+                        ai::tui::db::save_message(session->id, "Reasoning", session->reasoning_text);
                     }
                     nlohmann::json final_msg = {
                         {"type", "generation.complete"},
