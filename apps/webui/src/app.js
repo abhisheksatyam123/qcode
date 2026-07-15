@@ -1753,29 +1753,7 @@ async function deleteSessionPermanently(id) {
   }
 }
 
-async function closeSessionTab(id) {
-  const index = state.openSessions.findIndex(s => s.id === id);
-  if (index === -1) return;
 
-  const session = state.openSessions[index];
-  if (session.generating) {
-    await cancelSession(session.id);
-  }
-
-  state.openSessions.splice(index, 1);
-
-  if (state.sessionId === id) {
-    if (state.openSessions.length > 0) {
-      const nextIndex = Math.min(index, state.openSessions.length - 1);
-      switchSession(state.openSessions[nextIndex].id);
-    } else {
-      state.sessionId = null;
-      await createNewSession();
-    }
-  } else {
-    renderSessionTabs();
-  }
-}
 
 function renderSessionTabs() {
   if (!sessionTabsContainer) return;
@@ -1799,7 +1777,6 @@ function renderSessionTabs() {
         <div class="session-item-actions">
           <button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">✏️</button>
           <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently">🗑️</button>
-          <button class="session-action-btn close-session-btn" data-id="${session.id}" title="Close sidebar tab">&times;</button>
         </div>
       </div>
     `;
@@ -1828,12 +1805,7 @@ function renderSessionTabs() {
     });
   });
 
-  sessionTabsContainer.querySelectorAll('.close-session-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      closeSessionTab(btn.dataset.id);
-    });
-  });
+
 }
 
 
