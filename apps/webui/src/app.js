@@ -162,15 +162,22 @@ function onProviderChange(idx) {
 // Apply a provider/model selection to both the dropdowns and state.
 // Used by the model picker and when restoring a session.
 function applyProviderModel(providerId, modelId) {
-  const pidx = state.providers.findIndex(p => p.id === providerId);
-  if (pidx < 0) { state.provider = providerId; state.model = modelId; return false; }
+  const pidx = state.providers.findIndex(p => p.id === providerId || p.name === providerId);
+  if (pidx < 0) {
+    state.provider = providerId;
+    state.model = modelId;
+    return false;
+  }
   const p = state.providers[pidx];
   providerSelect.value = pidx;
   onProviderChange(pidx);
-  const midx = p.models.findIndex(m => m.id === modelId);
-  if (midx >= 0) modelSelect.value = modelId;
-  state.provider = providerId;
-  state.model = midx >= 0 ? modelId : (p.models.length > 0 ? p.models[0].id : modelId);
+  const midx = p.models.findIndex(m => m.id === modelId || m.name === modelId);
+  const resolvedModelId = midx >= 0 ? p.models[midx].id : (p.models.length > 0 ? p.models[0].id : modelId);
+  if (midx >= 0) {
+    modelSelect.value = resolvedModelId;
+  }
+  state.provider = p.id;
+  state.model = resolvedModelId;
   return true;
 }
 

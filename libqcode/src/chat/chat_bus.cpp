@@ -610,6 +610,7 @@ void run_generation_with_bus(
     // ── Resolve provider & API key ──
     ai::Client client;
     std::string provider_id;
+    std::string resolved_model_id = model_id;
     ai::providers::ProviderOptions provider_options;
 
     for (const auto& p : providers) {
@@ -620,6 +621,12 @@ void run_generation_with_bus(
         provider_options.headers = p.headers;
         provider_options.protocol = p.protocol;
         provider_options.project_id = p.project_id;
+        for (const auto& m : p.models) {
+          if (m.id == model_id || m.name == model_id) {
+            resolved_model_id = m.id;
+            break;
+          }
+        }
         break;
       }
     }
@@ -643,11 +650,11 @@ void run_generation_with_bus(
     }
     client = std::move(resolution.client);
 
-    LOG_INFO("ChatBus: provider={}, model={}, tools={}", provider_id, model_id, enable_tools);
+    LOG_INFO("ChatBus: provider={}, model={}, tools={}", provider_id, resolved_model_id, enable_tools);
 
     // ── Build common base options ──
     ai::GenerateOptions base_opts;
-    base_opts.model = model_id;
+    base_opts.model = resolved_model_id;
     base_opts.system = system_prompt;
     base_opts.messages = messages;
     base_opts.workspace = ctx.workspace;
@@ -657,7 +664,7 @@ void run_generation_with_bus(
     if (rm == "low" || rm == "medium" || rm == "high") {
       bool is_anthropic =
           (provider_id.find("anthropic") != std::string::npos) ||
-          (model_id.find("claude") != std::string::npos);
+          (resolved_model_id.find("claude") != std::string::npos);
       if (is_anthropic) {
         int budget = (rm == "low") ? 2000 : (rm == "medium") ? 8000 : 16000;
         base_opts.budget_tokens = budget;
