@@ -57,6 +57,7 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   context.messages = messages;
   if (options) {
     context.workspace = options->workspace;
+    context.abort_flag = options->abort_flag;
   }
 
   try {
@@ -85,6 +86,16 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
   if (!parallel) {
     // Execute sequentially
     for (const auto& tool_call : tool_calls) {
+      if (options && options->abort_flag && options->abort_flag->load()) {
+        ToolResult aborted_res(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                               std::string("Tool execution aborted"));
+        if (options && options->on_tool_call_finish.has_value()) {
+          options->on_tool_call_finish.value()(aborted_res);
+        }
+        results.push_back(aborted_res);
+        continue;
+      }
+
       // Check confirmation if callback is set
       if (options && options->on_tool_call_confirm.has_value()) {
         bool confirmed = options->on_tool_call_confirm.value()(tool_call);
@@ -126,36 +137,51 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
 
       for (std::size_t i = start; i < end; ++i) {
         const auto& tool_call = tool_calls[i];
-      // Confirmation (mirror sequential path) - must run before execution
-      if (options && options->on_tool_call_confirm.has_value()) {
-        bool confirmed = options->on_tool_call_confirm.value()(tool_call);
-        if (!confirmed) {
-          ToolResult rejected_res(tool_call.id, tool_call.tool_name,
-                                  tool_call.arguments,
-                                  std::string("Tool execution rejected by user"));
+        if (options && options->abort_flag && options->abort_flag->load()) {
+          ToolResult aborted_res(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                                 std::string("Tool execution aborted"));
           if (options && options->on_tool_call_finish.has_value()) {
-            options->on_tool_call_finish.value()(rejected_res);
+            options->on_tool_call_finish.value()(aborted_res);
           }
-          results.push_back(rejected_res);
+          results.push_back(aborted_res);
           continue;
         }
-      }
-      // Fire on_tool_call_start callback
-      if (options && options->on_tool_call_start.has_value()) {
-        options->on_tool_call_start.value()(tool_call);
-      }
 
-      // Capture by VALUE to avoid dangling ref (tool_call is a loop variable)
-      batch.emplace_back(
-          std::async(std::launch::async, [tool_call, &tools, &messages, options]() {
-            ToolResult result = execute_tool(tool_call, tools, messages, options);
-            // Fire on_tool_call_finish callback from the async thread
+        // Confirmation (mirror sequential path) - must run before execution
+        if (options && options->on_tool_call_confirm.has_value()) {
+          bool confirmed = options->on_tool_call_confirm.value()(tool_call);
+          if (!confirmed) {
+            ToolResult rejected_res(tool_call.id, tool_call.tool_name,
+                                    tool_call.arguments,
+                                    std::string("Tool execution rejected by user"));
             if (options && options->on_tool_call_finish.has_value()) {
-              options->on_tool_call_finish.value()(result);
+              options->on_tool_call_finish.value()(rejected_res);
             }
-            return result;
-          }));
-    }
+            results.push_back(rejected_res);
+            continue;
+          }
+        }
+        // Fire on_tool_call_start callback
+        if (options && options->on_tool_call_start.has_value()) {
+          options->on_tool_call_start.value()(tool_call);
+        }
+
+        // Capture by VALUE to avoid dangling ref (tool_call is a loop variable)
+        batch.emplace_back(
+            std::async(std::launch::async, [tool_call, &tools, &messages, options]() {
+              if (options && options->abort_flag && options->abort_flag->load()) {
+                ToolResult aborted_res(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                                       std::string("Tool execution aborted"));
+                return aborted_res;
+              }
+              ToolResult result = execute_tool(tool_call, tools, messages, options);
+              // Fire on_tool_call_finish callback from the async thread
+              if (options && options->on_tool_call_finish.has_value()) {
+                options->on_tool_call_finish.value()(result);
+              }
+              return result;
+            }));
+      }
 
       // Collect this batch before launching the next one (bounds concurrency).
       for (auto& future : batch) {

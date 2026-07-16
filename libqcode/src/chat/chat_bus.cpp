@@ -670,6 +670,7 @@ void run_generation_with_bus(
     base_opts.system = system_prompt;
     base_opts.messages = messages;
     base_opts.workspace = ctx.workspace;
+    base_opts.abort_flag = ctx.abort_flag;
 
     // ── Opt-in extended thinking / reasoning ──
     const std::string& rm = ctx.reasoning_mode;

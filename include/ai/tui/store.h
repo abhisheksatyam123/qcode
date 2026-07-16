@@ -42,6 +42,7 @@ public:
     std::string dequeue_prompt();
     void append_to_last_queued_prompt(const std::string& text);
     size_t queue_size() const;
+    void clear_prompt_queue();
 
     std::vector<Toast> toasts() const;
     void add_toast(const std::string& message, const std::string& variant = "info", int duration_ms = 5000);

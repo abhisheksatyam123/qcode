@@ -507,6 +507,18 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Cancel any active generation on that session first
+        if (session->generation_started.load() && !session->done.load()) {
+            if (session->ctx.abort_flag) {
+                session->ctx.abort_flag->store(true);
+            }
+            int wait_count = 0;
+            while (!session->done.load() && wait_count < 10) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                wait_count++;
+            }
+        }
+
         // Reset per-turn state so each /generate starts a fresh generation
         // thread (fixes broken multi-turn after the first reply).
         session->generation_started = false;

@@ -6,7 +6,9 @@
 #include "tool.h"
 #include "usage.h"
 
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -36,6 +38,7 @@ struct GenerateOptions {
   ToolChoice tool_choice = ToolChoice::auto_choice();
   int max_steps = 1;
   std::vector<std::string> active_tools;
+  std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
 
   // Callbacks for tool calling
   std::optional<std::function<void(const GenerateStep&)>> on_step_finish;

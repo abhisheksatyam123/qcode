@@ -34,6 +34,7 @@ void GenerationController::request_abort() {
     if (state.abort_flag) {
         state.abort_flag->store(true, std::memory_order_release);
     }
+    store_.clear_prompt_queue();
     if (worker_.joinable()) {
         worker_.request_stop();
     }

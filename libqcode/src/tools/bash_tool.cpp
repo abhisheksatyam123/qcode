@@ -15,6 +15,10 @@
 #include <regex>
 #include <sstream>
 #include <thread>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/select.h>
+#include <fcntl.h>
 
 namespace ai {
 
@@ -278,7 +282,8 @@ static void trim_incomplete_utf8_suffix(std::string& text) {
 std::string BashTool::run_shell(const std::string& command,
                                 const std::string& cwd, int /*timeout_ms*/,
                                 std::optional<int> max_chars,
-                                std::optional<int> max_lines, int& exit_code) {
+                                std::optional<int> max_lines, int& exit_code,
+                                std::shared_ptr<std::atomic<bool>> abort_flag) {
   constexpr size_t kReadBufferSize = 4096;
   const auto char_limit = static_cast<size_t>(max_chars.value_or(4096));
   const auto line_limit = max_lines.value_or(0);
@@ -294,13 +299,43 @@ std::string BashTool::run_shell(const std::string& command,
       dir_path + "/" + generate_unique_tool_file_name();
   std::ofstream output_file(file_path, std::ios::out | std::ios::binary);
 
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"),
-                                                pclose);
-  if (!pipe) {
+  int pipefds[2];
+  if (pipe(pipefds) < 0) {
     output_file.close();
     std::filesystem::remove(file_path, ec);
-    return "Error: Failed to execute command";
+    return "Error: Failed to create pipe";
   }
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(pipefds[0]);
+    close(pipefds[1]);
+    output_file.close();
+    std::filesystem::remove(file_path, ec);
+    return "Error: Failed to fork process";
+  }
+
+  if (pid == 0) {
+    // Child process
+    close(pipefds[0]); // close read end
+    dup2(pipefds[1], STDOUT_FILENO);
+    dup2(pipefds[1], STDERR_FILENO);
+    close(pipefds[1]);
+
+    // Set process group so we can kill child and its descendants
+    setpgid(0, 0);
+
+    execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+    exit(127);
+  }
+
+  // Parent process
+  close(pipefds[1]); // close write end
+  int fd = pipefds[0];
+
+  // Set O_NONBLOCK on the read end
+  int flags = fcntl(fd, F_GETFL, 0);
+  fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
   std::array<char, kReadBufferSize> buffer;
   std::string inline_output;
@@ -308,57 +343,103 @@ std::string BashTool::run_shell(const std::string& command,
   size_t line_count = 0;
   std::optional<size_t> truncate_index;
   std::optional<size_t> line_boundary;
+  bool is_aborted = false;
 
-  while (const auto bytes_read =
-             std::fread(buffer.data(), 1, buffer.size(), pipe.get())) {
-    if (output_file.is_open()) {
-      output_file.write(buffer.data(),
-                        static_cast<std::streamsize>(bytes_read));
+  fd_set read_fds;
+  struct timeval timeout_tv;
+
+  while (true) {
+    if (abort_flag && abort_flag->load()) {
+      is_aborted = true;
+      break;
     }
 
-    auto chunk_inline_size = bytes_read;
-    if (!truncate_index.has_value()) {
-      if (total_size + bytes_read > char_limit) {
-        truncate_index = char_limit;
-      }
+    FD_ZERO(&read_fds);
+    FD_SET(fd, &read_fds);
+    timeout_tv.tv_sec = 0;
+    timeout_tv.tv_usec = 50000; // Check abort_flag every 50ms
 
-      if (line_limit > 0 && !line_boundary.has_value()) {
-        for (size_t i = 0; i < bytes_read; ++i) {
-          if (buffer[i] != '\n') continue;
-          ++line_count;
-          if (line_count == static_cast<size_t>(line_limit)) {
-            line_boundary = total_size + i + 1;
-            break;
+    int ret = select(fd + 1, &read_fds, nullptr, nullptr, &timeout_tv);
+    if (ret > 0) {
+      if (FD_ISSET(fd, &read_fds)) {
+        ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
+        if (bytes_read > 0) {
+          if (output_file.is_open()) {
+            output_file.write(buffer.data(), bytes_read);
           }
+
+          auto chunk_inline_size = static_cast<size_t>(bytes_read);
+          if (!truncate_index.has_value()) {
+            if (total_size + bytes_read > char_limit) {
+              truncate_index = char_limit;
+            }
+
+            if (line_limit > 0 && !line_boundary.has_value()) {
+              for (ssize_t i = 0; i < bytes_read; ++i) {
+                if (buffer[i] != '\n') continue;
+                ++line_count;
+                if (line_count == static_cast<size_t>(line_limit)) {
+                  line_boundary = total_size + i + 1;
+                  break;
+                }
+              }
+            }
+
+            if (line_boundary.has_value() &&
+                total_size + bytes_read > line_boundary.value() &&
+                (!truncate_index.has_value() ||
+                 line_boundary.value() < truncate_index.value())) {
+              truncate_index = line_boundary;
+            }
+            if (truncate_index.has_value()) {
+              chunk_inline_size =
+                  truncate_index.value() > total_size
+                      ? std::min(static_cast<size_t>(bytes_read),
+                                 truncate_index.value() - total_size)
+                      : 0;
+            } else if (line_boundary.has_value()) {
+              chunk_inline_size = std::min(
+                  static_cast<size_t>(bytes_read), line_boundary.value() - total_size);
+            }
+            inline_output.append(buffer.data(), chunk_inline_size);
+          }
+          total_size += bytes_read;
+        } else if (bytes_read == 0) {
+          // EOF
+          break;
+        } else {
+          if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            continue;
+          }
+          break; // Read error
         }
       }
-
-      if (line_boundary.has_value() &&
-          total_size + bytes_read > line_boundary.value() &&
-          (!truncate_index.has_value() ||
-           line_boundary.value() < truncate_index.value())) {
-        truncate_index = line_boundary;
-      }
-      if (truncate_index.has_value()) {
-        chunk_inline_size =
-            truncate_index.value() > total_size
-                ? std::min(bytes_read,
-                           truncate_index.value() - total_size)
-                : 0;
-      } else if (line_boundary.has_value()) {
-        chunk_inline_size = std::min(
-            bytes_read, line_boundary.value() - total_size);
-      }
-      inline_output.append(buffer.data(), chunk_inline_size);
+    } else if (ret < 0) {
+      if (errno == EINTR) continue;
+      break; // Select error
     }
-    total_size += bytes_read;
   }
 
-  exit_code = pclose(pipe.release());
+  close(fd);
+
+  if (is_aborted) {
+    // Kill the whole process group
+    kill(-pid, SIGTERM);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    kill(-pid, SIGKILL);
+  }
+
+  int status = 0;
+  waitpid(pid, &status, 0);
+  exit_code = status;
   if (exit_code != 0 && WIFEXITED(exit_code)) {
     exit_code = WEXITSTATUS(exit_code);
   }
   output_file.close();
+
+  if (is_aborted) {
+    return inline_output + "\n\n[Tool execution aborted]";
+  }
 
   if (!truncate_index.has_value()) {
     std::filesystem::remove(file_path, ec);
@@ -411,7 +492,7 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
 
   int exit_code = 0;
   auto output =
-      run_shell(command, cwd, timeout, max_chars, max_lines, exit_code);
+      run_shell(command, cwd, timeout, max_chars, max_lines, exit_code, context.abort_flag);
 
   JsonValue result;
   result["title"] = desc;

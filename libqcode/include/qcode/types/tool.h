@@ -4,9 +4,11 @@
 #include "message.h"
 #include "usage.h"
 
+#include <atomic>
 #include <functional>
 #include <future>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -23,6 +25,7 @@ struct ToolExecutionContext {
   Messages messages;
   std::optional<std::function<void()>> abort_signal;
   std::string workspace;
+  std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
 };
 
 /// Tool execution function signature

@@ -2,6 +2,7 @@
 
 #include "ai/types/tool.h"
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <map>
@@ -144,7 +145,8 @@ class BashTool {
 
   static std::string run_shell(const std::string& command, const std::string& cwd,
                                int timeout_ms, std::optional<int> max_chars,
-                               std::optional<int> max_lines, int& exit_code);
+                               std::optional<int> max_lines, int& exit_code,
+                               std::shared_ptr<std::atomic<bool>> abort_flag = nullptr);
   static std::string resolve_workdir(const std::string& workdir);
 };
 

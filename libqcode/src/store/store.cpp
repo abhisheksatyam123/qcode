@@ -194,6 +194,15 @@ size_t AppStore::queue_size() const {
     return prompt_queue_.size();
 }
 
+void AppStore::clear_prompt_queue() {
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        prompt_queue_.clear();
+        *state_.queued_prompts = 0;
+    }
+    notify();
+}
+
 void AppStore::append_to_last_queued_prompt(const std::string& text) {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (!prompt_queue_.empty()) {
