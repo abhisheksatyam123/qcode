@@ -1,4 +1,5 @@
 #include <ai/tui/config.h>
+#include <ai/cursor.h>
 
 #include <algorithm>
 #include <array>
@@ -291,6 +292,118 @@ std::string get_notes_root() {
     return "notes";
 }
 
+namespace {
+
+std::string cursor_model_name(std::string id) {
+    std::replace(id.begin(), id.end(), '-', ' ');
+    std::ostringstream name;
+    bool first = true;
+    std::istringstream words(id);
+    for (std::string word; words >> word;) {
+        if (!first) name << ' ';
+        first = false;
+        if (word == "gpt") {
+            name << "GPT";
+        } else if (word == "claude") {
+            name << "Claude";
+        } else if (word == "xhigh") {
+            name << "XHigh";
+        } else {
+            word.front() =
+                static_cast<char>(std::toupper(static_cast<unsigned char>(
+                    word.front())));
+            name << word;
+        }
+    }
+    return name.str();
+}
+
+ModelInfo make_cursor_model(const std::string& id, std::string name = "") {
+    ModelInfo model{name.empty() ? cursor_model_name(id) : std::move(name), id};
+    model.reasoning = id.find("thinking") != std::string::npos ||
+                      id.find("gpt-5") != std::string::npos;
+    model.tool_call = true;
+    return model;
+}
+
+bool is_selected_cursor_family(const std::string& id) {
+    return id.starts_with("cursor-grok-") || id.starts_with("gpt-5.6-") ||
+           id.starts_with("claude-fable-5-") || id.starts_with("composer-");
+}
+
+std::string cursor_display_name(const std::string& id,
+                                const std::string& discovered_name) {
+    auto name = discovered_name.empty() ? cursor_model_name(id)
+                                        : discovered_name;
+    if (id.starts_with("claude-fable-5-") &&
+        name.find("Mythos") == std::string::npos) {
+        name = "Mythos - " + name;
+    }
+    return name;
+}
+
+void add_cursor_model_if_missing(std::vector<ModelInfo>& models,
+                                 const std::string& id,
+                                 const std::string& name) {
+    const auto found = std::find_if(
+        models.begin(), models.end(),
+        [&id](const ModelInfo& model) { return model.id == id; });
+    if (found == models.end()) {
+        models.emplace_back(make_cursor_model(id, name));
+    }
+}
+
+void hydrate_cursor_models(ProviderInfo& provider) {
+    const auto token =
+        provider.api_key.empty() ? get_cursor_access_token() : provider.api_key;
+    if (!token.empty()) {
+        ai::cursor::Options options;
+        if (!provider.api_url.empty()) {
+            options.agent_base_url = provider.api_url;
+        }
+        const auto available = ai::cursor::list_models(token, options);
+        if (!available.empty()) {
+            std::vector<ModelInfo> live_models;
+            live_models.reserve(available.size());
+            for (const auto& model : available) {
+                if (!is_selected_cursor_family(model.id)) continue;
+                add_cursor_model_if_missing(
+                    live_models, model.id,
+                    cursor_display_name(model.id, model.name));
+            }
+            provider.models = std::move(live_models);
+            LOG_INFO("Loaded {} live Cursor models", provider.models.size());
+            return;
+        }
+        LOG_WARN("Cursor model discovery failed; using configured fallbacks");
+    }
+
+    // Keep configured entries and seed current IDs when the catalog endpoint is
+    // temporarily unavailable. Cursor will still enforce account entitlement.
+    std::erase_if(provider.models, [](const ModelInfo& model) {
+        return !is_selected_cursor_family(model.id);
+    });
+    add_cursor_model_if_missing(provider.models, "cursor-grok-4.5-high",
+                                "Cursor Grok 4.5");
+    add_cursor_model_if_missing(provider.models, "composer-2.5",
+                                "Composer 2.5");
+    add_cursor_model_if_missing(provider.models, "composer-2.5-fast",
+                                "Composer 2.5 Fast");
+    add_cursor_model_if_missing(provider.models, "gpt-5.6-sol-medium",
+                                "GPT-5.6 Sol");
+    add_cursor_model_if_missing(provider.models, "gpt-5.6-terra-medium",
+                                "GPT-5.6 Terra");
+    add_cursor_model_if_missing(provider.models, "gpt-5.6-luna-medium",
+                                "GPT-5.6 Luna");
+    add_cursor_model_if_missing(provider.models, "claude-fable-5-high",
+                                "Mythos - Fable 5");
+    add_cursor_model_if_missing(provider.models,
+                                "claude-fable-5-thinking-high",
+                                "Mythos - Fable 5 Thinking High");
+}
+
+}  // namespace
+
 std::vector<ProviderInfo> load_providers_from_config() {
     std::vector<ProviderInfo> loaded;
     std::string path = config_path();
@@ -353,6 +466,11 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 LOG_INFO("Loaded provider: {} ({}), {} models, api={}",
                                      prov.name, prov.id, prov.models.size(),
                                      prov.api_url.empty() ? "(hardcoded)" : prov.api_url);
+            }
+        }
+        for (auto& provider : loaded) {
+            if (provider.id == "cursor") {
+                hydrate_cursor_models(provider);
             }
         }
     } catch (const std::exception& e) {

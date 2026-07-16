@@ -13,6 +13,12 @@ function closeMobileSidebar() {
   if (overlay) overlay.classList.remove('active');
 }
 
+function resizePromptInput() {
+  if (!promptInput) return;
+  promptInput.style.height = 'auto';
+  promptInput.style.height = Math.min(promptInput.scrollHeight, 180) + 'px';
+}
+
 // ── QCode Web UI ──────────────────────────────────────────────────
 const state = {
   provider: '',
@@ -27,7 +33,13 @@ const state = {
   // UI Tabs & layout state
   activeTab: 'chat', // 'chat' | 'terminal' | 'files' | 'stats'
   layoutMode: 'tab', // 'tab' or 'split'
-  terminalOpen: false
+  terminalOpen: false,
+  // Files tab: explorer + editor
+  filesSubtab: 'explorer', // 'explorer' | 'git'
+  fsDir: '',               // relative path of current directory
+  fsOpenPath: null,        // relative path of open file
+  fsSavedContent: '',      // last loaded/saved content
+  fsDirty: false
 };
 
 // ── DOM refs ──
@@ -50,6 +62,22 @@ const terminalCloseBtn = document.getElementById('terminal-close-btn');
 const filesPanel = document.getElementById('files-panel');
 const filesContent = document.getElementById('files-content');
 const filesRefreshBtn = document.getElementById('files-refresh-btn');
+const filesExplorer = document.getElementById('files-explorer');
+const filesGit = document.getElementById('files-git');
+const filesSubtabExplorer = document.getElementById('files-subtab-explorer');
+const filesSubtabGit = document.getElementById('files-subtab-git');
+const fsBreadcrumb = document.getElementById('fs-breadcrumb');
+const fsListing = document.getElementById('fs-listing');
+const fsEditor = document.getElementById('fs-editor');
+const fsEditorPath = document.getElementById('fs-editor-path');
+const fsEditorStatus = document.getElementById('fs-editor-status');
+const fsHighlight = document.getElementById('fs-highlight');
+const fsHighlightCode = document.getElementById('fs-highlight-code');
+const fsSaveBtn = document.getElementById('fs-save-btn');
+const fsCloseBtn = document.getElementById('fs-close-btn');
+const fsDirtyBadge = document.getElementById('fs-dirty-badge');
+let fsHighlightTimer = null;
+let fsLang = '';
 const statsPanel = document.getElementById('stats-panel');
 const statsContent = document.getElementById('stats-content');
 const statsRefreshBtn = document.getElementById('stats-refresh-btn');
@@ -262,6 +290,7 @@ function setupEventListeners() {
   });
   promptInput.addEventListener('input', () => {
     updateSlashMenu();
+    resizePromptInput();
   });
   document.addEventListener('click', (e) => {
     if (slashMenuEl && !slashMenuEl.contains(e.target) && e.target !== promptInput) {
@@ -301,6 +330,45 @@ function setupEventListeners() {
   if (filesRefreshBtn) {
     filesRefreshBtn.addEventListener('click', () => loadFilesTab());
   }
+  if (filesSubtabExplorer) {
+    filesSubtabExplorer.addEventListener('click', () => switchFilesSubtab('explorer'));
+  }
+  if (filesSubtabGit) {
+    filesSubtabGit.addEventListener('click', () => switchFilesSubtab('git'));
+  }
+  if (fsSaveBtn) {
+    fsSaveBtn.addEventListener('click', () => saveOpenFile());
+  }
+  if (fsCloseBtn) {
+    fsCloseBtn.addEventListener('click', () => closeOpenFile());
+  }
+  if (fsEditor) {
+    fsEditor.addEventListener('input', () => {
+      if (!state.fsOpenPath) return;
+      const dirty = fsEditor.value !== state.fsSavedContent;
+      setFsDirty(dirty);
+      scheduleFsHighlight();
+    });
+    fsEditor.addEventListener('scroll', syncFsHighlightScroll);
+    fsEditor.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveOpenFile();
+        return;
+      }
+      // Insert tab as spaces (keeps caret/highlight in sync).
+      if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && state.fsOpenPath) {
+        e.preventDefault();
+        const start = fsEditor.selectionStart;
+        const end = fsEditor.selectionEnd;
+        const val = fsEditor.value;
+        const insert = '  ';
+        fsEditor.value = val.slice(0, start) + insert + val.slice(end);
+        fsEditor.selectionStart = fsEditor.selectionEnd = start + insert.length;
+        fsEditor.dispatchEvent(new Event('input'));
+      }
+    });
+  }
   if (statsRefreshBtn) {
     statsRefreshBtn.addEventListener('click', () => loadStatsTab());
   }
@@ -334,12 +402,23 @@ function setupEventListeners() {
   });
 
   window.addEventListener('hashchange', handleHashChange);
+  window.addEventListener('online', updateConnectionStatus);
+  window.addEventListener('offline', updateConnectionStatus);
+  updateConnectionStatus();
 }
 
 // ── Status Bar ──
 function updateStatusBar() {
   statusSession.textContent = state.sessionTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
   statusWorkspace.textContent = state.sessionWorkspace ? '📁 ' + state.sessionWorkspace : '';
+}
+
+function updateConnectionStatus() {
+  const status = document.getElementById('connection-status');
+  if (!status) return;
+  const online = navigator.onLine;
+  status.classList.toggle('offline', !online);
+  status.querySelector('.connection-label').textContent = online ? 'Connected' : 'Offline';
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1125,6 +1204,7 @@ async function handleCompactCommand() {
 // ═══════════════════════════════════════════════════════════════════
 
 async function runGeneration(session, text) {
+  session.cancelRequested = false;
   session.messages.push({ role: 'user', content: text });
   
   const assistantMsg = { role: 'assistant', content: '', toolEvents: [] };
@@ -1139,6 +1219,7 @@ async function runGeneration(session, text) {
   session.generating = true;
   renderSessionTabs();
 
+  let receivedComplete = false;
   try {
     const body = JSON.stringify({
       text,
@@ -1151,10 +1232,22 @@ async function runGeneration(session, text) {
     const res = await fetch(`/session/${session.id}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
     if (!res.ok) throw new Error(await res.text());
     
+    if (!res.body) throw new Error('The server returned an empty response stream');
     const reader = res.body.getReader();
     session.reader = reader;
     const decoder = new TextDecoder();
     let buffer = '';
+
+    const consumeLine = (line) => {
+      if (!line.trim()) return;
+      try {
+        const event = JSON.parse(line);
+        handleEvent(event, assistantMsg, session);
+        if (event.type === 'generation.complete') receivedComplete = true;
+      } catch (error) {
+        console.warn('Ignoring malformed stream event:', error, line);
+      }
+    };
     
     while (true) {
       const { done, value } = await reader.read();
@@ -1162,17 +1255,21 @@ async function runGeneration(session, text) {
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          handleEvent(JSON.parse(line), assistantMsg, session);
-        } catch (e) {}
-      }
+      for (const line of lines) consumeLine(line);
+    }
+    buffer += decoder.decode();
+    consumeLine(buffer);
+
+    if (!receivedComplete && !session.cancelRequested) {
+      throw new Error('The response stream ended before generation completed');
     }
   } catch (e) {
-    if (e.name !== 'AbortError') {
-      showToast('Error: ' + e.message);
-      assistantMsg.content = 'Error: ' + e.message;
+    // Some browsers report a transport error after receiving the final chunk.
+    // The generation.complete event is authoritative in that case.
+    if (e.name !== 'AbortError' && !session.cancelRequested && !receivedComplete) {
+      const message = e.message || 'Connection interrupted';
+      showToast('Generation interrupted: ' + message);
+      assistantMsg.streamError = message;
     }
   } finally {
     session.generating = false;
@@ -1217,7 +1314,12 @@ async function sendMessage() {
   if (isModalOpen()) return;
   const text = promptInput.value.trim();
   if (!text) return;
-  if (text.startsWith('/')) { promptInput.value = ''; handleSlashCommand(text); return; }
+  if (text.startsWith('/')) {
+    promptInput.value = '';
+    resizePromptInput();
+    handleSlashCommand(text);
+    return;
+  }
 
   const session = state.openSessions.find(s => s.id === state.sessionId);
   if (!session) return;
@@ -1228,12 +1330,14 @@ async function sendMessage() {
     }
     session.promptQueue.push(text);
     promptInput.value = '';
+    resizePromptInput();
     showToast('Prompt queued');
     updateQueueIndicator();
     return;
   }
 
   promptInput.value = '';
+  resizePromptInput();
   await runGeneration(session, text);
 }
 
@@ -1296,6 +1400,15 @@ function handleEvent(evt, msg, session) {
       break;
     case 'backend.error.occurred':
       showToast(evt.message);
+      msg.streamError = evt.message || 'The backend reported an error';
+      if (session.id === state.sessionId) renderMessages();
+      break;
+    case 'generation.complete':
+      if (evt.error) {
+        msg.streamError = evt.error;
+        showToast('Generation failed: ' + evt.error);
+      }
+      if (session.id === state.sessionId) renderMessages();
       break;
   }
 }
@@ -1304,30 +1417,49 @@ function handleEvent(evt, msg, session) {
 //  RENDERING
 // ═══════════════════════════════════════════════════════════════════
 
+function switchFilesSubtab(sub) {
+  state.filesSubtab = sub === 'git' ? 'git' : 'explorer';
+  if (filesSubtabExplorer) filesSubtabExplorer.classList.toggle('active', state.filesSubtab === 'explorer');
+  if (filesSubtabGit) filesSubtabGit.classList.toggle('active', state.filesSubtab === 'git');
+  if (filesExplorer) filesExplorer.classList.toggle('hidden', state.filesSubtab !== 'explorer');
+  if (filesGit) filesGit.classList.toggle('hidden', state.filesSubtab !== 'git');
+  loadFilesTab();
+}
+
 async function loadFilesTab() {
+  if (state.filesSubtab === 'git') {
+    await loadGitChanges();
+  } else {
+    await loadFsListing(state.fsDir || '');
+  }
+}
+
+async function loadGitChanges() {
+  if (!filesGit) return;
   if (!state.sessionId) {
-    filesContent.innerHTML = '<div class="files-empty">No active session.</div>';
+    filesGit.innerHTML = '<div class="files-empty">No active session.</div>';
     return;
   }
-  filesContent.innerHTML = '<div class="files-empty">Loading working tree…</div>';
+  filesGit.innerHTML = '<div class="files-empty">Loading working tree…</div>';
   try {
     const res = await fetch('/session/' + state.sessionId + '/files');
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    renderFilesTab(data);
+    renderGitChanges(data);
   } catch (e) {
-    filesContent.innerHTML = '<div class="files-empty">Failed to load files: ' + esc(e.message) + '</div>';
+    filesGit.innerHTML = '<div class="files-empty">Failed to load files: ' + esc(e.message) + '</div>';
   }
 }
 
-function renderFilesTab(data) {
+function renderGitChanges(data) {
+  if (!filesGit) return;
   const ws = data.workspace || '';
   let html = '';
   html += '<div class="files-workspace">📁 ' + esc(ws) + '</div>';
 
   if (!data.is_git_repo) {
     html += '<div class="files-empty">Not a git repository. Initialize one with <code>git init</code> to see working-tree diffs here.</div>';
-    filesContent.innerHTML = html;
+    filesGit.innerHTML = html;
     return;
   }
 
@@ -1349,14 +1481,15 @@ function renderFilesTab(data) {
     for (const f of files) {
       const type = f.type || 'modified';
       const label = type.charAt(0).toUpperCase() + type.slice(1);
-      const ins = f.insertions || 0;
-      const del = f.deletions || 0;
-      const counts = (ins || del)
-        ? ' <span class="file-counts"><span class="add">+' + ins + '</span> <span class="del">-' + del + '</span></span>'
+      const fins = f.insertions || 0;
+      const fdel = f.deletions || 0;
+      const counts = (fins || fdel)
+        ? ' <span class="file-counts"><span class="add">+' + fins + '</span> <span class="del">-' + fdel + '</span></span>'
         : '';
-      html += '<div class="file-row">'
+      const path = f.path || '';
+      html += '<div class="file-row file-row-clickable" data-open-path="' + esc(path) + '" title="Open in editor">'
         + '<span class="file-type ' + esc(type) + '">' + esc(label) + '</span>'
-        + '<span class="file-path">' + esc(f.path || '') + '</span>'
+        + '<span class="file-path">' + esc(path) + '</span>'
         + counts
         + '</div>';
     }
@@ -1371,7 +1504,338 @@ function renderFilesTab(data) {
     html += '<div class="files-empty">Working tree clean — no modified files.</div>';
   }
 
-  filesContent.innerHTML = html;
+  filesGit.innerHTML = html;
+  filesGit.querySelectorAll('.file-row-clickable').forEach((row) => {
+    row.addEventListener('click', () => {
+      const p = row.getAttribute('data-open-path');
+      if (!p) return;
+      switchFilesSubtab('explorer');
+      openFsFile(p);
+    });
+  });
+}
+
+// ── Workspace filesystem browser + editor ──
+
+function setFsDirty(dirty) {
+  state.fsDirty = !!dirty;
+  if (fsDirtyBadge) fsDirtyBadge.classList.toggle('hidden', !state.fsDirty);
+  if (fsSaveBtn) fsSaveBtn.disabled = !state.fsOpenPath || !state.fsDirty;
+  if (fsEditorPath && state.fsOpenPath) {
+    fsEditorPath.textContent = state.fsOpenPath + (state.fsDirty ? ' •' : '');
+  }
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function renderFsBreadcrumb(relPath) {
+  if (!fsBreadcrumb) return;
+  const parts = relPath ? relPath.split('/').filter(Boolean) : [];
+  let html = '<button type="button" class="fs-crumb" data-path="">workspace</button>';
+  let acc = '';
+  for (const part of parts) {
+    acc = acc ? acc + '/' + part : part;
+    html += '<span class="fs-crumb-sep">/</span>';
+    html += '<button type="button" class="fs-crumb" data-path="' + esc(acc) + '">' + esc(part) + '</button>';
+  }
+  fsBreadcrumb.innerHTML = html;
+  fsBreadcrumb.querySelectorAll('.fs-crumb').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const p = btn.getAttribute('data-path') || '';
+      loadFsListing(p);
+    });
+  });
+}
+
+async function loadFsListing(relPath) {
+  if (!fsListing) return;
+  if (!state.sessionId) {
+    fsListing.innerHTML = '<div class="files-empty">No active session.</div>';
+    if (fsBreadcrumb) fsBreadcrumb.innerHTML = '';
+    return;
+  }
+  state.fsDir = relPath || '';
+  renderFsBreadcrumb(state.fsDir);
+  fsListing.innerHTML = '<div class="files-empty">Loading…</div>';
+  try {
+    const q = state.fsDir ? ('?path=' + encodeURIComponent(state.fsDir)) : '';
+    const res = await fetch('/session/' + state.sessionId + '/fs/list' + q);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText || 'list failed');
+    renderFsListing(data);
+  } catch (e) {
+    fsListing.innerHTML = '<div class="files-empty">Failed to list directory: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderFsListing(data) {
+  if (!fsListing) return;
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  let html = '';
+  if (state.fsDir) {
+    const parent = state.fsDir.includes('/')
+      ? state.fsDir.slice(0, state.fsDir.lastIndexOf('/'))
+      : '';
+    html += '<button type="button" class="fs-entry" data-type="dir" data-path="' + esc(parent) + '">'
+      + '<span class="fs-icon">⬆</span>'
+      + '<span class="fs-name">..</span>'
+      + '</button>';
+  }
+  if (entries.length === 0) {
+    html += '<div class="files-empty">Empty directory.</div>';
+  } else {
+    for (const e of entries) {
+      const isDir = e.type === 'dir';
+      const icon = isDir ? '📁' : '📄';
+      const size = (!isDir && e.size != null) ? '<span class="fs-size">' + formatBytes(e.size) + '</span>' : '';
+      const active = (!isDir && state.fsOpenPath === e.path) ? ' active' : '';
+      html += '<button type="button" class="fs-entry' + active + '" data-type="' + (isDir ? 'dir' : 'file')
+        + '" data-path="' + esc(e.path || '') + '">'
+        + '<span class="fs-icon">' + icon + '</span>'
+        + '<span class="fs-name">' + esc(e.name || '') + '</span>'
+        + size
+        + '</button>';
+    }
+  }
+  fsListing.innerHTML = html;
+  fsListing.querySelectorAll('.fs-entry').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const type = btn.getAttribute('data-type');
+      const path = btn.getAttribute('data-path') || '';
+      if (type === 'dir') loadFsListing(path);
+      else openFsFile(path);
+    });
+  });
+}
+
+async function confirmDiscardIfDirty() {
+  if (!state.fsDirty) return true;
+  return window.confirm('You have unsaved changes. Discard them?');
+}
+
+// Map file path → highlight.js language id (empty = plain / auto).
+function detectFsLanguage(path) {
+  const name = (path || '').split('/').pop() || '';
+  const lower = name.toLowerCase();
+  if (lower === 'cmakelists.txt' || lower.endsWith('.cmake')) return 'cmake';
+  if (lower === 'dockerfile' || lower.startsWith('dockerfile.')) return 'dockerfile';
+  if (lower === 'makefile' || lower === 'gnumakefile') return 'makefile';
+  const dot = lower.lastIndexOf('.');
+  const ext = dot >= 0 ? lower.slice(dot + 1) : '';
+  const map = {
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+    ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+    py: 'python', pyw: 'python',
+    c: 'c', h: 'c',
+    cc: 'cpp', cpp: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp',
+    rs: 'rust', go: 'go', java: 'java', kt: 'kotlin', kts: 'kotlin',
+    rb: 'ruby', php: 'php', swift: 'swift',
+    cs: 'csharp', fs: 'fsharp',
+    sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
+    json: 'json', jsonc: 'json',
+    yml: 'yaml', yaml: 'yaml',
+    toml: 'ini', ini: 'ini', conf: 'ini', cfg: 'ini',
+    md: 'markdown', markdown: 'markdown',
+    html: 'xml', htm: 'xml', xhtml: 'xml', svg: 'xml', xml: 'xml',
+    css: 'css', scss: 'scss', less: 'less',
+    sql: 'sql', graphql: 'graphql', gql: 'graphql',
+    diff: 'diff', patch: 'diff',
+    r: 'r', lua: 'lua', pl: 'perl', pm: 'perl',
+    vim: 'vim', proto: 'protobuf',
+    txt: 'plaintext', log: 'plaintext',
+  };
+  return map[ext] || '';
+}
+
+function syncFsHighlightScroll() {
+  if (!fsEditor || !fsHighlight) return;
+  fsHighlight.scrollTop = fsEditor.scrollTop;
+  fsHighlight.scrollLeft = fsEditor.scrollLeft;
+}
+
+function scheduleFsHighlight() {
+  if (fsHighlightTimer) clearTimeout(fsHighlightTimer);
+  fsHighlightTimer = setTimeout(() => {
+    fsHighlightTimer = null;
+    updateFsHighlight();
+  }, 40);
+}
+
+function getHljs() {
+  // CDN builds expose window.hljs; tolerate late load / alternate globals.
+  if (typeof window !== 'undefined' && window.hljs) return window.hljs;
+  if (typeof hljs !== 'undefined') return hljs;
+  return null;
+}
+
+function updateFsHighlight() {
+  if (!fsEditor || !fsHighlightCode) return;
+  const text = fsEditor.value;
+  const plainMode = !state.fsOpenPath || fsEditor.disabled;
+  const engine = getHljs();
+
+  if (plainMode) {
+    // Empty / closed: show textarea placeholder styling, hide overlay.
+    fsEditor.classList.add('fs-editor-plain');
+    fsEditor.classList.remove('fs-editor-highlighting');
+    fsHighlightCode.textContent = '';
+    fsHighlightCode.className = 'hljs';
+    return;
+  }
+
+  // highlight.js needs a trailing newline when the file ends with one so
+  // the last empty line still takes space (matches textarea layout).
+  const source = text.endsWith('\n') ? text + '\n' : text;
+
+  if (!engine) {
+    // No highlighter loaded — keep textarea text visible (not transparent).
+    fsEditor.classList.add('fs-editor-plain');
+    fsEditor.classList.remove('fs-editor-highlighting');
+    fsHighlightCode.textContent = '';
+    fsHighlightCode.className = 'hljs';
+    return;
+  }
+
+  try {
+    let result;
+    if (fsLang && engine.getLanguage(fsLang)) {
+      result = engine.highlight(source, { language: fsLang, ignoreIllegals: true });
+    } else if (source.length > 0 && source.length < 200000) {
+      result = engine.highlightAuto(source);
+      if (result.language) fsLang = result.language;
+    } else {
+      // Too large or empty — plain monochrome overlay still keeps caret working.
+      fsHighlightCode.textContent = source;
+      fsHighlightCode.className = 'hljs';
+      fsEditor.classList.remove('fs-editor-plain');
+      fsEditor.classList.add('fs-editor-highlighting');
+      syncFsHighlightScroll();
+      return;
+    }
+    fsHighlightCode.innerHTML = result.value + (source.endsWith('\n') ? '\n' : '');
+    fsHighlightCode.className = 'hljs language-' + (result.language || fsLang || 'plaintext');
+    fsEditor.classList.remove('fs-editor-plain');
+    fsEditor.classList.add('fs-editor-highlighting');
+  } catch (e) {
+    console.warn('syntax highlight failed:', e);
+    fsEditor.classList.add('fs-editor-plain');
+    fsEditor.classList.remove('fs-editor-highlighting');
+    fsHighlightCode.textContent = '';
+    fsHighlightCode.className = 'hljs';
+  }
+  syncFsHighlightScroll();
+}
+
+function setFsEditorContent(text, path) {
+  fsLang = detectFsLanguage(path || '');
+  if (fsEditor) {
+    fsEditor.disabled = false;
+    fsEditor.value = text;
+    fsEditor.classList.remove('fs-editor-plain');
+    fsEditor.scrollTop = 0;
+    fsEditor.scrollLeft = 0;
+  }
+  updateFsHighlight();
+}
+
+function clearFsEditor() {
+  fsLang = '';
+  if (fsHighlightTimer) {
+    clearTimeout(fsHighlightTimer);
+    fsHighlightTimer = null;
+  }
+  if (fsEditor) {
+    fsEditor.value = '';
+    fsEditor.disabled = true;
+    fsEditor.classList.add('fs-editor-plain');
+  }
+  if (fsHighlightCode) {
+    fsHighlightCode.textContent = '';
+    fsHighlightCode.className = 'hljs';
+  }
+}
+
+async function openFsFile(relPath) {
+  if (!relPath || !state.sessionId) return;
+  if (state.fsOpenPath === relPath && !state.fsDirty) return;
+  if (!(await confirmDiscardIfDirty())) return;
+
+  if (fsEditorStatus) fsEditorStatus.textContent = 'Loading…';
+  try {
+    const res = await fetch(
+      '/session/' + state.sessionId + '/fs/read?path=' + encodeURIComponent(relPath)
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText || 'read failed');
+
+    state.fsOpenPath = data.path || relPath;
+    state.fsSavedContent = data.content || '';
+    setFsEditorContent(state.fsSavedContent, state.fsOpenPath);
+    if (fsCloseBtn) fsCloseBtn.disabled = false;
+    if (fsEditorPath) fsEditorPath.textContent = state.fsOpenPath;
+    setFsDirty(false);
+    if (fsEditorStatus) {
+      const sz = data.size != null ? formatBytes(data.size) : formatBytes(state.fsSavedContent.length);
+      const langLabel = fsLang || 'text';
+      fsEditorStatus.textContent = sz + ' · ' + langLabel;
+    }
+    // Highlight active row if listing includes this file.
+    if (fsListing) {
+      fsListing.querySelectorAll('.fs-entry').forEach((el) => {
+        el.classList.toggle('active', el.getAttribute('data-path') === state.fsOpenPath);
+      });
+    }
+  } catch (e) {
+    if (fsEditorStatus) fsEditorStatus.textContent = 'Error: ' + e.message;
+    showToast('Open failed: ' + e.message);
+  }
+}
+
+async function saveOpenFile() {
+  if (!state.sessionId || !state.fsOpenPath || !fsEditor) return;
+  if (!state.fsDirty) return;
+  if (fsEditorStatus) fsEditorStatus.textContent = 'Saving…';
+  if (fsSaveBtn) fsSaveBtn.disabled = true;
+  try {
+    const res = await fetch('/session/' + state.sessionId + '/fs/write', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: state.fsOpenPath, content: fsEditor.value })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText || 'save failed');
+    state.fsSavedContent = fsEditor.value;
+    setFsDirty(false);
+    if (fsEditorStatus) {
+      const sz = data.size != null ? formatBytes(data.size) : formatBytes(state.fsSavedContent.length);
+      const langLabel = fsLang || 'text';
+      fsEditorStatus.textContent = 'Saved · ' + sz + ' · ' + langLabel;
+    }
+    showToast('Saved ' + state.fsOpenPath);
+  } catch (e) {
+    if (fsEditorStatus) fsEditorStatus.textContent = 'Save failed: ' + e.message;
+    showToast('Save failed: ' + e.message);
+    setFsDirty(true);
+  }
+}
+
+async function closeOpenFile() {
+  if (!(await confirmDiscardIfDirty())) return;
+  state.fsOpenPath = null;
+  state.fsSavedContent = '';
+  setFsDirty(false);
+  clearFsEditor();
+  if (fsEditorPath) fsEditorPath.textContent = 'No file open';
+  if (fsCloseBtn) fsCloseBtn.disabled = true;
+  if (fsSaveBtn) fsSaveBtn.disabled = true;
+  if (fsEditorStatus) fsEditorStatus.textContent = '';
+  if (fsListing) {
+    fsListing.querySelectorAll('.fs-entry.active').forEach((el) => el.classList.remove('active'));
+  }
 }
 
 async function loadStatsTab() {
@@ -1439,6 +1903,16 @@ function renderMessages() {
   messagesEl.innerHTML = '';
   const session = state.openSessions.find(s => s.id === state.sessionId);
   if (!session) return;
+  if (session.messages.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-chat';
+    empty.innerHTML = '<div class="empty-chat-mark">Q</div>'
+      + '<h2>What are we building?</h2>'
+      + '<p>Ask QCode to explore the workspace, write code, or run a command.</p>'
+      + '<div class="empty-chat-hint"><kbd>/</kbd> Browse commands <span>•</span> <kbd>Enter</kbd> Send</div>';
+    messagesEl.appendChild(empty);
+    return;
+  }
   for (const msg of session.messages) {
     messagesEl.appendChild(renderMessage(msg));
   }
@@ -1479,7 +1953,23 @@ function renderMessage(msg) {
     if (isGenerating && isLastMsg) textEl.className += ' streaming-cursor';
     content.appendChild(textEl);
   }
+  if (msg.streamError) {
+    const error = document.createElement('div');
+    error.className = 'stream-error';
+    error.innerHTML = '<span>!</span><div><strong>Response interrupted</strong><br>'
+      + esc(msg.streamError) + '</div>';
+    content.appendChild(error);
+  }
   div.appendChild(content); return div;
+}
+
+function parseToolValue(value) {
+  if (typeof value !== 'string') return value || {};
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    return { raw: value };
+  }
 }
 
 function renderToolBlock(tc) {
@@ -1488,7 +1978,7 @@ function renderToolBlock(tc) {
   // Extract command
   let command = toolName;
   if (tc.arguments) {
-    const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments;
+    const args = parseToolValue(tc.arguments);
     if (toolName === 'bash' || toolName === 'shell' || toolName === 'run_command') {
       command = args.command || args.cmd || args.script || '';
     } else if (['read_file', 'view_file', 'write_file', 'edit_file'].includes(toolName)) {
@@ -1498,21 +1988,21 @@ function renderToolBlock(tc) {
     } else if (toolName === 'task' || toolName === 'dispatch_agent') {
       command = 'task ' + (args.description || args.prompt || '');
     } else {
-      command = toolName + ' ' + JSON.stringify(args);
+      command = args.raw || (toolName + ' ' + JSON.stringify(args));
     }
   }
 
   // Extract description
   let desc = '';
   if (tc.arguments) {
-    const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments;
+    const args = parseToolValue(tc.arguments);
     desc = args.description || args.desc || args.prompt || '';
   }
 
   // Extract workdir
   let workdir = '';
   if (tc.arguments && (toolName === 'bash' || toolName === 'shell' || toolName === 'run_command')) {
-    const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments;
+    const args = parseToolValue(tc.arguments);
     workdir = args.workdir || args.cwd || '';
   }
 
@@ -1661,7 +2151,9 @@ function renderMarkdown(text) {
 function setGenerating(on) {
   sendBtn.disabled = false;
   promptInput.disabled = false;
-  sendBtn.textContent = 'Send';
+  sendBtn.innerHTML = on ? '<span>Queue</span><span class="send-icon">＋</span>' : '<span>Send</span><span class="send-icon">↑</span>';
+  document.body.classList.toggle('is-generating', Boolean(on));
+  sendBtn.setAttribute('aria-label', on ? 'Queue prompt' : 'Send message');
 }
 function scrollToBottom() { document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight; }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -1716,6 +2208,7 @@ async function createNewSession(title = '', workspace = '') {
 async function cancelSession(id) {
   const session = state.openSessions.find(s => s.id === id);
   if (!session) return;
+  session.cancelRequested = true;
 
   if (session.reader) {
     try {
@@ -1762,6 +2255,17 @@ async function switchSession(id) {
   state.sessionId = id;
   state.sessionTitle = session.title || '';
   state.sessionWorkspace = session.workspace || '';
+  // Reset file browser/editor when switching sessions (discard unsaved).
+  state.fsDir = '';
+  state.fsOpenPath = null;
+  state.fsSavedContent = '';
+  state.fsDirty = false;
+  clearFsEditor();
+  if (fsEditorPath) fsEditorPath.textContent = 'No file open';
+  if (fsCloseBtn) fsCloseBtn.disabled = true;
+  if (fsSaveBtn) fsSaveBtn.disabled = true;
+  if (fsDirtyBadge) fsDirtyBadge.classList.add('hidden');
+  if (fsEditorStatus) fsEditorStatus.textContent = '';
   if (session.provider && session.model) {
     applyProviderModel(session.provider, session.model);
   }

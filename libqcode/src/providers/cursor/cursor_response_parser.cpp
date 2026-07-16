@@ -248,17 +248,27 @@ EmbeddingResult CursorResponseParser::parse_error_embedding_response(
   return EmbeddingResult(body.empty() ? "cursor embedding error" : body);
 }
 
-std::vector<std::string> CursorResponseParser::parse_get_usable_models(
+std::vector<CursorModelInfo> CursorResponseParser::parse_get_usable_models(
     const std::string& body) {
-  std::vector<std::string> models;
+  std::vector<CursorModelInfo> models;
   const auto top = parse_fields(body);
   for (const auto& f : top) {
     if (f.num == 1 && f.wire == 2) {  // models: ModelDetails[]
       const auto model = parse_fields(f.bytes);
+      CursorModelInfo info;
       for (const auto& g : model) {
         if (g.num == 1 && g.wire == 2) {  // model_id
-          models.push_back(g.bytes);
+          info.id = g.bytes;
+        } else if (g.num == 4 && g.wire == 2) {  // display_name
+          info.name = g.bytes;
+        } else if (g.num == 3 && g.wire == 2 && info.name.empty()) {
+          // Older schemas use display_model_id when display_name is absent.
+          info.name = g.bytes;
         }
+      }
+      if (!info.id.empty()) {
+        if (info.name.empty()) info.name = info.id;
+        models.emplace_back(std::move(info));
       }
     }
   }

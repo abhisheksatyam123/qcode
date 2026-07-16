@@ -54,7 +54,6 @@ target_sources(qcode-core PRIVATE
     src/providers/base_provider_client.cpp
     src/providers/registry.cpp
     src/providers/registry_init.cpp
-    src/providers/provider_registry_init.cpp
     src/providers/openai/openai_client.cpp
     src/providers/openai/openai_request_builder.cpp
     src/providers/openai/openai_response_parser.cpp

@@ -3,12 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#080b12">
 <title>QCode Chat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/styles/github-dark.min.css">
 </head>
 <body>
 <div id="app">
@@ -19,26 +21,29 @@
   <aside id="sidebar">
     <div class="sidebar-header">
       <div class="sidebar-brand">
-        <h1>QCode</h1>
-        <div class="version">v0.2</div>
+        <div class="brand-mark">Q</div>
+        <div class="brand-copy">
+          <h1>QCode</h1>
+          <span>AI workspace</span>
+        </div>
       </div>
-      <button id="sidebar-close-btn" class="sidebar-close-btn" title="Close Menu">&times;</button>
+      <button id="sidebar-close-btn" class="sidebar-close-btn" title="Close menu" aria-label="Close menu">&times;</button>
     </div>
 
     <!-- Views Selection -->
     <div class="sidebar-section">
       <div class="sidebar-section-title">Views</div>
       <nav class="sidebar-nav">
-        <button class="sidebar-nav-btn active" id="tab-chat-btn">
+        <button class="sidebar-nav-btn active" id="tab-chat-btn" type="button">
           <span class="nav-icon">💬</span> Chat
         </button>
-        <button class="sidebar-nav-btn" id="tab-terminal-btn">
+        <button class="sidebar-nav-btn" id="tab-terminal-btn" type="button">
           <span class="nav-icon">⚡</span> Terminal
         </button>
-        <button class="sidebar-nav-btn" id="tab-files-btn">
-          <span class="nav-icon">📁</span> Working Tree
+        <button class="sidebar-nav-btn" id="tab-files-btn" type="button">
+          <span class="nav-icon">📁</span> Files
         </button>
-        <button class="sidebar-nav-btn" id="tab-stats-btn">
+        <button class="sidebar-nav-btn" id="tab-stats-btn" type="button">
           <span class="nav-icon">📊</span> Session Stats
         </button>
       </nav>
@@ -48,7 +53,7 @@
     <div class="sidebar-section flex-grow">
       <div class="sidebar-section-header">
         <div class="sidebar-section-title">Sessions</div>
-        <button id="new-session-btn" class="session-add-btn" title="New Session">+</button>
+        <button id="new-session-btn" class="session-add-btn" title="New session" aria-label="New session">+</button>
       </div>
       <div id="session-tabs-container" class="session-tabs-container"></div>
     </div>
@@ -79,6 +84,10 @@
 
     <div class="sidebar-footer">
       <button id="clear-btn">Clear Chat</button>
+      <div class="connection-status" id="connection-status">
+        <span class="connection-dot"></span>
+        <span class="connection-label">Connected</span>
+      </div>
     </div>
   </aside>
 
@@ -86,14 +95,14 @@
   <div id="main-area">
     <!-- Header replacing the old main-tabs -->
     <header id="main-header">
-      <button id="menu-toggle-btn" class="menu-toggle-btn" title="Toggle Menu">☰</button>
+      <button id="menu-toggle-btn" class="menu-toggle-btn" title="Open menu" aria-label="Open menu">☰</button>
       <div class="header-session-info">
         <div class="header-session-title" id="header-session-title">No session</div>
         <div class="header-session-workspace" id="header-session-workspace"></div>
       </div>
       <div class="header-actions">
         <button class="layout-toggle-btn" id="layout-toggle-btn" title="Toggle Split View">
-          <span class="layout-icon">🔲</span> Split View
+          <span class="layout-icon">◫</span> Split View
         </button>
       </div>
     </header>
@@ -109,10 +118,10 @@
             <span id="queue-text"></span>
           </div>
           <div class="input-wrapper">
-            <textarea id="prompt-input" placeholder="Type your message..." rows="3"></textarea>
+            <textarea id="prompt-input" placeholder="Ask QCode anything…" rows="1" aria-label="Message QCode"></textarea>
             <div class="input-actions">
-              <span class="input-info">Shift+Enter for newline</span>
-              <button id="send-btn">Send</button>
+              <span class="input-info"><kbd>Shift</kbd> + <kbd>Enter</kbd> for newline</span>
+              <button id="send-btn" aria-label="Send message"><span>Send</span><span class="send-icon">↑</span></button>
             </div>
           </div>
         </div>
@@ -126,10 +135,43 @@
       </div>
       <div id="files-panel" class="side-tab-panel hidden">
         <div class="side-tab-header">
-          <span>📁 Working Tree</span>
-          <button id="files-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+          <span>📁 Files</span>
+          <div class="files-header-actions">
+            <div class="files-subtabs" role="tablist">
+              <button type="button" class="files-subtab active" id="files-subtab-explorer" data-subtab="explorer">Explorer</button>
+              <button type="button" class="files-subtab" id="files-subtab-git" data-subtab="git">Changes</button>
+            </div>
+            <button id="files-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+          </div>
         </div>
-        <div id="files-content"></div>
+        <div id="files-content" class="files-content-root">
+          <!-- Explorer: browser + editor -->
+          <div id="files-explorer" class="files-explorer">
+            <div class="fs-browser">
+              <div class="fs-breadcrumb" id="fs-breadcrumb"></div>
+              <div class="fs-listing" id="fs-listing">
+                <div class="files-empty">Select a session to browse files.</div>
+              </div>
+            </div>
+            <div class="fs-editor-pane" id="fs-editor-pane">
+              <div class="fs-editor-toolbar">
+                <span class="fs-editor-path" id="fs-editor-path">No file open</span>
+                <div class="fs-editor-actions">
+                  <span class="fs-dirty-badge hidden" id="fs-dirty-badge">unsaved</span>
+                  <button type="button" id="fs-save-btn" class="fs-btn primary" disabled title="Save (Ctrl+S)">Save</button>
+                  <button type="button" id="fs-close-btn" class="fs-btn" disabled title="Close editor">Close</button>
+                </div>
+              </div>
+              <div class="fs-editor-wrap" id="fs-editor-wrap">
+                <pre class="fs-highlight" id="fs-highlight" aria-hidden="true"><code class="hljs" id="fs-highlight-code"></code></pre>
+                <textarea id="fs-editor" class="fs-editor" spellcheck="false" placeholder="Open a file from the browser…" disabled></textarea>
+              </div>
+              <div class="fs-editor-status" id="fs-editor-status"></div>
+            </div>
+          </div>
+          <!-- Git working-tree changes (existing) -->
+          <div id="files-git" class="files-git hidden"></div>
+        </div>
       </div>
       <div id="stats-panel" class="side-tab-panel hidden">
         <div class="side-tab-header">
@@ -146,6 +188,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
-<script src="/app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>
+<script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -12,6 +12,11 @@
 namespace ai {
 namespace cursor {
 
+struct CursorModelInfo {
+  std::string id;
+  std::string name;
+};
+
 // Parsed view of one AgentServerMessage connect frame.
 struct AgentStreamEvent {
   enum class Kind {
@@ -63,7 +68,7 @@ class CursorResponseParser : public providers::ResponseParser {
       int status_code, const std::string& body) override;
 
   // body = raw protobuf from GetUsableModelsResponse { 1: models[] }.
-  static std::vector<std::string> parse_get_usable_models(
+  static std::vector<CursorModelInfo> parse_get_usable_models(
       const std::string& body);
 
   // Full body (binary connect stream or legacy SSE) -> assistant text.

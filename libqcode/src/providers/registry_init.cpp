@@ -41,7 +41,9 @@ void register_tui_providers() {
     // core registry -- mirroring the Antigravity pattern.
     ProviderRegistry::instance().register_provider(
         "cursor", [](const ProviderOptions& options) {
-          std::string token = ai::tui::get_cursor_access_token();
+          std::string token = options.api_key.empty()
+                                  ? ai::tui::get_cursor_access_token()
+                                  : options.api_key;
           if (token.empty()) {
             return ClientResolution::fail("Cursor access token failed.");
           }

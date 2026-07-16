@@ -19,6 +19,8 @@ namespace cursor {
 namespace {
 
 constexpr const char* kAiserverPath = "/aiserver.v1.AiService/GetUsableModels";
+constexpr const char* kAgentModelsPath =
+    "/agent.v1.AgentService/GetUsableModels";
 constexpr const char* kBidiAppendPath = "/aiserver.v1.BidiService/BidiAppend";
 constexpr const char* kAgentPath = "/agent.v1.AgentService/RunSSE";
 constexpr const char* kClientVersion = "cli-2026.07.09-a3815c0";
@@ -115,21 +117,45 @@ httplib::Headers CursorClient::build_headers(const std::string& token,
 }
 
 std::vector<std::string> CursorClient::supported_models() const {
+  std::vector<std::string> ids;
+  for (const auto& model : available_models()) {
+    ids.emplace_back(model.id);
+  }
+  return ids;
+}
+
+std::vector<CursorModelInfo> CursorClient::available_models() const {
   try {
-    auto headers = build_headers(session_token_, false);
-    std::string body =
-        cursor_request_builder_->build_get_usable_models_request();
-    auto res = aiserver_handler_->post(kAiserverPath, headers, body,
+    const auto request_id = random_id();
+    const auto body = cursor_request_builder_->build_get_usable_models_request();
+
+    auto agent_headers = build_headers(access_token_, true);
+    agent_headers.emplace("x-request-id", request_id);
+    auto result = agent_handler_->post(kAgentModelsPath, agent_headers, body,
                                        "application/proto");
-    if (!res.is_success()) {
-      LOG_ERROR("Cursor GetUsableModels failed: {}", res.error_message());
-      return {};
+    if (result.is_success()) {
+      auto models = CursorResponseParser::parse_get_usable_models(result.text);
+      if (!models.empty()) return models;
+      LOG_WARN("Cursor agent model catalog returned no models");
+    } else {
+      LOG_WARN("Cursor agent GetUsableModels failed: {}",
+               result.error_message());
     }
-    return CursorResponseParser::parse_get_usable_models(res.text);
+
+    // Older Cursor accounts expose model discovery on the aiserver service.
+    auto legacy_headers = build_headers(session_token_, false);
+    legacy_headers.emplace("x-request-id", request_id);
+    result = aiserver_handler_->post(kAiserverPath, legacy_headers, body,
+                                     "application/proto");
+    if (result.is_success()) {
+      return CursorResponseParser::parse_get_usable_models(result.text);
+    }
+    LOG_ERROR("Cursor legacy GetUsableModels failed: {}",
+              result.error_message());
   } catch (const std::exception& e) {
     LOG_ERROR("Cursor GetUsableModels exception: {}", e.what());
-    return {};
   }
+  return {};
 }
 
 GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
@@ -261,6 +287,8 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
 
     GenerateResult result(collected_text, kFinishReasonStop, Usage());
     result.model = options.model;
+    result.provider_metadata =
+        R"({"prompt_cache":"cursor_automatic","transport":"agent"})";
     return result;
   } catch (const std::exception& e) {
     return GenerateResult(std::string("cursor generate_text error: ") +
@@ -458,7 +486,7 @@ bool CursorClient::supports_model(const std::string&) const { return true; }
 std::string CursorClient::default_model() const { return "default"; }
 
 std::string CursorClient::config_info() const {
-  return "Cursor (BidiAppend + RunSSE over HTTP/2)";
+  return "Cursor (QCode AI SDK, HTTP/2 agent, automatic prompt caching)";
 }
 
 }  // namespace cursor

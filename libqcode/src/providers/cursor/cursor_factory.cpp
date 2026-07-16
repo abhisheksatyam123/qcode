@@ -36,5 +36,17 @@ Client create_client(const std::string& access_token, const Options& options) {
       options.agent_base_url));
 }
 
+std::vector<AvailableModel> list_models(const std::string& access_token,
+                                        const Options& options) {
+  CursorClient client(access_token, access_token, options.aiserver_base_url,
+                      options.agent_base_url);
+  std::vector<AvailableModel> models;
+  for (auto&& model : client.available_models()) {
+    models.emplace_back(
+        AvailableModel{std::move(model.id), std::move(model.name)});
+  }
+  return models;
+}
+
 }  // namespace cursor
 }  // namespace ai

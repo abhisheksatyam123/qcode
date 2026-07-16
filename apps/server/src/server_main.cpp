@@ -30,12 +30,15 @@
 #include <unordered_map>
 #include <vector>
 #include <map>
+#include <algorithm>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include <termios.h>
 #include <unistd.h>
+#include <sstream>
 
 using namespace ai::tui::contract;
 
@@ -116,6 +119,83 @@ static std::vector<std::string> split_lines(const std::string& s) {
     }
     if (!cur.empty()) out.push_back(cur);
     return out;
+}
+
+// ── Workspace filesystem helpers (WebUI file browser / editor) ──
+static constexpr std::uintmax_t kMaxFsFileBytes = 2 * 1024 * 1024;  // 2 MiB
+
+static std::string resolve_session_workspace(const std::string& sid) {
+    std::string ws = ai::tui::db::get_session_workspace(sid);
+    if (!ws.empty()) ws = expand_tilde(ws);
+    if (ws.empty()) {
+        char cwd[4096] = {0};
+        if (getcwd(cwd, sizeof(cwd))) ws = cwd;
+    }
+    return ws;
+}
+
+// Resolve a client-relative path against the session workspace. Rejects
+// absolute paths and any path that escapes the workspace root.
+// On success: sets abs_out to the absolute path and rel_out to the
+// normalized relative path ("" for workspace root). Returns error message or "".
+static std::string resolve_workspace_path(const std::string& workspace,
+                                          const std::string& rel_in,
+                                          std::string& abs_out,
+                                          std::string& rel_out) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    if (workspace.empty()) return "no workspace";
+    if (!rel_in.empty() && rel_in[0] == '/') return "absolute paths not allowed";
+    if (rel_in.find('\0') != std::string::npos) return "invalid path";
+
+    fs::path root = fs::weakly_canonical(fs::path(workspace), ec);
+    if (ec || root.empty()) {
+        // Workspace may not exist yet — fall back to absolute() if present.
+        root = fs::absolute(fs::path(workspace), ec);
+        if (ec) return "invalid workspace";
+    }
+
+    fs::path candidate = root;
+    if (!rel_in.empty() && rel_in != ".") {
+        candidate = root / fs::path(rel_in);
+    }
+    candidate = fs::weakly_canonical(candidate, ec);
+    if (ec) {
+        // Parent may exist while leaf does not (for create/write).
+        candidate = fs::absolute(root / fs::path(rel_in.empty() ? "." : rel_in), ec);
+        if (ec) return "invalid path";
+    }
+
+    std::string root_s = root.string();
+    std::string cand_s = candidate.string();
+    // Ensure cand is root or under root/
+    if (cand_s != root_s) {
+        std::string prefix = root_s;
+        if (!prefix.empty() && prefix.back() != '/') prefix += '/';
+        if (cand_s.rfind(prefix, 0) != 0) return "path escapes workspace";
+    }
+
+    abs_out = cand_s;
+    if (cand_s == root_s) {
+        rel_out.clear();
+    } else {
+        rel_out = cand_s.substr(root_s.size() + 1);
+    }
+    return "";
+}
+
+static bool looks_binary(const std::string& data) {
+    // NUL byte or high ratio of non-printable bytes → treat as binary.
+    size_t n = std::min(data.size(), size_t(8192));
+    if (n == 0) return false;
+    size_t bad = 0;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = static_cast<unsigned char>(data[i]);
+        if (c == 0) return true;
+        if (c < 9 || (c > 13 && c < 32)) bad++;
+    }
+    return bad * 10 > n;  // >10% control chars
 }
 
 static std::mutex g_terminal_mutex;
@@ -538,15 +618,24 @@ int main(int argc, char* argv[]) {
                         final_msg["error"] = session->error;
                     }
                     std::string chunk = final_msg.dump() + "\n";
-                    sink.write(chunk.data(), chunk.size());
+                    if (!sink.write(chunk.data(), chunk.size())) {
+                        return false;
+                    }
                     sink.done();
-                    return false; // No more data
+                    // cpp-httplib treats false as a cancelled provider. sink.done()
+                    // already emitted the terminating chunk, so report success.
+                    return true;
                 }
 
-                // Not done yet - will be called again
+                // Avoid a hot loop while waiting for the provider or a tool.
+                if (events.empty()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
                 return true;
             }
         );
+        res.set_header("Cache-Control", "no-cache, no-transform");
+        res.set_header("X-Accel-Buffering", "no");
     };
 
     // ── Generate response (Deprecated generic fallback) ──
@@ -1198,6 +1287,250 @@ int main(int argc, char* argv[]) {
             j["diff"] = "";
         }
 
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    // ── Workspace filesystem: list directory ──
+    // GET /session/:id/fs/list?path=relative/dir
+    svr.Get("/session/([a-f0-9-]+)/fs/list", [](const httplib::Request& req, httplib::Response& res) {
+        namespace fs = std::filesystem;
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+        std::string ws = resolve_session_workspace(sid);
+        std::string rel = req.has_param("path") ? req.get_param_value("path") : "";
+        // Strip leading "./"
+        while (rel.rfind("./", 0) == 0) rel = rel.substr(2);
+        if (rel == ".") rel.clear();
+
+        std::string abs, rel_norm;
+        std::string err = resolve_workspace_path(ws, rel, abs, rel_norm);
+        if (!err.empty()) {
+            res.status = 400;
+            res.set_content(nlohmann::json({{"error", err}}).dump(), "application/json");
+            return;
+        }
+
+        nlohmann::json j;
+        j["workspace"] = ws;
+        j["path"] = rel_norm;
+        j["entries"] = nlohmann::json::array();
+
+        std::error_code ec;
+        if (!fs::exists(abs, ec) || !fs::is_directory(abs, ec)) {
+            res.status = 404;
+            res.set_content(nlohmann::json({{"error", "not a directory"}, {"path", rel_norm}}).dump(),
+                            "application/json");
+            return;
+        }
+
+        std::vector<nlohmann::json> dirs, files;
+        for (const auto& entry : fs::directory_iterator(abs, ec)) {
+            if (ec) break;
+            const auto& p = entry.path();
+            std::string name = p.filename().string();
+            if (name.empty() || name[0] == '.') continue;  // skip hidden
+            bool is_dir = entry.is_directory(ec);
+            nlohmann::json e = {
+                {"name", name},
+                {"type", is_dir ? "dir" : "file"},
+                {"path", rel_norm.empty() ? name : (rel_norm + "/" + name)}
+            };
+            if (!is_dir) {
+                auto sz = entry.file_size(ec);
+                if (!ec) e["size"] = static_cast<std::uint64_t>(sz);
+            }
+            if (is_dir) dirs.push_back(std::move(e));
+            else files.push_back(std::move(e));
+        }
+        std::sort(dirs.begin(), dirs.end(),
+                  [](const nlohmann::json& a, const nlohmann::json& b) {
+                      return a["name"].get<std::string>() < b["name"].get<std::string>();
+                  });
+        std::sort(files.begin(), files.end(),
+                  [](const nlohmann::json& a, const nlohmann::json& b) {
+                      return a["name"].get<std::string>() < b["name"].get<std::string>();
+                  });
+        for (auto& e : dirs) j["entries"].push_back(std::move(e));
+        for (auto& e : files) j["entries"].push_back(std::move(e));
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    // ── Workspace filesystem: read file ──
+    // GET /session/:id/fs/read?path=relative/file
+    svr.Get("/session/([a-f0-9-]+)/fs/read", [](const httplib::Request& req, httplib::Response& res) {
+        namespace fs = std::filesystem;
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+        if (!req.has_param("path") || req.get_param_value("path").empty()) {
+            res.status = 400;
+            res.set_content(R"({"error":"path required"})", "application/json");
+            return;
+        }
+        std::string rel = req.get_param_value("path");
+        while (rel.rfind("./", 0) == 0) rel = rel.substr(2);
+
+        std::string ws = resolve_session_workspace(sid);
+        std::string abs, rel_norm;
+        std::string err = resolve_workspace_path(ws, rel, abs, rel_norm);
+        if (!err.empty()) {
+            res.status = 400;
+            res.set_content(nlohmann::json({{"error", err}}).dump(), "application/json");
+            return;
+        }
+
+        std::error_code ec;
+        if (!fs::exists(abs, ec) || !fs::is_regular_file(abs, ec)) {
+            res.status = 404;
+            res.set_content(nlohmann::json({{"error", "not a file"}, {"path", rel_norm}}).dump(),
+                            "application/json");
+            return;
+        }
+        auto sz = fs::file_size(abs, ec);
+        if (ec) {
+            res.status = 500;
+            res.set_content(R"({"error":"stat failed"})", "application/json");
+            return;
+        }
+        if (sz > kMaxFsFileBytes) {
+            res.status = 413;
+            res.set_content(nlohmann::json({
+                {"error", "file too large"},
+                {"size", static_cast<std::uint64_t>(sz)},
+                {"max", static_cast<std::uint64_t>(kMaxFsFileBytes)}
+            }).dump(), "application/json");
+            return;
+        }
+
+        std::ifstream in(abs, std::ios::binary);
+        if (!in) {
+            res.status = 500;
+            res.set_content(R"({"error":"open failed"})", "application/json");
+            return;
+        }
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        std::string content = ss.str();
+        if (looks_binary(content)) {
+            res.status = 415;
+            res.set_content(nlohmann::json({
+                {"error", "binary file not editable"},
+                {"path", rel_norm},
+                {"size", static_cast<std::uint64_t>(sz)}
+            }).dump(), "application/json");
+            return;
+        }
+
+        nlohmann::json j = {
+            {"workspace", ws},
+            {"path", rel_norm},
+            {"size", static_cast<std::uint64_t>(sz)},
+            {"content", content}
+        };
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    // ── Workspace filesystem: write file ──
+    // PUT /session/:id/fs/write  body: { "path": "rel/file", "content": "..." }
+    svr.Put("/session/([a-f0-9-]+)/fs/write", [](const httplib::Request& req, httplib::Response& res) {
+        namespace fs = std::filesystem;
+        std::string sid = req.matches[1];
+        if (!ai::tui::db::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid session_id"})", "application/json");
+            return;
+        }
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); }
+        catch (...) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid json"})", "application/json");
+            return;
+        }
+        if (!body.contains("path") || !body["path"].is_string() ||
+            body["path"].get<std::string>().empty()) {
+            res.status = 400;
+            res.set_content(R"({"error":"path required"})", "application/json");
+            return;
+        }
+        if (!body.contains("content") || !body["content"].is_string()) {
+            res.status = 400;
+            res.set_content(R"({"error":"content required string"})", "application/json");
+            return;
+        }
+        std::string rel = body["path"].get<std::string>();
+        std::string content = body["content"].get<std::string>();
+        while (rel.rfind("./", 0) == 0) rel = rel.substr(2);
+        if (content.size() > kMaxFsFileBytes) {
+            res.status = 413;
+            res.set_content(nlohmann::json({
+                {"error", "content too large"},
+                {"max", static_cast<std::uint64_t>(kMaxFsFileBytes)}
+            }).dump(), "application/json");
+            return;
+        }
+
+        std::string ws = resolve_session_workspace(sid);
+        std::string abs, rel_norm;
+        std::string err = resolve_workspace_path(ws, rel, abs, rel_norm);
+        if (!err.empty()) {
+            res.status = 400;
+            res.set_content(nlohmann::json({{"error", err}}).dump(), "application/json");
+            return;
+        }
+        if (rel_norm.empty()) {
+            res.status = 400;
+            res.set_content(R"({"error":"cannot write workspace root"})", "application/json");
+            return;
+        }
+
+        std::error_code ec;
+        // Refuse to overwrite directories.
+        if (fs::exists(abs, ec) && fs::is_directory(abs, ec)) {
+            res.status = 400;
+            res.set_content(R"({"error":"path is a directory"})", "application/json");
+            return;
+        }
+        // Create parent dirs if needed.
+        fs::path parent = fs::path(abs).parent_path();
+        if (!parent.empty() && !fs::exists(parent, ec)) {
+            fs::create_directories(parent, ec);
+            if (ec) {
+                res.status = 500;
+                res.set_content(nlohmann::json({{"error", "mkdir failed"},
+                                                {"detail", ec.message()}}).dump(),
+                                "application/json");
+                return;
+            }
+        }
+
+        std::ofstream out(abs, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            res.status = 500;
+            res.set_content(R"({"error":"open for write failed"})", "application/json");
+            return;
+        }
+        out.write(content.data(), static_cast<std::streamsize>(content.size()));
+        out.close();
+        if (!out) {
+            res.status = 500;
+            res.set_content(R"({"error":"write failed"})", "application/json");
+            return;
+        }
+
+        nlohmann::json j = {
+            {"ok", true},
+            {"workspace", ws},
+            {"path", rel_norm},
+            {"size", content.size()}
+        };
         res.set_content(j.dump(2), "application/json");
     });
 

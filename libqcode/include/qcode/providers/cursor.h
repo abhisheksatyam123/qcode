@@ -8,6 +8,7 @@
 #include "types/client.h"
 
 #include <string>
+#include <vector>
 
 namespace ai {
 namespace cursor {
@@ -17,6 +18,11 @@ namespace cursor {
 struct Options {
   std::string aiserver_base_url = "https://api2.cursor.sh";
   std::string agent_base_url = "https://agentn.global.api5.cursor.sh";
+};
+
+struct AvailableModel {
+  std::string id;
+  std::string name;
 };
 
 // Create a Cursor client with an explicit access token.
@@ -35,6 +41,10 @@ Client create_client(const std::string& access_token,
 
 // Create a Cursor client from an Options struct.
 Client create_client(const std::string& access_token, const Options& options);
+
+// Load the models enabled for this Cursor account.
+std::vector<AvailableModel> list_models(const std::string& access_token,
+                                        const Options& options = {});
 
 }  // namespace cursor
 }  // namespace ai

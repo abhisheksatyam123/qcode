@@ -3,6 +3,7 @@
 #include "cursor_proto.h"
 
 #include <random>
+#include <sstream>
 #include <variant>
 
 namespace ai {
@@ -20,23 +21,42 @@ std::string random_id() {
   return s;
 }
 
-// Pull a user-facing prompt out of GenerateOptions, preferring the explicit
-// prompt and falling back to the last user message's text content.
-std::string extract_prompt(const GenerateOptions& options) {
-  if (!options.prompt.empty()) return options.prompt;
-  for (auto it = options.messages.rbegin(); it != options.messages.rend();
-       ++it) {
-    for (const auto& part : it->content) {
-      if (std::holds_alternative<TextContentPart>(part)) {
-        const auto& tcp = std::get<TextContentPart>(part);
-        if (!tcp.text.empty()) return tcp.text;
-      } else if (std::holds_alternative<ReasoningContentPart>(part)) {
-        const auto& rcp = std::get<ReasoningContentPart>(part);
-        if (!rcp.text.empty()) return rcp.text;
+// Cursor manages prompt caching on its backend. Keep the system prompt and
+// conversation in a stable prefix so subsequent turns can reuse that cache.
+std::string build_conversation_prompt(const GenerateOptions& options) {
+  std::ostringstream prompt;
+  if (!options.system.empty()) {
+    prompt << "System:\n" << options.system << "\n\n";
+  }
+
+  for (const auto& message : options.messages) {
+    prompt << message.roleToString() << ":\n";
+    for (const auto& part : message.content) {
+      if (const auto* text = std::get_if<TextContentPart>(&part)) {
+        prompt << text->text;
+      } else if (const auto* reasoning =
+                     std::get_if<ReasoningContentPart>(&part)) {
+        prompt << reasoning->text;
+      } else if (const auto* call =
+                     std::get_if<ToolCallContentPart>(&part)) {
+        prompt << "[tool call " << call->tool_name << ": "
+               << call->arguments.dump() << ']';
+      } else if (const auto* result =
+                     std::get_if<ToolResultContentPart>(&part)) {
+        prompt << "[tool result: " << result->result.dump() << ']';
       }
     }
+    prompt << "\n\n";
   }
-  return "";
+
+  if (options.messages.empty() && !options.prompt.empty()) {
+    prompt << options.prompt;
+  } else if (!options.prompt.empty() &&
+             (options.messages.empty() ||
+              options.messages.back().get_text() != options.prompt)) {
+    prompt << "user:\n" << options.prompt;
+  }
+  return prompt.str();
 }
 
 // agent.v1.AgentMode.AGENT_MODE_AGENT
@@ -74,7 +94,7 @@ std::string CursorRequestBuilder::build_get_usable_models_request() const {
 std::string CursorRequestBuilder::build_agent_run_request(
     const GenerateOptions& options) const {
   const std::string model = options.model.empty() ? "default" : options.model;
-  const std::string prompt = extract_prompt(options);
+  const std::string prompt = build_conversation_prompt(options);
   const std::string conversation_id = random_id();
   const std::string message_id = random_id();
 

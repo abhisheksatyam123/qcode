@@ -34,6 +34,7 @@ class CursorClient : public providers::BaseProviderClient {
   GenerateResult generate_text(const GenerateOptions& options) override;
   std::string provider_name() const override;
   std::vector<std::string> supported_models() const override;
+  std::vector<CursorModelInfo> available_models() const;
   bool supports_model(const std::string& model_name) const override;
   std::string config_info() const override;
   std::string default_model() const override;

@@ -1,5 +1,6 @@
 #include "ai/tui/config.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -100,6 +101,49 @@ TEST(TuiConfigTest, DetectsExpiredAntigravityTokenFile) {
 TEST(TuiConfigTest, EnvApiKeySkipsAntigravityRefreshCheck) {
   ScopedEnv api_key("ANTIGRAVITY_API_KEY", "env-token");
   EXPECT_FALSE(antigravity_token_needs_refresh());
+}
+
+TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    "qcode-cursor-config-test.json";
+  {
+    std::ofstream output(path);
+    output << R"({
+      "provider": {
+        "cursor": {
+          "name": "Cursor",
+          "models": {
+            "composer-2.5": {"name": "Composer 2.5"},
+            "claude-opus-4.8": {"name": "Claude Opus 4.8"}
+          }
+        }
+      }
+    })";
+  }
+  ScopedEnv config("OPENCODE_CONFIG", path.string());
+  ScopedEnv auth_file("CURSOR_AUTH_FILE", path.string() + ".missing");
+  ScopedEnv api_key("CURSOR_API_KEY", "");
+  unsetenv("CURSOR_API_KEY");
+
+  const auto providers = load_providers_from_config();
+
+  ASSERT_EQ(providers.size(), 1u);
+  const auto& models = providers.front().models;
+  const auto has_model = [&models](const std::string& id) {
+    return std::any_of(models.begin(), models.end(),
+                       [&id](const ModelInfo& model) {
+                         return model.id == id;
+                       });
+  };
+  EXPECT_TRUE(has_model("composer-2.5"));
+  EXPECT_TRUE(has_model("cursor-grok-4.5-high"));
+  EXPECT_TRUE(has_model("gpt-5.6-sol-medium"));
+  EXPECT_TRUE(has_model("gpt-5.6-terra-medium"));
+  EXPECT_TRUE(has_model("gpt-5.6-luna-medium"));
+  EXPECT_TRUE(has_model("claude-fable-5-high"));
+  EXPECT_TRUE(has_model("claude-fable-5-thinking-high"));
+  EXPECT_FALSE(has_model("claude-opus-4.8"));
+  std::filesystem::remove(path);
 }
 
 }  // namespace
