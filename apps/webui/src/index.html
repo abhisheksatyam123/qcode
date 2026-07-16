@@ -164,7 +164,8 @@
               </div>
               <div class="fs-editor-wrap" id="fs-editor-wrap">
                 <pre class="fs-highlight" id="fs-highlight" aria-hidden="true"><code class="hljs" id="fs-highlight-code"></code></pre>
-                <textarea id="fs-editor" class="fs-editor" spellcheck="false" placeholder="Open a file from the browser…" disabled></textarea>
+                <!-- wrap="off" keeps long lines in sync with the <pre> highlight overlay -->
+                <textarea id="fs-editor" class="fs-editor" spellcheck="false" wrap="off" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Open a file from the browser…" disabled></textarea>
               </div>
               <div class="fs-editor-status" id="fs-editor-status"></div>
             </div>
@@ -189,6 +190,12 @@
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>
+<!-- Extra languages used by the file editor (not in the common bundle). -->
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/cmake.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/dockerfile.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/protobuf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/vim.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/fsharp.min.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

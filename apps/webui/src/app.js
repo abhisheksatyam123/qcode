@@ -229,26 +229,36 @@ function onProviderChange(idx) {
   if (p.models.length > 0) state.model = p.models[0].id;
 }
 
+// Resolve a provider/model pair against the loaded provider list.
+// Falls back to the first configured provider/model when the stored
+// selection is empty or stale (common for older sessions).
+function resolveProviderModel(providerId, modelId) {
+  if (!state.providers.length) {
+    return { provider: providerId || '', model: modelId || '', ok: false };
+  }
+  let pidx = state.providers.findIndex(p => p.id === providerId || p.name === providerId);
+  if (pidx < 0) pidx = 0;
+  const p = state.providers[pidx];
+  let midx = p.models.findIndex(m => m.id === modelId || m.name === modelId);
+  if (midx < 0) midx = 0;
+  const model = p.models[midx] ? p.models[midx].id : (modelId || '');
+  return { provider: p.id, model, ok: !!p.id && !!model };
+}
+
 // Apply a provider/model selection to both the dropdowns and state.
 // Used by the model picker and when restoring a session.
 function applyProviderModel(providerId, modelId) {
-  const pidx = state.providers.findIndex(p => p.id === providerId || p.name === providerId);
-  if (pidx < 0) {
-    state.provider = providerId;
-    state.model = modelId;
-    return false;
-  }
-  const p = state.providers[pidx];
+  const resolved = resolveProviderModel(providerId, modelId);
+  if (!resolved.ok) return false;
+  const pidx = state.providers.findIndex(p => p.id === resolved.provider);
+  if (pidx < 0) return false;
   providerSelect.value = pidx;
   onProviderChange(pidx);
-  const midx = p.models.findIndex(m => m.id === modelId || m.name === modelId);
-  const resolvedModelId = midx >= 0 ? p.models[midx].id : (p.models.length > 0 ? p.models[0].id : modelId);
-  if (midx >= 0) {
-    modelSelect.value = resolvedModelId;
-  }
-  state.provider = p.id;
-  state.model = resolvedModelId;
-  return true;
+  modelSelect.value = resolved.model;
+  state.provider = resolved.provider;
+  state.model = resolved.model;
+  return resolved.provider === providerId ||
+    state.providers[pidx].name === providerId;
 }
 
 function setupEventListeners() {
@@ -1221,10 +1231,25 @@ async function runGeneration(session, text) {
 
   let receivedComplete = false;
   try {
+    // Prefer the live dropdown selection, then the session's stored pair.
+    // Always resolve against /providers so stale/empty DB values cannot
+    // produce "Unknown provider:".
+    const resolved = resolveProviderModel(
+      state.provider || session.provider,
+      state.model || session.model
+    );
+    if (!resolved.ok) {
+      throw new Error('No provider/model configured. Check the sidebar selectors.');
+    }
+    session.provider = resolved.provider;
+    session.model = resolved.model;
+    state.provider = resolved.provider;
+    state.model = resolved.model;
+
     const body = JSON.stringify({
       text,
-      provider: session.provider || state.provider,
-      model: session.model || state.model,
+      provider: resolved.provider,
+      model: resolved.model,
       reasoning_mode: state.reasoning,
       session_id: session.id
     });
@@ -1672,6 +1697,17 @@ function getHljs() {
   return null;
 }
 
+function applyFsPlainOverlay(source) {
+  // Monochrome overlay keeps caret/selection working when hljs can't highlight.
+  fsHighlightCode.textContent = source;
+  // Browsers collapse a trailing newline inside <pre>/<code>; add one back so
+  // the last empty line still occupies space (matches textarea layout).
+  if (source.endsWith('\n')) fsHighlightCode.appendChild(document.createTextNode('\n'));
+  fsHighlightCode.className = 'hljs';
+  fsEditor.classList.remove('fs-editor-plain');
+  fsEditor.classList.add('fs-editor-highlighting');
+}
+
 function updateFsHighlight() {
   if (!fsEditor || !fsHighlightCode) return;
   const text = fsEditor.value;
@@ -1687,9 +1723,9 @@ function updateFsHighlight() {
     return;
   }
 
-  // highlight.js needs a trailing newline when the file ends with one so
-  // the last empty line still takes space (matches textarea layout).
-  const source = text.endsWith('\n') ? text + '\n' : text;
+  // Highlight the exact editor text. Do not invent extra newlines in the
+  // source string — that desyncs overlay height from the textarea.
+  const source = text;
 
   if (!engine) {
     // No highlighter loaded — keep textarea text visible (not transparent).
@@ -1701,31 +1737,25 @@ function updateFsHighlight() {
   }
 
   try {
-    let result;
-    if (fsLang && engine.getLanguage(fsLang)) {
-      result = engine.highlight(source, { language: fsLang, ignoreIllegals: true });
+    const knownLang = fsLang && engine.getLanguage(fsLang) ? fsLang : '';
+    let result = null;
+    if (knownLang) {
+      result = engine.highlight(source, { language: knownLang, ignoreIllegals: true });
     } else if (source.length > 0 && source.length < 200000) {
+      // Extension unknown — best-effort auto detect (skip huge files).
       result = engine.highlightAuto(source);
-      if (result.language) fsLang = result.language;
     } else {
-      // Too large or empty — plain monochrome overlay still keeps caret working.
-      fsHighlightCode.textContent = source;
-      fsHighlightCode.className = 'hljs';
-      fsEditor.classList.remove('fs-editor-plain');
-      fsEditor.classList.add('fs-editor-highlighting');
+      applyFsPlainOverlay(source);
       syncFsHighlightScroll();
       return;
     }
     fsHighlightCode.innerHTML = result.value + (source.endsWith('\n') ? '\n' : '');
-    fsHighlightCode.className = 'hljs language-' + (result.language || fsLang || 'plaintext');
+    fsHighlightCode.className = 'hljs language-' + (result.language || knownLang || 'plaintext');
     fsEditor.classList.remove('fs-editor-plain');
     fsEditor.classList.add('fs-editor-highlighting');
   } catch (e) {
     console.warn('syntax highlight failed:', e);
-    fsEditor.classList.add('fs-editor-plain');
-    fsEditor.classList.remove('fs-editor-highlighting');
-    fsHighlightCode.textContent = '';
-    fsHighlightCode.className = 'hljs';
+    applyFsPlainOverlay(source);
   }
   syncFsHighlightScroll();
 }
@@ -1752,6 +1782,7 @@ function clearFsEditor() {
     fsEditor.value = '';
     fsEditor.disabled = true;
     fsEditor.classList.add('fs-editor-plain');
+    fsEditor.classList.remove('fs-editor-highlighting');
   }
   if (fsHighlightCode) {
     fsHighlightCode.textContent = '';
@@ -2167,22 +2198,30 @@ function showToast(msg) { const t = document.createElement('div'); t.className =
 
 async function createNewSession(title = '', workspace = '') {
   try {
+    const resolved = resolveProviderModel(state.provider, state.model);
+    if (!resolved.ok) {
+      showToast('No provider/model configured');
+      return;
+    }
+    state.provider = resolved.provider;
+    state.model = resolved.model;
+
     const res = await fetch('/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: state.provider, model: state.model, workspace })
+      body: JSON.stringify({ provider: resolved.provider, model: resolved.model, workspace })
     });
     if (res.ok) {
       const data = await res.json();
       const newSession = {
         id: data.id,
-        title: title || 'Session - ' + state.model,
+        title: title || 'Session - ' + resolved.model,
         workspace: workspace || '',
         messages: [],
         generating: false,
         reader: null,
-        provider: state.provider,
-        model: state.model
+        provider: resolved.provider,
+        model: resolved.model
       };
       
       if (title) {
@@ -2266,8 +2305,16 @@ async function switchSession(id) {
   if (fsSaveBtn) fsSaveBtn.disabled = true;
   if (fsDirtyBadge) fsDirtyBadge.classList.add('hidden');
   if (fsEditorStatus) fsEditorStatus.textContent = '';
-  if (session.provider && session.model) {
-    applyProviderModel(session.provider, session.model);
+  // Restore provider/model from the session, falling back to a valid
+  // configured pair when the stored values are empty or stale.
+  const resolved = resolveProviderModel(
+    session.provider || state.provider,
+    session.model || state.model
+  );
+  if (resolved.ok) {
+    applyProviderModel(resolved.provider, resolved.model);
+    session.provider = resolved.provider;
+    session.model = resolved.model;
   }
 
   const expectedHash = `#/session/${id}`;

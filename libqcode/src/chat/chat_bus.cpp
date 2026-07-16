@@ -634,6 +634,18 @@ void run_generation_with_bus(
     LOG_DEBUG("chat_bus: resolved provider={} api_url={}", provider_id,
               provider_options.base_url);
 
+    if (provider_id.empty()) {
+      const std::string msg = provider_name.empty()
+                                  ? "No provider selected"
+                                  : ("Unknown provider: " + provider_name);
+      bus.publish<ErrorOccurred>({
+          .session_id = ctx.session_id,
+          .message = msg,
+          .severity = "error"
+      });
+      return;
+    }
+
     // Provider registry is populated once at startup (see main.cpp). Resolve the
     // provider client via the central registry (auth + base URL handled per
     // provider). Errors are surfaced on the bus.

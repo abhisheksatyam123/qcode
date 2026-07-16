@@ -463,8 +463,34 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        std::string provider = body.value("provider", providers_list[0].id);
-        std::string model = body.value("model", providers_list[0].models[0].id);
+        // body.value() only uses the default when the key is absent. An explicit
+        // empty string from the WebUI must still fall back to a real provider.
+        std::string provider = body.value("provider", "");
+        std::string model = body.value("model", "");
+        {
+            int sp = -1;
+            for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
+                if (providers_list[i].id == provider || providers_list[i].name == provider) {
+                    sp = i;
+                    break;
+                }
+            }
+            if (sp < 0) sp = 0;
+            provider = providers_list[sp].id;
+
+            int sm = -1;
+            for (int i = 0; i < static_cast<int>(providers_list[sp].models.size()); ++i) {
+                if (providers_list[sp].models[i].id == model ||
+                    providers_list[sp].models[i].name == model) {
+                    sm = i;
+                    break;
+                }
+            }
+            if (sm < 0) sm = 0;
+            if (!providers_list[sp].models.empty()) {
+                model = providers_list[sp].models[sm].id;
+            }
+        }
         std::string system_prompt = body.value("system_prompt",
             ai::tui::SystemPrompt::build_default());
         std::string reasoning_mode = body.value("reasoning_mode", "off");

@@ -1620,10 +1620,13 @@ body {
   border: none;
   font-family: 'Fira Code', ui-monospace, monospace;
   font-size: 13px;
+  font-weight: 400;
+  font-variant-ligatures: none;
   line-height: 1.55;
+  letter-spacing: normal;
   tab-size: 2;
+  -moz-tab-size: 2;
   white-space: pre;
-  overflow: auto;
   word-wrap: normal;
   overflow-wrap: normal;
 }
@@ -1633,26 +1636,32 @@ body {
   pointer-events: none;
   color: #e6edf3;
   background: transparent;
+  /* Textarea owns scrolling; this layer only mirrors scrollTop/Left.
+     overflow:hidden (not auto) avoids a second scrollbar AND keeps the
+     content width identical to the textarea (no gutter mismatch). */
+  overflow: hidden;
 }
 .fs-highlight code {
   display: block;
   font: inherit;
+  letter-spacing: inherit;
   background: transparent !important;
   padding: 0 !important;
+  margin: 0;
   white-space: pre;
   word-wrap: normal;
   overflow-wrap: normal;
-  /* trailing newline spacer so last line height matches textarea */
-  min-height: 100%;
 }
 .fs-highlight code.hljs {
   background: transparent !important;
+  padding: 0 !important;
 }
 
 .fs-editor {
   z-index: 1;
   resize: none;
   outline: none;
+  overflow: auto;
   background: transparent;
   color: #e6edf3; /* default: visible (fallback if highlight fails) */
   caret-color: #e6edf3;
