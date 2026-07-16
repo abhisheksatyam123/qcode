@@ -1297,24 +1297,35 @@ async function runGeneration(session, text) {
       assistantMsg.streamError = message;
     }
   } finally {
-    session.generating = false;
     session.reader = null;
-    renderSessionTabs();
-
-    if (session.id === state.sessionId) {
-      setGenerating(false);
-      renderMessages();
-      scrollToBottom();
-    }
 
     const exists = state.openSessions.some(s => s.id === session.id);
-    if (exists && session.promptQueue && session.promptQueue.length > 0) {
+    const hasNext = exists && !session.cancelRequested && session.promptQueue && session.promptQueue.length > 0;
+
+    if (hasNext) {
+      session.generating = true;
       const nextPrompt = session.promptQueue.shift();
+      renderSessionTabs();
       updateQueueIndicator();
       setTimeout(() => {
+        if (session.cancelRequested) {
+          session.generating = false;
+          renderSessionTabs();
+          if (session.id === state.sessionId) {
+            setGenerating(false);
+          }
+          return;
+        }
         runGeneration(session, nextPrompt);
       }, 50);
     } else {
+      session.generating = false;
+      renderSessionTabs();
+      if (session.id === state.sessionId) {
+        setGenerating(false);
+        renderMessages();
+        scrollToBottom();
+      }
       updateQueueIndicator();
     }
   }

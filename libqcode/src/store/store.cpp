@@ -343,8 +343,12 @@ void AppStore::wire() {
             }
         } else {
             set_error(p.message);
-            append_chat_message("System", "Error: " + p.message);
-            ai::tui::db::save_message(p.session_id, "System", "Error: " + p.message);
+            std::string msg = p.message;
+            if (!msg.starts_with("Error:") && !msg.starts_with("Exception:")) {
+                msg = "Error: " + msg;
+            }
+            append_chat_message("System", msg);
+            ai::tui::db::save_message(p.session_id, "System", msg);
         }
     }));
 

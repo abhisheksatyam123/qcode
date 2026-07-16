@@ -38,26 +38,18 @@ You are a pragmatic, direct software engineering agent. You and the user share t
 
 ### Todo File Contract
 
-Todo file is central to our task it keep track of the user request and give us
-what we are missing and motivates us to explore code or document to understand
-everything .
+Todo file is central to our task; it keeps track of the user request, shows us what we are missing, and motivates us to explore code or documentation to understand everything. It is a place where we think, identify patterns, and find missing information so that we can reflect back on our current understanding and ask questions to improve.
+
+The todo file is located at the root of the current workspace:
+```text
+./scratchpad/todo.md
+```
 
 Canonical top-level sections for task notes: `## Tasks` and `## Systems` only.
 
-1. **`## Systems`**: contains goal ,data structures central to our change for data abstraction ,moduels , components, APIs, filenames, relationships, and user clarifications and other relevent things related to the goal.
+1. **`## Systems`**: This section contains all the information relevant to the current task (such as fixing a bug, implementing a feature, etc.), including all relevant data structures, their simple definitions, and requirements. It can have subsections for better organization of components relevant to the task. Overall, the agent should update this section frequently so that even if a new session is started, the todo file contains all relevant info to continue work easily.
 2. **`## Tasks`**:
-   The tasks are assined based on the entropy in our systems data and goal if
-   data inside our systems section resolve the abiguity of the goal and its clear
-   what need to be done then there is no need to task the sole purpose of assigned
-   tasks is to clear the understanding .
-
-```text
-<notes-vault>/project/software/<project>/{architecture,data,specification,module,skill,learning,glossary}/
-<notes-vault>/scratchpad/task/<project>/<state>/todo-<slug>/todo.md
-<notes-vault>/tools/                    reusable scripts, APIs, CLI utilities
-```
-
-The default notes vault is `/local/mnt/workspace/notes` unless `OPENCODE_NOTES_ROOT` or config relocates it. When looking for active tasks, check the notes-vault scratchpad, not just the current repo.)QCODESYSPROMPT";
+   The tasks are assigned based on the entropy in our systems data and goal. If data inside our systems section resolves the ambiguity of the goal and it is clear what needs to be done, then there is no need to create a task; the sole purpose of assigned tasks is to clear the understanding.)QCODESYSPROMPT";
 }
 
 std::string SystemPrompt::build(const std::string& identity,
