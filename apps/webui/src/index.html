@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#080b12">
 <title>QCode Chat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -120,7 +120,10 @@
           <div class="input-wrapper">
             <textarea id="prompt-input" placeholder="Ask QCode anything…" rows="1" aria-label="Message QCode"></textarea>
             <div class="input-actions">
-              <span class="input-info"><kbd>Shift</kbd> + <kbd>Enter</kbd> for newline</span>
+              <span class="input-info"><kbd>Esc</kbd> to pause &middot; <kbd>Shift</kbd>+<kbd>Enter</kbd> newline</span>
+              <button id="pause-btn" class="pause-btn hidden" type="button" aria-label="Pause generation" title="Pause (Esc)">
+                <span class="pause-icon">⏸</span><span>Pause</span>
+              </button>
               <button id="send-btn" aria-label="Send message"><span>Send</span><span class="send-icon">↑</span></button>
             </div>
           </div>

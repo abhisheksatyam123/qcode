@@ -46,6 +46,7 @@ const state = {
 const messagesEl = document.getElementById('messages');
 const promptInput = document.getElementById('prompt-input');
 const sendBtn = document.getElementById('send-btn');
+const pauseBtn = document.getElementById('pause-btn');
 const clearBtn = document.getElementById('clear-btn');
 const providerSelect = document.getElementById('provider-select');
 const modelSelect = document.getElementById('model-select');
@@ -323,6 +324,9 @@ function setupEventListeners() {
   if (terminalCloseBtn) {
     terminalCloseBtn.addEventListener('click', closeTerminal);
   }
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', () => pauseActiveGeneration());
+  }
   
   // Tab and layout event listeners
   if (tabChatBtn) {
@@ -400,14 +404,12 @@ function setupEventListeners() {
     sidebarOverlay.addEventListener('click', closeMobileSidebar);
   }
 
-  // Escape key cancels active generation
+  // Escape key pauses/cancels the active generation from anywhere
+  // (document level catches input textarea, FS editor, and unfocused UI).
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      const activeSession = state.openSessions.find(s => s.id === state.sessionId);
-      if (activeSession && activeSession.generating) {
-        showToast('Cancelling generation...');
-        cancelSession(activeSession.id);
-      }
+    if (e.key === 'Escape' && e.type === 'keydown') {
+      if (isModalOpen()) return;
+      pauseActiveGeneration();
     }
   });
 
@@ -524,6 +526,15 @@ async function startTerminal(workspace) {
     fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(terminalContainer);
+
+    // xterm swallows key events, so intercept Escape here too and route
+    // it through the same global pause path used by the rest of the UI.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.key === 'Escape' && e.type === 'keydown') {
+        pauseActiveGeneration();
+      }
+      return true;
+    });
     
     setTimeout(() => {
       if (fitAddon) {
@@ -912,7 +923,12 @@ function handleInputKeydown(e) {
       }
       return;
     }
-    if (e.key === 'Escape') { closeSlashMenu(); return; }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSlashMenu();
+      return;
+    }
   }
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 }
@@ -2196,6 +2212,7 @@ function setGenerating(on) {
   sendBtn.innerHTML = on ? '<span>Queue</span><span class="send-icon">＋</span>' : '<span>Send</span><span class="send-icon">↑</span>';
   document.body.classList.toggle('is-generating', Boolean(on));
   sendBtn.setAttribute('aria-label', on ? 'Queue prompt' : 'Send message');
+  if (pauseBtn) pauseBtn.classList.toggle('hidden', !on);
 }
 function scrollToBottom() { document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight; }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -2252,6 +2269,18 @@ async function createNewSession(title = '', workspace = '') {
     }
   } catch (e) {
     showToast('Failed to create session: ' + e.message);
+  }
+}
+
+// Pause/cancel the currently generating session. Safe to call from any
+// focus context (document keydown, terminal, file editor, input box).
+// No-op when nothing is generating or a modal is open.
+function pauseActiveGeneration() {
+  if (isModalOpen()) return;
+  const activeSession = state.openSessions.find(s => s.id === state.sessionId);
+  if (activeSession && activeSession.generating) {
+    showToast('Paused — generation cancelled');
+    cancelSession(activeSession.id);
   }
 }
 
@@ -2335,6 +2364,7 @@ async function switchSession(id) {
 
   setGenerating(session.generating);
   renderMessages();
+  scrollToBottom();
   renderSessionTabs();
   updateStatusBar();
   closeMobileSidebar();

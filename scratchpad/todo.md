@@ -1,10 +1,12 @@
 ## Systems
-- Goal: Fix the double "Error: Error:" prefix in stored session messages and investigate "Error from provider (Console): Upstream request failed".
-- Findings:
-  - `libqcode/src/store/store.cpp` receives `ErrorOccurred` events and prepends `"Error: "` to the message before appending it to the chat history and saving to SQLite.
-  - `libqcode/src/chat/chat_bus.cpp` already prepends `"Error: "` to error messages (e.g. `err_str = "Error: " + gen_result.error_message()`), causing a duplicate `"Error: Error: "` prefix in the saved chat history.
-  - The message `"Error from provider (Console): Upstream request failed"` is returned by the OpenCode Zen API (or the OpenRouter proxy) when the downstream model provider (Console) is unreachable or fails.
+- Goal: Improve the web UI — (1) Esc should pause/cancel the active generation from any focus context; (2) polish the mobile UI to match the desktop polish.
+- Files touched:
+  - `apps/webui/src/app.js`: added `pauseActiveGeneration()` helper; routed document-level Escape, xterm Escape handler, and a new Pause button through it; toggled Pause button visibility in `setGenerating()`.
+  - `apps/webui/src/index.html`: added `pause-btn` to input actions; enriched viewport meta (`viewport-fit=cover`, `user-scalable=no`, `maximum-scale=1`); updated input-info hint text.
+  - `apps/webui/src/style.css`: pause-btn styles; `100dvh`/`overflow-x` on `#app`; body tap-highlight + overscroll fixes; safe-area top/bottom padding; mobile (≤1024/900/600/480) sidebar tap-targets, header, input, file explorer/editor, terminal, and bottom-sheet modals.
+- Build: `scripts/build.py --mode release` copies built webui next to qcode-server; vite build + node --check pass; C++ tests still green (273/273).
 
 ## Tasks
-- [x] Fix `libqcode/src/store/store.cpp` to avoid prepending `"Error: "` if the event message already starts with `"Error: "` or `"Exception: "`.
-- [x] Rebuild and run the C++ unit tests to verify changes.
+- [x] Make Esc pause the active generation globally (document + xterm + pause button).
+- [x] Audit + polish mobile responsive CSS (layout, tap targets, safe-area, modals).
+- [x] Rebuild (webui + full server) and verify build + C++ test suite.
