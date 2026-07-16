@@ -1583,7 +1583,7 @@ function renderToolBlock(tc) {
 function addMessage(role, content) { const div = renderMessage({ role, content }); messagesEl.appendChild(div); scrollToBottom(); }
 
 function renderMarkdown(text) {
-  if (typeof marked === 'undefined') {
+  if (typeof marked === 'undefined' || !marked.Renderer) {
     return esc(text).replace(/\n/g, '<br>');
   }
   
