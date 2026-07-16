@@ -1124,17 +1124,7 @@ async function handleCompactCommand() {
 //  SEND MESSAGE + STREAMING
 // ═══════════════════════════════════════════════════════════════════
 
-async function sendMessage() {
-  if (isModalOpen()) return;
-  const text = promptInput.value.trim();
-  if (!text) return;
-  if (text.startsWith('/')) { promptInput.value = ''; handleSlashCommand(text); return; }
-
-  const session = state.openSessions.find(s => s.id === state.sessionId);
-  if (!session || session.generating) return;
-
-  promptInput.value = '';
-  
+async function runGeneration(session, text) {
   session.messages.push({ role: 'user', content: text });
   
   const assistantMsg = { role: 'assistant', content: '', toolEvents: [] };
@@ -1184,17 +1174,67 @@ async function sendMessage() {
       showToast('Error: ' + e.message);
       assistantMsg.content = 'Error: ' + e.message;
     }
+  } finally {
+    session.generating = false;
+    session.reader = null;
+    renderSessionTabs();
+
+    if (session.id === state.sessionId) {
+      setGenerating(false);
+      renderMessages();
+      scrollToBottom();
+    }
+
+    const exists = state.openSessions.some(s => s.id === session.id);
+    if (exists && session.promptQueue && session.promptQueue.length > 0) {
+      const nextPrompt = session.promptQueue.shift();
+      updateQueueIndicator();
+      setTimeout(() => {
+        runGeneration(session, nextPrompt);
+      }, 50);
+    } else {
+      updateQueueIndicator();
+    }
+  }
+}
+
+function updateQueueIndicator() {
+  const indicator = document.getElementById('queue-indicator');
+  const textEl = document.getElementById('queue-text');
+  if (!indicator || !textEl) return;
+
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (session && session.promptQueue && session.promptQueue.length > 0) {
+    const count = session.promptQueue.length;
+    textEl.textContent = `${count} prompt${count > 1 ? 's' : ''} in queue`;
+    indicator.classList.remove('hidden');
+  } else {
+    indicator.classList.add('hidden');
+  }
+}
+
+async function sendMessage() {
+  if (isModalOpen()) return;
+  const text = promptInput.value.trim();
+  if (!text) return;
+  if (text.startsWith('/')) { promptInput.value = ''; handleSlashCommand(text); return; }
+
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (!session) return;
+
+  if (session.generating) {
+    if (!session.promptQueue) {
+      session.promptQueue = [];
+    }
+    session.promptQueue.push(text);
+    promptInput.value = '';
+    showToast('Prompt queued');
+    updateQueueIndicator();
+    return;
   }
 
-  session.generating = false;
-  session.reader = null;
-  renderSessionTabs();
-
-  if (session.id === state.sessionId) {
-    setGenerating(false);
-    renderMessages();
-    scrollToBottom();
-  }
+  promptInput.value = '';
+  await runGeneration(session, text);
 }
 
 function handleEvent(evt, msg, session) {
@@ -1618,7 +1658,11 @@ function renderMarkdown(text) {
   return marked.parse(text);
 }
 
-function setGenerating(on) { sendBtn.disabled = on; sendBtn.textContent = on ? 'Generating...' : 'Send'; promptInput.disabled = on; }
+function setGenerating(on) {
+  sendBtn.disabled = false;
+  promptInput.disabled = false;
+  sendBtn.textContent = 'Send';
+}
 function scrollToBottom() { document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight; }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -1689,11 +1733,13 @@ async function cancelSession(id) {
   } catch (e) {}
 
   session.generating = false;
+  session.promptQueue = [];
   renderSessionTabs();
 
   if (id === state.sessionId) {
     setGenerating(false);
     renderMessages();
+    updateQueueIndicator();
   }
 }
 
@@ -1730,6 +1776,7 @@ async function switchSession(id) {
   renderSessionTabs();
   updateStatusBar();
   closeMobileSidebar();
+  updateQueueIndicator();
 
   // Refresh the auxiliary tabs for the newly active session.
   if (state.activeTab === 'files') loadFilesTab();
