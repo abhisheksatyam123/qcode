@@ -26,6 +26,44 @@ static std::string format_tokens(int n) {
   return std::to_string(n);
 }
 
+// Soft amber used for pending / queued chrome (readable on dark terminals).
+static Color queue_amber() { return Color::RGB(0xE8, 0xB8, 0x4A); }
+
+// Grok-style queued prompt card: looks like a user turn, dimmed, with a
+// position badge so the queue is visible in the message list.
+static Element render_queued_prompt(const std::string& prompt_body,
+                                    size_t index, size_t total,
+                                    const std::string& /*theme*/) {
+    Elements body_lines;
+    std::istringstream iss(prompt_body);
+    std::string line;
+    bool any = false;
+    while (std::getline(iss, line)) {
+        any = true;
+        body_lines.push_back(
+            hbox({text("  "), text(line) | dim | color(Color::GrayLight)}));
+    }
+    if (!any) {
+        body_lines.push_back(hbox({text("  "), text("(empty)") | dim}));
+    }
+
+    auto header = hbox({
+        text("❯ ") | bold | color(queue_amber()),
+        text("You") | bold | color(queue_amber()),
+        text("  ·  ") | dim,
+        text("queued") | dim | color(queue_amber()),
+        text("  #" + std::to_string(index + 1) + "/" +
+             std::to_string(total)) |
+            dim | color(Color::GrayDark),
+    });
+
+    return vbox({
+        header,
+        vbox(std::move(body_lines)),
+        text(""),
+    });
+}
+
 // Raw helper to get git diff of the selected file
 // Quote a path as a single-quoted POSIX shell literal (escapes embedded
 // single quotes) so a file path containing shell metacharacters cannot inject
@@ -348,10 +386,10 @@ ftxui::Element render_view(
         status_color = Color::Yellow;
     }
 
-    // Prompt queue indicator
+    // Prompt queue indicator (hourglass + count)
     std::string hdr_queue;
     if (state.queued_prompts && *state.queued_prompts > 0) {
-        hdr_queue = "\u29d6 " + std::to_string(*state.queued_prompts);
+        hdr_queue = "\u29d6 " + std::to_string(*state.queued_prompts) + " queued";
     }
 
     
@@ -366,7 +404,7 @@ ftxui::Element render_view(
         text(" " + hdr_tokens + " ") | dim,
         (hdr_queue.empty() ? emptyElement() : hbox({
             separatorLight(),
-            text(" " + hdr_queue + " ") | color(Color::Yellow) | bold,
+            text(" " + hdr_queue + " ") | color(queue_amber()) | bold,
         })),
         (hdr_status.empty() ? emptyElement() : hbox({
             separatorLight(),
@@ -497,15 +535,54 @@ ftxui::Element render_view(
                          " later messages · PageDown/End to view ") |
                     dim | hcenter);
             }
-            // Animated spinner during generation
-            // Status displayed in header strip, not here
 
-            // Clean input bar: just prompt prefix + input (model badge moved to header)
-            auto prompt_box = hbox({
+            // Queued prompts appear at the end of the message list (Grok-style)
+            // so pending turns are first-class chat rows, not only a header badge.
+            const auto* queue =
+                state.queued_prompt_texts ? state.queued_prompt_texts.get()
+                                          : nullptr;
+            if (queue && !queue->empty() && last >= history_size) {
+                msgs.push_back(hbox({
+                    text(" ─── ") | dim | color(queue_amber()),
+                    text("queue") | bold | color(queue_amber()),
+                    text(" · " + std::to_string(queue->size()) +
+                         " waiting · Esc clears queue ") |
+                        dim | color(Color::GrayDark),
+                    text("───") | dim | color(queue_amber()),
+                    filler(),
+                }));
+                for (size_t qi = 0; qi < queue->size(); ++qi) {
+                    msgs.push_back(
+                        render_queued_prompt((*queue)[qi], qi, queue->size(),
+                                             theme));
+                    msgs.push_back(separatorLight() | color(queue_amber()) |
+                                   dim);
+                }
+            }
+
+            // Clean input bar: prompt prefix + input; subtle queue hint when busy
+            Elements prompt_row = {
                 text(" ❯ ") | color(accent2(theme)) | bold,
                 // Wrap input render in a vertical frame constrained to max 6 lines for scrolling
                 input->Render() | yframe | size(HEIGHT, LESS_THAN, 6) | flex,
-            }) | border | color(accent(theme));
+            };
+            auto prompt_inner = hbox(std::move(prompt_row));
+            Element prompt_box = prompt_inner | border | color(accent(theme));
+            if (queue && !queue->empty()) {
+                prompt_box = vbox({
+                    prompt_box,
+                    hbox({
+                        text("  "),
+                        text("\u29d6 " + std::to_string(queue->size()) +
+                             " queued") |
+                            dim | color(queue_amber()),
+                        text("  ·  next runs when this turn finishes") | dim,
+                        filler(),
+                        text("Esc cancels queue") | dim | color(Color::GrayDark),
+                        text("  "),
+                    }),
+                });
+            }
 
             // Dynamic inline slash command / session autocomplete matching opencode
             if (prompt_input.size() >= 9 && prompt_input.substr(0, 9) == "/session ") {

@@ -1,7 +1,9 @@
 #include <ai/tui/store.h>
 #include <ai/tui/bus/impl.h>
+#include <ai/tui/context_manager.h>
 #include <ai/tui/db.h>
 #include <algorithm>
+#include <climits>
 #include <ai/types/message.h>
 #include <ai/logger.h>
 #include <nlohmann/json.hpp>
@@ -161,12 +163,21 @@ void AppStore::advance_frame() {
     notify();
 }
 
+void AppStore::sync_queue_mirror_unlocked() {
+    *state_.queued_prompts = static_cast<int>(prompt_queue_.size());
+    if (state_.queued_prompt_texts) {
+        state_.queued_prompt_texts->assign(prompt_queue_.begin(),
+                                           prompt_queue_.end());
+    }
+}
+
 void AppStore::enqueue_prompt(const std::string& prompt) {
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         prompt_queue_.push_back(prompt);
-        *state_.queued_prompts = static_cast<int>(prompt_queue_.size());
-        LOG_DEBUG("Store: enqueue_prompt queue_size={}", static_cast<int>(prompt_queue_.size()));
+        sync_queue_mirror_unlocked();
+        LOG_DEBUG("Store: enqueue_prompt queue_size={}",
+                  static_cast<int>(prompt_queue_.size()));
     }
     notify();
 }
@@ -182,8 +193,9 @@ std::string AppStore::dequeue_prompt() {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         prompt = prompt_queue_.front();
         prompt_queue_.pop_front();
-        *state_.queued_prompts = static_cast<int>(prompt_queue_.size());
-        LOG_DEBUG("Store: dequeue_prompt queue_size={}", static_cast<int>(prompt_queue_.size()));
+        sync_queue_mirror_unlocked();
+        LOG_DEBUG("Store: dequeue_prompt queue_size={}",
+                  static_cast<int>(prompt_queue_.size()));
     }
     notify();
     return prompt;
@@ -198,18 +210,27 @@ void AppStore::clear_prompt_queue() {
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         prompt_queue_.clear();
-        *state_.queued_prompts = 0;
+        sync_queue_mirror_unlocked();
     }
     notify();
 }
 
 void AppStore::append_to_last_queued_prompt(const std::string& text) {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
-    if (!prompt_queue_.empty()) {
-        prompt_queue_.back() += "\n" + text;
-        *state_.queued_prompts = static_cast<int>(prompt_queue_.size());
-        LOG_DEBUG("Store: append_to_last_queued_prompt queue_size={}", static_cast<int>(prompt_queue_.size()));
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (!prompt_queue_.empty()) {
+            prompt_queue_.back() += "\n" + text;
+            sync_queue_mirror_unlocked();
+            LOG_DEBUG("Store: append_to_last_queued_prompt queue_size={}",
+                      static_cast<int>(prompt_queue_.size()));
+        }
     }
+    notify();
+}
+
+std::vector<std::string> AppStore::queued_prompts_snapshot() const {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    return std::vector<std::string>(prompt_queue_.begin(), prompt_queue_.end());
 }
 
 bus::Subscription AppStore::on_change(Callback cb) {
@@ -263,33 +284,70 @@ void AppStore::wire() {
                            " messages -> handoff packet";
         note += p.wrote ? ("\nTodo file: " + p.todo_path) : " (todo file write failed)";
 
-        // Build the new sequenced message history containing all old messages,
-        // the compaction summary inserted before the 'keep' recent messages,
-        // and the 'keep' recent messages.
+        // Replace history with the handoff summary + recent keep-tail messages.
+        // Older turns are dropped from the UI and from subsequent model context
+        // (apply_compaction_cutoff also cuts at the summary marker).
         const auto& hist = *state_.messages_history;
         ai::Messages new_messages;
-
-        size_t cutoff_idx = (hist.size() > static_cast<size_t>(p.keep))
-                            ? hist.size() - static_cast<size_t>(p.keep)
-                            : 0;
-
-        // Copy older messages
-        for (size_t i = 0; i < cutoff_idx; ++i) {
-            new_messages.push_back(hist[i]);
-        }
-
-        // Insert compaction note and user summary
         new_messages.push_back(ai::Message::system(note));
         new_messages.push_back(ai::Message::user(summary_body));
 
-        // Copy keep recent messages
-        for (size_t i = cutoff_idx; i < hist.size(); ++i) {
+        auto is_prior_compaction_msg = [](const ai::Message& m) {
+            if (m.role == ai::kMessageRoleSystem) {
+                for (const auto& part : m.content) {
+                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                        if (tp->text.find("Conversation compacted:") !=
+                            std::string::npos) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            if (m.role == ai::kMessageRoleUser) {
+                for (const auto& part : m.content) {
+                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                        if (tp->text.find(
+                                "This conversation was compacted into a "
+                                "handoff packet") != std::string::npos) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+
+        size_t keep_start = (hist.size() > static_cast<size_t>(p.keep))
+                                ? hist.size() - static_cast<size_t>(p.keep)
+                                : 0;
+        for (size_t i = keep_start; i < hist.size(); ++i) {
+            // Drop prior handoff packets so the new summary stays the cutoff.
+            if (is_prior_compaction_msg(hist[i])) continue;
             new_messages.push_back(hist[i]);
         }
 
         state_.messages_history = std::make_shared<ai::Messages>(new_messages);
 
-        // Overwrite history in SQLite database to persist the new sequenced order
+        // Context window resets to the compacted set (system notes are stripped
+        // before generation; estimate matches what apply_compaction_cutoff keeps).
+        ai::Messages context_view = ai::apply_compaction_cutoff(*state_.messages_history);
+        context_view.erase(
+            std::remove_if(context_view.begin(), context_view.end(),
+                           [](const ai::Message& m) {
+                               return m.role == ai::kMessageRoleSystem;
+                           }),
+            context_view.end());
+        const int reset_tokens = static_cast<int>(estimate_tokens(context_view));
+        *state_.current_context_tokens = reset_tokens;
+        *state_.last_estimated_tokens = reset_tokens;
+        *state_.last_actual_prompt_tokens = 0;
+        *state_.consecutive_prunes = 0;
+        *state_.history_window_start = 0;
+        *state_.auto_scroll = true;
+        *state_.scroll_line = INT_MAX;
+        bus_.publish<ContextSizeUpdated>({.context_tokens = reset_tokens});
+
+        // Overwrite history in SQLite database to persist the compact set
         ai::tui::db::overwrite_session_history(*state_.session_id, *state_.messages_history);
 
         add_toast("Compaction complete", "success", 3000);

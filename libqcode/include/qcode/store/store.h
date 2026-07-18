@@ -9,8 +9,9 @@
 #include <string>
 #include <vector>
 #include <utility>
-#include <queue>
 #include <chrono>
+#include <deque>
+#include <queue>
 
 namespace ai {
 namespace tui {
@@ -43,6 +44,8 @@ public:
     void append_to_last_queued_prompt(const std::string& text);
     size_t queue_size() const;
     void clear_prompt_queue();
+    // Snapshot of queued prompt bodies for the message list (thread-safe copy).
+    std::vector<std::string> queued_prompts_snapshot() const;
 
     std::vector<Toast> toasts() const;
     void add_toast(const std::string& message, const std::string& variant = "info", int duration_ms = 5000);
@@ -86,6 +89,9 @@ private:
 
     std::string latest_assistant_text() const;
     void remove_callback(uint64_t id);
+    // Keep ChatState.queued_prompts / queued_prompt_texts in sync (call with
+    // queue_mutex_ held).
+    void sync_queue_mirror_unlocked();
 };
 
 } // namespace tui

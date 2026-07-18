@@ -30,11 +30,12 @@ bool GenerationController::is_active() const noexcept {
 }
 
 void GenerationController::request_abort() {
+    // Stop the in-flight turn only. Queued prompts are preserved so a
+    // force-stop → enqueue handoff (and multi-prompt queues) still run.
     auto& state = store_.state();
     if (state.abort_flag) {
         state.abort_flag->store(true, std::memory_order_release);
     }
-    store_.clear_prompt_queue();
     if (worker_.joinable()) {
         worker_.request_stop();
     }
@@ -42,6 +43,7 @@ void GenerationController::request_abort() {
 
 void GenerationController::force_stop_ui() {
     request_abort();
+    store_.clear_prompt_queue();
     store_.set_generating(false);
     store_.set_status("idle");
     store_.add_toast("Generation force-stopped", "warning", 2500);
@@ -49,6 +51,7 @@ void GenerationController::force_stop_ui() {
 
 void GenerationController::spawn(std::string prompt, GenerationRequest request) {
     if (is_busy()) {
+        // Nudge the lingering worker to exit; keep any already-queued prompts.
         request_abort();
         store_.enqueue_prompt(std::move(prompt));
         store_.add_toast("Waiting for previous turn to stop…", "warning", 2000);
@@ -235,6 +238,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
 
 void GenerationController::shutdown() {
     request_abort();
+    store_.clear_prompt_queue();
     if (app_running_) {
         app_running_->store(false, std::memory_order_release);
     }

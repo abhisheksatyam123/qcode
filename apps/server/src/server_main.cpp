@@ -1105,30 +1105,46 @@ int main(int argc, char* argv[]) {
                            " messages -> handoff packet";
         note += wrote ? ("\nTodo file: " + todo_path) : " (todo file write failed)";
 
-        // Build the new sequenced message history containing all old messages,
-        // the compaction summary inserted before the 'keep' recent messages,
-        // and the 'keep' recent messages.
+        // Replace history with the handoff summary + recent keep-tail messages.
+        // Older turns are dropped so the message list and model context reset.
         ai::Messages new_messages;
-
-        size_t cutoff_idx = (snapshot.size() > static_cast<size_t>(keep))
-                            ? snapshot.size() - static_cast<size_t>(keep)
-                            : 0;
-
-        // Copy older messages
-        for (size_t i = 0; i < cutoff_idx; ++i) {
-            new_messages.push_back(snapshot[i]);
-        }
-
-        // Insert compaction note and user summary
         new_messages.push_back(ai::Message::system(note));
         new_messages.push_back(ai::Message::user(summary_body));
 
-        // Copy keep recent messages
-        for (size_t i = cutoff_idx; i < snapshot.size(); ++i) {
+        auto is_prior_compaction_msg = [](const ai::Message& m) {
+            if (m.role == ai::kMessageRoleSystem) {
+                for (const auto& part : m.content) {
+                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                        if (tp->text.find("Conversation compacted:") !=
+                            std::string::npos) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            if (m.role == ai::kMessageRoleUser) {
+                for (const auto& part : m.content) {
+                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                        if (tp->text.find(
+                                "This conversation was compacted into a "
+                                "handoff packet") != std::string::npos) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+
+        size_t keep_start = (snapshot.size() > static_cast<size_t>(keep))
+                                ? snapshot.size() - static_cast<size_t>(keep)
+                                : 0;
+        for (size_t i = keep_start; i < snapshot.size(); ++i) {
+            if (is_prior_compaction_msg(snapshot[i])) continue;
             new_messages.push_back(snapshot[i]);
         }
 
-        // Overwrite history in SQLite database to persist the new sequenced order
+        // Overwrite history in SQLite database to persist the compact set
         ai::tui::db::overwrite_session_history(sid, new_messages);
 
         nlohmann::json res_j;

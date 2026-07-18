@@ -192,26 +192,23 @@ int main() {
     auto submit = [&] {
         if (prompt_input.empty()) return;
         if (generation.is_active()) {
-            if (store.has_queued_prompt()) {
-                store.append_to_last_queued_prompt(prompt_input);
-                store.add_toast("Prompt appended to queue", "info", 1000);
-                LOG_INFO("Main: prompt appended to queue (queue_size={})", store.queue_size());
-            } else {
-                store.enqueue_prompt(prompt_input);
-                store.add_toast(
-                    generation.is_busy() && !store.is_generating()
-                        ? "Queued — waiting for previous turn to stop"
-                        : "Prompt queued",
-                    generation.is_busy() && !store.is_generating()
-                        ? "warning"
-                        : "info",
-                    1500);
-                LOG_INFO("Main: prompt queued (queue_size={})", store.queue_size());
-            }
+            // Each submit becomes its own queue entry so the message list can
+            // show every pending prompt (Grok-style), not a single merged blob.
+            store.enqueue_prompt(prompt_input);
+            store.add_toast(
+                generation.is_busy() && !store.is_generating()
+                    ? "Queued — waiting for previous turn to stop"
+                    : "Queued · #" + std::to_string(store.queue_size()),
+                generation.is_busy() && !store.is_generating()
+                    ? "warning"
+                    : "info",
+                1200);
+            LOG_INFO("Main: prompt queued (queue_size={})", store.queue_size());
             if (generation.is_busy() && !store.is_generating()) {
                 generation.request_abort();
             }
             prompt_input = "";
+            *state.auto_scroll = true;
             return;
         }
 
@@ -604,7 +601,7 @@ int main() {
             screen.Post(Event::Custom);
             return true;
         }
-        // ── Global Escape: close popups, abort generation, clear input ──
+        // ── Global Escape: close popups, clear queue, abort, clear input ──
         if (e == Event::Escape) {
             if (show_model_select) { show_model_select = false; model_query = ""; return true; }
             if (show_session_select) { show_session_select = false; session_query = ""; return true; }
@@ -612,6 +609,18 @@ int main() {
             if (state.slash_suggestion_mode) {
                 state.slash_suggestion_mode = false;
                 state.slash_suggestion_idx = 0;
+                return true;
+            }
+            // Queued prompts first: Esc cancels the queue without stopping the
+            // in-flight turn (Grok-style). A second Esc then aborts generation.
+            if (store.has_queued_prompt()) {
+                const auto n = store.queue_size();
+                store.clear_prompt_queue();
+                store.add_toast(
+                    n == 1 ? "Cleared 1 queued prompt"
+                           : ("Cleared " + std::to_string(n) + " queued prompts"),
+                    "info", 1200);
+                screen.Post(Event::Custom);
                 return true;
             }
             // Abort takes priority over clearing the prompt while a turn runs
