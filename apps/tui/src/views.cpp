@@ -18,6 +18,40 @@ namespace tui {
 
 using namespace ftxui;
 
+namespace {
+
+// Reflect layout box into ChatState hit-testing (file list rows, etc.).
+class ReflectSimple : public ftxui::Node {
+ public:
+  ReflectSimple(ftxui::Element child, SimpleBox& box)
+      : ftxui::Node(unpack(std::move(child))), reflected_box_(box) {}
+
+  void ComputeRequirement() final {
+    ftxui::Node::ComputeRequirement();
+    requirement_ = children_[0]->requirement();
+  }
+
+  void SetBox(ftxui::Box box) final {
+    reflected_box_.x_min = box.x_min;
+    reflected_box_.x_max = box.x_max;
+    reflected_box_.y_min = box.y_min;
+    reflected_box_.y_max = box.y_max;
+    ftxui::Node::SetBox(box);
+    children_[0]->SetBox(box);
+  }
+
+ private:
+  SimpleBox& reflected_box_;
+};
+
+ftxui::Decorator reflect_box(SimpleBox& box) {
+  return [&box](ftxui::Element child) -> ftxui::Element {
+    return std::make_shared<ReflectSimple>(std::move(child), box);
+  };
+}
+
+}  // namespace
+
 // Compact token-count formatter: 1234 -> "1234", 128000 -> "128k",
 // 2'000'000 -> "2M". Used for the always-visible context usage / window.
 static std::string format_tokens(int n) {
@@ -343,7 +377,6 @@ ftxui::Element render_view(
     const std::vector<ThemeEntry>& theme_entries,
     const std::string& theme_query,
     const ftxui::Component& tab_toggle,
-    const ftxui::Component& files_menu,
     const std::shared_ptr<int>& scroll_line,
     const ftxui::Component& input
 ) {
@@ -674,74 +707,199 @@ ftxui::Element render_view(
             }) | flex;
         }
     }
-    // ── Tab 1: Files preview ──
+    // ── Tab 1: Files — list of git changes, then per-file diff ──
     else if (state.tab_selected == 1) {
-        if (state.modified_files->empty()) {
+        const auto* changes =
+            state.file_changes ? state.file_changes.get() : nullptr;
+        if (state.file_row_boxes) state.file_row_boxes->clear();
+
+        if (!changes || changes->empty()) {
             body = vbox({
                 filler() | flex,
-                text("No modified files detected in project (git is clean).") | hcenter | dim,
+                text("Working tree clean — no changes in git diff.") | hcenter |
+                    dim,
+                text("Press r to refresh") | hcenter | dim,
                 filler() | flex,
             }) | flex;
+        } else if (!state.files_detail_open) {
+            // List view: every changed file with +/- from numstat.
+            Elements rows;
+            rows.push_back(hbox({
+                text(" CHANGED FILES ") | bold | color(accent2(theme)),
+                text(" (" + std::to_string(changes->size()) + ") ") | dim,
+                filler(),
+                text("↑↓ select  Enter/click open  r refresh") | dim,
+            }));
+            rows.push_back(separatorLight() | color(accent(theme)));
+
+            if (state.file_row_boxes) {
+                state.file_row_boxes->resize(changes->size());
+            }
+
+            int total_add = 0;
+            int total_del = 0;
+            for (size_t i = 0; i < changes->size(); ++i) {
+                const auto& entry = (*changes)[i];
+                total_add += entry.additions;
+                total_del += entry.deletions;
+                const bool active =
+                    static_cast<int>(i) == state.selected_file;
+                const std::string marker = active ? "▶ " : "  ";
+
+                Element stats;
+                if (entry.binary) {
+                    stats = text("binary") | dim | color(Color::Yellow);
+                } else if (entry.untracked && !entry.path.empty() &&
+                           entry.path.back() == '/') {
+                    stats = text("untracked dir") | dim |
+                            color(Color::Yellow);
+                } else {
+                    stats = hbox({
+                        text("+" + std::to_string(entry.additions)) |
+                            color(Color::Green) | (active ? bold : dim),
+                        text("  "),
+                        text("-" + std::to_string(entry.deletions)) |
+                            color(Color::Red) | (active ? bold : dim),
+                    });
+                }
+
+                Element path_el =
+                    text(entry.path) |
+                    color(active ? accent2(theme) : Color::Default);
+                if (active) path_el = std::move(path_el) | bold;
+
+                Element row = hbox({
+                    text(marker) |
+                        color(active ? accent2(theme) : Color::Default),
+                    std::move(path_el),
+                    text(entry.untracked ? "  (new)" : "") | dim |
+                        color(Color::Yellow),
+                    filler(),
+                    stats,
+                    text("  "),
+                });
+                if (active) {
+                    row = std::move(row) | bgcolor(bg_popup());
+                }
+                if (state.file_row_boxes) {
+                    row = std::move(row) |
+                          reflect_box((*state.file_row_boxes)[i]);
+                }
+                rows.push_back(std::move(row));
+            }
+
+            rows.push_back(separatorLight() | color(dim_gray()));
+            rows.push_back(hbox({
+                text("  "),
+                text(std::to_string(changes->size()) + " files") | dim,
+                text("  "),
+                text("+" + std::to_string(total_add)) | color(Color::Green) |
+                    dim,
+                text("  "),
+                text("-" + std::to_string(total_del)) | color(Color::Red) |
+                    dim,
+            }));
+
+            Element file_scroll = vbox(std::move(rows));
+            file_scroll->ComputeRequirement();
+            {
+                const int content_height =
+                    std::max(0, file_scroll->requirement().min_y);
+                // Keep the selected row roughly in view.
+                const int target = std::min(
+                    content_height - 1,
+                    std::max(0, state.selected_file + 2));
+                *state.scroll_line =
+                    std::clamp(target, 0, std::max(0, content_height - 1));
+                *state.auto_scroll = false;
+            }
+            body = vbox({
+                file_scroll | vscroll_indicator |
+                    focusPosition(0, *state.scroll_line) | yframe | flex,
+            }) | flex;
         } else {
-            Elements file_blocks;
+            // Detail view: unified diff for the selected file.
             const auto selected = std::clamp(
                 state.selected_file, 0,
-                static_cast<int>(state.modified_files->size()) - 1);
-            if (selected >= 0) {
-                const auto& filepath = (*state.modified_files)[selected];
-                // Get cached diff content (optimized)
-                const auto& content =
-                    get_file_diff(filepath, *state.files_revision);
-                
-                // Count additions/deletions
-                int additions = 0;
-                int deletions = 0;
-                std::stringstream ss(content);
-                std::string line;
-                while (std::getline(ss, line)) {
-                    if (!line.empty()) {
-                        if (line[0] == '+' && (line.size() < 2 || line[1] != '+')) additions++;
-                        else if (line[0] == '-' && (line.size() < 2 || line[1] != '-')) deletions++;
+                static_cast<int>(changes->size()) - 1);
+            const auto& entry = (*changes)[selected];
+            std::string content;
+            const bool untracked_dir =
+                entry.untracked && !entry.path.empty() &&
+                entry.path.back() == '/';
+            if (untracked_dir) {
+                content = "Untracked directory — sample paths:\n\n";
+                const std::string cmd =
+                    "git -c core.quotepath=false ls-files --others "
+                    "--exclude-standard -- " +
+                    shell_quote(entry.path) + " 2>/dev/null | head -n 80";
+                std::array<char, 512> buf{};
+                FILE* pipe = popen(cmd.c_str(), "r");
+                int n = 0;
+                if (pipe) {
+                    while (fgets(buf.data(), static_cast<int>(buf.size()),
+                                pipe) != nullptr) {
+                        content += "+";
+                        content += buf.data();
+                        ++n;
                     }
+                    pclose(pipe);
                 }
-                
-                auto file_header = hbox({
-                    text(" " + filepath) | bold | color(accent2(theme)),
-                    filler(),
-                    text("+" + std::to_string(additions)) | color(Color::Green),
-                    text(" "),
-                    text("-" + std::to_string(deletions)) | color(Color::Red),
-                });
-                
-                auto file_block = vbox({
-                    file_header,
-                    separatorLight() | color(accent(theme)),
-                    hbox({ text("  "), render_diff_content(content) | flex }),
-                    text(""),
-                }) | borderLight | color(accent(theme));
-                
-                file_blocks.push_back(file_block);
+                if (n == 0) {
+                    content += "(empty or ignored)\n";
+                } else if (n >= 80) {
+                    content += "\n… truncated\n";
+                }
+            } else {
+                content = get_file_diff(entry.path, *state.files_revision);
             }
-            
-            // Same real-line-index treatment as the chat tab (shared scroll_line).
+
+            auto file_header = hbox({
+                text(" ← Esc ") | dim,
+                text(entry.path) | bold | color(accent2(theme)),
+                text(entry.untracked ? "  (untracked)" : "") | dim |
+                    color(Color::Yellow),
+                filler(),
+                entry.binary
+                    ? text("binary") | color(Color::Yellow)
+                    : hbox({
+                          text("+" + std::to_string(entry.additions)) |
+                              color(Color::Green),
+                          text(" "),
+                          text("-" + std::to_string(entry.deletions)) |
+                              color(Color::Red),
+                      }),
+            });
+
+            Elements file_blocks;
+            file_blocks.push_back(vbox({
+                file_header,
+                separatorLight() | color(accent(theme)),
+                content.empty()
+                    ? text("  (no diff output)") | dim
+                    : hbox({text("  "), render_diff_content(content) | flex}),
+                text(""),
+            }) | borderLight | color(accent(theme)));
+
             Element file_scroll = vbox(std::move(file_blocks));
             file_scroll->ComputeRequirement();
             {
-                const int content_height = std::max(0, file_scroll->requirement().min_y);
+                const int content_height =
+                    std::max(0, file_scroll->requirement().min_y);
                 if (*state.auto_scroll) {
-                    *state.scroll_line = std::max(0, content_height - 1);
+                    *state.scroll_line = 0;
+                    *state.auto_scroll = false;
                 } else {
-                    *state.scroll_line =
-                        std::clamp(*state.scroll_line, 0, std::max(0, content_height - 1));
-                    if (*state.scroll_line >= content_height - 1) {
-                        *state.auto_scroll = true;
-                    }
+                    *state.scroll_line = std::clamp(
+                        *state.scroll_line, 0,
+                        std::max(0, content_height - 1));
                 }
             }
             body = vbox({
-                text(" MODIFIED FILES ") | bold | color(accent2(theme)) | hcenter,
+                text(" FILE DIFF ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
-                file_scroll | vscroll_indicator | focusPosition(0, *state.scroll_line) | yframe | flex,
+                file_scroll | vscroll_indicator |
+                    focusPosition(0, *state.scroll_line) | yframe | flex,
             }) | flex;
         }
     }

@@ -41,7 +41,6 @@ ftxui::Element render_view(
     const std::vector<ThemeEntry>& theme_entries,
     const std::string& theme_query,
     const ftxui::Component& tab_toggle,
-    const ftxui::Component& files_menu,
     const std::shared_ptr<int>& scroll_line,
     const ftxui::Component& input
 );

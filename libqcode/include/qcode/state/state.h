@@ -48,6 +48,15 @@ struct ProviderInfo {
     std::vector<ModelInfo> models;
 };
 
+// One row in the Files tab list (from `git diff HEAD --numstat` + untracked).
+struct FileChangeEntry {
+    std::string path;
+    int additions = 0;
+    int deletions = 0;
+    bool untracked = false;
+    bool binary = false;
+};
+
 // ── Shared chat state ──
 
 struct ChatState {
@@ -58,8 +67,14 @@ struct ChatState {
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> current_context_tokens = std::make_shared<int>(0);
-    std::shared_ptr<std::vector<std::string>> modified_files = std::make_shared<std::vector<std::string>>();
+    std::shared_ptr<std::vector<FileChangeEntry>> file_changes =
+        std::make_shared<std::vector<FileChangeEntry>>();
     std::shared_ptr<size_t> files_revision = std::make_shared<size_t>(0);
+    // Files tab: list of changed files, or the selected file's unified diff.
+    bool files_detail_open = false;
+    // Hit boxes for clickable file rows in the list view (index == file index).
+    std::shared_ptr<std::vector<SimpleBox>> file_row_boxes =
+        std::make_shared<std::vector<SimpleBox>>();
     std::shared_ptr<int> scroll_line = std::make_shared<int>(INT_MAX);
     std::shared_ptr<bool> auto_scroll = std::make_shared<bool>(true);
     // First message in the bounded render window. The complete history remains
@@ -73,7 +88,7 @@ struct ChatState {
 
     // Tab navigation
     int tab_selected = 0; // 0 = Chat, 1 = Files, 2 = Stats
-    int selected_file = 0; // Selected index in modified_files
+    int selected_file = 0; // Selected index in file_changes
 
     int terminal_height = 40; // Approximate terminal height, updated during render
 

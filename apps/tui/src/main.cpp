@@ -163,8 +163,6 @@ int main() {
     std::vector<std::string> tab_values = {"Chat", "Files", "Stats"};
     Component tab_toggle = Toggle(&tab_values, &state.tab_selected);
 
-    Component files_menu = Menu(state.modified_files.get(), &state.selected_file);
-
     InputOption input_opts = InputOption::Default();
     input_opts.multiline = true;
     input_opts.transform = [](InputState s) {
@@ -574,7 +572,6 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     auto main_container = Container::Vertical({
         tab_toggle,
-        files_menu,
         input
     });
 
@@ -609,6 +606,13 @@ int main() {
             if (state.slash_suggestion_mode) {
                 state.slash_suggestion_mode = false;
                 state.slash_suggestion_idx = 0;
+                return true;
+            }
+            // Files tab detail → back to the changed-file list.
+            if (state.tab_selected == 1 && state.files_detail_open) {
+                state.files_detail_open = false;
+                *state.scroll_line = 0;
+                screen.Post(Event::Custom);
                 return true;
             }
             // Queued prompts first: Esc cancels the queue without stopping the
@@ -703,14 +707,49 @@ int main() {
 
         }
         if (e == Event::Tab) {
-            if (state.tab_selected == 1) {
-                if (tab_toggle->Focused()) files_menu->TakeFocus();
-                else tab_toggle->TakeFocus();
-            } else if (state.tab_selected == 0) {
+            if (state.tab_selected == 0) {
                 if (tab_toggle->Focused()) input->TakeFocus();
                 else tab_toggle->TakeFocus();
+            } else {
+                tab_toggle->TakeFocus();
             }
             return true;
+        }
+
+        // ── Files tab: list navigation / open diff / refresh ──
+        if (state.tab_selected == 1 && !show_model_select &&
+            !show_session_select && !show_theme_select) {
+            const auto file_count =
+                state.file_changes ? state.file_changes->size() : 0;
+            if (!state.files_detail_open && file_count > 0) {
+                if (e == Event::ArrowUp || e == Event::Character('k')) {
+                    state.selected_file =
+                        std::max(0, state.selected_file - 1);
+                    screen.Post(Event::Custom);
+                    return true;
+                }
+                if (e == Event::ArrowDown || e == Event::Character('j')) {
+                    state.selected_file = std::min(
+                        state.selected_file + 1,
+                        static_cast<int>(file_count) - 1);
+                    screen.Post(Event::Custom);
+                    return true;
+                }
+                if (e == Event::Return) {
+                    state.files_detail_open = true;
+                    *state.scroll_line = 0;
+                    *state.auto_scroll = true;
+                    screen.Post(Event::Custom);
+                    return true;
+                }
+            }
+            if (e == Event::Character('r') || e == Event::Character('R')) {
+                ai::tui::update_modified_files(state);
+                state.files_detail_open = false;
+                store.add_toast("Refreshed git changes", "info", 1000);
+                screen.Post(Event::Custom);
+                return true;
+            }
         }
         constexpr int kLinesPerWheel = 3;
         constexpr int kLinesPerPage = 20;
@@ -748,6 +787,20 @@ int main() {
             if (e.mouse().button == Mouse::WheelUp) { *state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
             if (e.mouse().button == Mouse::WheelDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerWheel); return true; }
             if (e.mouse().button == Mouse::Left && e.mouse().motion == Mouse::Pressed) {
+                if (state.tab_selected == 1 && !state.files_detail_open &&
+                    state.file_row_boxes) {
+                    for (size_t i = 0; i < state.file_row_boxes->size(); ++i) {
+                        if ((*state.file_row_boxes)[i].Contain(e.mouse().x,
+                                                               e.mouse().y)) {
+                            state.selected_file = static_cast<int>(i);
+                            state.files_detail_open = true;
+                            *state.scroll_line = 0;
+                            *state.auto_scroll = true;
+                            screen.Post(Event::Custom);
+                            return true;
+                        }
+                    }
+                }
                 if (state.tool_arrow_boxes) {
                     for (const auto& [id, box] : *state.tool_arrow_boxes) {
                         if (box.Contain(e.mouse().x, e.mouse().y)) {
@@ -798,6 +851,8 @@ int main() {
         was_generating = store.is_generating();
         if (state.tab_selected == 1 && previous_tab != 1) {
             ai::tui::update_modified_files(state);
+            state.files_detail_open = false;
+            *state.scroll_line = 0;
         }
         previous_tab = state.tab_selected;
         
@@ -842,7 +897,7 @@ int main() {
             show_model_select, model_select_idx, filtered_model_entries, model_query,
             show_session_select, session_select_idx, filtered_session_entries, session_query,
             show_theme_select, theme_select_idx, filtered_theme_entries, theme_query,
-            tab_toggle, files_menu, state.scroll_line, input);
+            tab_toggle, state.scroll_line, input);
         
         // Everything is in the header strip now — no separate footer
         auto layout = main_view;
