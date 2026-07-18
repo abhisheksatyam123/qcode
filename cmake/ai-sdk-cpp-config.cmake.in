@@ -1,9 +1,0 @@
-@PACKAGE_INIT@
-
-include(CMakeFindDependencyMacro)
-find_dependency(OpenSSL)
-find_dependency(nlohmann_json 3.10)
-
-include("${CMAKE_CURRENT_LIST_DIR}/ai-sdk-cpp-targets.cmake")
-
-set(ai_sdk_cpp_FOUND TRUE)

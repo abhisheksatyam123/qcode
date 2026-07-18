@@ -11,7 +11,7 @@ file(MAKE_DIRECTORY ${HTTPLIB_BUILD_INCLUDE_DIR})
 
 # Copy httplib.h to the build include directory from header-only directory
 configure_file(
-    ${AI_SDK_THIRD_PARTY_DIR}/httplib-header-only/httplib.h
+    ${QCODE_THIRD_PARTY_DIR}/httplib-header-only/httplib.h
     ${HTTPLIB_BUILD_INCLUDE_DIR}/httplib.h
     COPYONLY
 )

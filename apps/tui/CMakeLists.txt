@@ -17,7 +17,3 @@ target_include_directories(qcode-tui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-
-install(TARGETS qcode-tui
-    RUNTIME DESTINATION bin
-)

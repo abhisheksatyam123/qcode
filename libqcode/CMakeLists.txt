@@ -1,30 +1,13 @@
-cmake_minimum_required(VERSION 3.16)
-project(qcode-core VERSION 0.1.0 LANGUAGES CXX)
+# qcode-core — shared library (providers, session, generation, render, tools).
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# Common compile definitions
-set(HTTPLIB_COMPILE_DEFS
-    CPPHTTPLIB_OPENSSL_SUPPORT=1
-    CPPHTTPLIB_BROTLI_SUPPORT=1
-    CPPHTTPLIB_THREAD_POOL_COUNT=8
-)
-
-# Find dependencies
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json 3.10 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
 
-# Core library
 add_library(qcode-core)
+add_library(qcode::core ALIAS qcode-core)
 
-# Include directories.
-# Canonical public API: <qcode/...> via libqcode/include.
-# Legacy <ai/...> shims live under ${CMAKE_SOURCE_DIR}/include.
 target_include_directories(qcode-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
@@ -33,12 +16,10 @@ target_include_directories(qcode-core PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-# Private headers live next to sources (e.g. http/http_request_handler.h).
 target_include_directories(qcode-core PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Source files
 target_sources(qcode-core PRIVATE
     # Types
     src/types/message.cpp
@@ -94,6 +75,7 @@ target_sources(qcode-core PRIVATE
 
     # Generation
     src/generation/generation_controller.cpp
+    src/generation/generation_service.cpp
 
     # Context
     src/context/token_budget.cpp
@@ -123,9 +105,6 @@ target_sources(qcode-core PRIVATE
     # Store
     src/store/app_store.cpp
 
-    # Chat
-    src/generation/generation_service.cpp
-
     # Commands
     src/commands/commands.cpp
 
@@ -138,37 +117,28 @@ set_source_files_properties(
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=c99"
 )
 
-# Dependencies
 # Keep third-party deps as BUILD_INTERFACE so install(EXPORT) does not require
-# them to be in an export set (matches the pre-migration SDK layout).
+# them to be in an export set.
 target_link_libraries(qcode-core PUBLIC
     nlohmann_json::nlohmann_json
     OpenSSL::SSL
     OpenSSL::Crypto
     Threads::Threads
     CURL::libcurl
+    ftxui::screen
+    ftxui::dom
+    ftxui::component
     $<BUILD_INTERFACE:httplib::httplib>
     $<BUILD_INTERFACE:sqlite3>
     $<BUILD_INTERFACE:stduuid::stduuid>
     $<BUILD_INTERFACE:concurrentqueue::concurrentqueue>
 )
 
-if(TARGET ftxui::component)
-    target_link_libraries(qcode-core PUBLIC
-        $<BUILD_INTERFACE:ftxui::screen>
-        $<BUILD_INTERFACE:ftxui::dom>
-        $<BUILD_INTERFACE:ftxui::component>
-    )
-endif()
-
-# Compile options
 target_compile_options(qcode-core PRIVATE
     -Wall -Wextra -Wpedantic
     -Wno-unused-parameter
 )
 
-# Compile definitions
-# Feature macros required by the legacy include/ai/*.h availability guards.
 target_compile_definitions(qcode-core PUBLIC
     ${HTTPLIB_COMPILE_DEFS}
     AI_SDK_HAS_OPENAI=1
@@ -177,24 +147,4 @@ target_compile_definitions(qcode-core PUBLIC
     AI_SDK_HAS_CURSOR=1
     AI_SDK_HAS_LANGFUSE=1
     AI_SDK_HAS_REGISTRY=1
-)
-
-# Install
-install(TARGETS qcode-core
-    EXPORT qcode-core-targets
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
-    INCLUDES DESTINATION include
-)
-
-install(DIRECTORY include/
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.h"
-)
-
-install(EXPORT qcode-core-targets
-    FILE qcode-core-targets.cmake
-    NAMESPACE qcode::
-    DESTINATION lib/cmake/qcode-core
 )

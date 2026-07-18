@@ -6,7 +6,7 @@ add_library(concurrentqueue INTERFACE)
 add_library(concurrentqueue::concurrentqueue ALIAS concurrentqueue)
 
 # Set the header-only directory path
-set(CONCURRENTQUEUE_HEADER_DIR ${AI_SDK_THIRD_PARTY_DIR}/concurrentqueue-header-only)
+set(CONCURRENTQUEUE_HEADER_DIR ${QCODE_THIRD_PARTY_DIR}/concurrentqueue-header-only)
 
 # Add include directory
 target_include_directories(concurrentqueue INTERFACE

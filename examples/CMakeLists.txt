@@ -1,79 +1,31 @@
-# Examples for AI SDK C++
+# Examples for qcode
 
-# Helper function to create examples
-function(add_ai_example name source_file)
+function(add_qcode_example name source_file)
     add_executable(${name} ${source_file})
-    target_link_libraries(${name} PRIVATE ai::sdk)
-    
-    # Set output directory
+    target_link_libraries(${name} PRIVATE qcode-core)
+
     set_target_properties(${name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
     )
-    
-    # Copy to examples directory for easy running
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set(EXAMPLE_SUFFIX "_debug")
-    else()
-        set(EXAMPLE_SUFFIX "")
-    endif()
-    
-    set_target_properties(${name} PROPERTIES
-        OUTPUT_NAME "${name}${EXAMPLE_SUFFIX}"
-    )
 endfunction()
 
-# Basic chat example
-add_ai_example(basic_chat basic_chat.cpp)
+add_qcode_example(basic_chat basic_chat.cpp)
+add_qcode_example(streaming_chat streaming_chat.cpp)
+add_qcode_example(multi_provider multi_provider.cpp)
+add_qcode_example(error_handling error_handling.cpp)
+add_qcode_example(retry_config_example retry_config_example.cpp)
+add_qcode_example(test_openai test_openai.cpp)
+add_qcode_example(test_anthropic test_anthropic.cpp)
+add_qcode_example(openrouter_example openrouter_example.cpp)
+add_qcode_example(tool_calling_basic tool_calling_basic.cpp)
+add_qcode_example(tool_calling_multistep tool_calling_multistep.cpp)
+add_qcode_example(tool_calling_async tool_calling_async.cpp)
+add_qcode_example(test_tool_integration test_tool_integration.cpp)
+add_qcode_example(embeddings_example embeddings_example.cpp)
+add_qcode_example(langfuse_tracing langfuse_tracing.cpp)
 
-# Streaming chat example  
-add_ai_example(streaming_chat streaming_chat.cpp)
-
-# Multi-provider comparison
-add_ai_example(multi_provider multi_provider.cpp)
-
-# Error handling demonstration
-add_ai_example(error_handling error_handling.cpp)
-
-# Retry configuration example
-add_ai_example(retry_config_example retry_config_example.cpp)
-
-# Simple test examples
-add_ai_example(test_openai test_openai.cpp)
-add_ai_example(test_anthropic test_anthropic.cpp)
-
-# OpenRouter example (OpenAI-compatible)
-add_ai_example(openrouter_example openrouter_example.cpp)
-
-# Tool calling examples
-add_ai_example(tool_calling_basic tool_calling_basic.cpp)
-add_ai_example(tool_calling_multistep tool_calling_multistep.cpp)
-add_ai_example(tool_calling_async tool_calling_async.cpp)
-add_ai_example(test_tool_integration test_tool_integration.cpp)
-
-# Embeddings example
-add_ai_example(embeddings_example embeddings_example.cpp)
-
-# Langfuse tracing example
-add_ai_example(langfuse_tracing langfuse_tracing.cpp)
-
-# Component-specific examples
 add_subdirectory(components/openai)
-add_subdirectory(components/anthropic) 
+add_subdirectory(components/anthropic)
 add_subdirectory(components/all)
 
-# Message to show how to run examples
 message(STATUS "Examples will be built in: ${CMAKE_BINARY_DIR}/examples/")
-message(STATUS "To run examples:")
-message(STATUS "  Set environment variables: OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY")
-message(STATUS "  Run: ./examples/basic_chat")
-message(STATUS "       ./examples/streaming_chat")
-message(STATUS "       ./examples/multi_provider")
-message(STATUS "       ./examples/error_handling")
-message(STATUS "       ./examples/test_openai")
-message(STATUS "       ./examples/test_anthropic")
-message(STATUS "       ./examples/openrouter_example")
-message(STATUS "")
-message(STATUS "Component-specific examples:")
-message(STATUS "  ./examples/components/openai/openai_component_demo     (OpenAI + Core only)")
-message(STATUS "  ./examples/components/anthropic/anthropic_component_demo (Anthropic + Core only)")
-message(STATUS "  ./examples/components/all/all_components_demo          (All components)")

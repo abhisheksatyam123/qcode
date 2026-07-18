@@ -4,7 +4,7 @@ set(BROTLI_BUNDLED_MODE ON CACHE INTERNAL "Enable bundled mode")
 
 # Add brotli as subdirectory
 add_subdirectory(
-    ${AI_SDK_THIRD_PARTY_DIR}/brotli 
+    ${QCODE_THIRD_PARTY_DIR}/brotli 
     ${CMAKE_CURRENT_BINARY_DIR}/brotli
 )
 

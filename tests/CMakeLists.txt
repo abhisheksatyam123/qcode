@@ -1,5 +1,6 @@
-# Test executable for AI SDK C++
-add_executable(ai_tests
+# Unit / integration tests for qcode-core.
+
+add_executable(qcode_tests
     # Unit tests
     unit/openai_client_test.cpp
     unit/openai_responses_test.cpp
@@ -16,8 +17,6 @@ add_executable(ai_tests
     unit/bash_tool_test.cpp
     unit/tui_config_test.cpp
     unit/tui_bus_test.cpp
-    ../libqcode/src/config/config.cpp
-    ../libqcode/src/bus/in_process_bus.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp
@@ -26,18 +25,17 @@ add_executable(ai_tests
     integration/openai_embeddings_integration_test.cpp
     integration/multi_step_duplicate_execution_test.cpp
 
-    # Utility classes
+    # Test helpers
     utils/mock_openai_client.cpp
     utils/mock_anthropic_client.cpp
     utils/test_fixtures.cpp
 )
 
-# Link against the main library and test dependencies
-target_link_libraries(ai_tests
+target_link_libraries(qcode_tests
     PRIVATE
         qcode-core
-        httplib::httplib  # Need direct access to httplib for internal headers
-        concurrentqueue   # Need direct access to concurrentqueue
+        httplib::httplib
+        concurrentqueue
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
@@ -45,32 +43,27 @@ target_link_libraries(ai_tests
         OpenSSL::Crypto
 )
 
-# Include directories for tests
-target_include_directories(ai_tests
+target_include_directories(qcode_tests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/utils
-        ${CMAKE_SOURCE_DIR}/src  # Access to private headers
         ${CMAKE_SOURCE_DIR}/third_party/httplib-header-only
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/libqcode/src
         ${CMAKE_SOURCE_DIR}/libqcode/include
 )
 
-# Set test properties
-set_target_properties(ai_tests PROPERTIES
+set_target_properties(qcode_tests PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
 )
 
-# Compiler options for tests (less strict than main library)
 if(MSVC)
-    target_compile_options(ai_tests PRIVATE /W3)
+    target_compile_options(qcode_tests PRIVATE /W3)
 else()
-    target_compile_options(ai_tests PRIVATE -Wall -Wextra)
+    target_compile_options(qcode_tests PRIVATE -Wall -Wextra)
 endif()
 
-# Define preprocessor macros for tests
-target_compile_definitions(ai_tests PRIVATE
+target_compile_definitions(qcode_tests PRIVATE
     AI_SDK_TESTING=1
     AI_SDK_HAS_REGISTRY=1
     AI_SDK_HAS_ANTIGRAVITY=1
@@ -79,29 +72,24 @@ target_compile_definitions(ai_tests PRIVATE
     AI_SDK_HAS_CURSOR=1
     AI_SDK_HAS_LANGFUSE=1
     $<$<CONFIG:Debug>:AI_SDK_DEBUG_TESTS=1>
-    # httplib configuration (must match main library)
     CPPHTTPLIB_OPENSSL_SUPPORT=1
     CPPHTTPLIB_BROTLI_SUPPORT=1
     CPPHTTPLIB_THREAD_POOL_COUNT=8
 )
 
-# Discover tests for CTest
 include(GoogleTest)
-gtest_discover_tests(ai_tests
+gtest_discover_tests(qcode_tests
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    PROPERTIES 
+    PROPERTIES
         TIMEOUT 30
 )
 
-# ClickHouse integration tests are opt-in: they require the clickhouse-cpp submodule
-# (with its contrib/) and a live ClickHouse server, so they are excluded from the
-# default test build.
+# ClickHouse integration tests are opt-in.
 if(BUILD_CLICKHOUSE_TESTS)
-    target_sources(ai_tests PRIVATE
+    target_sources(qcode_tests PRIVATE
         integration/clickhouse_integration_test.cpp
     )
-    target_link_libraries(ai_tests PRIVATE
+    target_link_libraries(qcode_tests PRIVATE
         ClickHouse::Client
     )
 endif()
-

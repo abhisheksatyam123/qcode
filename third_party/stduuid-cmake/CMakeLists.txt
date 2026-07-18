@@ -10,7 +10,7 @@ file(MAKE_DIRECTORY ${STDUUID_BUILD_INCLUDE_DIR})
 
 # Copy uuid.h from the vendored header-only directory.
 configure_file(
-    ${AI_SDK_THIRD_PARTY_DIR}/stduuid-header-only/uuid.h
+    ${QCODE_THIRD_PARTY_DIR}/stduuid-header-only/uuid.h
     ${STDUUID_BUILD_INCLUDE_DIR}/uuid.h
     COPYONLY
 )
