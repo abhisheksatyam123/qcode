@@ -1,9 +1,40 @@
-# Build artifacts
-apps/webui/dist/
-apps/webui/node_modules/
+# Build trees / CMake
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+Testing/
+compile_commands.json
+CTestTestfile.cmake
+_deps/
 
-# Personal working notes / scratchpad (task handoff notes, not source)
-scratchpad/
+# Nested / accidental CMake leftovers at repo root
+**/CMakeFiles/
+**/cmake_install.cmake
+
+# Logs
+*.log
+qcode-server.log
+
+# Editor / LSP
+.clangd
+.cache/
+.idea/
+.vscode/
+*.swp
+*~
 
 # CMake/gtest discovery scratch files
 tests/cmake_test_discovery_*.json
+
+# WebUI build
+apps/webui/dist/
+apps/webui/node_modules/
+
+# Personal working notes (task handoff notes, not source)
+scratchpad/
+
+# OS junk
+.DS_Store
+Thumbs.db
