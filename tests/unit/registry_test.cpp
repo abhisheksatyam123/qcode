@@ -116,7 +116,9 @@ TEST(RegistryTest, OpenCodeResolvesWithoutKey) {
   ScopedEnv key("OPENCODE_API_KEY");
   key.unset();
   register_core_providers();
-  ClientResolution res = ProviderRegistry::instance().resolve("opencode", "");
+  ProviderOptions options;
+  options.base_url = "https://custom.opencode.ai/v1";
+  ClientResolution res = ProviderRegistry::instance().resolve("opencode", options);
   EXPECT_FALSE(res.ok());
   EXPECT_FALSE(res.error.empty());
 }

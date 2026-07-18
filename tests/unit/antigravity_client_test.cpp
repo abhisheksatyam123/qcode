@@ -78,5 +78,36 @@ TEST(AntigravityClientTest, GenerateTextE2E) {
   EXPECT_FALSE(out.text.empty());
 }
 
+TEST(AntigravityClientTest, CompactionLiveTest) {
+  if (std::getenv("QCODE_RUN_LIVE_TESTS") == nullptr) {
+    GTEST_SKIP() << "Set QCODE_RUN_LIVE_TESTS=1 to run provider E2E tests";
+  }
+  const auto access_token = ai::tui::get_antigravity_token();
+  if (access_token.empty()) {
+    GTEST_SKIP() << "No usable Antigravity credential";
+  }
+
+  Options client_options;
+  for (const auto& provider : ai::tui::load_providers_from_config()) {
+    if (provider.id == "antigravity") {
+      client_options.base_url = provider.api_url;
+      client_options.project_id = provider.project_id;
+      break;
+    }
+  }
+  Client client = create_client(access_token, client_options);
+  ASSERT_TRUE(client.is_valid());
+
+  GenerateOptions opts;
+  opts.model = "gemini-3-flash";
+  opts.system = "Summarize this conversation into a handoff packet. Output only: ## Tasks\n## Systems";
+  opts.messages = {Message::user("User: hi\nAssistant: hello there! How can I help you today?")};
+
+  GenerateResult out = client.generate_text(opts);
+  EXPECT_TRUE(out.is_success()) << out.error_message();
+  EXPECT_FALSE(out.text.empty());
+  std::cout << "[CompactionLiveTest Output]: " << out.text << std::endl;
+}
+
 }  // namespace antigravity
 }  // namespace ai

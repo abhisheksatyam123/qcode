@@ -4,6 +4,7 @@ add_executable(ai_tests
     unit/openai_client_test.cpp
     unit/openai_responses_test.cpp
     unit/anthropic_client_test.cpp
+    unit/anthropic_request_builder_test.cpp
     unit/types_test.cpp
     unit/openai_stream_test.cpp
     unit/anthropic_stream_test.cpp

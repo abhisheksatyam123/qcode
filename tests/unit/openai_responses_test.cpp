@@ -1,3 +1,5 @@
+#include "ai/types/generate_options.h"
+#include "ai/types/message.h"
 #include "providers/openai/openai_request_builder.h"
 #include "providers/openai/openai_response_parser.h"
 
@@ -20,6 +22,29 @@ TEST(OpenAIResponsesTest, BuildsResponsesRequestWithTools) {
   EXPECT_FALSE(request.contains("messages"));
   EXPECT_EQ(request["reasoning"]["effort"], "high");
   EXPECT_EQ(request["tools"][0]["name"], "lookup");
+}
+
+TEST(OpenAIChatCompletionsTest, AddsCacheControlForClaudeModelIds) {
+  OpenAIRequestBuilder builder(false);
+  GenerateOptions options;
+  options.model = "anthropic/claude-sonnet-4";
+  options.messages = {Message::user("hi")};
+  options.reasoning_effort = "medium";
+
+  const auto request = builder.build_request_json(options);
+  ASSERT_TRUE(request.contains("cache_control"));
+  EXPECT_EQ(request["cache_control"]["type"], "ephemeral");
+  EXPECT_EQ(request["reasoning_effort"], "medium");
+}
+
+TEST(OpenAIChatCompletionsTest, SkipsCacheControlForNonClaudeModels) {
+  OpenAIRequestBuilder builder(false);
+  GenerateOptions options;
+  options.model = "gpt-4o";
+  options.messages = {Message::user("hi")};
+
+  const auto request = builder.build_request_json(options);
+  EXPECT_FALSE(request.contains("cache_control"));
 }
 
 TEST(OpenAIResponsesTest, ParsesTextAndFunctionCalls) {
