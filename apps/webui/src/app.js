@@ -2237,13 +2237,13 @@ async function createNewSession(title = '', workspace = '') {
     const res = await fetch('/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: resolved.provider, model: resolved.model, workspace })
+      body: JSON.stringify({ provider: resolved.provider, model: resolved.model, workspace, custom_id: title })
     });
     if (res.ok) {
       const data = await res.json();
       const newSession = {
         id: data.id,
-        title: title || 'Session - ' + resolved.model,
+        title: data.title || title || 'Session - ' + resolved.model,
         workspace: workspace || '',
         messages: [],
         generating: false,
@@ -2251,14 +2251,6 @@ async function createNewSession(title = '', workspace = '') {
         provider: resolved.provider,
         model: resolved.model
       };
-      
-      if (title) {
-        await fetch('/rename', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: data.id, title })
-        });
-      }
 
       state.openSessions.push(newSession);
       switchSession(data.id);

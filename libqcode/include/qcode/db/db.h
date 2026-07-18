@@ -15,7 +15,8 @@ void init_database();
 
 // Create a new session row in the database and return its UUID
 std::string create_new_session(const std::string& provider, const std::string& model,
-                               const std::string& workspace = "");
+                               const std::string& workspace = "",
+                               const std::string& custom_id = "");
 
 // Retrieve the last active session ID from the database, or empty if none
 std::string get_last_active_session();

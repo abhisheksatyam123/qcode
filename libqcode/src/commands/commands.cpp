@@ -134,12 +134,61 @@ bool handle_slash_command(
     if (cmd == "new") {
         std::string prov = providers_list[selected_provider].name;
         std::string mod = providers_list[selected_provider].models[selected_model].name;
-        // /new [workspace_path] — optional workspace directory for this session
-        std::string ws = args;
-        ws.erase(ws.begin(), std::find_if(ws.begin(), ws.end(), [](unsigned char ch) {
+        
+        std::string ws;
+        std::string custom_id;
+        
+        std::string trimmed_args = args;
+        trimmed_args.erase(trimmed_args.begin(), std::find_if(trimmed_args.begin(), trimmed_args.end(), [](unsigned char ch) {
             return !std::isspace(ch);
         }));
-        std::string new_id = db::create_new_session(prov, mod, ws);
+        trimmed_args.erase(std::find_if(trimmed_args.rbegin(), trimmed_args.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }).base(), trimmed_args.end());
+
+        if (!trimmed_args.empty()) {
+            size_t last_space = trimmed_args.find_last_of(" 	");
+            if (last_space != std::string::npos) {
+                std::string last_word = trimmed_args.substr(last_space + 1);
+                bool looks_like_path = false;
+                if (!last_word.empty()) {
+                    if (last_word[0] == '/' || last_word[0] == '.' || last_word[0] == '~') {
+                        looks_like_path = true;
+                    } else {
+                        std::error_code ec;
+                        if (std::filesystem::is_directory(last_word, ec)) {
+                            looks_like_path = true;
+                        }
+                    }
+                }
+                if (looks_like_path) {
+                    ws = last_word;
+                    custom_id = trimmed_args.substr(0, last_space);
+                    custom_id.erase(std::find_if(custom_id.rbegin(), custom_id.rend(), [](unsigned char ch) {
+                        return !std::isspace(ch);
+                    }).base(), custom_id.end());
+                } else {
+                    custom_id = trimmed_args;
+                }
+            } else {
+                bool looks_like_path = false;
+                if (trimmed_args[0] == '/' || trimmed_args[0] == '.' || trimmed_args[0] == '~') {
+                    looks_like_path = true;
+                } else {
+                    std::error_code ec;
+                    if (std::filesystem::is_directory(trimmed_args, ec)) {
+                        looks_like_path = true;
+                    }
+                }
+                if (looks_like_path) {
+                    ws = trimmed_args;
+                } else {
+                    custom_id = trimmed_args;
+                }
+            }
+        }
+
+        std::string new_id = db::create_new_session(prov, mod, ws, custom_id);
         *state.session_id = new_id;
         state.messages_history->clear();
         if (!ws.empty()) {
@@ -147,6 +196,28 @@ bool handle_slash_command(
         } else {
             append_system_message(state, "Started new persistent session: " + new_id);
         }
+        return true;
+    }
+
+    if (cmd == "rename") {
+        std::string new_title = args;
+        new_title.erase(new_title.begin(), std::find_if(new_title.begin(), new_title.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        new_title.erase(std::find_if(new_title.rbegin(), new_title.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }).base(), new_title.end());
+
+        if (new_title.empty()) {
+            append_system_message(state, "Usage: /rename <new name>");
+            return true;
+        }
+        if (state.session_id->empty()) {
+            append_system_message(state, "No active session to rename. Start or load one first.");
+            return true;
+        }
+        db::rename_session(*state.session_id, new_title);
+        append_system_message(state, "Renamed session to: " + new_title);
         return true;
     }
 
@@ -181,6 +252,31 @@ bool handle_slash_command(
         if (found) {
             *state.session_id = target_id;
             db::reload_session_history(target_id, state);
+            
+            // Restore provider and model from the loaded session!
+            std::string loaded_prov_id;
+            std::string loaded_model_id;
+            for (const auto& s : db::list_sessions_full()) {
+                if (s.id == target_id) {
+                    loaded_prov_id = s.provider;
+                    loaded_model_id = s.model;
+                    break;
+                }
+            }
+            if (!loaded_prov_id.empty() && !loaded_model_id.empty()) {
+                for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
+                    if (providers_list[i].name == loaded_prov_id || providers_list[i].id == loaded_prov_id) {
+                        for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
+                            if (providers_list[i].models[j].name == loaded_model_id || providers_list[i].models[j].id == loaded_model_id) {
+                                selected_provider = i;
+                                selected_model = j;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
             append_system_message(state, "Loaded persistent session: " + target_id);
         } else {
             append_system_message(state, "Session ID not found: " + target_id);
@@ -250,9 +346,10 @@ bool handle_slash_command(
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
-          << "  /new              - start a new persistent session\n"
+          << "  /new [name]       - start a new persistent session (optional name/description)\n"
           << "  /session <id>     - load a persistent session by id\n"
-          << "  /reasoning [on|off|<0..1>] - set reasoning effort\n"
+          << "  /rename <name>    - rename the current session\n"
+          << "  /reasoning [off|low|medium|high] - set reasoning effort\n"
           << "  /compact [keep]   - compress conversation into a handoff summary\n"
           << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
           << "  /help             - show this help\n"

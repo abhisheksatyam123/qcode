@@ -203,24 +203,46 @@ void init_database() {
 }
 
 std::string create_new_session(const std::string& provider, const std::string& model,
-                               const std::string& workspace) {
+                               const std::string& workspace,
+                               const std::string& custom_id) {
     std::string path;
     sqlite3* db = open_database(path);
     if (!db) {
         return "";
     }
 
-    std::string uuid = generate_uuid();
+    std::string final_id = custom_id.empty() ? generate_uuid() : custom_id;
+    if (!custom_id.empty()) {
+        std::string base_id = custom_id;
+        int counter = 1;
+        while (true) {
+            const char* check_sql = "SELECT COUNT(*) FROM sessions WHERE id = ?;";
+            sqlite3_stmt* check_stmt = nullptr;
+            int count = 0;
+            if (prepare_stmt(db, check_sql, &check_stmt)) {
+                sqlite3_bind_text(check_stmt, 1, final_id.c_str(), -1, SQLITE_STATIC);
+                if (sqlite3_step(check_stmt) == SQLITE_ROW) {
+                    count = sqlite3_column_int(check_stmt, 0);
+                }
+                sqlite3_finalize(check_stmt);
+            }
+            if (count == 0) {
+                break;
+            }
+            final_id = base_id + " (" + std::to_string(counter++) + ")";
+        }
+    }
+
     auto now = std::chrono::system_clock::now();
     long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     
-    // Default title is "Session - <model_name>"
-    std::string title = "Session - " + model;
+    // Default title is "Session - <model_name>" or final_id if custom_id was provided
+    std::string title = custom_id.empty() ? ("Session - " + model) : final_id;
 
     const char* sql = "INSERT INTO sessions (id, title, provider, model, created_at, workspace) VALUES (?, ?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
-        sqlite3_bind_text(stmt, 1, uuid.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 1, final_id.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 2, title.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 3, provider.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 4, model.c_str(), -1, SQLITE_STATIC);
@@ -231,7 +253,7 @@ std::string create_new_session(const std::string& provider, const std::string& m
     }
 
     sqlite3_close(db);
-    return uuid;
+    return final_id;
 }
 
 std::string get_last_active_session() {
@@ -257,18 +279,12 @@ std::string get_last_active_session() {
 }
 
 bool is_valid_session_id(const std::string& id) {
-    // RFC 4122 v4 canonical form: 8-4-4-4-12 lowercase hex with dashes at 8/13/18/23.
-    if (id.size() != 36) return false;
-    constexpr int kDashPos[4] = {8, 13, 18, 23};
-    for (int i = 0; i < 4; ++i) {
-        if (id[kDashPos[i]] != '-') return false;
-    }
-    for (int i = 0; i < 36; ++i) {
-        if (i == 8 || i == 13 || i == 18 || i == 23) continue;
-        const char c = id[i];
-        const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
-                         (c >= 'A' && c <= 'F');
-        if (!hex) return false;
+    if (id.empty() || id.size() > 255) return false;
+    for (char c : id) {
+        if (c == '/' || c == '\\' || c == '?' || c == '#' || c == '%' || c == '*' ||
+            static_cast<unsigned char>(c) < 32 || c == 127) {
+            return false;
+        }
     }
     return true;
 }

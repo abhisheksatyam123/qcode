@@ -42,6 +42,28 @@
 
 using namespace ai::tui::contract;
 
+static std::string url_decode(const std::string& value) {
+    std::string result;
+    result.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '%') {
+            if (i + 2 < value.size()) {
+                char hex[3] = { value[i+1], value[i+2], '\0' };
+                result += static_cast<char>(std::strtol(hex, nullptr, 16));
+                i += 2;
+            } else {
+                result += '%';
+            }
+        } else if (value[i] == '+') {
+            result += ' ';
+        } else {
+            result += value[i];
+        }
+    }
+    return result;
+}
+
+
 // ── Globals ──
 static std::atomic<bool> g_running{true};
 static std::shared_ptr<ai::tui::bus::BusRuntime> g_bus;
@@ -696,8 +718,8 @@ int main(int argc, char* argv[]) {
     });
 
     // ── Generate response for specific session ──
-    svr.Post("/session/([a-f0-9-]+)/generate", [handle_generate](const httplib::Request& req, httplib::Response& res) {
-        std::string session_id = req.matches[1];
+    svr.Post("/session/([^/]+)/generate", [handle_generate](const httplib::Request& req, httplib::Response& res) {
+        std::string session_id = url_decode(req.matches[1]);
         handle_generate(session_id, req.body, res);
     });
 
@@ -723,13 +745,17 @@ int main(int argc, char* argv[]) {
         std::string provider = body.value("provider", "");
         std::string model = body.value("model", "");
         std::string workspace = body.value("workspace", "");
+        std::string custom_id = body.value("custom_id", "");
+        if (custom_id.empty()) {
+            custom_id = body.value("title", "");
+        }
         if (provider.empty() || model.empty()) {
             res.status = 400;
             res.set_content(R"({"error":"provider and model required"})", "application/json");
             return;
         }
-        auto id = ai::tui::db::create_new_session(provider, model, workspace);
-        res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}}).dump(), "application/json");
+        auto id = ai::tui::db::create_new_session(provider, model, workspace, custom_id);
+        res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}, {"title", id}}).dump(), "application/json");
     });
 
     // ── Rename session ──
@@ -856,9 +882,34 @@ int main(int argc, char* argv[]) {
         res.set_content(output, "text/plain");
     });
 
+    // ── Get last active session (with history) for client auto-restore ──
+    svr.Get("/session/last", [](const httplib::Request&, httplib::Response& res) {
+        std::string sid = ai::tui::db::get_last_active_session();
+        if (sid.empty()) {
+            res.set_content(R"({"id":""})", "application/json");
+            return;
+        }
+        nlohmann::json info = {{"id", sid}};
+        for (const auto& s : ai::tui::db::list_sessions_full()) {
+            if (s.id == sid) {
+                info["title"] = s.title;
+                info["workspace"] = s.workspace;
+                info["provider"] = s.provider;
+                info["model"] = s.model;
+                break;
+            }
+        }
+        nlohmann::json msgs = nlohmann::json::array();
+        for (const auto& [sender, content] : ai::tui::db::load_session_messages(sid)) {
+            msgs.push_back({{"role", sender}, {"content", content}});
+        }
+        info["messages"] = std::move(msgs);
+        res.set_content(info.dump(2), "application/json");
+    });
+
     // ── Get session info ──
-    svr.Get("/session/([a-f0-9-]+)", [](const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
+    svr.Get("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = url_decode(req.matches[1]);
         auto list = ai::tui::db::list_sessions_full();
         for (const auto& s : list) {
             if (s.id == sid) {
@@ -872,8 +923,8 @@ int main(int argc, char* argv[]) {
     });
 
     // ── Delete session ──
-    svr.Delete("/session/([a-f0-9-]+)", [](const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
+    svr.Delete("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -900,8 +951,8 @@ int main(int argc, char* argv[]) {
     });
 
     // ── Clear session messages (truncate history) ──
-    svr.Post("/session/([a-f0-9-]+)/clear", [](const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
+    svr.Post("/session/([^/]+)/clear", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -925,8 +976,8 @@ int main(int argc, char* argv[]) {
     });
 
     // ── Get session message history ──
-    svr.Get("/session/([a-f0-9-]+)/messages", [](const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
+    svr.Get("/session/([^/]+)/messages", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -941,8 +992,8 @@ int main(int argc, char* argv[]) {
     });
 
     // ── Compact session ──
-    svr.Post("/session/([a-f0-9-]+)/compact", [&providers_list](const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
+    svr.Post("/session/([^/]+)/compact", [&providers_list](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -1158,8 +1209,8 @@ int main(int argc, char* argv[]) {
     });
 
     // ── Get aggregate session statistics ──
-    svr.Get("/session/([a-f0-9-]+)/stats", [](const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
+    svr.Get("/session/([^/]+)/stats", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -1197,8 +1248,8 @@ int main(int argc, char* argv[]) {
     // ── Get git working-tree status for a session's workspace ──
     // Returns the unified diff of all modified/new files plus a file list with
     // change type + insertion/deletion counts.
-    svr.Get("/session/([a-f0-9-]+)/files", [](const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
+    svr.Get("/session/([^/]+)/files", [](const httplib::Request& req, httplib::Response& res) {
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -1346,9 +1397,9 @@ int main(int argc, char* argv[]) {
 
     // ── Workspace filesystem: list directory ──
     // GET /session/:id/fs/list?path=relative/dir
-    svr.Get("/session/([a-f0-9-]+)/fs/list", [](const httplib::Request& req, httplib::Response& res) {
+    svr.Get("/session/([^/]+)/fs/list", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
-        std::string sid = req.matches[1];
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -1415,9 +1466,9 @@ int main(int argc, char* argv[]) {
 
     // ── Workspace filesystem: read file ──
     // GET /session/:id/fs/read?path=relative/file
-    svr.Get("/session/([a-f0-9-]+)/fs/read", [](const httplib::Request& req, httplib::Response& res) {
+    svr.Get("/session/([^/]+)/fs/read", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
-        std::string sid = req.matches[1];
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -1493,9 +1544,9 @@ int main(int argc, char* argv[]) {
 
     // ── Workspace filesystem: write file ──
     // PUT /session/:id/fs/write  body: { "path": "rel/file", "content": "..." }
-    svr.Put("/session/([a-f0-9-]+)/fs/write", [](const httplib::Request& req, httplib::Response& res) {
+    svr.Put("/session/([^/]+)/fs/write", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
-        std::string sid = req.matches[1];
+        std::string sid = url_decode(req.matches[1]);
         if (!ai::tui::db::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
@@ -1588,30 +1639,6 @@ int main(int argc, char* argv[]) {
         res.set_content(j.dump(2), "application/json");
     });
 
-    // ── Get last active session (with history) for client auto-restore ──
-    svr.Get("/session/last", [](const httplib::Request&, httplib::Response& res) {
-        std::string sid = ai::tui::db::get_last_active_session();
-        if (sid.empty()) {
-            res.set_content(R"({"id":""})", "application/json");
-            return;
-        }
-        nlohmann::json info = {{"id", sid}};
-        for (const auto& s : ai::tui::db::list_sessions_full()) {
-            if (s.id == sid) {
-                info["title"] = s.title;
-                info["workspace"] = s.workspace;
-                info["provider"] = s.provider;
-                info["model"] = s.model;
-                break;
-            }
-        }
-        nlohmann::json msgs = nlohmann::json::array();
-        for (const auto& [sender, content] : ai::tui::db::load_session_messages(sid)) {
-            msgs.push_back({{"role", sender}, {"content", content}});
-        }
-        info["messages"] = std::move(msgs);
-        res.set_content(info.dump(2), "application/json");
-    });
 
     // ── Start server ──
     LOG_INFO("Starting HTTP server on port {}...", port);
