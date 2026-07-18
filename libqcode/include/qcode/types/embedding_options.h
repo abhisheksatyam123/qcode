@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 
 struct EmbeddingOptions {
   std::string model;
@@ -75,4 +75,4 @@ struct EmbeddingResult {
   std::string error_message() const { return error.value_or(""); }
 };
 
-}  // namespace ai
+}  // namespace qcode

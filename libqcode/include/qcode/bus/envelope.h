@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 namespace bus {
 
@@ -52,4 +52,4 @@ using EventCallback = std::function<void(const EventEnvelope&)>;
 
 } // namespace bus
 } // namespace tui
-} // namespace ai
+} // namespace qcode

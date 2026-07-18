@@ -4,7 +4,7 @@
 #include <qcode/retry/retry_policy.h>
 #include "utils/response_utils.h"
 
-namespace ai {
+namespace qcode {
 namespace http {
 
 HttpRequestHandler::HttpRequestHandler(const HttpConfig& config)
@@ -166,4 +166,4 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
 }
 
 }  // namespace http
-}  // namespace ai
+}  // namespace qcode

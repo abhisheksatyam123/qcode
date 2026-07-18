@@ -13,7 +13,7 @@
 #include <climits>
 #include <unordered_map>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 using namespace ftxui;
@@ -526,7 +526,7 @@ ftxui::Element render_view(
             // Completed plain messages are immutable. Reuse their parsed
             // Markdown/FTXUI trees across frames and keep cache residency
             // bounded to the current window.
-            static const ai::Messages* cache_owner = nullptr;
+            static const qcode::Messages* cache_owner = nullptr;
             static size_t cached_history_size = 0;
             static int cached_width = 0;
             static int cached_provider = -1;
@@ -573,7 +573,7 @@ ftxui::Element render_view(
             }
             for (size_t i = first; i < last; ++i) {
                 const auto& msg = (*state.messages_history)[i];
-                const ai::Message* adjacent_tool_results = nullptr;
+                const qcode::Message* adjacent_tool_results = nullptr;
                 if (msg.has_tool_calls() && i + 1 < history_size &&
                     (*state.messages_history)[i + 1].has_tool_results()) {
                     adjacent_tool_results =
@@ -1159,5 +1159,5 @@ ftxui::Element render_toast_overlay(
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode
 

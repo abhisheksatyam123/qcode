@@ -6,7 +6,7 @@
 #include <optional>
 #include <string>
 
-namespace ai {
+namespace qcode {
 
 struct StreamEvent {
   explicit StreamEvent(std::string text)
@@ -46,4 +46,4 @@ struct StreamEvent {
   std::optional<std::string> metadata;
 };
 
-}  // namespace ai
+}  // namespace qcode

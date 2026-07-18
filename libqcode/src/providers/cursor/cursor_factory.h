@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 // Create a Cursor client.
-// @param access_token Cursor access token (from ai::tui::get_cursor_access_token()).
+// @param access_token Cursor access token (from qcode::tui::get_cursor_access_token()).
 Client create_client(const std::string& access_token);
 Client create_client(const std::string& access_token, const Options& options);
 Client create_client(const std::string& access_token,
@@ -23,4 +23,4 @@ std::vector<AvailableModel> list_models(const std::string& access_token,
                                         const Options& options);
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

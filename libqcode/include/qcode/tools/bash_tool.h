@@ -14,7 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 
 using JsonValue = nlohmann::json;
 
@@ -150,4 +150,4 @@ class BashTool {
   static std::string resolve_workdir(const std::string& workdir);
 };
 
-}  // namespace ai
+}  // namespace qcode

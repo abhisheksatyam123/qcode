@@ -1,7 +1,7 @@
 /**
- * Basic Chat Example - AI SDK C++
+ * Basic Chat Example - qcode
  *
- * This example demonstrates basic text generation using the AI SDK.
+ * This example demonstrates basic text generation using the qcode.
  * It shows how to:
  * - Use the simple generate_text API
  * - Handle both OpenAI and Anthropic providers
@@ -20,16 +20,16 @@
 #include <qcode/providers/openai.h>
 
 int main() {
-  std::cout << "AI SDK C++ - Basic Chat Example\n";
+  std::cout << "qcode - Basic Chat Example\n";
   std::cout << "================================\n\n";
 
   // Example 1: Simple text generation with OpenAI
   std::cout << "1. Generating text with OpenAI GPT-5.4:\n";
   std::cout << "Question: What is the capital of France?\n\n";
 
-  auto client1 = ai::openai::create_client();
-  ai::GenerateOptions options1;
-  options1.model = ai::openai::models::kGpt54;
+  auto client1 = qcode::openai::create_client();
+  qcode::GenerateOptions options1;
+  options1.model = qcode::openai::models::kGpt54;
   options1.prompt =
       "What is the capital of France? Please provide a brief answer.";
 
@@ -49,8 +49,8 @@ int main() {
                "clearly.\n";
   std::cout << "Question: Explain what a prime number is.\n\n";
 
-  ai::GenerateOptions options2;
-  options2.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options2;
+  options2.model = qcode::openai::models::kGpt54;
   options2.system =
       "You are a helpful math tutor who explains concepts clearly.";
   options2.prompt =
@@ -68,19 +68,19 @@ int main() {
   // Example 3: Conversation with messages
   std::cout << "3. Multi-turn conversation:\n";
 
-  ai::Messages conversation = {
-      ai::Message::system("You are a friendly assistant who likes to help with "
+  qcode::Messages conversation = {
+      qcode::Message::system("You are a friendly assistant who likes to help with "
                           "coding questions."),
-      ai::Message::user(
+      qcode::Message::user(
           "What is the difference between a vector and a list in C++?"),
-      ai::Message::assistant(
+      qcode::Message::assistant(
           "Great question! In C++, std::vector and std::list are both "
           "containers but with different characteristics..."),
-      ai::Message::user(
+      qcode::Message::user(
           "Which one should I use for frequent insertions in the middle?")};
 
-  ai::GenerateOptions options3;
-  options3.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options3;
+  options3.model = qcode::openai::models::kGpt54;
   options3.messages = conversation;
 
   auto result3 = client1.generate_text(options3);
@@ -96,9 +96,9 @@ int main() {
   std::cout << "4. Generating text with Anthropic Claude:\n";
   std::cout << "Question: Write a haiku about programming.\n\n";
 
-  auto client4 = ai::anthropic::create_client();
-  ai::GenerateOptions options4;
-  options4.model = ai::anthropic::models::kClaudeSonnet46;
+  auto client4 = qcode::anthropic::create_client();
+  qcode::GenerateOptions options4;
+  options4.model = qcode::anthropic::models::kClaudeSonnet46;
   options4.prompt =
       "Write a haiku about programming. Just the haiku, nothing else.";
 
@@ -114,8 +114,8 @@ int main() {
   // Example 5: Using GenerateOptions for more control
   std::cout << "5. Using GenerateOptions for fine control:\n";
 
-  ai::GenerateOptions options;
-  options.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options;
+  options.model = qcode::openai::models::kGpt54;
   options.prompt = "List 3 benefits of using C++ for systems programming.";
   options.max_tokens = 150;
   options.temperature = 0.7;

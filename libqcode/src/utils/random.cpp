@@ -3,7 +3,7 @@
 #include <mutex>
 #include <random>
 
-namespace ai {
+namespace qcode {
 namespace utils {
 namespace {
 
@@ -44,4 +44,4 @@ std::string new_uuid() {
 }
 
 }  // namespace utils
-}  // namespace ai
+}  // namespace qcode

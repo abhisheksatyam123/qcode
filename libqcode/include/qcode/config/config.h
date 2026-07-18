@@ -5,7 +5,7 @@
 
 #include <qcode/state/state.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // Retrieve antigravity API token from env var or keyring.
@@ -28,4 +28,4 @@ std::string get_notes_root();
 std::vector<ProviderInfo> load_providers_from_config();
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

@@ -8,7 +8,7 @@
 #include <string>
 #include <thread>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 class CursorBufferedStream : public internal::StreamResultImpl {
@@ -36,4 +36,4 @@ class CursorBufferedStream : public internal::StreamResultImpl {
 };
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

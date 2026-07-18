@@ -18,7 +18,7 @@
 #include <qcode/types/message.h>
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 namespace session {
 
@@ -301,8 +301,8 @@ void save_message(const std::string& session_id, const std::string& sender, cons
     writer.write(session_id, sender, content, created_at);
 }
 
-std::vector<ai::Message> load_session_history_parsed(const std::string& session_id) {
-    std::vector<ai::Message> history;
+std::vector<qcode::Message> load_session_history_parsed(const std::string& session_id) {
+    std::vector<qcode::Message> history;
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
         return history;
@@ -327,11 +327,11 @@ std::vector<ai::Message> load_session_history_parsed(const std::string& session_
             std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
 
             if (sender == "User") {
-                history.push_back(ai::Message::user(content));
+                history.push_back(qcode::Message::user(content));
                 continue;
             }
             if (sender == "Assistant") {
-                history.push_back(ai::Message::assistant(content));
+                history.push_back(qcode::Message::assistant(content));
                 continue;
             }
 
@@ -342,7 +342,7 @@ std::vector<ai::Message> load_session_history_parsed(const std::string& session_
                     if (j.is_object() && j.contains("id") && j.contains("name")) {
                         auto args = j.value("arguments", nlohmann::json::object());
                         history.push_back(
-                            ai::Message::assistant_with_tools(
+                            qcode::Message::assistant_with_tools(
                                 "",
                                 {{j.at("id").get<std::string>(),
                                   j.at("name").get<std::string>(),
@@ -362,13 +362,13 @@ std::vector<ai::Message> load_session_history_parsed(const std::string& session_
                         const std::string id =
                             "legacy-call-" + std::to_string(++legacy_tool_seq);
                         history.push_back(
-                            ai::Message::assistant_with_tools(
+                            qcode::Message::assistant_with_tools(
                                 "", {{id, tool_name, std::move(args)}}));
                         continue;
                     } catch (...) {
                     }
                 }
-                history.push_back(ai::Message::system(content));
+                history.push_back(qcode::Message::system(content));
                 continue;
             }
 
@@ -378,7 +378,7 @@ std::vector<ai::Message> load_session_history_parsed(const std::string& session_
                     if (j.is_object() && j.contains("tool_call_id")) {
                         auto result = j.contains("result") ? j.at("result")
                                                            : nlohmann::json();
-                        history.push_back(ai::Message::tool_results(
+                        history.push_back(qcode::Message::tool_results(
                             {{j.at("tool_call_id").get<std::string>(),
                               std::move(result),
                               j.value("is_error", false),
@@ -417,13 +417,13 @@ std::vector<ai::Message> load_session_history_parsed(const std::string& session_
                     content.find("failed") != std::string::npos ||
                     content.find("✖") != std::string::npos ||
                     content.find("✗") != std::string::npos;
-                history.push_back(ai::Message::tool_results(
+                history.push_back(qcode::Message::tool_results(
                     {{call_id, nlohmann::json::object(), is_error, duration_ms}}));
                 continue;
             }
 
             // Persisted tool/status rows are display history.
-            history.push_back(ai::Message::system(content));
+            history.push_back(qcode::Message::system(content));
         }
         sqlite3_finalize(stmt);
     }
@@ -434,7 +434,7 @@ std::vector<ai::Message> load_session_history_parsed(const std::string& session_
 
 void reload_session_history(const std::string& session_id, ChatState& state) {
     state.messages_history =
-        std::make_shared<ai::Messages>(load_session_history_parsed(session_id));
+        std::make_shared<qcode::Messages>(load_session_history_parsed(session_id));
     // Live counters belong to the previous session — clear them so header/Stats
     // don't keep showing stale totals after a switch.
     if (state.total_prompt_tokens) *state.total_prompt_tokens = 0;
@@ -452,7 +452,7 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
     state.files_detail_open = false;
 }
 
-void overwrite_session_history(const std::string& session_id, const std::vector<ai::Message>& messages) {
+void overwrite_session_history(const std::string& session_id, const std::vector<qcode::Message>& messages) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
         return;
@@ -492,16 +492,16 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
             bool has_tools = false;
             bool has_results = false;
             for (const auto& part : m.content) {
-                if (std::holds_alternative<ai::ToolCallContentPart>(part)) {
+                if (std::holds_alternative<qcode::ToolCallContentPart>(part)) {
                     has_tools = true;
-                } else if (std::holds_alternative<ai::ToolResultContentPart>(part)) {
+                } else if (std::holds_alternative<qcode::ToolResultContentPart>(part)) {
                     has_results = true;
                 }
             }
 
             if (has_tools) {
                 for (const auto& part : m.content) {
-                    if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) {
+                    if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
                         nlohmann::json call_json = {
                             {"id", tcp->id},
                             {"name", tcp->tool_name},
@@ -522,7 +522,7 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
                 }
             } else if (has_results) {
                 for (const auto& part : m.content) {
-                    if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
+                    if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
                         nlohmann::json result_json = {
                             {"tool_call_id", trp->tool_call_id},
                             {"result", trp->result},
@@ -544,13 +544,13 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
                 }
             } else {
                 std::string sender;
-                if (m.role == ai::kMessageRoleUser) sender = "User";
-                else if (m.role == ai::kMessageRoleAssistant) sender = "Assistant";
-                else if (m.role == ai::kMessageRoleSystem) sender = "System";
+                if (m.role == qcode::kMessageRoleUser) sender = "User";
+                else if (m.role == qcode::kMessageRoleAssistant) sender = "Assistant";
+                else if (m.role == qcode::kMessageRoleSystem) sender = "System";
 
                 std::string content;
                 for (const auto& part : m.content) {
-                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                    if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                         content += tp->text;
                     }
                 }
@@ -872,4 +872,4 @@ void delete_session(const std::string& session_id) {
 
 } // namespace session
 } // namespace tui
-} // namespace ai
+} // namespace qcode

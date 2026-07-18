@@ -7,7 +7,7 @@
 
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 namespace {
 
@@ -141,5 +141,5 @@ TEST(CursorProviderTest, MultiTurnPromptIncludesPriorTurns) {
 
 }  // namespace
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode
 

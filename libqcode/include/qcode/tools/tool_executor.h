@@ -5,7 +5,7 @@
 #include <qcode/types/message.h>
 #include <qcode/types/tool.h>
 
-namespace ai {
+namespace qcode {
 
 /// Executes tool calls (single, batch, sync/async) against a ToolSet.
 class ToolExecutor {
@@ -44,4 +44,4 @@ class ToolExecutor {
                                    const JsonValue& schema);
 };
 
-}  // namespace ai
+}  // namespace qcode

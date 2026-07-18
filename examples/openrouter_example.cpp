@@ -8,8 +8,8 @@
 int main() {
   try {
     // Enable info logging
-    ai::logger::install_logger(std::make_shared<ai::logger::ConsoleLogger>(
-        ai::logger::LogLevel::kLogLevelInfo));
+    qcode::logger::install_logger(std::make_shared<qcode::logger::ConsoleLogger>(
+        qcode::logger::LogLevel::kLogLevelInfo));
 
     // Get OpenRouter API key from environment variable
     const char* api_key_env = std::getenv("OPENROUTER_API_KEY");
@@ -24,7 +24,7 @@ int main() {
     // Create OpenAI client with OpenRouter's base URL
     // OpenRouter provides an OpenAI-compatible API endpoint
     auto client =
-        ai::openai::create_client(api_key, "https://openrouter.ai/api");
+        qcode::openai::create_client(api_key, "https://openrouter.ai/api");
 
     std::cout << "=== OpenRouter Example (OpenAI-compatible) ===\n\n";
 
@@ -35,7 +35,7 @@ int main() {
     // Common models: "openai/gpt-5.4", "anthropic/claude-sonnet-4-6",
     // "meta-llama/llama-3.1-8b-instruct" See https://openrouter.ai/models for
     // available models
-    ai::GenerateOptions options(
+    qcode::GenerateOptions options(
         "anthropic/claude-sonnet-4-6", "You are a helpful assistant.",
         "What are the benefits of using OpenRouter for AI applications? Give a "
         "brief answer.");
@@ -55,10 +55,10 @@ int main() {
     // Test streaming with OpenRouter
     std::cout << "\n\nTesting streaming with OpenRouter...\n";
 
-    ai::GenerateOptions stream_opts("anthropic/claude-sonnet-4-6",
+    qcode::GenerateOptions stream_opts("anthropic/claude-sonnet-4-6",
                                     "You are a creative writer.",
                                     "Write a haiku about API compatibility.");
-    ai::StreamOptions stream_options(stream_opts);
+    qcode::StreamOptions stream_options(stream_opts);
 
     auto stream = client.stream_text(stream_options);
 

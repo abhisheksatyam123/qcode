@@ -20,7 +20,7 @@
 #include <qcode/providers/registry.h>
 #include <qcode/providers/authenticated_providers.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 using namespace contract;
@@ -34,7 +34,7 @@ static bool looks_like_auth_error(const std::string& message) {
 }
 
 static std::string tool_calls_fingerprint(
-    const std::vector<ai::ToolCall>& calls) {
+    const std::vector<qcode::ToolCall>& calls) {
   std::string fp;
   for (const auto& call : calls) {
     fp += call.tool_name;
@@ -48,7 +48,7 @@ static std::string tool_calls_fingerprint(
 // Fingerprint of tool results so "same call, new output" is not treated as a
 // stuck loop (e.g. re-read after edit, poll/retry bash).
 static std::string tool_results_fingerprint(
-    const std::vector<ai::ToolResult>& results) {
+    const std::vector<qcode::ToolResult>& results) {
   std::string fp;
   for (const auto& res : results) {
     fp += res.tool_name;
@@ -68,11 +68,11 @@ static std::string tool_results_fingerprint(
 //  Tools-enabled generation path (bus version)
 // ──────────────────────────────────────────────────────────────
 static void run_tools_generation_bus(
-    ai::Client& client,
-    ai::GenerateOptions options,
+    qcode::Client& client,
+    qcode::GenerateOptions options,
     bus::BusPort& bus,
     GenerationContext& ctx,
-    const std::function<bool(ai::Client&)>& refresh_client) {
+    const std::function<bool(qcode::Client&)>& refresh_client) {
   auto assistant_text    = std::make_shared<std::string>();
   auto assistant_msg_idx = std::make_shared<int>(-1);
   auto tool_starts       = std::make_shared<
@@ -84,7 +84,7 @@ static void run_tools_generation_bus(
   // ── Step finished: emit MessageDelta ──
   options.on_step_finish =
       [&bus, &ctx, assistant_text,
-       callback_mutex](const ai::GenerateStep& step) {
+       callback_mutex](const qcode::GenerateStep& step) {
         std::lock_guard<std::mutex> lock(*callback_mutex);
         LOG_DEBUG("generation_service: on_step_finish text_len={}", step.text.size());
         if (step.text.empty()) return;
@@ -104,7 +104,7 @@ static void run_tools_generation_bus(
   // ── Tool call started: emit ToolCallStarted ──
   options.on_tool_call_start =
       [&bus, &ctx, tool_starts, step_counter, max_steps,
-       callback_mutex](const ai::ToolCall& call) {
+       callback_mutex](const qcode::ToolCall& call) {
         std::lock_guard<std::mutex> lock(*callback_mutex);
         LOG_DEBUG("generation_service: on_tool_call_start tool={} step={}/{}", call.tool_name, (int)*step_counter, max_steps);
         auto now = std::chrono::steady_clock::now();
@@ -122,7 +122,7 @@ static void run_tools_generation_bus(
   // ── Tool call finished: emit ToolCallCompleted ──
   options.on_tool_call_finish =
       [&bus, &ctx, assistant_text, tool_starts,
-       callback_mutex](const ai::ToolResult& res) {
+       callback_mutex](const qcode::ToolResult& res) {
         std::lock_guard<std::mutex> lock(*callback_mutex);
         double duration_s = 0.0;
         {
@@ -158,17 +158,17 @@ static void run_tools_generation_bus(
       };
 
   // ── Multi-step generation loop ──
-  ai::GenerateResult gen_result;
-  gen_result.finish_reason = ai::kFinishReasonStop;
+  qcode::GenerateResult gen_result;
+  gen_result.finish_reason = qcode::kFinishReasonStop;
 
-  ai::Messages response_messages;
-  ai::Messages step_messages = options.messages;
+  qcode::Messages response_messages;
+  qcode::Messages step_messages = options.messages;
   if (step_messages.empty() && !options.prompt.empty()) {
-    step_messages.push_back(ai::Message::user(options.prompt));
+    step_messages.push_back(qcode::Message::user(options.prompt));
   }
   const size_t initial_count = step_messages.size();
 
-  ai::GenerateOptions step_opts = options;
+  qcode::GenerateOptions step_opts = options;
   step_opts.prompt.clear();
 
   int step = 0;
@@ -196,7 +196,7 @@ static void run_tools_generation_bus(
 
     {
       LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);
-      ai::GenerateResult step_res = client.generate_text(step_opts);
+      qcode::GenerateResult step_res = client.generate_text(step_opts);
       // Abort may have been requested while blocked in generate_text.
       if (ctx.abort_flag && ctx.abort_flag->load()) {
         LOG_INFO("run_tools_generation_bus: abort after generate_text step={}",
@@ -238,20 +238,20 @@ static void run_tools_generation_bus(
 
       LOG_DEBUG("run_tools_generation_bus: step={} has_tool_calls={} text_len={}", step, step_res.has_tool_calls(), step_res.text.size());
       if (step_res.has_tool_calls()) {
-        std::vector<ai::ToolCallContentPart> tool_parts;
+        std::vector<qcode::ToolCallContentPart> tool_parts;
         for (const auto& call : step_res.tool_calls) {
           tool_parts.emplace_back(call.id, call.tool_name, call.arguments,
                                   call.thought_signature);
           gen_result.tool_calls.push_back(call);
         }
-        response_messages.push_back(ai::Message::assistant_with_tools(step_res.text, tool_parts));
+        response_messages.push_back(qcode::Message::assistant_with_tools(step_res.text, tool_parts));
 
-        std::vector<ai::ToolResultContentPart> result_parts;
+        std::vector<qcode::ToolResultContentPart> result_parts;
         for (const auto& res : step_res.tool_results) {
           result_parts.emplace_back(res.tool_call_id, res.result, !res.is_success());
           gen_result.tool_results.push_back(res);
         }
-        response_messages.push_back(ai::Message::tool_results(result_parts));
+        response_messages.push_back(qcode::Message::tool_results(result_parts));
 
         // Detect true no-progress wedges only: identical calls *and* identical
         // results. Do not stop on long tool-only streaks or same-args retries
@@ -277,7 +277,7 @@ static void run_tools_generation_bus(
         // Re-publish the live context size after each tool call so the TUI's
         // context window updates dynamically as messages are appended.
         {
-            ai::Messages temp_messages = options.messages;
+            qcode::Messages temp_messages = options.messages;
             temp_messages.insert(temp_messages.end(), response_messages.begin(), response_messages.end());
             const size_t sys_tok = estimate_system_tokens(options.system);
             const size_t msg_tok = estimate_tokens(temp_messages);
@@ -290,7 +290,7 @@ static void run_tools_generation_bus(
         }
 
         if (options.on_step_finish) {
-          ai::GenerateStep step_data;
+          qcode::GenerateStep step_data;
           step_data.text = step_res.text;
           step_data.tool_calls = step_res.tool_calls;
           step_data.tool_results = step_res.tool_results;
@@ -303,9 +303,9 @@ static void run_tools_generation_bus(
         no_progress_repeat = 0;
         last_progress_fp.clear();
         LOG_DEBUG("run_tools_generation_bus: step={} no tool calls, finishing", step);
-        response_messages.push_back(ai::Message::assistant(step_res.text));
+        response_messages.push_back(qcode::Message::assistant(step_res.text));
         if (options.on_step_finish) {
-          ai::GenerateStep step_data;
+          qcode::GenerateStep step_data;
           step_data.text = step_res.text;
           step_data.finish_reason = step_res.finish_reason;
           step_data.usage = step_res.usage;
@@ -456,11 +456,11 @@ static void run_tools_generation_bus(
 // ──────────────────────────────────────────────────────────────
 //  Non-tools streaming generation path (bus version)
 // ──────────────────────────────────────────────────────────────
-static void run_stream_generation_bus(ai::Client& client,
-                                       ai::GenerateOptions gen_options,
+static void run_stream_generation_bus(qcode::Client& client,
+                                       qcode::GenerateOptions gen_options,
                                        bus::BusPort& bus,
                                        GenerationContext& ctx) {
-  ai::StreamOptions stream_options(std::move(gen_options));
+  qcode::StreamOptions stream_options(std::move(gen_options));
   auto stream = client.stream_text(stream_options);
   LOG_DEBUG("run_stream_generation_bus: streaming model={} system={}", stream_options.model, stream_options.system.size());
 
@@ -602,7 +602,7 @@ void run_generation_with_bus(
     const std::string& provider_name,
     const std::string& model_id,
     const std::string& system_prompt,
-    const ai::Messages& messages,
+    const qcode::Messages& messages,
     bool enable_tools,
     const std::vector<ProviderInfo>& providers,
     bus::BusPort& bus,
@@ -628,10 +628,10 @@ void run_generation_with_bus(
     });
 
     // ── Resolve provider & API key ──
-    ai::Client client;
+    qcode::Client client;
     std::string provider_id;
     std::string resolved_model_id = model_id;
-    ai::providers::ProviderOptions provider_options;
+    qcode::providers::ProviderOptions provider_options;
 
     for (const auto& p : providers) {
       if (p.id == provider_name || p.name == provider_name) {
@@ -670,7 +670,7 @@ void run_generation_with_bus(
     // provider client via the central registry (auth + base URL handled per
     // provider). Errors are surfaced on the bus.
     auto resolution =
-        ai::providers::ProviderRegistry::instance().resolve(provider_id,
+        qcode::providers::ProviderRegistry::instance().resolve(provider_id,
                                                              provider_options);
     if (!resolution.ok()) {
       bus.publish<ErrorOccurred>({
@@ -685,7 +685,7 @@ void run_generation_with_bus(
     LOG_INFO("ChatBus: provider={}, model={}, tools={}", provider_id, resolved_model_id, enable_tools);
 
     // ── Build common base options ──
-    ai::GenerateOptions base_opts;
+    qcode::GenerateOptions base_opts;
     base_opts.model = resolved_model_id;
     base_opts.system = system_prompt;
     base_opts.messages = messages;
@@ -716,12 +716,12 @@ void run_generation_with_bus(
     // and can truncate multi-step agent turns. Always stream Cursor.
     const bool cursor_native_agent = (provider_id == "cursor");
     if (enable_tools && !cursor_native_agent) {
-      ai::ToolSet tools = ToolCatalog::build_definitions(ToolConfig{true, true});
+      qcode::ToolSet tools = ToolCatalog::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
       // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
       constexpr int kMaxToolSteps = 1000;
       base_opts.max_steps = kMaxToolSteps;
-      auto refresh_client = [&](ai::Client& out_client) -> bool {
+      auto refresh_client = [&](qcode::Client& out_client) -> bool {
         // Re-read Antigravity OAuth (force refresh on 401).
         if (provider_id.find("antigravity") != std::string::npos ||
             provider_name.find("Antigravity") != std::string::npos) {
@@ -733,7 +733,7 @@ void run_generation_with_bus(
           provider_options.api_key = fresh;
         }
         auto resolution =
-            ai::providers::ProviderRegistry::instance().resolve(
+            qcode::providers::ProviderRegistry::instance().resolve(
                 provider_id, provider_options);
         if (!resolution.ok()) {
           LOG_ERROR("generation_service: credential refresh failed: {}", resolution.error);
@@ -776,15 +776,15 @@ void run_generation_with_bus(
 //  GenerationService implementation
 // ════════════════════════════════════════════════════════════════════════════
 
-void ai::tui::GenerationService::run_generation(
+void qcode::tui::GenerationService::run_generation(
     const std::string& provider_name,
     const std::string& model_id,
     const std::string& system_prompt,
-    const ai::Messages& messages,
+    const qcode::Messages& messages,
     bool enable_tools,
     GenerationContext& ctx)
 {
-    ai::tui::run_generation_with_bus(provider_name, model_id, system_prompt,
+    qcode::tui::run_generation_with_bus(provider_name, model_id, system_prompt,
                             messages, enable_tools, providers_, bus_, ctx);
 }
-} // namespace ai
+} // namespace qcode

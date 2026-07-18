@@ -12,7 +12,7 @@ target_include_directories(qcode-server PRIVATE
 )
 
 target_compile_definitions(qcode-server PRIVATE
-    AI_SERVER_WEBUI_DIR="${QCODE_WEBUI_SRC}"
+    QCODE_SERVER_WEBUI_DIR="${QCODE_WEBUI_SRC}"
 )
 
 target_link_libraries(qcode-server PRIVATE qcode-core)

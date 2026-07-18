@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 struct ThemeEntry {
@@ -149,4 +149,4 @@ inline std::vector<ThemeEntry> builtin_theme_entries() {
 }
 
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

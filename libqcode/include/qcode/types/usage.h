@@ -1,6 +1,6 @@
 #pragma once
 
-namespace ai {
+namespace qcode {
 
 struct Usage {
   int prompt_tokens = 0;
@@ -17,4 +17,4 @@ struct Usage {
   }
 };
 
-}  // namespace ai
+}  // namespace qcode

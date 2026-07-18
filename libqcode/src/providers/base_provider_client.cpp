@@ -4,7 +4,7 @@
 #include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/tools/tool_executor.h>
 
-namespace ai {
+namespace qcode {
 namespace providers {
 
 BaseProviderClient::BaseProviderClient(
@@ -215,4 +215,4 @@ EmbeddingResult BaseProviderClient::embeddings(
 }
 
 }  // namespace providers
-}  // namespace ai
+}  // namespace qcode

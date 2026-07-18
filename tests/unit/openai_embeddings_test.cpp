@@ -10,7 +10,7 @@
 // Test utilities
 #include "../utils/test_fixtures.h"
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 class OpenAIEmbeddingsTest : public OpenAITestFixture {
@@ -18,7 +18,7 @@ class OpenAIEmbeddingsTest : public OpenAITestFixture {
   void SetUp() override {
     OpenAITestFixture::SetUp();
     client_ =
-        std::make_unique<ai::openai::OpenAIClient>(kTestApiKey, kTestBaseUrl);
+        std::make_unique<qcode::openai::OpenAIClient>(kTestApiKey, kTestBaseUrl);
   }
 
   void TearDown() override {
@@ -26,7 +26,7 @@ class OpenAIEmbeddingsTest : public OpenAITestFixture {
     OpenAITestFixture::TearDown();
   }
 
-  std::unique_ptr<ai::openai::OpenAIClient> client_;
+  std::unique_ptr<qcode::openai::OpenAIClient> client_;
 };
 
 // EmbeddingOptions Constructor and Validation Tests
@@ -115,7 +115,7 @@ TEST_F(OpenAIEmbeddingsTest, EmbeddingResultBoolConversion) {
 
 // Client Tests - Testing error handling without network calls
 TEST_F(OpenAIEmbeddingsTest, EmbeddingsWithInvalidApiKey) {
-  ai::openai::OpenAIClient client("invalid-key", "https://api.openai.com");
+  qcode::openai::OpenAIClient client("invalid-key", "https://api.openai.com");
 
   nlohmann::json input = "test text";
   EmbeddingOptions options("text-embedding-3-small", input);
@@ -129,7 +129,7 @@ TEST_F(OpenAIEmbeddingsTest, EmbeddingsWithInvalidApiKey) {
 }
 
 TEST_F(OpenAIEmbeddingsTest, EmbeddingsWithBadUrl) {
-  ai::openai::OpenAIClient client(
+  qcode::openai::OpenAIClient client(
       "sk-test", "http://invalid-url-that-does-not-exist.example");
 
   nlohmann::json input = "test text";
@@ -238,4 +238,4 @@ TEST_F(OpenAIEmbeddingsTest, EmbeddingsWithDifferentModels) {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

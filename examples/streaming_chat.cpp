@@ -1,5 +1,5 @@
 /**
- * Streaming Chat Example - AI SDK C++
+ * Streaming Chat Example - qcode
  *
  * This example demonstrates real-time streaming text generation.
  * It shows how to:
@@ -19,7 +19,7 @@
 #include <qcode/qcode.h>
 
 int main() {
-  std::cout << "AI SDK C++ - Streaming Chat Example\n";
+  std::cout << "qcode - Streaming Chat Example\n";
   std::cout << "====================================\n\n";
 
   // Example 1: Basic streaming with iterator
@@ -28,13 +28,13 @@ int main() {
       << "Prompt: Write a short story about a robot learning to paint.\n\n";
   std::cout << "Response: ";
 
-  auto client = ai::openai::create_client();
-  ai::GenerateOptions gen_options1;
-  gen_options1.model = ai::openai::models::kGpt54;
+  auto client = qcode::openai::create_client();
+  qcode::GenerateOptions gen_options1;
+  gen_options1.model = qcode::openai::models::kGpt54;
   gen_options1.prompt =
       "Write a short story about a robot learning "
       "to paint. Keep it under 200 words.";
-  ai::StreamOptions options1(std::move(gen_options1));
+  qcode::StreamOptions options1(std::move(gen_options1));
   auto stream1 = client.stream_text(options1);
 
   for (const auto& event : stream1) {
@@ -63,7 +63,7 @@ int main() {
     chunk_count++;
   };
 
-  auto complete_callback = [&](const ai::GenerateResult& result) {
+  auto complete_callback = [&](const qcode::GenerateResult& result) {
     std::cout << "\n\n[Stream completed]\n";
     std::cout << "Total chunks received: " << chunk_count << "\n";
     std::cout << "Final text length: " << accumulated_text.length()
@@ -76,12 +76,12 @@ int main() {
     std::cout << "\nError in stream: " << error << "\n\n";
   };
 
-  ai::GenerateOptions gen_options2;
-  gen_options2.model = ai::openai::models::kGpt54Mini;
+  qcode::GenerateOptions gen_options2;
+  gen_options2.model = qcode::openai::models::kGpt54Mini;
   gen_options2.prompt =
       "Explain quantum computing in simple terms that a "
       "high school student could understand.";
-  ai::StreamOptions options(std::move(gen_options2), text_callback,
+  qcode::StreamOptions options(std::move(gen_options2), text_callback,
                             complete_callback, error_callback);
 
   std::cout << "Response: ";
@@ -93,33 +93,33 @@ int main() {
   // Example 3: Streaming conversation
   std::cout << "3. Streaming conversation:\n";
 
-  ai::Messages conversation = {
-      ai::Message::system("You are a creative writing assistant."),
-      ai::Message::user("I need help writing a poem about the ocean."),
-      ai::Message::assistant("I'd be happy to help! What specific aspect of "
+  qcode::Messages conversation = {
+      qcode::Message::system("You are a creative writing assistant."),
+      qcode::Message::user("I need help writing a poem about the ocean."),
+      qcode::Message::assistant("I'd be happy to help! What specific aspect of "
                              "the ocean interests you most?"),
-      ai::Message::user("The way waves crash against rocks during a storm.")};
+      qcode::Message::user("The way waves crash against rocks during a storm.")};
 
   std::cout << "Response: ";
-  ai::GenerateOptions gen_options3;
-  gen_options3.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions gen_options3;
+  gen_options3.model = qcode::openai::models::kGpt54;
   gen_options3.messages = conversation;
-  ai::StreamOptions options3(std::move(gen_options3));
+  qcode::StreamOptions options3(std::move(gen_options3));
   auto stream3 = client.stream_text(options3);
 
   // Manual event processing
   bool finished = false;
   for (const auto& event : stream3) {
     switch (event.type) {
-      case ai::kStreamEventTypeTextDelta:
+      case qcode::kStreamEventTypeTextDelta:
         std::cout << event.text_delta;
         std::cout.flush();
         break;
-      case ai::kStreamEventTypeFinish:
+      case qcode::kStreamEventTypeFinish:
         std::cout << "\n\nGeneration finished.\n";
         finished = true;
         break;
-      case ai::kStreamEventTypeError:
+      case qcode::kStreamEventTypeError:
         std::cerr << "\nError in stream: "
                   << event.error.value_or("Unknown error") << "\n";
         finished = true;
@@ -138,13 +138,13 @@ next_example:
   std::cout << "4. Creative streaming (high temperature):\n";
   std::cout << "Prompt: Write 3 unusual ice cream flavors.\n\n";
 
-  ai::GenerateOptions gen_options4;
-  gen_options4.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions gen_options4;
+  gen_options4.model = qcode::openai::models::kGpt54;
   gen_options4.prompt =
       "Invent 3 unusual but delicious ice cream flavors with creative names.";
   gen_options4.temperature = 1.2;  // High creativity
   gen_options4.max_tokens = 100;
-  ai::StreamOptions creative_options(std::move(gen_options4));
+  qcode::StreamOptions creative_options(std::move(gen_options4));
 
   std::cout << "Response: ";
   auto stream4 = client.stream_text(creative_options);
@@ -156,10 +156,10 @@ next_example:
   std::cout << "5. Error handling:\n";
   std::cout << "Testing with invalid model...\n\n";
 
-  ai::GenerateOptions gen_options5;
+  qcode::GenerateOptions gen_options5;
   gen_options5.model = "invalid-model-name";
   gen_options5.prompt = "Hello, world!";
-  ai::StreamOptions options5(std::move(gen_options5));
+  qcode::StreamOptions options5(std::move(gen_options5));
   auto stream5 = client.stream_text(options5);
 
   if (stream5.has_error()) {

@@ -12,7 +12,7 @@
 // Note: These tests connect to the real Anthropic API when ANTHROPIC_API_KEY is
 // set Otherwise they are skipped
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 class AnthropicIntegrationTest : public AITestFixture {
@@ -25,7 +25,7 @@ class AnthropicIntegrationTest : public AITestFixture {
 
     if (api_key != nullptr) {
       use_real_api_ = true;
-      client_ = ai::anthropic::create_client(api_key);
+      client_ = qcode::anthropic::create_client(api_key);
     } else {
       use_real_api_ = false;
       // Skip tests if no API key is available
@@ -35,7 +35,7 @@ class AnthropicIntegrationTest : public AITestFixture {
   void TearDown() override { AITestFixture::TearDown(); }
 
   bool use_real_api_;
-  std::optional<ai::Client> client_;
+  std::optional<qcode::Client> client_;
 };
 
 // Basic API Connectivity Tests
@@ -44,7 +44,7 @@ TEST_F(AnthropicIntegrationTest, BasicTextGeneration) {
     GTEST_SKIP() << "No ANTHROPIC_API_KEY environment variable set";
   }
 
-  GenerateOptions options(ai::anthropic::models::kDefaultModel,
+  GenerateOptions options(qcode::anthropic::models::kDefaultModel,
                           "Hello, how are you?");
   auto result = client_->generate_text(options);
 
@@ -63,7 +63,7 @@ TEST_F(AnthropicIntegrationTest, TextGenerationWithSystemPrompt) {
   }
 
   GenerateOptions options(
-      ai::anthropic::models::kDefaultModel,
+      qcode::anthropic::models::kDefaultModel,
       "You are a helpful assistant that responds in French.",
       "Hello, how are you?");
 
@@ -85,7 +85,7 @@ TEST_F(AnthropicIntegrationTest, TextGenerationWithParameters) {
     GTEST_SKIP() << "No ANTHROPIC_API_KEY environment variable set";
   }
 
-  GenerateOptions options(ai::anthropic::models::kDefaultModel,
+  GenerateOptions options(qcode::anthropic::models::kDefaultModel,
                           "Write a very short story about a cat.");
   options.max_tokens = 50;
   options.temperature = 0.7;
@@ -111,7 +111,7 @@ TEST_F(AnthropicIntegrationTest, ConversationWithMessages) {
       Message::assistant("Hello! I can help you with weather information."),
       Message::user("What's the weather like today?")};
 
-  GenerateOptions options(ai::anthropic::models::kDefaultModel,
+  GenerateOptions options(qcode::anthropic::models::kDefaultModel,
                           std::move(conversation));
   options.system = "You are a helpful weather assistant.";
   auto result = client_->generate_text(options);
@@ -134,8 +134,8 @@ TEST_F(AnthropicIntegrationTest, DifferentModelSupport) {
   }
 
   std::vector<std::string> models_to_test = {
-      ai::anthropic::models::kDefaultModel,
-      ai::anthropic::models::kClaudeHaiku45};
+      qcode::anthropic::models::kDefaultModel,
+      qcode::anthropic::models::kClaudeHaiku45};
 
   for (const auto& model : models_to_test) {
     if (!client_->supports_model(model)) {
@@ -159,9 +159,9 @@ TEST_F(AnthropicIntegrationTest, DifferentModelSupport) {
 // Error Handling Tests
 TEST_F(AnthropicIntegrationTest, InvalidApiKey) {
   // Test with invalid API key
-  auto invalid_client = ai::anthropic::create_client("sk-ant-invalid123");
+  auto invalid_client = qcode::anthropic::create_client("sk-ant-invalid123");
 
-  GenerateOptions options(ai::anthropic::models::kDefaultModel, "Test prompt");
+  GenerateOptions options(qcode::anthropic::models::kDefaultModel, "Test prompt");
   auto result = invalid_client.generate_text(options);
 
   TestAssertions::assertError(result);
@@ -195,7 +195,7 @@ TEST_F(AnthropicIntegrationTest, RateLimitHandling) {
 
   // Note: This test may not trigger rate limiting in normal usage
   // It's here to document the expected behavior when rate limits are hit
-  GenerateOptions options(ai::anthropic::models::kDefaultModel, "Test prompt");
+  GenerateOptions options(qcode::anthropic::models::kDefaultModel, "Test prompt");
   auto result = client_->generate_text(options);
 
   // If we hit rate limits, the error should be handled gracefully
@@ -216,7 +216,7 @@ TEST_F(AnthropicIntegrationTest, BasicStreaming) {
     GTEST_SKIP() << "No ANTHROPIC_API_KEY environment variable set";
   }
 
-  GenerateOptions gen_options(ai::anthropic::models::kDefaultModel,
+  GenerateOptions gen_options(qcode::anthropic::models::kDefaultModel,
                               "Count from 1 to 3");
   StreamOptions options(gen_options);
   auto stream = client_->stream_text(options);
@@ -255,7 +255,7 @@ TEST_F(AnthropicIntegrationTest, ConcurrentRequests) {
 
   for (int i = 0; i < num_requests; ++i) {
     futures.push_back(std::async(std::launch::async, [this, i]() {
-      GenerateOptions options(ai::anthropic::models::kDefaultModel,
+      GenerateOptions options(qcode::anthropic::models::kDefaultModel,
                               "Say hello " + std::to_string(i));
       return client_->generate_text(options);
     }));
@@ -278,7 +278,7 @@ TEST_F(AnthropicIntegrationTest, LargePromptHandling) {
   auto large_prompt =
       TestDataGenerator::createLargePrompt(2000);  // ~2KB prompt
 
-  GenerateOptions options(ai::anthropic::models::kClaudeSonnet45, large_prompt);
+  GenerateOptions options(qcode::anthropic::models::kClaudeSonnet45, large_prompt);
   auto result = client_->generate_text(options);
 
   TestAssertions::assertSuccess(result);
@@ -297,9 +297,9 @@ TEST_F(AnthropicIntegrationTest, CustomBaseUrl) {
   // Test that custom base URL can be set (though we'll use Anthropic's URL)
   const char* api_key = std::getenv("ANTHROPIC_API_KEY");
   auto custom_client =
-      ai::anthropic::create_client(api_key, "https://api.anthropic.com");
+      qcode::anthropic::create_client(api_key, "https://api.anthropic.com");
 
-  GenerateOptions options(ai::anthropic::models::kClaudeSonnet45,
+  GenerateOptions options(qcode::anthropic::models::kClaudeSonnet45,
                           "Test custom base URL");
   auto result = custom_client.generate_text(options);
 
@@ -313,7 +313,7 @@ TEST_F(AnthropicIntegrationTest, EmptyPrompt) {
     GTEST_SKIP() << "No ANTHROPIC_API_KEY environment variable set";
   }
 
-  GenerateOptions options(ai::anthropic::models::kClaudeSonnet45, "");
+  GenerateOptions options(qcode::anthropic::models::kClaudeSonnet45, "");
 
   // Empty prompt should be caught by validation
   EXPECT_FALSE(options.is_valid());
@@ -328,7 +328,7 @@ TEST_F(AnthropicIntegrationTest, VeryLongResponse) {
     GTEST_SKIP() << "No ANTHROPIC_API_KEY environment variable set";
   }
 
-  GenerateOptions options(ai::anthropic::models::kClaudeSonnet45,
+  GenerateOptions options(qcode::anthropic::models::kClaudeSonnet45,
                           "Write a detailed explanation of quantum physics");
   options.max_tokens = 500;  // Reasonable limit for testing
 
@@ -349,7 +349,7 @@ TEST_F(AnthropicIntegrationTest, NetworkTimeout) {
 
   // Note: This test documents timeout behavior but cannot reliably trigger it
   // with the real API under normal conditions
-  GenerateOptions options(ai::anthropic::models::kClaudeSonnet45,
+  GenerateOptions options(qcode::anthropic::models::kClaudeSonnet45,
                           "Simple test");
   auto result = client_->generate_text(options);
 
@@ -372,10 +372,10 @@ TEST_F(AnthropicIntegrationTest, NetworkFailure) {
 
   // Test with localhost on unused port to simulate connection refused quickly
   const char* api_key = std::getenv("ANTHROPIC_API_KEY");
-  auto failing_client = ai::anthropic::create_client(
+  auto failing_client = qcode::anthropic::create_client(
       api_key, "http://localhost:59999");  // Very unlikely port to be in use
 
-  GenerateOptions options(ai::anthropic::models::kClaudeSonnet45,
+  GenerateOptions options(qcode::anthropic::models::kClaudeSonnet45,
                           "Test network failure");
   auto result = failing_client.generate_text(options);
 
@@ -411,8 +411,8 @@ TEST_F(AnthropicEnvironmentConfigTest, ConfigurationFromEnvironment) {
   const char* base_url = std::getenv("ANTHROPIC_BASE_URL");
 
   if (api_key) {
-    auto client = base_url ? ai::anthropic::create_client(api_key, base_url)
-                           : ai::anthropic::create_client(api_key);
+    auto client = base_url ? qcode::anthropic::create_client(api_key, base_url)
+                           : qcode::anthropic::create_client(api_key);
     EXPECT_TRUE(client.is_valid());
     EXPECT_EQ(client.provider_name(), "anthropic");
   } else {
@@ -426,7 +426,7 @@ TEST_F(AnthropicIntegrationTest, MaxTokensRequired) {
     GTEST_SKIP() << "No ANTHROPIC_API_KEY environment variable set";
   }
 
-  GenerateOptions options(ai::anthropic::models::kClaudeSonnet45,
+  GenerateOptions options(qcode::anthropic::models::kClaudeSonnet45,
                           "Tell me about artificial intelligence");
   // Anthropic requires max_tokens to be set
   options.max_tokens = 100;
@@ -445,7 +445,7 @@ TEST_F(AnthropicIntegrationTest, SystemMessageHandling) {
 
   // Anthropic has specific handling for system messages
   GenerateOptions options(
-      ai::anthropic::models::kClaudeSonnet45,
+      qcode::anthropic::models::kClaudeSonnet45,
       "You are Claude, an AI assistant created by Anthropic.",
       "What is your name?");
   options.max_tokens = 50;
@@ -472,13 +472,13 @@ TEST_F(AnthropicIntegrationTest, DefaultModelGeneration) {
   EXPECT_FALSE(result.text.empty());
 
   // Verify we're using the expected default model
-  EXPECT_EQ(client_->default_model(), ai::anthropic::models::kDefaultModel);
+  EXPECT_EQ(client_->default_model(), qcode::anthropic::models::kDefaultModel);
   if (result.model.has_value()) {
     // Anthropic returns either the alias (e.g. "claude-sonnet-4-6") or its
     // full snapshot. Assert the API echoed back the configured default.
     EXPECT_TRUE(result.model.value().find(
-                    ai::anthropic::models::kDefaultModel) != std::string::npos)
-        << "Expected model to contain '" << ai::anthropic::models::kDefaultModel
+                    qcode::anthropic::models::kDefaultModel) != std::string::npos)
+        << "Expected model to contain '" << qcode::anthropic::models::kDefaultModel
         << "', but got: " << result.model.value();
   }
 }
@@ -517,4 +517,4 @@ TEST_F(AnthropicIntegrationTest, DefaultModelStreaming) {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

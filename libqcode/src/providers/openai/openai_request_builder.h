@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace openai {
 
 class OpenAIRequestBuilder : public providers::RequestBuilder {
@@ -24,4 +24,4 @@ class OpenAIRequestBuilder : public providers::RequestBuilder {
 };
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 struct CursorModelInfo {
@@ -80,4 +80,4 @@ class CursorResponseParser : public providers::ResponseParser {
 };
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

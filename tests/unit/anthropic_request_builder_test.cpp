@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 namespace {
 
@@ -31,4 +31,4 @@ TEST(AnthropicRequestBuilderTest, EnablesPromptCachingOnSystemAndTopLevel) {
 
 }  // namespace
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

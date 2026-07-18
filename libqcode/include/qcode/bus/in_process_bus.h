@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 namespace bus {
 
@@ -77,4 +77,4 @@ private:
 
 } // namespace bus
 } // namespace tui
-} // namespace ai
+} // namespace qcode

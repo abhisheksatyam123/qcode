@@ -1,5 +1,5 @@
 /**
- * Retry Configuration Example - AI SDK C++
+ * Retry Configuration Example - qcode
  *
  * This example demonstrates how to configure custom retry behavior for API
  * calls. It shows how to:
@@ -21,7 +21,7 @@
 #include <qcode/retry/retry_policy.h>
 
 int main() {
-  std::cout << "AI SDK C++ - Retry Configuration Example\n";
+  std::cout << "qcode - Retry Configuration Example\n";
   std::cout << "========================================\n\n";
 
   // Example 1: Default retry configuration
@@ -30,10 +30,10 @@ int main() {
   std::cout << "   - Initial delay: 2000ms\n";
   std::cout << "   - Backoff factor: 2.0\n\n";
 
-  auto default_client = ai::openai::create_client();
+  auto default_client = qcode::openai::create_client();
 
-  ai::GenerateOptions options;
-  options.model = ai::openai::models::kGpt54Mini;
+  qcode::GenerateOptions options;
+  options.model = qcode::openai::models::kGpt54Mini;
   options.prompt = "Say 'Hello with default retry config!'";
 
   auto result1 = default_client.generate_text(options);
@@ -49,7 +49,7 @@ int main() {
   std::cout << "   - Initial delay: 1000ms (faster initial retry)\n";
   std::cout << "   - Backoff factor: 1.5 (gentler backoff)\n\n";
 
-  ai::retry::RetryConfig aggressive_config;
+  qcode::retry::RetryConfig aggressive_config;
   aggressive_config.max_retries = 5;
   aggressive_config.initial_delay = std::chrono::milliseconds(1000);
   aggressive_config.backoff_factor = 1.5;
@@ -61,7 +61,7 @@ int main() {
     return 1;
   }
 
-  auto aggressive_client = ai::openai::create_client(
+  auto aggressive_client = qcode::openai::create_client(
       api_key, "https://api.openai.com", aggressive_config);
 
   options.prompt = "Say 'Hello with aggressive retry config!'";
@@ -80,12 +80,12 @@ int main() {
       << "   - Initial delay: 5000ms (longer wait to avoid rate limits)\n";
   std::cout << "   - Backoff factor: 3.0 (aggressive backoff)\n\n";
 
-  ai::retry::RetryConfig conservative_config;
+  qcode::retry::RetryConfig conservative_config;
   conservative_config.max_retries = 3;
   conservative_config.initial_delay = std::chrono::milliseconds(5000);
   conservative_config.backoff_factor = 3.0;
 
-  auto conservative_client = ai::openai::create_client(
+  auto conservative_client = qcode::openai::create_client(
       api_key, "https://api.openai.com", conservative_config);
 
   options.prompt = "Say 'Hello with conservative retry config!'";
@@ -103,10 +103,10 @@ int main() {
   std::cout << "   - Initial delay: N/A\n";
   std::cout << "   - Backoff factor: N/A\n\n";
 
-  ai::retry::RetryConfig no_retry_config;
+  qcode::retry::RetryConfig no_retry_config;
   no_retry_config.max_retries = 0;
 
-  auto no_retry_client = ai::openai::create_client(
+  auto no_retry_client = qcode::openai::create_client(
       api_key, "https://api.openai.com", no_retry_config);
 
   options.prompt = "Say 'Hello with no retry config!'";
@@ -127,18 +127,18 @@ int main() {
   std::cout << "   - Backoff factor: 2.0\n";
   std::cout << "   - Max total retry time: ~102 seconds\n\n";
 
-  ai::retry::RetryConfig batch_config;
+  qcode::retry::RetryConfig batch_config;
   batch_config.max_retries = 10;
   batch_config.initial_delay = std::chrono::milliseconds(3000);
   batch_config.backoff_factor = 2.0;
 
-  auto batch_client = ai::openai::create_client(
+  auto batch_client = qcode::openai::create_client(
       api_key, "https://api.openai.com", batch_config);
 
   options.prompt =
       "Generate a list of 5 creative project names for a batch processing "
       "system.";
-  options.model = ai::openai::models::kGpt54;
+  options.model = qcode::openai::models::kGpt54;
 
   std::cout << "Processing batch request (this might take a while if retries "
                "occur)...\n";

@@ -9,7 +9,7 @@
 #include <memory>
 #include <optional>
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 namespace {
 
@@ -106,4 +106,4 @@ std::string AntigravityClient::default_model() const {
 }
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

@@ -7,7 +7,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace gemini {
 namespace {
 
@@ -209,4 +209,4 @@ TEST(GeminiTransformTest, NormalizeReturnsNonCandidatePayloadUnchanged) {
 
 }  // namespace
 }  // namespace gemini
-}  // namespace ai
+}  // namespace qcode

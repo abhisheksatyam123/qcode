@@ -1,5 +1,5 @@
 /**
- * Async Tool Calling Example - AI SDK C++
+ * Async Tool Calling Example - qcode
  *
  * This example demonstrates asynchronous tool calling functionality.
  * It shows how to:
@@ -27,9 +27,9 @@
 #include <qcode/tools/tool_factory.h>
 
 // Async tool: Simulate web API call
-std::future<ai::JsonValue> fetch_news_async(
-    const ai::JsonValue& args,
-    const ai::ToolExecutionContext& context) {
+std::future<qcode::JsonValue> fetch_news_async(
+    const qcode::JsonValue& args,
+    const qcode::ToolExecutionContext& context) {
   std::string category = args["category"].get<std::string>();
 
   return std::async(std::launch::async, [category]() {
@@ -39,7 +39,7 @@ std::future<ai::JsonValue> fetch_news_async(
     // Simulate network delay
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
-    ai::JsonValue news_articles = ai::JsonValue::array();
+    qcode::JsonValue news_articles = qcode::JsonValue::array();
     if (category == "tech") {
       news_articles = {"AI breakthrough in quantum computing",
                        "New smartphone features announced",
@@ -55,16 +55,16 @@ std::future<ai::JsonValue> fetch_news_async(
 
     std::cout << "📰 News fetch completed for: " << category << std::endl;
 
-    return ai::JsonValue{{"category", category},
+    return qcode::JsonValue{{"category", category},
                          {"articles", news_articles},
                          {"fetch_time_ms", 1000}};
   });
 }
 
 // Async tool: Simulate database query
-std::future<ai::JsonValue> query_database_async(
-    const ai::JsonValue& args,
-    const ai::ToolExecutionContext& context) {
+std::future<qcode::JsonValue> query_database_async(
+    const qcode::JsonValue& args,
+    const qcode::ToolExecutionContext& context) {
   std::string query = args["query"].get<std::string>();
 
   return std::async(std::launch::async, [query]() {
@@ -74,7 +74,7 @@ std::future<ai::JsonValue> query_database_async(
     // Simulate database processing time
     std::this_thread::sleep_for(std::chrono::milliseconds(800));
 
-    ai::JsonValue results = ai::JsonValue::array();
+    qcode::JsonValue results = qcode::JsonValue::array();
     if (query.find("users") != std::string::npos) {
       results = {{{"id", 1}, {"name", "John"}, {"active", true}},
                  {{"id", 2}, {"name", "Jane"}, {"active", true}},
@@ -87,21 +87,21 @@ std::future<ai::JsonValue> query_database_async(
 
     std::cout << "🗄️  Database query completed: " << query << std::endl;
 
-    return ai::JsonValue{
+    return qcode::JsonValue{
         {"query", query}, {"results", results}, {"execution_time_ms", 800}};
   });
 }
 
 // Sync tool for comparison: Quick calculation
-ai::JsonValue calculate_stats(const ai::JsonValue& args,
-                              const ai::ToolExecutionContext& context) {
-  ai::JsonValue data = args["data"];
+qcode::JsonValue calculate_stats(const qcode::JsonValue& args,
+                              const qcode::ToolExecutionContext& context) {
+  qcode::JsonValue data = args["data"];
 
   std::cout << "🧮 Calculating statistics (sync)..." << std::endl;
   std::cout << "   Data received: " << data.dump() << std::endl;
 
   if (!data.is_array()) {
-    return ai::JsonValue{{"error", "Data must be an array"}};
+    return qcode::JsonValue{{"error", "Data must be an array"}};
   }
 
   double sum = 0.0;
@@ -119,13 +119,13 @@ ai::JsonValue calculate_stats(const ai::JsonValue& args,
   std::cout << "   Statistics calculated: sum=" << sum << ", count=" << count
             << ", avg=" << average << std::endl;
 
-  return ai::JsonValue{{"sum", sum}, {"count", count}, {"average", average}};
+  return qcode::JsonValue{{"sum", sum}, {"count", count}, {"average", average}};
 }
 
 // Async tool: File processing simulation
-std::future<ai::JsonValue> process_file_async(
-    const ai::JsonValue& args,
-    const ai::ToolExecutionContext& context) {
+std::future<qcode::JsonValue> process_file_async(
+    const qcode::JsonValue& args,
+    const qcode::ToolExecutionContext& context) {
   std::string filename = args["filename"].get<std::string>();
   std::string operation = args["operation"].get<std::string>();
 
@@ -144,7 +144,7 @@ std::future<ai::JsonValue> process_file_async(
 
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
 
-    ai::JsonValue result = {{"filename", filename},
+    qcode::JsonValue result = {{"filename", filename},
                             {"operation", operation},
                             {"status", "completed"},
                             {"processing_time_ms", delay_ms}};
@@ -165,26 +165,26 @@ std::future<ai::JsonValue> process_file_async(
 }
 
 int main() {
-  std::cout << "AI SDK C++ - Async Tool Calling Example\n";
+  std::cout << "qcode - Async Tool Calling Example\n";
   std::cout << "========================================\n\n";
 
   // Create OpenAI client
-  auto client = ai::openai::create_client();
+  auto client = qcode::openai::create_client();
 
   // Define async tools
-  ai::ToolSet tools = {
+  qcode::ToolSet tools = {
       {"fetch_news",
-       ai::create_simple_async_tool(
+       qcode::create_simple_async_tool(
            "fetch_news", "Fetch latest news articles for a given category",
            {{"category", "string"}}, fetch_news_async)},
       {"query_database",
-       ai::create_simple_async_tool(
+       qcode::create_simple_async_tool(
            "query_database", "Execute a database query and return results",
            {{"query", "string"}}, query_database_async)},
       {"calculate_stats",
-       ai::create_tool(
+       qcode::create_tool(
            "Calculate statistics (sum, count, average) for an array of numbers",
-           ai::JsonValue{
+           qcode::JsonValue{
                {"type", "object"},
                {"properties",
                 {{"data",
@@ -194,7 +194,7 @@ int main() {
                     "Array of numbers to calculate statistics for"}}}}},
                {"required", {"data"}}},
            calculate_stats)},
-      {"process_file", ai::create_simple_async_tool(
+      {"process_file", qcode::create_simple_async_tool(
                            "process_file",
                            "Process a file with the specified operation "
                            "(analyze, compress, backup)",
@@ -207,8 +207,8 @@ int main() {
 
   auto start_time = std::chrono::high_resolution_clock::now();
 
-  ai::GenerateOptions options1;
-  options1.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options1;
+  options1.model = qcode::openai::models::kGpt54;
   options1.prompt = "Get me the latest tech news articles";
   options1.tools = tools;
   options1.max_tokens = 200;
@@ -234,8 +234,8 @@ int main() {
 
   start_time = std::chrono::high_resolution_clock::now();
 
-  ai::GenerateOptions options2;
-  options2.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options2;
+  options2.model = qcode::openai::models::kGpt54;
   options2.prompt = R"(
     Please help me with these tasks:
     1. Fetch the latest sports news
@@ -271,8 +271,8 @@ int main() {
 
   start_time = std::chrono::high_resolution_clock::now();
 
-  ai::GenerateOptions options3;
-  options3.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options3;
+  options3.model = qcode::openai::models::kGpt54;
   options3.prompt = R"(
     Please help me with these tasks:
     1. Fetch tech news articles
@@ -336,14 +336,14 @@ int main() {
   std::cout << "\n\n4. Testing with Anthropic:\n";
   std::cout << "========================================\n";
 
-  auto anthropic_client = ai::anthropic::create_client();
+  auto anthropic_client = qcode::anthropic::create_client();
 
   std::cout << "Testing async tools with Claude Sonnet 4.5\n\n";
 
   start_time = std::chrono::high_resolution_clock::now();
 
-  ai::GenerateOptions anthropic_options;
-  anthropic_options.model = ai::anthropic::models::kClaudeSonnet46;
+  qcode::GenerateOptions anthropic_options;
+  anthropic_options.model = qcode::anthropic::models::kClaudeSonnet46;
   anthropic_options.prompt = R"(
     Please help me with these THREE tasks. You MUST use the tools to complete ALL of them:
     1. Use the fetch_news tool to get tech news articles  

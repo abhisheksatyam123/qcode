@@ -5,7 +5,7 @@
 
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace openai {
 namespace {
 
@@ -72,4 +72,4 @@ TEST(OpenAIResponsesTest, ParsesTextAndFunctionCalls) {
 
 }  // namespace
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

@@ -6,7 +6,7 @@
 #include <sstream>
 #include <variant>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 namespace {
@@ -198,4 +198,4 @@ std::string CursorRequestBuilder::build_request_context_reply(
 }
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

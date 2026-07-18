@@ -3,7 +3,7 @@
 #include <sstream>
 #include <qcode/logger/logger.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 std::string SystemPrompt::default_identity() {
@@ -70,4 +70,4 @@ std::string SystemPrompt::build_default(const ToolConfig& tool_cfg) {
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

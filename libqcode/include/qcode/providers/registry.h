@@ -1,8 +1,8 @@
 #pragma once
 
-#ifndef AI_SDK_HAS_REGISTRY
+#ifndef QCODE_HAS_REGISTRY
 #error \
-    "Provider registry not available. Link with ai::registry or ai::sdk to use provider dispatch."
+    "Provider registry not available. Link with qcode::registry or qcode::sdk to use provider dispatch."
 #endif
 
 #include <qcode/types/client.h>
@@ -11,7 +11,7 @@
 #include <map>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace providers {
 
 // Result of resolving a provider: either a ready Client, or a non-empty error
@@ -65,4 +65,4 @@ class ProviderRegistry {
 void register_core_providers();
 
 }  // namespace providers
-}  // namespace ai
+}  // namespace qcode

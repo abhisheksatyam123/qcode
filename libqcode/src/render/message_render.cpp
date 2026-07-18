@@ -9,7 +9,7 @@
 #include <nlohmann/json.hpp>
 #include <qcode/logger/logger.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 using namespace ftxui;
@@ -88,8 +88,8 @@ bool is_bash_tool(const std::string& tool_name) {
 }  // namespace
 
 // Forward declarations
-static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
-                                const ai::ToolResultContentPart& result_part,
+static Element render_tool_pair(const qcode::ToolCallContentPart& call_part,
+                                const qcode::ToolResultContentPart& result_part,
                                 const std::string& theme,
                                 bool collapsed,
                                 bool collapsible,
@@ -257,13 +257,13 @@ Element render_truncated_output(const std::string& output,
 // ════════════════════════════════════════════════════════════════════════════
 //  Helpers
 // ════════════════════════════════════════════════════════════════════════════
-static std::string extract_tool_description(const ai::ToolCallContentPart& part) {
+static std::string extract_tool_description(const qcode::ToolCallContentPart& part) {
     const auto& args = part.arguments;
     if (!args.is_object()) return "";
     return truncate_utf8(json_string(args, {"description", "desc", "prompt"}), 72);
 }
 
-static std::string extract_shell_command(const ai::ToolCallContentPart& part) {
+static std::string extract_shell_command(const qcode::ToolCallContentPart& part) {
     const auto& args = part.arguments;
     if (!args.is_object()) return part.tool_name;
 
@@ -299,7 +299,7 @@ static std::string extract_shell_command(const ai::ToolCallContentPart& part) {
     return part.tool_name;
 }
 
-static std::string extract_result_output(const ai::ToolResultContentPart& part) {
+static std::string extract_result_output(const qcode::ToolResultContentPart& part) {
     if (part.result.is_string()) return part.result.get<std::string>();
     if (!part.result.is_object()) return part.result.dump(2);
 
@@ -312,8 +312,8 @@ static std::string extract_result_output(const ai::ToolResultContentPart& part) 
     return part.result.dump(2);
 }
 
-static Element render_shell_output(const ai::ToolCallContentPart& call_part,
-                                   const ai::ToolResultContentPart& result_part,
+static Element render_shell_output(const qcode::ToolCallContentPart& call_part,
+                                   const qcode::ToolResultContentPart& result_part,
                                    const std::string& theme,
                                    bool collapsed) {
     Elements body;
@@ -355,7 +355,7 @@ static Element render_shell_output(const ai::ToolCallContentPart& call_part,
     return vbox(std::move(body));
 }
 
-static Element render_tool_call(const ai::ToolCallContentPart& part,
+static Element render_tool_call(const qcode::ToolCallContentPart& part,
                                  const std::string& theme,
                                  const ChatState& state) {
     const auto command = extract_shell_command(part);
@@ -367,7 +367,7 @@ static Element render_tool_call(const ai::ToolCallContentPart& part,
                       command, theme, const_cast<ChatState*>(&state), part.id);
 }
 
-static Element render_tool_result(const ai::ToolResultContentPart& part,
+static Element render_tool_result(const qcode::ToolResultContentPart& part,
                                    const std::string& theme,
                                    const ChatState& state) {
     std::string tool_name;
@@ -386,7 +386,7 @@ static Element render_tool_result(const ai::ToolResultContentPart& part,
                       tool_name.empty() ? "tool" : tool_name, theme, const_cast<ChatState*>(&state), part.tool_call_id);
 }
 
-static Element render_reasoning(const ai::ReasoningContentPart& rp,
+static Element render_reasoning(const qcode::ReasoningContentPart& rp,
                                  const std::string& theme) {
     if (rp.text.empty()) return emptyElement();
     Elements md = render_markdown(rp.text, theme);
@@ -408,11 +408,11 @@ static Element render_reasoning(const ai::ReasoningContentPart& rp,
     });
 }
 
-Element render_message(const ai::Message& msg, const ChatState& state,
+Element render_message(const qcode::Message& msg, const ChatState& state,
                         const std::vector<ProviderInfo>& providers_list,
                         int selected_provider, int selected_model,
                         const std::string& theme,
-                        const ai::Message* adjacent_tool_results) {
+                        const qcode::Message* adjacent_tool_results) {
     Elements parts;
 
     const bool has_text = msg.has_text();
@@ -449,21 +449,21 @@ Element render_message(const ai::Message& msg, const ChatState& state,
         }));
     }
 
-    std::unordered_map<std::string, const ai::ToolCallContentPart*> tool_calls;
-    std::unordered_map<std::string, const ai::ToolResultContentPart*> tool_results;
+    std::unordered_map<std::string, const qcode::ToolCallContentPart*> tool_calls;
+    std::unordered_map<std::string, const qcode::ToolResultContentPart*> tool_results;
 
     for (const auto& part : msg.content) {
-        if (const auto* tool_part = std::get_if<ai::ToolCallContentPart>(&part)) {
+        if (const auto* tool_part = std::get_if<qcode::ToolCallContentPart>(&part)) {
             tool_calls[tool_part->id] = tool_part;
         } else if (const auto* result_part =
-                       std::get_if<ai::ToolResultContentPart>(&part)) {
+                       std::get_if<qcode::ToolResultContentPart>(&part)) {
             tool_results[result_part->tool_call_id] = result_part;
         }
     }
     if (adjacent_tool_results != nullptr) {
         for (const auto& part : adjacent_tool_results->content) {
             if (const auto* result_part =
-                    std::get_if<ai::ToolResultContentPart>(&part)) {
+                    std::get_if<qcode::ToolResultContentPart>(&part)) {
                 tool_results[result_part->tool_call_id] = result_part;
             }
         }
@@ -472,7 +472,7 @@ Element render_message(const ai::Message& msg, const ChatState& state,
     std::unordered_set<std::string> rendered_tool_results;
 
     for (const auto& part : msg.content) {
-        if (const auto* text_part = std::get_if<ai::TextContentPart>(&part)) {
+        if (const auto* text_part = std::get_if<qcode::TextContentPart>(&part)) {
             if (text_part->text.empty()) continue;
             if (msg.role == kMessageRoleSystem) {
                 parts.push_back(
@@ -486,7 +486,7 @@ Element render_message(const ai::Message& msg, const ChatState& state,
                 parts.push_back(vbox(std::move(indented)));
             }
         } else if (const auto* tool_part =
-                       std::get_if<ai::ToolCallContentPart>(&part)) {
+                       std::get_if<qcode::ToolCallContentPart>(&part)) {
             auto result_it = tool_results.find(tool_part->id);
             if (result_it != tool_results.end()) {
                 bool collapsed = true;
@@ -514,14 +514,14 @@ Element render_message(const ai::Message& msg, const ChatState& state,
                 parts.push_back(render_tool_call(*tool_part, theme, state));
             }
         } else if (const auto* result_part =
-                       std::get_if<ai::ToolResultContentPart>(&part)) {
+                       std::get_if<qcode::ToolResultContentPart>(&part)) {
             if (rendered_tool_results.count(result_part->tool_call_id)) {
                 continue;
             }
             parts.push_back(render_tool_result(*result_part, theme, state));
             rendered_tool_results.insert(result_part->tool_call_id);
         } else if (const auto* reasoning_part =
-                       std::get_if<ai::ReasoningContentPart>(&part)) {
+                       std::get_if<qcode::ReasoningContentPart>(&part)) {
             if (*state.show_thinking) {
                 parts.push_back(render_reasoning(*reasoning_part, theme));
             }
@@ -531,8 +531,8 @@ Element render_message(const ai::Message& msg, const ChatState& state,
     return vbox(std::move(parts));
 }
 
-static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
-                                 const ai::ToolResultContentPart& result_part,
+static Element render_tool_pair(const qcode::ToolCallContentPart& call_part,
+                                 const qcode::ToolResultContentPart& result_part,
                                  const std::string& theme,
                                  bool collapsed,
                                  bool collapsible,
@@ -563,4 +563,4 @@ static Element render_tool_pair(const ai::ToolCallContentPart& call_part,
 }
 
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

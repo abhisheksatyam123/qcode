@@ -12,7 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 
 using JsonValue = nlohmann::json;
 
@@ -129,4 +129,4 @@ class TaskTool {
   static JsonValue exec_model(const JsonValue& args);
 };
 
-}  // namespace ai
+}  // namespace qcode

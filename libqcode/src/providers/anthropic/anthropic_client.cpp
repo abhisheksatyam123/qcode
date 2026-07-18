@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <memory>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 AnthropicClient::AnthropicClient(const std::string& api_key,
@@ -61,7 +61,7 @@ std::string AnthropicClient::provider_name() const {
 std::vector<std::string> AnthropicClient::supported_models() const {
   // Both the friendly aliases (e.g. "claude-sonnet-4-5") and their dated
   // snapshot variants (e.g. "claude-sonnet-4-5-20250929") are accepted by the
-  // Anthropic API; list both so identifiers in `ai::anthropic::models::*`
+  // Anthropic API; list both so identifiers in `qcode::anthropic::models::*`
   // resolve via `supports_model()`.
   return {"claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6",
           "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-4-5",
@@ -87,4 +87,4 @@ std::string AnthropicClient::default_model() const {
 }
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

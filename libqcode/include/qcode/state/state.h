@@ -10,7 +10,7 @@
 
 #include <qcode/types/message.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 struct HitBox {
@@ -62,7 +62,7 @@ struct FileChangeEntry {
 struct ChatState {
     std::shared_ptr<std::atomic<bool>> is_generating =
         std::make_shared<std::atomic<bool>>(false);
-    std::shared_ptr<ai::Messages> messages_history = std::make_shared<ai::Messages>();
+    std::shared_ptr<qcode::Messages> messages_history = std::make_shared<qcode::Messages>();
     std::shared_ptr<int> total_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
@@ -153,4 +153,4 @@ struct ChatState {
 };
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

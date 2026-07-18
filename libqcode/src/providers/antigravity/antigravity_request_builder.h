@@ -8,14 +8,14 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 
 // Builds Antigravity / Google Vertex (Gemini) requests.
 //
 // The wire format is OpenAI-shaped internally; we reuse OpenAIRequestBuilder to
 // assemble messages/tools/parameters, then translate that JSON through
-// ai::gemini::convert_openai_to_gemini + wrap_antigravity_envelope. HTTP headers
+// qcode::gemini::convert_openai_to_gemini + wrap_antigravity_envelope. HTTP headers
 // carry the Antigravity/Vertex identity.
 class AntigravityRequestBuilder : public providers::RequestBuilder {
  public:
@@ -31,4 +31,4 @@ class AntigravityRequestBuilder : public providers::RequestBuilder {
 };
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

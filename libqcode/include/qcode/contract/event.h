@@ -6,7 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <qcode/bus/port.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 namespace contract {
 
@@ -181,4 +181,4 @@ inline void register_all_events(bus::BusPort& bus) {
 
 } // namespace contract
 } // namespace tui
-} // namespace ai
+} // namespace qcode

@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 class AnthropicRequestBuilder : public providers::RequestBuilder {
@@ -18,4 +18,4 @@ class AnthropicRequestBuilder : public providers::RequestBuilder {
 };
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

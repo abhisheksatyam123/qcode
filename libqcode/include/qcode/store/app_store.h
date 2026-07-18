@@ -13,7 +13,7 @@
 #include <deque>
 #include <queue>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 namespace bus {
@@ -99,4 +99,4 @@ private:
 };
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

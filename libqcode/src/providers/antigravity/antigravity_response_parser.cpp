@@ -4,7 +4,7 @@
 #include "providers/openai/openai_response_parser.h"
 #include "utils/response_utils.h"
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 
 GenerateResult AntigravityResponseParser::parse_success_completion_response(
@@ -31,4 +31,4 @@ EmbeddingResult AntigravityResponseParser::parse_error_embedding_response(
 }
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

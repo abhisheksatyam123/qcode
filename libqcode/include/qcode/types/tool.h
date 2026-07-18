@@ -15,7 +15,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 
 using JsonValue = nlohmann::json;
 
@@ -272,4 +272,4 @@ inline JsonValue create_object_schema(
   return schema;
 }
 
-}  // namespace ai
+}  // namespace qcode

@@ -8,7 +8,7 @@
 #include <sstream>
 #include <thread>
 
-namespace ai {
+namespace qcode {
 
 // ── TaskTool implementation ──
 // Direct port of opencode's TaskTool (src/tool/task/index.ts + contract/port.ts)
@@ -277,4 +277,4 @@ Tool TaskTool::definition() {
   );
 }
 
-}  // namespace ai
+}  // namespace qcode

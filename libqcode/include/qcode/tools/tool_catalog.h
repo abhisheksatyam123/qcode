@@ -5,7 +5,7 @@
 
 #include <qcode/types/tool.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // ── Tool descriptors for the system prompt ──
@@ -35,8 +35,8 @@ class ToolCatalog {
   // Build the tool-description section for the system prompt
   static std::string build_tool_section(const ToolConfig& cfg = {});
 
-  // Build the agent's tool definitions (for ai::ToolSet)
-  static ai::ToolSet build_definitions(const ToolConfig& cfg = {});
+  // Build the agent's tool definitions (for qcode::ToolSet)
+  static qcode::ToolSet build_definitions(const ToolConfig& cfg = {});
 
   // Format a single tool call for display
   static std::string format_tool_call(const std::string& tool_name,
@@ -53,4 +53,4 @@ class ToolCatalog {
 };
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

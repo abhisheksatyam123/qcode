@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // ── Bus-aware generation entry points ────────────────────────────────
@@ -51,7 +51,7 @@ public:
         const std::string& provider_name,
         const std::string& model_id,
         const std::string& system_prompt,
-        const ai::Messages& messages,
+        const qcode::Messages& messages,
         bool enable_tools,
         GenerationContext& ctx);
 
@@ -72,11 +72,11 @@ void run_generation_with_bus(
     const std::string& provider_name,
     const std::string& model_id,
     const std::string& system_prompt,
-    const ai::Messages& messages,
+    const qcode::Messages& messages,
     bool enable_tools,
     const std::vector<ProviderInfo>& providers,
     bus::BusPort& bus,
     GenerationContext& ctx);
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

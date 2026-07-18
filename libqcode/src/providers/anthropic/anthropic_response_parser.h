@@ -5,7 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 class AnthropicResponseParser : public providers::ResponseParser {
@@ -26,4 +26,4 @@ class AnthropicResponseParser : public providers::ResponseParser {
 };
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

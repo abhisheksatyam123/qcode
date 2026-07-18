@@ -7,16 +7,16 @@
 int main() {
   try {
     // Enable debug logging
-    ai::logger::install_logger(std::make_shared<ai::logger::ConsoleLogger>(
-        ai::logger::LogLevel::kLogLevelInfo));
+    qcode::logger::install_logger(std::make_shared<qcode::logger::ConsoleLogger>(
+        qcode::logger::LogLevel::kLogLevelInfo));
 
     // Create OpenAI client
-    auto client = ai::openai::create_client();
+    auto client = qcode::openai::create_client();
 
     // Test simple generation
     std::cout << "Testing OpenAI text generation...\n\n";
 
-    ai::GenerateOptions options(ai::openai::models::kGpt54Mini,
+    qcode::GenerateOptions options(qcode::openai::models::kGpt54Mini,
                                 "You are a friendly assistant!",
                                 "Why is the sky blue? Give a short answer.");
 
@@ -34,10 +34,10 @@ int main() {
     // Test streaming
     std::cout << "\nTesting streaming...\n";
 
-    ai::GenerateOptions stream_opts(
-        ai::openai::models::kGpt54Mini,
+    qcode::GenerateOptions stream_opts(
+        qcode::openai::models::kGpt54Mini,
         "Count from 1 to 5 slowly and along with each number say 'tick'");
-    ai::StreamOptions stream_options(stream_opts);
+    qcode::StreamOptions stream_options(stream_opts);
 
     auto stream = client.stream_text(stream_options);
 

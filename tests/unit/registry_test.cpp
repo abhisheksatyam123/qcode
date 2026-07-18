@@ -9,7 +9,7 @@
 #include <qcode/types/generate_options.h>
 #include <qcode/config/config.h>
 
-namespace ai {
+namespace qcode {
 namespace providers {
 namespace {
 
@@ -183,4 +183,4 @@ TEST(RegistryTest, OpenCodeZenE2E) {
 }
 
 }  // namespace providers
-}  // namespace ai
+}  // namespace qcode

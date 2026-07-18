@@ -1,6 +1,6 @@
 #pragma once
 
-namespace ai {
+namespace qcode {
 
 enum MessageRole {
   kMessageRoleSystem,
@@ -27,4 +27,4 @@ enum StreamEventType {
   kStreamEventTypeError
 };
 
-}  // namespace ai
+}  // namespace qcode

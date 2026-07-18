@@ -7,7 +7,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 class AnthropicStreamTest : public AnthropicTestFixture {};
@@ -391,4 +391,4 @@ TEST_F(AnthropicStreamEventTypesTest, MessageStopEvent) {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

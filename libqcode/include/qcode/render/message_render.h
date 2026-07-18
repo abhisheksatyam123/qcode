@@ -3,7 +3,7 @@
 #include <qcode/types/message.h>
 #include <qcode/state/state.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // OpenCode-inspired shell session block:
@@ -34,12 +34,12 @@ ftxui::Element BlockTool(const std::string& title, ftxui::Element content,
                           ftxui::Color border_color = ftxui::Color::GrayDark);
 
 // ── Render a complete message (user/assistant/system) ──
-ftxui::Element render_message(const ai::Message& msg,
+ftxui::Element render_message(const qcode::Message& msg,
                                const ChatState& state,
                                const std::vector<ProviderInfo>& providers_list,
                                int selected_provider, int selected_model,
                                const std::string& theme,
-                               const ai::Message* adjacent_tool_results = nullptr);
+                               const qcode::Message* adjacent_tool_results = nullptr);
 
 // Colored, truncated shell-style stdout/stderr.
 ftxui::Element render_truncated_output(const std::string& output,
@@ -48,4 +48,4 @@ ftxui::Element render_truncated_output(const std::string& output,
                                         bool is_error = false);
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

@@ -1,12 +1,12 @@
 /**
- * Langfuse Tracing Example - AI SDK C++
+ * Langfuse Tracing Example - qcode
  *
- * Demonstrates how to wrap an `ai::Client::generate_text` call (with tools and
+ * Demonstrates how to wrap an `qcode::Client::generate_text` call (with tools and
  * multi-step) so the LLM call and each tool execution show up as a trace in
  * Langfuse.
  *
  * Required env:
- *   OPENAI_API_KEY        (or use ai::anthropic instead)
+ *   OPENAI_API_KEY        (or use qcode::anthropic instead)
  *   LANGFUSE_PUBLIC_KEY
  *   LANGFUSE_SECRET_KEY
  * Optional:
@@ -29,9 +29,9 @@ const char* getenv_nonempty(const char* name) {
   return (v && *v) ? v : nullptr;
 }
 
-ai::JsonValue lookup_user(const ai::JsonValue& args,
-                          const ai::ToolExecutionContext&) {
-  static const std::map<std::string, ai::JsonValue> users = {
+qcode::JsonValue lookup_user(const qcode::JsonValue& args,
+                          const qcode::ToolExecutionContext&) {
+  static const std::map<std::string, qcode::JsonValue> users = {
       {"alice", {{"name", "Alice"}, {"city", "San Francisco"}}},
       {"bob", {{"name", "Bob"}, {"city", "New York"}}},
   };
@@ -39,13 +39,13 @@ ai::JsonValue lookup_user(const ai::JsonValue& args,
   auto it = users.find(id);
   if (it != users.end())
     return it->second;
-  return ai::JsonValue{{"error", "user not found"}};
+  return qcode::JsonValue{{"error", "user not found"}};
 }
 
-ai::JsonValue get_weather(const ai::JsonValue& args,
-                          const ai::ToolExecutionContext&) {
+qcode::JsonValue get_weather(const qcode::JsonValue& args,
+                          const qcode::ToolExecutionContext&) {
   auto loc = args.value("location", std::string{"unknown"});
-  return ai::JsonValue{
+  return qcode::JsonValue{
       {"location", loc}, {"temperature_c", 21}, {"sky", "clear"}};
 }
 
@@ -65,7 +65,7 @@ int main() {
   if (!host || !*host)
     host = "https://cloud.langfuse.com";
 
-  ai::langfuse::Tracer tracer({
+  qcode::langfuse::Tracer tracer({
       .host = host,
       .public_key = lf_pk,
       .secret_key = lf_sk,
@@ -76,22 +76,22 @@ int main() {
     return 1;
   }
 
-  auto client = ai::openai::create_client();
+  auto client = qcode::openai::create_client();
   if (!client.is_valid()) {
     std::cerr << "OpenAI client not configured (set OPENAI_API_KEY).\n";
     return 1;
   }
 
-  ai::ToolSet tools;
-  tools["lookup_user"] = ai::create_tool(
+  qcode::ToolSet tools;
+  tools["lookup_user"] = qcode::create_tool(
       "Look up a user's profile by id",
-      ai::create_object_schema({{"user_id", "string"}}), lookup_user);
-  tools["get_weather"] = ai::create_tool(
+      qcode::create_object_schema({{"user_id", "string"}}), lookup_user);
+  tools["get_weather"] = qcode::create_tool(
       "Get the current weather for a location",
-      ai::create_object_schema({{"location", "string"}}), get_weather);
+      qcode::create_object_schema({{"location", "string"}}), get_weather);
 
-  ai::GenerateOptions options;
-  options.model = ai::openai::models::kGpt4oMini;
+  qcode::GenerateOptions options;
+  options.model = qcode::openai::models::kGpt4oMini;
   options.system =
       "You are a concise assistant. Use the available tools when helpful.";
   options.prompt = "Look up alice and tell me the weather where she lives.";
@@ -103,14 +103,14 @@ int main() {
   trace->set_input(options.prompt);
   trace->set_metadata({{"example", "langfuse_tracing"}, {"sdk", "ai-sdk-cpp"}});
 
-  auto result = ai::langfuse::generate_text(client, std::move(options), *trace);
+  auto result = qcode::langfuse::generate_text(client, std::move(options), *trace);
 
   if (result) {
     std::cout << "Output: " << result.text << "\n";
     trace->set_output(result.text);
   } else {
     std::cerr << "Generation failed: " << result.error_message() << "\n";
-    trace->set_output(ai::JsonValue{{"error", result.error_message()}});
+    trace->set_output(qcode::JsonValue{{"error", result.error_message()}});
   }
 
   trace->end();

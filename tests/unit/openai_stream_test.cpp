@@ -8,7 +8,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 class OpenAIStreamTest : public OpenAITestFixture {};
@@ -337,8 +337,8 @@ TEST_F(StreamEdgeCaseTest, UnicodeInStream) {
 class AntigravityStreamTest : public OpenAITestFixture {};
 
 TEST_F(AntigravityStreamTest, UnwrapsResponseEnvelopeAndExtractsText) {
-  ai::openai::OpenAIStreamImpl impl(
-      ai::openai::StreamProtocol::kGeminiEnvelope);
+  qcode::openai::OpenAIStreamImpl impl(
+      qcode::openai::StreamProtocol::kGeminiEnvelope);
 
   std::vector<std::string> chunks = {
       R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":""}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":1,"totalTokenCount":16}},"traceId":"t1","metadata":{}})",
@@ -356,7 +356,7 @@ TEST_F(AntigravityStreamTest, UnwrapsResponseEnvelopeAndExtractsText) {
   bool saw_finish = false;
   bool saw_usage = false;
   while (impl.has_more_events()) {
-    ai::StreamEvent ev = impl.get_next_event();
+    qcode::StreamEvent ev = impl.get_next_event();
     if (ev.is_text_delta()) {
       text += ev.text_delta;
     } else if (ev.is_finish()) {
@@ -375,7 +375,7 @@ TEST_F(AntigravityStreamTest, UnwrapsResponseEnvelopeAndExtractsText) {
 }
 
 TEST_F(AntigravityStreamTest, SurfacesProviderErrorInsteadOfEmpty) {
-  ai::openai::OpenAIStreamImpl impl;
+  qcode::openai::OpenAIStreamImpl impl;
   // Antigravity quota/rate-limit errors arrive at the top level (no envelope).
   impl.test_parse_sse_line(
       R"(data: {"error":{"code":429,"message":"Individual quota reached. Please upgrade your subscription."}})");
@@ -383,7 +383,7 @@ TEST_F(AntigravityStreamTest, SurfacesProviderErrorInsteadOfEmpty) {
 
   bool saw_error = false;
   while (impl.has_more_events()) {
-    ai::StreamEvent ev = impl.get_next_event();
+    qcode::StreamEvent ev = impl.get_next_event();
     if (ev.is_error()) {
       saw_error = true;
       EXPECT_THAT(ev.error.value_or(""), testing::HasSubstr("Individual quota reached"));
@@ -398,4 +398,4 @@ TEST_F(AntigravityStreamTest, SurfacesProviderErrorInsteadOfEmpty) {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

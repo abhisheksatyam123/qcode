@@ -8,7 +8,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // GenerateOptions Tests
@@ -397,4 +397,4 @@ TEST_F(TypeIntegrationTest, MessageConversationFlow) {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

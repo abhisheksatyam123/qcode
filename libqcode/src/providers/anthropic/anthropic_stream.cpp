@@ -20,7 +20,7 @@ std::chrono::seconds default_event_timeout() {
 constexpr auto kSleepInterval = std::chrono::milliseconds(1);
 }  // namespace
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 AnthropicStreamImpl::~AnthropicStreamImpl() {
@@ -275,4 +275,4 @@ void AnthropicStreamImpl::handle_stream_error(int status_code,
 }
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // Render a GitHub-flavored Markdown string into ftxui Elements.
@@ -14,4 +14,4 @@ namespace tui {
 ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme = "orange");
 
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

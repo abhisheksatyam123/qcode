@@ -6,7 +6,7 @@
 #include <qcode/providers/registry.h>
 #include <mutex>
 
-namespace ai {
+namespace qcode {
 namespace providers {
 
 namespace {
@@ -21,11 +21,11 @@ void register_authenticated_providers() {
     // registered here rather than in the core registry.
     ProviderRegistry::instance().register_provider(
         "antigravity", [](const ProviderOptions& options) {
-          std::string token = ai::tui::get_antigravity_token();
+          std::string token = qcode::tui::get_antigravity_token();
           if (token.empty()) {
             return ClientResolution::fail("Antigravity token failed.");
           }
-          ai::antigravity::Options client_options;
+          qcode::antigravity::Options client_options;
           client_options.base_url =
               options.base_url.empty()
                   ? "https://daily-cloudcode-pa.sandbox.googleapis.com/"
@@ -33,7 +33,7 @@ void register_authenticated_providers() {
                   : options.base_url;
           client_options.project_id = options.project_id;
           return ClientResolution{
-              ai::antigravity::create_client(token, client_options)};
+              qcode::antigravity::create_client(token, client_options)};
         });
 
     // Cursor auth (access token) lives in the TUI (reads
@@ -42,7 +42,7 @@ void register_authenticated_providers() {
     ProviderRegistry::instance().register_provider(
         "cursor", [](const ProviderOptions& options) {
           std::string token = options.api_key.empty()
-                                  ? ai::tui::get_cursor_access_token()
+                                  ? qcode::tui::get_cursor_access_token()
                                   : options.api_key;
           if (token.empty()) {
             return ClientResolution::fail("Cursor access token failed.");
@@ -52,14 +52,14 @@ void register_authenticated_providers() {
               options.base_url.empty()
                   ? "https://agentn.global.api5.cursor.sh"
                   : options.base_url;
-          ai::cursor::Options cursor_options;
+          qcode::cursor::Options cursor_options;
           cursor_options.aiserver_base_url = aiserver;
           cursor_options.agent_base_url = agent;
           return ClientResolution{
-              ai::cursor::create_client(token, cursor_options)};
+              qcode::cursor::create_client(token, cursor_options)};
         });
   });
 }
 
 }  // namespace providers
-}  // namespace ai
+}  // namespace qcode

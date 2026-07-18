@@ -12,7 +12,7 @@
 #include <string_view>
 #include <thread>
 
-namespace ai::logger {
+namespace qcode::logger {
 
 enum class LogLevel {
   kLogLevelDebug = 0,
@@ -181,7 +181,7 @@ inline Logger& logger() {
   return *ptr;
 }
 
-}  // namespace ai::logger
+}  // namespace qcode::logger
 
 // ── Macros that capture source_location at the call site ──
 // These call logger().log() directly, capturing the TRUE caller location.
@@ -189,46 +189,46 @@ inline Logger& logger() {
 
 #define LOG_DEBUG(...)                                                       \
   do {                                                                       \
-    ::ai::logger::Logger& _lg = ::ai::logger::logger();                      \
-    if (_lg.is_enabled(::ai::logger::LogLevel::kLogLevelDebug)) {            \
+    ::qcode::logger::Logger& _lg = ::qcode::logger::logger();                      \
+    if (_lg.is_enabled(::qcode::logger::LogLevel::kLogLevelDebug)) {            \
       ::std::source_location _loc = ::std::source_location::current();       \
-      _lg.log(::ai::logger::LogLevel::kLogLevelDebug,                        \
+      _lg.log(::qcode::logger::LogLevel::kLogLevelDebug,                        \
               std::format(__VA_ARGS__), _loc);                                \
     }                                                                        \
   } while (0)
 
 #define LOG_INFO(...)                                                        \
   do {                                                                       \
-    ::ai::logger::Logger& _lg = ::ai::logger::logger();                      \
-    if (_lg.is_enabled(::ai::logger::LogLevel::kLogLevelInfo)) {             \
+    ::qcode::logger::Logger& _lg = ::qcode::logger::logger();                      \
+    if (_lg.is_enabled(::qcode::logger::LogLevel::kLogLevelInfo)) {             \
       ::std::source_location _loc = ::std::source_location::current();       \
-      _lg.log(::ai::logger::LogLevel::kLogLevelInfo,                         \
+      _lg.log(::qcode::logger::LogLevel::kLogLevelInfo,                         \
               std::format(__VA_ARGS__), _loc);                                \
     }                                                                        \
   } while (0)
 
 #define LOG_WARN(...)                                                        \
   do {                                                                       \
-    ::ai::logger::Logger& _lg = ::ai::logger::logger();                      \
-    if (_lg.is_enabled(::ai::logger::LogLevel::kLogLevelWarn)) {             \
+    ::qcode::logger::Logger& _lg = ::qcode::logger::logger();                      \
+    if (_lg.is_enabled(::qcode::logger::LogLevel::kLogLevelWarn)) {             \
       ::std::source_location _loc = ::std::source_location::current();       \
-      _lg.log(::ai::logger::LogLevel::kLogLevelWarn,                         \
+      _lg.log(::qcode::logger::LogLevel::kLogLevelWarn,                         \
               std::format(__VA_ARGS__), _loc);                                \
     }                                                                        \
   } while (0)
 
 #define LOG_ERROR(...)                                                       \
   do {                                                                       \
-    ::ai::logger::Logger& _lg = ::ai::logger::logger();                      \
-    if (_lg.is_enabled(::ai::logger::LogLevel::kLogLevelError)) {            \
+    ::qcode::logger::Logger& _lg = ::qcode::logger::logger();                      \
+    if (_lg.is_enabled(::qcode::logger::LogLevel::kLogLevelError)) {            \
       ::std::source_location _loc = ::std::source_location::current();       \
-      _lg.log(::ai::logger::LogLevel::kLogLevelError,                        \
+      _lg.log(::qcode::logger::LogLevel::kLogLevelError,                        \
               std::format(__VA_ARGS__), _loc);                                \
     }                                                                        \
   } while (0)
 
 // Also keep inline function wrappers for convenience (without source_location capture)
-namespace ai::logger {
+namespace qcode::logger {
 
 template <typename... Args>
 inline void log_debug(std::format_string<Args...> fmt, Args&&... args) {
@@ -250,4 +250,4 @@ inline void log_error(std::format_string<Args...> fmt, Args&&... args) {
   logger().error(fmt, std::forward<Args>(args)...);
 }
 
-}  // namespace ai::logger
+}  // namespace qcode::logger

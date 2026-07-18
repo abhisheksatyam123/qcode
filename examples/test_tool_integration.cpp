@@ -1,5 +1,5 @@
 /**
- * Tool Integration Test - AI SDK C++
+ * Tool Integration Test - qcode
  *
  * A simple test to verify that tool calling works with the provider
  * implementations. This example tests the integration between the tool system
@@ -20,13 +20,13 @@
 #include <qcode/tools/tool_factory.h>
 
 // Simple test tool
-ai::JsonValue simple_test_tool(const ai::JsonValue& args,
-                               const ai::ToolExecutionContext& context) {
+qcode::JsonValue simple_test_tool(const qcode::JsonValue& args,
+                               const qcode::ToolExecutionContext& context) {
   std::string input = args["input"].get<std::string>();
 
   std::cout << "🔧 Tool called with input: " << input << std::endl;
 
-  return ai::JsonValue{{"result", "Tool executed successfully"},
+  return qcode::JsonValue{{"result", "Tool executed successfully"},
                        {"input_received", input},
                        {"execution_id", context.tool_call_id}};
 }
@@ -34,20 +34,20 @@ ai::JsonValue simple_test_tool(const ai::JsonValue& args,
 void test_openai_tools() {
   std::cout << "\n=== Testing OpenAI Tool Integration ===\n";
 
-  auto client = ai::openai::create_client();
+  auto client = qcode::openai::create_client();
 
   // Create a simple tool
-  ai::ToolSet tools = {
-      {"test_tool", ai::create_simple_tool(
+  qcode::ToolSet tools = {
+      {"test_tool", qcode::create_simple_tool(
                         "test_tool", "A simple test tool that echoes input",
                         {{"input", "string"}}, simple_test_tool)}};
 
-  ai::GenerateOptions options;
-  options.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options;
+  options.model = qcode::openai::models::kGpt54;
   options.prompt = "Please use the test_tool with input 'hello world'";
   options.tools = tools;
   options.tool_choice =
-      ai::ToolChoice::specific("test_tool");  // Force tool usage
+      qcode::ToolChoice::specific("test_tool");  // Force tool usage
   options.max_tokens = 100;
 
   std::cout << "Making request to OpenAI with forced tool usage...\n";
@@ -78,20 +78,20 @@ void test_openai_tools() {
 void test_anthropic_tools() {
   std::cout << "\n=== Testing Anthropic Tool Integration ===\n";
 
-  auto client = ai::anthropic::create_client();
+  auto client = qcode::anthropic::create_client();
 
   // Create a simple tool
-  ai::ToolSet tools = {
-      {"test_tool", ai::create_simple_tool(
+  qcode::ToolSet tools = {
+      {"test_tool", qcode::create_simple_tool(
                         "test_tool", "A simple test tool that echoes input",
                         {{"input", "string"}}, simple_test_tool)}};
 
-  ai::GenerateOptions options;
-  options.model = ai::anthropic::models::kClaudeSonnet46;
+  qcode::GenerateOptions options;
+  options.model = qcode::anthropic::models::kClaudeSonnet46;
   options.prompt = "Please use the test_tool with input 'hello anthropic'";
   options.tools = tools;
   options.tool_choice =
-      ai::ToolChoice::specific("test_tool");  // Force tool usage
+      qcode::ToolChoice::specific("test_tool");  // Force tool usage
   options.max_tokens = 100;
 
   std::cout << "Making request to Anthropic with forced tool usage...\n";
@@ -122,26 +122,26 @@ void test_anthropic_tools() {
 void test_multi_step() {
   std::cout << "\n=== Testing Multi-Step Tool Calling ===\n";
 
-  auto client = ai::openai::create_client();
+  auto client = qcode::openai::create_client();
 
   // Create tools for multi-step
-  ai::ToolSet tools = {
+  qcode::ToolSet tools = {
       {"get_number",
-       ai::create_simple_tool(
+       qcode::create_simple_tool(
            "get_number", "Get a number for calculation",
            {{"description", "string"}},
-           [](const ai::JsonValue& args,
-              const ai::ToolExecutionContext& context) -> ai::JsonValue {
+           [](const qcode::JsonValue& args,
+              const qcode::ToolExecutionContext& context) -> qcode::JsonValue {
              std::string desc = args["description"].get<std::string>();
              std::cout << "🔢 Getting number for: " << desc << std::endl;
-             return ai::JsonValue{{"number", 42}};
+             return qcode::JsonValue{{"number", 42}};
            })},
       {"calculate",
-       ai::create_simple_tool(
+       qcode::create_simple_tool(
            "calculate", "Perform a calculation",
            {{"operation", "string"}, {"a", "number"}, {"b", "number"}},
-           [](const ai::JsonValue& args,
-              const ai::ToolExecutionContext& context) -> ai::JsonValue {
+           [](const qcode::JsonValue& args,
+              const qcode::ToolExecutionContext& context) -> qcode::JsonValue {
              std::string op = args["operation"].get<std::string>();
              double a = args["a"].get<double>();
              double b = args["b"].get<double>();
@@ -155,11 +155,11 @@ void test_multi_step() {
              else if (op == "multiply")
                result = a * b;
 
-             return ai::JsonValue{{"result", result}};
+             return qcode::JsonValue{{"result", result}};
            })}};
 
-  ai::GenerateOptions options;
-  options.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options;
+  options.model = qcode::openai::models::kGpt54;
   options.prompt = "Get a number and then multiply it by 2. Show me the steps.";
   options.tools = tools;
   options.max_steps = 5;  // Enable multi-step
@@ -184,7 +184,7 @@ void test_multi_step() {
 }
 
 int main() {
-  std::cout << "AI SDK C++ - Tool Integration Test\n";
+  std::cout << "qcode - Tool Integration Test\n";
   std::cout << "===================================\n";
 
   // Test OpenAI integration

@@ -6,7 +6,7 @@
 #include <qcode/types/enums.h>
 #include <qcode/types/tool.h>
 
-namespace ai {
+namespace qcode {
 
 GenerateResult MultiStepCoordinator::execute_multi_step(
     const GenerateOptions& initial_options,
@@ -190,4 +190,4 @@ Messages MultiStepCoordinator::tool_results_to_messages(
   return messages;
 }
 
-}  // namespace ai
+}  // namespace qcode

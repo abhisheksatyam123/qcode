@@ -1,7 +1,7 @@
 #include <qcode/context/token_budget.h>
 #include <sstream>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // ── Token estimation ─────────────────────────────────────────────
@@ -10,21 +10,21 @@ namespace tui {
 static constexpr size_t kCharsPerToken = 4;
 static constexpr size_t kMessageOverheadTokens = 4;
 
-size_t estimate_tokens(const ai::Messages& messages) {
+size_t estimate_tokens(const qcode::Messages& messages) {
     size_t total = 0;
     for (const auto& msg : messages) {
         total += kMessageOverheadTokens;
         for (const auto& part : msg.content) {
-            if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+            if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                 total += (tp->text.size() + kCharsPerToken - 1) / kCharsPerToken;
-            } else if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) {
+            } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
                 total += (tcp->tool_name.size() + kCharsPerToken - 1) / kCharsPerToken;
                 auto args_str = tcp->arguments.dump();
                 total += (args_str.size() + kCharsPerToken - 1) / kCharsPerToken;
-            } else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
+            } else if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
                 auto result_str = trp->result.dump();
                 total += (result_str.size() + kCharsPerToken - 1) / kCharsPerToken;
-            } else if (const auto* rp = std::get_if<ai::ReasoningContentPart>(&part)) {
+            } else if (const auto* rp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                 total += (rp->text.size() + kCharsPerToken - 1) / kCharsPerToken;
             }
         }
@@ -45,13 +45,13 @@ size_t estimate_system_tokens(const std::string& system_prompt) {
 //   Pass 2: Strip old ReasoningContentPart text entirely
 //   Pass 3: Replace old assistant text with "[Earlier response pruned]"
 // Messages in the last `keep_recent` window are always preserved.
-ai::Messages prune_context(const ai::Messages& messages,
+qcode::Messages prune_context(const qcode::Messages& messages,
                            size_t context_window,
                            size_t keep_recent) {
     if (context_window == 0 || messages.size() <= keep_recent)
         return messages;
 
-    ai::Messages result = messages;
+    qcode::Messages result = messages;
     size_t budget = (context_window * 4) / 5;  // 80%
 
     auto estimate = [&]() -> size_t {
@@ -65,7 +65,7 @@ ai::Messages prune_context(const ai::Messages& messages,
     // ── Pass 1: Prune large tool results ──
     for (size_t i = 0; i < prune_limit; ++i) {
         for (auto& part : result[i].content) {
-            if (auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
+            if (auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
                 auto result_str = trp->result.dump();
                 if (result_str.size() > 200) {
                     trp->result = "[Pruned: " + result_str.substr(0, 80) + "...]";
@@ -78,7 +78,7 @@ ai::Messages prune_context(const ai::Messages& messages,
     // ── Pass 2: Strip old reasoning content ──
     for (size_t i = 0; i < prune_limit; ++i) {
         for (auto& part : result[i].content) {
-            if (auto* rp = std::get_if<ai::ReasoningContentPart>(&part)) {
+            if (auto* rp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                 if (!rp->text.empty()) {
                     rp->text = "[Reasoning pruned]";
                     rp->signature.clear();
@@ -90,9 +90,9 @@ ai::Messages prune_context(const ai::Messages& messages,
 
     // ── Pass 3: Replace old assistant text with summary placeholder ──
     for (size_t i = 0; i < prune_limit; ++i) {
-        if (result[i].role == ai::kMessageRoleAssistant) {
+        if (result[i].role == qcode::kMessageRoleAssistant) {
             for (auto& part : result[i].content) {
-                if (auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                if (auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                     if (tp->text.size() > 100) {
                         tp->text = "[Earlier response pruned]";
                     }
@@ -104,8 +104,8 @@ ai::Messages prune_context(const ai::Messages& messages,
 
     // ── Pass 4: Drop old assistant messages entirely (keep role marker) ──
     for (size_t i = 0; i < prune_limit; ++i) {
-        if (result[i].role == ai::kMessageRoleAssistant) {
-            result[i].content = {ai::TextContentPart{"[Older messages pruned]"}};
+        if (result[i].role == qcode::kMessageRoleAssistant) {
+            result[i].content = {qcode::TextContentPart{"[Older messages pruned]"}};
         }
         if (estimate() <= budget) break;
     }
@@ -114,10 +114,10 @@ ai::Messages prune_context(const ai::Messages& messages,
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode
 
 // ── Calibration ──────────────────────────────────────────────────
-namespace ai {
+namespace qcode {
 namespace tui {
 
 size_t calibrate_estimate(size_t heuristic,
@@ -131,4 +131,4 @@ size_t calibrate_estimate(size_t heuristic,
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

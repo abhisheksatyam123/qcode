@@ -4,7 +4,7 @@
 
 #include <gmock/gmock.h>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // AITestFixture implementation
@@ -370,4 +370,4 @@ void TestAssertions::assertHasRequiredFields(
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

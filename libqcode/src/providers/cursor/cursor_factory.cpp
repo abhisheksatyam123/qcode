@@ -5,7 +5,7 @@
 
 #include <memory>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 namespace {
 constexpr const char* kDefaultAiserver = "https://api2.cursor.sh";
@@ -49,4 +49,4 @@ std::vector<AvailableModel> list_models(const std::string& access_token,
 }
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

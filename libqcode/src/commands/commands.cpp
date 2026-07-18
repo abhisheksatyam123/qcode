@@ -21,12 +21,12 @@
 #include <utility>
 #include <atomic>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 namespace {
 void append_system_message(ChatState& state, std::string text) {
-    state.messages_history->emplace_back(ai::Message::system(std::move(text)));
+    state.messages_history->emplace_back(qcode::Message::system(std::move(text)));
 }
 }  // namespace
 
@@ -393,7 +393,7 @@ void run_compaction(
 
     if (compaction_busy.exchange(true)) {
         append_system_message(state, "Compaction already in progress.");
-        bus.publish<ai::tui::contract::ToastRequested>({
+        bus.publish<qcode::tui::contract::ToastRequested>({
             .message = "Compaction already in progress",
             .variant = "warning",
             .duration_ms = 2500});
@@ -401,17 +401,17 @@ void run_compaction(
     }
 
     // Snapshot the conversation for the worker thread.
-    ai::Messages snapshot = hist;
+    qcode::Messages snapshot = hist;
     auto providers_copy = providers_list;
     int sp = selected_provider;
     int sm = selected_model;
     std::string sid = *state.session_id;
 
-    bus.publish<ai::tui::contract::ToastRequested>({
+    bus.publish<qcode::tui::contract::ToastRequested>({
         .message = "Compacting conversation...",
         .variant = "info",
         .duration_ms = 4000});
-    bus.publish<ai::tui::contract::SessionStatusChanged>({
+    bus.publish<qcode::tui::contract::SessionStatusChanged>({
         .session_id = sid,
         .status = "generating"});
 
@@ -424,7 +424,7 @@ void run_compaction(
     *compaction_thread = std::jthread(
         [providers_copy, sp, sm, snapshot, keep, sid,
          &bus](std::stop_token stop_token) mutable {
-        ai::tui::contract::CompactionResult::Payload result;
+        qcode::tui::contract::CompactionResult::Payload result;
         result.keep = keep;
         result.original_size = snapshot.size();
 
@@ -432,7 +432,7 @@ void run_compaction(
 
         auto fail = [&](const std::string& msg) {
             result.error = msg;
-            bus.publish<ai::tui::contract::CompactionResult>(result);
+            bus.publish<qcode::tui::contract::CompactionResult>(result);
             finish_busy();
         };
 
@@ -453,19 +453,19 @@ void run_compaction(
         std::ostringstream transcript;
         for (const auto& m : snapshot) {
             std::string role_str;
-            if (m.role == ai::kMessageRoleUser) role_str = "User";
-            else if (m.role == ai::kMessageRoleAssistant) role_str = "Assistant";
-            else if (m.role == ai::kMessageRoleSystem) role_str = "System";
+            if (m.role == qcode::kMessageRoleUser) role_str = "User";
+            else if (m.role == qcode::kMessageRoleAssistant) role_str = "Assistant";
+            else if (m.role == qcode::kMessageRoleSystem) role_str = "System";
             else role_str = "Message";
             std::string text;
             for (const auto& part : m.content) {
-                if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                     text += tp->text + "\n";
-                } else if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) {
+                } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
                     text += "[Tool call: " + tcp->tool_name + "]\n";
-                } else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
+                } else if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
                     text += "[Tool result]\n";
-                } else if (const auto* rcp = std::get_if<ai::ReasoningContentPart>(&part)) {
+                } else if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                     if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";
                 }
             }
@@ -487,14 +487,14 @@ void run_compaction(
             "Use tools only when they improve summary accuracy; otherwise answer directly.";
 
         const auto& sel = providers_copy[sp];
-        ai::providers::register_authenticated_providers();
-        ai::providers::ProviderOptions provider_options;
+        qcode::providers::register_authenticated_providers();
+        qcode::providers::ProviderOptions provider_options;
         provider_options.base_url = sel.api_url;
         provider_options.api_key = sel.api_key;
         provider_options.headers = sel.headers;
         provider_options.protocol = sel.protocol;
         provider_options.project_id = sel.project_id;
-        auto resolution = ai::providers::ProviderRegistry::instance().resolve(
+        auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
             sel.id, provider_options);
         if (!resolution.ok()) {
             fail("Compaction failed: " + resolution.error);
@@ -504,14 +504,14 @@ void run_compaction(
             fail("Compaction cancelled");
             return;
         }
-        ai::Client client = std::move(resolution.client);
+        qcode::Client client = std::move(resolution.client);
 
-        ai::GenerateOptions opts;
+        qcode::GenerateOptions opts;
         opts.model = providers_copy[sp].models[sm].id;
         opts.system = compaction_instruction;
-        opts.messages = {ai::Message::user(transcript.str())};
+        opts.messages = {qcode::Message::user(transcript.str())};
 
-        ai::GenerateResult res = client.generate_text(opts);
+        qcode::GenerateResult res = client.generate_text(opts);
         if (stop_token.stop_requested()) {
             fail("Compaction cancelled");
             return;
@@ -528,7 +528,7 @@ void run_compaction(
             return;
         }
 
-        std::string notes_root = ai::tui::get_notes_root();
+        std::string notes_root = qcode::tui::get_notes_root();
 
         std::error_code ec;
         std::filesystem::create_directories(
@@ -547,7 +547,7 @@ void run_compaction(
         result.summary = std::move(summary);
         result.todo_path = std::move(todo_path);
         result.wrote = wrote;
-        bus.publish<ai::tui::contract::CompactionResult>(result);
+        bus.publish<qcode::tui::contract::CompactionResult>(result);
         finish_busy();
         } catch (const std::exception& e) {
             fail(std::string("Compaction failed: ") + e.what());
@@ -557,4 +557,4 @@ void run_compaction(
         });
 }
 } // namespace tui
-} // namespace ai
+} // namespace qcode

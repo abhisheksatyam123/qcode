@@ -2,7 +2,7 @@
 
 /// Langfuse tracing for ai-sdk-cpp.
 ///
-/// Records traces, generations, and tool spans for `ai::Client::generate_text`
+/// Records traces, generations, and tool spans for `qcode::Client::generate_text`
 /// calls and POSTs them to Langfuse's `/api/public/ingestion` endpoint.
 ///
 /// Usage:
@@ -10,7 +10,7 @@
 /// #include <qcode/qcode.h>
 /// #include <qcode/langfuse/tracer.h>
 ///
-/// ai::langfuse::Tracer tracer({
+/// qcode::langfuse::Tracer tracer({
 ///     .host = "https://cloud.langfuse.com",
 ///     .public_key = std::getenv("LANGFUSE_PUBLIC_KEY"),
 ///     .secret_key = std::getenv("LANGFUSE_SECRET_KEY"),
@@ -19,8 +19,8 @@
 /// auto trace = tracer.start_trace("sql-generation");
 /// trace->set_input(user_prompt);
 ///
-/// ai::GenerateOptions options{...};
-/// auto result = ai::langfuse::generate_text(client, std::move(options),
+/// qcode::GenerateOptions options{...};
+/// auto result = qcode::langfuse::generate_text(client, std::move(options),
 /// *trace);
 ///
 /// trace->set_output(result.text);
@@ -42,7 +42,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace langfuse {
 
 using JsonValue = nlohmann::json;
@@ -228,4 +228,4 @@ GenerateResult generate_text(
     const std::string& generation_name = "generate_text");
 
 }  // namespace langfuse
-}  // namespace ai
+}  // namespace qcode

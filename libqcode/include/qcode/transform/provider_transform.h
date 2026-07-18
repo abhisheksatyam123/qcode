@@ -12,7 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 
 using JsonValue = nlohmann::json;
 
@@ -96,4 +96,4 @@ bool is_opus_family(const std::string& model_id);
 std::string sdk_key(const std::string& provider_name);
 
 }  // namespace ProviderTransform
-}  // namespace ai
+}  // namespace qcode

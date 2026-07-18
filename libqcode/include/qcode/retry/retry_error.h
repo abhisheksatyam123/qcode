@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace retry {
 
 enum class RetryErrorReason {
@@ -48,4 +48,4 @@ class RetryError : public AIError {
 };
 
 }  // namespace retry
-}  // namespace ai
+}  // namespace qcode

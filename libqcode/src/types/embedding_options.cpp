@@ -1,7 +1,7 @@
 #include <qcode/types/embedding_options.h>
 
-namespace ai {
+namespace qcode {
 
 // Implementation details for EmbeddingOptions if needed
 
-}  // namespace ai
+}  // namespace qcode

@@ -8,7 +8,7 @@
 #include <qcode/state/state.h>
 #include <qcode/bus/port.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // ── Model selector entry (flat list across all providers) ──
@@ -77,4 +77,4 @@ void run_compaction(
 );
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

@@ -3,7 +3,7 @@
 #include "../../utils/response_utils.h"
 #include <qcode/logger/logger.h>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 GenerateResult AnthropicResponseParser::parse_success_completion_response(
@@ -152,4 +152,4 @@ FinishReason AnthropicResponseParser::parse_stop_reason(
 }
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

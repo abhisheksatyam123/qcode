@@ -12,7 +12,7 @@
 #include <clickhouse/client.h>
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // Utility function to generate random suffix for table names
@@ -422,4 +422,4 @@ INSTANTIATE_TEST_SUITE_P(Providers,
                          ::testing::Values("openai", "anthropic"));
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

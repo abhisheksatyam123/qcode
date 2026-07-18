@@ -1,7 +1,7 @@
 /**
- * Basic Tool Calling Example - AI SDK C++
+ * Basic Tool Calling Example - qcode
  *
- * This example demonstrates basic tool calling functionality using the AI SDK.
+ * This example demonstrates basic tool calling functionality using the qcode.
  * It shows how to:
  * - Define simple tools with schemas and execution functions
  * - Register tools with the generation options
@@ -23,15 +23,15 @@
 #include <qcode/tools/tool_factory.h>
 
 // Example tool function: Get weather information
-ai::JsonValue get_weather(const ai::JsonValue& args,
-                          const ai::ToolExecutionContext& context) {
+qcode::JsonValue get_weather(const qcode::JsonValue& args,
+                          const qcode::ToolExecutionContext& context) {
   std::string location = args["location"].get<std::string>();
 
   // Simulate weather API call
   std::srand(std::time(nullptr));
   int temperature = 60 + (std::rand() % 40);  // Random temp between 60-100°F
 
-  ai::JsonValue result = {{"location", location},
+  qcode::JsonValue result = {{"location", location},
                           {"temperature", temperature},
                           {"unit", "Fahrenheit"},
                           {"condition", "Partly cloudy"}};
@@ -41,11 +41,11 @@ ai::JsonValue get_weather(const ai::JsonValue& args,
 }
 
 // Example tool function: Get city attractions
-ai::JsonValue get_city_attractions(const ai::JsonValue& args,
-                                   const ai::ToolExecutionContext& context) {
+qcode::JsonValue get_city_attractions(const qcode::JsonValue& args,
+                                   const qcode::ToolExecutionContext& context) {
   std::string city = args["city"].get<std::string>();
 
-  ai::JsonValue attractions;
+  qcode::JsonValue attractions;
   if (city == "San Francisco") {
     attractions = {"Golden Gate Bridge", "Alcatraz Island", "Fisherman's Wharf",
                    "Lombard Street"};
@@ -59,38 +59,38 @@ ai::JsonValue get_city_attractions(const ai::JsonValue& args,
     attractions = {"Downtown area", "Local parks", "Historical sites"};
   }
 
-  ai::JsonValue result = {{"city", city}, {"attractions", attractions}};
+  qcode::JsonValue result = {{"city", city}, {"attractions", attractions}};
 
   std::cout << "🏛️  Attractions tool called for: " << city << std::endl;
   return result;
 }
 
 int main() {
-  std::cout << "AI SDK C++ - Basic Tool Calling Example\n";
+  std::cout << "qcode - Basic Tool Calling Example\n";
   std::cout << "=========================================\n\n";
 
   // Create OpenAI client
-  auto client = ai::openai::create_client();
+  auto client = qcode::openai::create_client();
 
   // Define tools using the helper function
-  auto weather_tool = ai::create_simple_tool(
+  auto weather_tool = qcode::create_simple_tool(
       "weather", "Get current weather information for a location",
       {{"location", "string"}}, get_weather);
 
-  auto attractions_tool = ai::create_simple_tool(
+  auto attractions_tool = qcode::create_simple_tool(
       "cityAttractions", "Get popular tourist attractions for a city",
       {{"city", "string"}}, get_city_attractions);
 
   // Create a tool set
-  ai::ToolSet tools = {{"weather", weather_tool},
+  qcode::ToolSet tools = {{"weather", weather_tool},
                        {"cityAttractions", attractions_tool}};
 
   // Example 1: Single tool call
   std::cout << "1. Single Tool Call Example:\n";
   std::cout << "Question: What's the weather like in San Francisco?\n\n";
 
-  ai::GenerateOptions options1;
-  options1.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options1;
+  options1.model = qcode::openai::models::kGpt54;
   options1.prompt = "What's the weather like in San Francisco?";
   options1.tools = tools;
   options1.max_tokens = 200;
@@ -126,8 +126,8 @@ int main() {
   std::cout << "Question: I'm planning a trip to San Francisco. What's the "
                "weather like and what attractions should I visit?\n\n";
 
-  ai::GenerateOptions options2;
-  options2.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options2;
+  options2.model = qcode::openai::models::kGpt54;
   options2.prompt =
       "I'm planning a trip to San Francisco. What's the weather like and what "
       "attractions should I visit?";
@@ -157,12 +157,12 @@ int main() {
   std::cout
       << "Question: Tell me about the weather (forced to use weather tool)\n\n";
 
-  ai::GenerateOptions options3;
-  options3.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options3;
+  options3.model = qcode::openai::models::kGpt54;
   options3.prompt = "Tell me about the weather in New York";
   options3.tools = tools;
   options3.tool_choice =
-      ai::ToolChoice::specific("weather");  // Force weather tool
+      qcode::ToolChoice::specific("weather");  // Force weather tool
   options3.max_tokens = 150;
 
   auto result3 = client.generate_text(options3);
@@ -179,11 +179,11 @@ int main() {
   std::cout << "4. No Tools Example:\n";
   std::cout << "Question: What's the weather like? (tools disabled)\n\n";
 
-  ai::GenerateOptions options4;
-  options4.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options4;
+  options4.model = qcode::openai::models::kGpt54;
   options4.prompt = "What's the weather like in Boston?";
   options4.tools = tools;
-  options4.tool_choice = ai::ToolChoice::none();  // Disable tools
+  options4.tool_choice = qcode::ToolChoice::none();  // Disable tools
   options4.max_tokens = 100;
 
   auto result4 = client.generate_text(options4);

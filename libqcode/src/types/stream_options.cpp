@@ -1,7 +1,7 @@
 #include <qcode/types/stream_options.h>
 
-namespace ai {
+namespace qcode {
 
 // Implementation details for StreamOptions if needed
 
-}  // namespace ai
+}  // namespace qcode

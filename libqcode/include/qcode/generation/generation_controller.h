@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // Snapshot of provider selection captured when a turn starts.
@@ -75,4 +75,4 @@ private:
 };
 
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

@@ -2,7 +2,7 @@
 
 #include "providers/base_provider_client.h"
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 
 class AntigravityResponseParser final : public providers::ResponseParser {
@@ -18,4 +18,4 @@ class AntigravityResponseParser final : public providers::ResponseParser {
 };
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

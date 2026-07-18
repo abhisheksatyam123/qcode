@@ -7,7 +7,7 @@
 #include <concepts>
 #include <any>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 namespace bus {
 
@@ -58,4 +58,4 @@ public:
 
 } // namespace bus
 } // namespace tui
-} // namespace ai
+} // namespace qcode

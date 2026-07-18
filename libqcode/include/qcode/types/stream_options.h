@@ -5,7 +5,7 @@
 #include <functional>
 #include <string>
 
-namespace ai {
+namespace qcode {
 
 struct StreamOptions : public GenerateOptions {
   explicit StreamOptions(
@@ -27,4 +27,4 @@ struct StreamOptions : public GenerateOptions {
   const std::function<void(const std::string&)> on_error;
 };
 
-}  // namespace ai
+}  // namespace qcode

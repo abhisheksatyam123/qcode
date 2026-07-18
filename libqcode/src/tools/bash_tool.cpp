@@ -20,7 +20,7 @@
 #include <sys/select.h>
 #include <fcntl.h>
 
-namespace ai {
+namespace qcode {
 
 // ── Background Registry ──
 
@@ -690,4 +690,4 @@ Tool BashTool::definition() {
   );
 }
 
-}  // namespace ai
+}  // namespace qcode

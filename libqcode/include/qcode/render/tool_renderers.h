@@ -3,7 +3,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // ── Tool icon lookup ──
@@ -52,4 +52,4 @@ ftxui::Element BashToolRender(const std::string& command,
                                const std::string& workdir = "");
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

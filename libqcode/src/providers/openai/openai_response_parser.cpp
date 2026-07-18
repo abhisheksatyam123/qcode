@@ -3,7 +3,7 @@
 #include "../../utils/response_utils.h"
 #include <qcode/logger/logger.h>
 
-namespace ai {
+namespace qcode {
 namespace openai {
 namespace {
 
@@ -287,4 +287,4 @@ FinishReason OpenAIResponseParser::parse_finish_reason(
 }
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

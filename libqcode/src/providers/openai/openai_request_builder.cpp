@@ -8,7 +8,7 @@
 #include <qcode/utils/random.h>
 #include "utils/message_utils.h"
 
-namespace ai {
+namespace qcode {
 
 
 namespace openai {
@@ -328,9 +328,9 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
     if (config.base_url.find("qpilot") != std::string::npos) {
       cli_name = "qpilot_cli";
     }
-    std::string turn_id = ai::utils::new_uuid();
-    std::string session_id = ai::utils::new_uuid();
-    std::string enc_key = ai::utils::random_hex(64);
+    std::string turn_id = qcode::utils::new_uuid();
+    std::string session_id = qcode::utils::new_uuid();
+    std::string enc_key = qcode::utils::random_hex(64);
 
     headers.emplace("originator", "codex_cli_rs");
     headers.emplace("version", "0.1.12");
@@ -350,4 +350,4 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
 }
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

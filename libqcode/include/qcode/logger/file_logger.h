@@ -9,7 +9,7 @@
 #include <mutex>
 #include <string>
 
-namespace ai {
+namespace qcode {
 
 /// File logger that writes to a specified path with timestamps,
 /// source location, and thread-id metadata
@@ -77,7 +77,7 @@ inline void install_file_logger(const std::string& path,
                                 logger::LogLevel level = logger::LogLevel::kLogLevelDebug) {
   auto file_logger = std::make_shared<FileLogger>(path, level);
   logger::install_logger(file_logger);
-  ai::logger::log_info("File logger installed: {}", path);
+  qcode::logger::log_info("File logger installed: {}", path);
 }
 
-}  // namespace ai
+}  // namespace qcode

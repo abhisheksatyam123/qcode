@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ai {
+namespace qcode {
 
 /// Check if an HTTP status code indicates a retryable error
 inline bool is_status_code_retryable(int status_code) {
@@ -13,7 +13,7 @@ inline bool is_status_code_retryable(int status_code) {
          status_code >= 500;    // Server errors (5xx)
 }
 
-/// Base class for all AI SDK errors
+/// Base class for all qcode errors
 class AIError : public std::runtime_error {
  public:
   explicit AIError(const std::string& message) : std::runtime_error(message) {}
@@ -34,7 +34,7 @@ class APIError : public AIError {
 
   /// Check if the error is retryable based on status code
   bool is_retryable() const {
-    return ai::is_status_code_retryable(status_code_);
+    return qcode::is_status_code_retryable(status_code_);
   }
 };
 
@@ -73,4 +73,4 @@ class ModelError : public AIError {
       : AIError("Model error: " + message) {}
 };
 
-}  // namespace ai
+}  // namespace qcode

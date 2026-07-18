@@ -5,7 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // ControllableAnthropicClient implementation
@@ -273,4 +273,4 @@ std::string AnthropicResponseBuilder::buildMaxTokensRequiredResponse() {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

@@ -7,7 +7,7 @@
 #include <random>
 #include <uuid.h>
 
-namespace ai {
+namespace qcode {
 namespace langfuse {
 
 namespace {
@@ -562,4 +562,4 @@ GenerateResult generate_text(Client& client,
 }
 
 }  // namespace langfuse
-}  // namespace ai
+}  // namespace qcode

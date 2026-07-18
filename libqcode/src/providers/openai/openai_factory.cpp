@@ -9,7 +9,7 @@
 #include <optional>
 #include <qcode/logger/logger.h>
 
-namespace ai {
+namespace qcode {
 namespace openai {
 
 namespace {
@@ -75,4 +75,4 @@ std::optional<Client> try_create_client() {
 }
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

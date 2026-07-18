@@ -5,7 +5,7 @@
 #include <chrono>
 #include <unordered_map>
 
-namespace ai {
+namespace qcode {
 namespace gemini {
 namespace {
 
@@ -308,4 +308,4 @@ nlohmann::json normalize_gemini_response(const nlohmann::json& response) {
 }
 
 }  // namespace gemini
-}  // namespace ai
+}  // namespace qcode

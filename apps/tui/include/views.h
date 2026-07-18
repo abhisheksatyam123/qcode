@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 ftxui::Element render_logo();
@@ -52,4 +52,4 @@ ftxui::Element render_toast_overlay(
 );
 
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

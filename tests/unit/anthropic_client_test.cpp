@@ -11,14 +11,14 @@
 // Test utilities
 #include "../utils/test_fixtures.h"
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 class AnthropicClientTest : public AnthropicTestFixture {
  protected:
   void SetUp() override {
     AnthropicTestFixture::SetUp();
-    client_ = std::make_unique<ai::anthropic::AnthropicClient>(
+    client_ = std::make_unique<qcode::anthropic::AnthropicClient>(
         kTestAnthropicApiKey, kTestAnthropicBaseUrl);
   }
 
@@ -27,12 +27,12 @@ class AnthropicClientTest : public AnthropicTestFixture {
     AnthropicTestFixture::TearDown();
   }
 
-  std::unique_ptr<ai::anthropic::AnthropicClient> client_;
+  std::unique_ptr<qcode::anthropic::AnthropicClient> client_;
 };
 
 // Constructor and Configuration Tests
 TEST_F(AnthropicClientTest, ConstructorWithValidApiKey) {
-  ai::anthropic::AnthropicClient client("sk-ant-validkey123",
+  qcode::anthropic::AnthropicClient client("sk-ant-validkey123",
                                         "https://api.anthropic.com");
 
   EXPECT_TRUE(client.is_valid());
@@ -48,14 +48,14 @@ TEST_F(AnthropicClientTest, ConstructorWithValidApiKey) {
 }
 
 TEST_F(AnthropicClientTest, ConstructorWithEmptyApiKey) {
-  ai::anthropic::AnthropicClient client("", "https://api.anthropic.com");
+  qcode::anthropic::AnthropicClient client("", "https://api.anthropic.com");
 
   // Real implementation should be invalid with empty API key
   EXPECT_FALSE(client.is_valid());
 }
 
 TEST_F(AnthropicClientTest, ConstructorWithCustomBaseUrl) {
-  ai::anthropic::AnthropicClient client("sk-ant-test",
+  qcode::anthropic::AnthropicClient client("sk-ant-test",
                                         "https://custom-anthropic.example.com");
 
   EXPECT_TRUE(client.is_valid());
@@ -69,7 +69,7 @@ TEST_F(AnthropicClientTest, ConstructorWithCustomBaseUrl) {
 }
 
 TEST_F(AnthropicClientTest, ConstructorWithHttpUrl) {
-  ai::anthropic::AnthropicClient client("sk-ant-test", "http://localhost:8080");
+  qcode::anthropic::AnthropicClient client("sk-ant-test", "http://localhost:8080");
 
   EXPECT_TRUE(client.is_valid());
   // Commented out internal method tests that don't exist:
@@ -102,7 +102,7 @@ TEST_F(AnthropicClientTest, DoesNotSupportInvalidModel) {
 
 // Text Generation Tests - Testing error handling without network calls
 TEST_F(AnthropicClientTest, GenerateTextWithInvalidApiKey) {
-  ai::anthropic::AnthropicClient client("invalid-key",
+  qcode::anthropic::AnthropicClient client("invalid-key",
                                         "https://api.anthropic.com");
   auto options = createBasicAnthropicOptions();
 
@@ -115,7 +115,7 @@ TEST_F(AnthropicClientTest, GenerateTextWithInvalidApiKey) {
 }
 
 TEST_F(AnthropicClientTest, GenerateTextWithBadUrl) {
-  ai::anthropic::AnthropicClient client(
+  qcode::anthropic::AnthropicClient client(
       "sk-ant-test", "http://invalid-url-that-does-not-exist.example");
   auto options = createBasicAnthropicOptions();
 
@@ -174,7 +174,7 @@ TEST_F(AnthropicClientTest, StreamTextBasicValidation) {
 TEST_F(AnthropicClientTest, TestInternalJsonBuilding) {
   auto options = createBasicAnthropicOptions();
 
-  // Test the internal JSON building method (exposed via AI_SDK_TESTING)
+  // Test the internal JSON building method (exposed via QCODE_TESTING)
   auto json = client_->build_request_json(options);
 
   EXPECT_EQ(json["model"], kTestAnthropicModel);
@@ -205,4 +205,4 @@ TEST_F(AnthropicClientTest, TestStopReasonParsing) {
 */
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

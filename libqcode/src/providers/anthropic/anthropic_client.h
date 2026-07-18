@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 class AnthropicClient : public providers::BaseProviderClient {
@@ -29,4 +29,4 @@ class AnthropicClient : public providers::BaseProviderClient {
 };
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

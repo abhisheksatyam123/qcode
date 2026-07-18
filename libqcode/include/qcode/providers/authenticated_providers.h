@@ -1,6 +1,6 @@
 #pragma once
 
-namespace ai {
+namespace qcode {
 namespace providers {
 
 // Register core providers plus auth-backed ones (Antigravity, Cursor)
@@ -8,4 +8,4 @@ namespace providers {
 void register_authenticated_providers();
 
 }  // namespace providers
-}  // namespace ai
+}  // namespace qcode

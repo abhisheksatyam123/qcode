@@ -14,7 +14,7 @@
 #include <stdexcept>
 #include <thread>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 namespace {
 
@@ -336,7 +336,7 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                  agent_base_url = agent_base_url_, 
                  aiserver_base_url = aiserver_base_url_,
                  builder = cursor_request_builder_]() {
-    ai::logger::set_thread_name("cursor-stream");
+    qcode::logger::set_thread_name("cursor-stream");
     try {
       const std::string request_id = random_id();
       const std::string run_sse_body =
@@ -531,8 +531,8 @@ bool CursorClient::supports_model(const std::string&) const { return true; }
 std::string CursorClient::default_model() const { return "default"; }
 
 std::string CursorClient::config_info() const {
-  return "Cursor (QCode AI SDK, HTTP/2 agent, automatic prompt caching)";
+  return "Cursor (QCode qcode, HTTP/2 agent, automatic prompt caching)";
 }
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

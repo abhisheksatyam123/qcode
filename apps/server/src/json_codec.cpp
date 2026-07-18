@@ -4,10 +4,10 @@
 #include <any>
 #include <typeindex>
 
-namespace ai {
+namespace qcode {
 namespace server {
 
-using namespace ai::tui::contract;
+using namespace qcode::tui::contract;
 
 nlohmann::json message_delta_to_json(const MessageDelta::Payload& p) {
     return {
@@ -105,7 +105,7 @@ std::optional<nlohmann::json> serialize_event(
     return std::nullopt;
 }
 
-bool dispatch_json(const nlohmann::json& msg, ai::tui::bus::BusPort& bus) {
+bool dispatch_json(const nlohmann::json& msg, qcode::tui::bus::BusPort& bus) {
     if (!msg.contains("type")) return false;
     std::string type = msg["type"];
 
@@ -138,4 +138,4 @@ bool dispatch_json(const nlohmann::json& msg, ai::tui::bus::BusPort& bus) {
 }
 
 } // namespace server
-} // namespace ai
+} // namespace qcode

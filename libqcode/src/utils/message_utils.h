@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace utils {
 
 // Convert MessageRole enum to string representation
@@ -22,4 +22,4 @@ inline std::string message_role_to_string(MessageRole role) {
 }
 
 }  // namespace utils
-}  // namespace ai
+}  // namespace qcode

@@ -17,7 +17,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // Test fixtures for tool calling functionality
@@ -137,8 +137,8 @@ class ToolCallingIntegrationTest
       const char* api_key = std::getenv("OPENAI_API_KEY");
       if (api_key) {
         use_real_api_ = true;
-        client_ = ai::openai::create_client(api_key);
-        model_ = ai::openai::models::kGpt4oMini;
+        client_ = qcode::openai::create_client(api_key);
+        model_ = qcode::openai::models::kGpt4oMini;
       } else {
         use_real_api_ = false;
       }
@@ -146,8 +146,8 @@ class ToolCallingIntegrationTest
       const char* api_key = std::getenv("ANTHROPIC_API_KEY");
       if (api_key) {
         use_real_api_ = true;
-        client_ = ai::anthropic::create_client(api_key);
-        model_ = ai::anthropic::models::kClaudeSonnet45;
+        client_ = qcode::anthropic::create_client(api_key);
+        model_ = qcode::anthropic::models::kClaudeSonnet45;
       } else {
         use_real_api_ = false;
       }
@@ -157,7 +157,7 @@ class ToolCallingIntegrationTest
   }
 
   bool use_real_api_ = false;
-  std::optional<ai::Client> client_;
+  std::optional<qcode::Client> client_;
   std::string model_;
   ToolSet tools_;
 };
@@ -633,8 +633,8 @@ class OpenAISpecificToolTest : public ::testing::Test {
     const char* api_key = std::getenv("OPENAI_API_KEY");
     if (api_key) {
       use_real_api_ = true;
-      client_ = ai::openai::create_client(api_key);
-      model_ = ai::openai::models::kGpt4oMini;
+      client_ = qcode::openai::create_client(api_key);
+      model_ = qcode::openai::models::kGpt4oMini;
     } else {
       use_real_api_ = false;
     }
@@ -643,7 +643,7 @@ class OpenAISpecificToolTest : public ::testing::Test {
   }
 
   bool use_real_api_ = false;
-  std::optional<ai::Client> client_;
+  std::optional<qcode::Client> client_;
   std::string model_;
   ToolSet tools_;
 };
@@ -672,8 +672,8 @@ class AnthropicSpecificToolTest : public ::testing::Test {
     const char* api_key = std::getenv("ANTHROPIC_API_KEY");
     if (api_key) {
       use_real_api_ = true;
-      client_ = ai::anthropic::create_client(api_key);
-      model_ = ai::anthropic::models::kClaudeSonnet45;
+      client_ = qcode::anthropic::create_client(api_key);
+      model_ = qcode::anthropic::models::kClaudeSonnet45;
     } else {
       use_real_api_ = false;
     }
@@ -682,7 +682,7 @@ class AnthropicSpecificToolTest : public ::testing::Test {
   }
 
   bool use_real_api_ = false;
-  std::optional<ai::Client> client_;
+  std::optional<qcode::Client> client_;
   std::string model_;
   ToolSet tools_;
 };
@@ -710,4 +710,4 @@ TEST_F(AnthropicSpecificToolTest, MaxTokensRequiredWithTools) {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

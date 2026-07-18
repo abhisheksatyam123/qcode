@@ -1,7 +1,7 @@
 #include <qcode/types/message.h>
 
-namespace ai {
+namespace qcode {
 
 // Implementation details for Messages if needed
 
-}  // namespace ai
+}  // namespace qcode

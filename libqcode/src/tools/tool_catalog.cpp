@@ -9,7 +9,7 @@
 #include <qcode/tools/bash_tool.h>
 #include <qcode/tools/task_tool.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 std::vector<ToolDescriptor> ToolCatalog::descriptors() {
@@ -81,13 +81,13 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
   return ss.str();
 }
 
-ai::ToolSet ToolCatalog::build_definitions(const ToolConfig& cfg) {
+qcode::ToolSet ToolCatalog::build_definitions(const ToolConfig& cfg) {
   LOG_DEBUG("Tools: build_definitions bash={} task={}", cfg.enable_bash, cfg.enable_task);
-  ai::ToolSet tools;
+  qcode::ToolSet tools;
   if (cfg.enable_bash)
-    tools["bash"] = ai::BashTool::definition();
+    tools["bash"] = qcode::BashTool::definition();
   if (cfg.enable_task)
-    tools["task"] = ai::TaskTool::definition();
+    tools["task"] = qcode::TaskTool::definition();
   return tools;
 }
 
@@ -312,4 +312,4 @@ std::string ToolCatalog::format_tool_result(const std::string& tool_name,
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

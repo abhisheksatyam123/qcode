@@ -1,8 +1,8 @@
 #pragma once
 
-#ifndef AI_SDK_HAS_OPENAI
+#ifndef QCODE_HAS_OPENAI
 #error \
-    "OpenAI component not available. Link with ai::openai or ai::sdk to use OpenAI functionality."
+    "OpenAI component not available. Link with qcode::openai or qcode::sdk to use OpenAI functionality."
 #endif
 
 #include <qcode/retry/retry_policy.h>
@@ -12,7 +12,7 @@
 #include <map>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace openai {
 
 struct CompatibleOptions {
@@ -117,4 +117,4 @@ Client create_client(const std::string& api_key,
 std::optional<Client> try_create_client();
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

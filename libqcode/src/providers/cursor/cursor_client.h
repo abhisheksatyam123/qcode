@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 // Cursor provider client.
@@ -52,4 +52,4 @@ class CursorClient : public providers::BaseProviderClient {
 };
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

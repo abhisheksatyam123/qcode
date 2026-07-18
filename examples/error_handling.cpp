@@ -1,7 +1,7 @@
 /**
- * Error Handling Example - AI SDK C++
+ * Error Handling Example - qcode
  *
- * This example demonstrates comprehensive error handling in the AI SDK.
+ * This example demonstrates comprehensive error handling in the qcode.
  * It shows how to:
  * - Handle different types of errors gracefully
  * - Use exception-safe patterns
@@ -24,8 +24,8 @@ void demonstrate_api_errors() {
 
   // Test with invalid API key
   std::cout << "Testing with invalid model name:\n";
-  auto client = ai::openai::create_client();
-  ai::GenerateOptions options1;
+  auto client = qcode::openai::create_client();
+  qcode::GenerateOptions options1;
   options1.model = "invalid-model-2024";
   options1.prompt = "Hello, world!";
   auto result1 = client.generate_text(options1);
@@ -36,8 +36,8 @@ void demonstrate_api_errors() {
 
   // Test with empty prompt
   std::cout << "Testing with empty prompt:\n";
-  ai::GenerateOptions options2;
-  options2.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options2;
+  options2.model = qcode::openai::models::kGpt54;
   options2.prompt = "";
   auto result2 = client.generate_text(options2);
 
@@ -47,7 +47,7 @@ void demonstrate_api_errors() {
 
   // Test with malformed model identifier
   std::cout << "Testing with malformed model identifier:\n";
-  ai::GenerateOptions options3;
+  qcode::GenerateOptions options3;
   options3.model = "";
   options3.prompt = "Hello, world!";
   auto result3 = client.generate_text(options3);
@@ -64,7 +64,7 @@ void demonstrate_validation() {
   // Test GenerateOptions validation
   std::cout << "Testing invalid GenerateOptions:\n";
 
-  ai::GenerateOptions invalid_options;
+  qcode::GenerateOptions invalid_options;
   // Leave model and prompt empty
 
   if (!invalid_options.is_valid()) {
@@ -72,7 +72,7 @@ void demonstrate_validation() {
         << "Options validation correctly failed (empty model and prompt)\n";
   }
 
-  auto client = ai::openai::create_client();
+  auto client = qcode::openai::create_client();
   auto result = client.generate_text(invalid_options);
   if (!result) {
     std::cout << "API call correctly failed: " << result.error_message()
@@ -80,8 +80,8 @@ void demonstrate_validation() {
   }
 
   // Test valid options
-  ai::GenerateOptions valid_options;
-  valid_options.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions valid_options;
+  valid_options.model = qcode::openai::models::kGpt54;
   valid_options.prompt = "Hello";
 
   if (valid_options.is_valid()) {
@@ -117,11 +117,11 @@ void demonstrate_streaming_errors() {
 
   std::cout << "Testing streaming with invalid model:\n";
 
-  auto client = ai::openai::create_client();
-  ai::GenerateOptions gen_options;
+  auto client = qcode::openai::create_client();
+  qcode::GenerateOptions gen_options;
   gen_options.model = "invalid-streaming-model";
   gen_options.prompt = "Tell me a story";
-  ai::StreamOptions stream_options(std::move(gen_options));
+  qcode::StreamOptions stream_options(std::move(gen_options));
   auto stream = client.stream_text(stream_options);
 
   // Check for immediate errors
@@ -152,7 +152,7 @@ void demonstrate_exception_handling() {
   try {
     // Most SDK functions use error return values instead of exceptions
     // for better performance and clearer error handling
-    std::cout << "The AI SDK uses error return values instead of exceptions\n";
+    std::cout << "The qcode uses error return values instead of exceptions\n";
     std::cout << "for most operations. This provides:\n";
     std::cout << "  - Better performance (no exception overhead)\n";
     std::cout << "  - Clearer error handling code\n";
@@ -163,10 +163,10 @@ void demonstrate_exception_handling() {
     std::cout << "Programming errors may still throw exceptions:\n";
 
     // Example: trying to use moved-from objects, null pointers, etc.
-    // These are typically ai::ConfigurationError or std::logic_error
+    // These are typically qcode::ConfigurationError or std::logic_error
 
-  } catch (const ai::AIError& e) {
-    std::cout << "AI SDK Error: " << e.what() << "\n";
+  } catch (const qcode::AIError& e) {
+    std::cout << "qcode Error: " << e.what() << "\n";
   } catch (const std::exception& e) {
     std::cout << "Standard exception: " << e.what() << "\n";
   }
@@ -181,17 +181,17 @@ void demonstrate_recovery_patterns() {
 
   std::vector<std::string> fallback_models = {
       "primary-model-v3",          // This will fail
-      ai::openai::models::kGpt54,  // This should work (if API key is available)
-      ai::openai::models::kGpt54Mini  // Faster fallback
+      qcode::openai::models::kGpt54,  // This should work (if API key is available)
+      qcode::openai::models::kGpt54Mini  // Faster fallback
   };
 
   std::string prompt = "What is machine learning?";
-  ai::GenerateResult final_result;
+  qcode::GenerateResult final_result;
 
   for (const auto& model : fallback_models) {
     std::cout << "Trying model: " << model << "... ";
-    auto client = ai::openai::create_client();
-    ai::GenerateOptions options;
+    auto client = qcode::openai::create_client();
+    qcode::GenerateOptions options;
     options.model = model;
     options.prompt = prompt;
     auto result = client.generate_text(options);
@@ -223,8 +223,8 @@ void demonstrate_recovery_patterns() {
     std::cout << "Attempt " << (retry_count + 1) << "/" << max_retries
               << "... ";
 
-    auto client = ai::openai::create_client();
-    ai::GenerateOptions options;
+    auto client = qcode::openai::create_client();
+    qcode::GenerateOptions options;
     options.model = "unstable-model";
     options.prompt = prompt;
     auto result = client.generate_text(options);
@@ -251,8 +251,8 @@ void demonstrate_recovery_patterns() {
   // Pattern 3: Graceful degradation
   std::cout << "Pattern 3 - Graceful degradation:\n";
 
-  auto client = ai::openai::create_client();
-  ai::GenerateOptions options;
+  auto client = qcode::openai::create_client();
+  qcode::GenerateOptions options;
   options.model = "advanced-model";
   options.prompt = "Explain quantum computing";
   auto result = client.generate_text(options);
@@ -275,8 +275,8 @@ void demonstrate_logging() {
   std::cout << "Best practices for error logging in AI applications:\n\n";
 
   std::cout << "1. Log error details but not sensitive data:\n";
-  auto client = ai::openai::create_client();
-  ai::GenerateOptions options;
+  auto client = qcode::openai::create_client();
+  qcode::GenerateOptions options;
   options.model = "";
   options.prompt = "Secret information";
   auto result = client.generate_text(options);
@@ -306,7 +306,7 @@ void demonstrate_logging() {
 }
 
 int main() {
-  std::cout << "AI SDK C++ - Error Handling Examples\n";
+  std::cout << "qcode - Error Handling Examples\n";
   std::cout << "=====================================\n\n";
 
   demonstrate_api_errors();

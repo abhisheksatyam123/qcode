@@ -5,7 +5,7 @@
 
 #include <memory>
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 
 namespace {
@@ -29,4 +29,4 @@ Client create_client(const std::string& api_key, const Options& options) {
 }
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

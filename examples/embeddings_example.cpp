@@ -1,7 +1,7 @@
 /**
- * Embeddings Example - AI SDK C++
+ * Embeddings Example - qcode
  *
- * This example demonstrates how to use the embeddings API with the AI SDK.
+ * This example demonstrates how to use the embeddings API with the qcode.
  * It shows how to:
  * - Generate embeddings for single and multiple texts
  * - Use different embedding models and dimensions
@@ -59,11 +59,11 @@ std::vector<double> extract_embedding(const nlohmann::json& data,
 }
 
 int main() {
-  std::cout << "AI SDK C++ - Embeddings Example\n";
+  std::cout << "qcode - Embeddings Example\n";
   std::cout << "================================\n\n";
 
   // Create OpenAI client
-  auto client = ai::openai::create_client();
+  auto client = qcode::openai::create_client();
   if (!client.is_valid()) {
     std::cerr << "Error: Failed to create OpenAI client. Make sure "
                  "OPENAI_API_KEY is set.\n";
@@ -75,7 +75,7 @@ int main() {
   std::cout << "Text: \"Hello, world!\"\n\n";
 
   nlohmann::json input1 = "Hello, world!";
-  ai::EmbeddingOptions options1("text-embedding-3-small", input1);
+  qcode::EmbeddingOptions options1("text-embedding-3-small", input1);
   auto result1 = client.embeddings(options1);
 
   if (result1) {
@@ -101,7 +101,7 @@ int main() {
       {"sunny day at the beach", "rainy afternoon in the city",
        "snowy night in the mountains"});
 
-  ai::EmbeddingOptions options2("text-embedding-3-small", input2);
+  qcode::EmbeddingOptions options2("text-embedding-3-small", input2);
   auto result2 = client.embeddings(options2);
 
   if (result2) {
@@ -121,7 +121,7 @@ int main() {
   // Example 3: Embedding with custom dimensions
   std::cout << "3. Custom Dimensions (512 instead of default 1536):\n";
   nlohmann::json input3 = "Testing custom dimensions";
-  ai::EmbeddingOptions options3("text-embedding-3-small", input3, 512);
+  qcode::EmbeddingOptions options3("text-embedding-3-small", input3, 512);
   auto result3 = client.embeddings(options3);
 
   if (result3) {
@@ -139,7 +139,7 @@ int main() {
   nlohmann::json input4 = nlohmann::json::array(
       {"cat", "kitten", "dog", "puppy", "car", "automobile"});
 
-  ai::EmbeddingOptions options4("text-embedding-3-small", input4);
+  qcode::EmbeddingOptions options4("text-embedding-3-small", input4);
   auto result4 = client.embeddings(options4);
 
   if (result4) {
@@ -179,7 +179,7 @@ int main() {
   nlohmann::json input5 = "Artificial intelligence and machine learning";
 
   // text-embedding-3-small
-  ai::EmbeddingOptions options5a("text-embedding-3-small", input5);
+  qcode::EmbeddingOptions options5a("text-embedding-3-small", input5);
   auto result5a = client.embeddings(options5a);
 
   if (result5a) {
@@ -191,7 +191,7 @@ int main() {
   }
 
   // text-embedding-3-large
-  ai::EmbeddingOptions options5b("text-embedding-3-large", input5);
+  qcode::EmbeddingOptions options5b("text-embedding-3-large", input5);
   auto result5b = client.embeddings(options5b);
 
   if (result5b) {
@@ -222,7 +222,7 @@ int main() {
     input6.push_back(doc);
   }
 
-  ai::EmbeddingOptions options6("text-embedding-3-small", input6);
+  qcode::EmbeddingOptions options6("text-embedding-3-small", input6);
   auto result6 = client.embeddings(options6);
 
   if (result6) {
@@ -263,7 +263,7 @@ int main() {
 
   // Test with invalid model
   nlohmann::json input7 = "Test error handling";
-  ai::EmbeddingOptions options7("invalid-model-name", input7);
+  qcode::EmbeddingOptions options7("invalid-model-name", input7);
   auto result7 = client.embeddings(options7);
 
   if (!result7) {

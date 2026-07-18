@@ -7,13 +7,13 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 
 // Antigravity (Google Vertex / Gemini) provider.
 //
 // Reuses OpenAIResponseParser (which already understands the Gemini generateContent
-// payload via ai::gemini::normalize_gemini_response) and OpenAIStreamImpl for SSE.
+// payload via qcode::gemini::normalize_gemini_response) and OpenAIStreamImpl for SSE.
 // The Google Vertex endpoints (:generateContent / :streamGenerateContent?alt=sse)
 // are fixed here rather than sniffed from the base URL.
 class AntigravityClient : public providers::BaseProviderClient {
@@ -37,4 +37,4 @@ class AntigravityClient : public providers::BaseProviderClient {
 };
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

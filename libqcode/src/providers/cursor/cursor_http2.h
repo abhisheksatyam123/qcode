@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 // Minimal HTTP/2 POST helper. Cursor's agent RunSSE endpoint rejects HTTP/1.1
@@ -41,4 +41,4 @@ Http2PostResult http2_post_stream(
     int timeout_sec = 120);
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

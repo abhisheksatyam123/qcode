@@ -4,7 +4,7 @@
 
 #include <qcode/tools/tool_catalog.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // ── System prompt builder ──
@@ -24,4 +24,4 @@ class SystemPrompt {
 };
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

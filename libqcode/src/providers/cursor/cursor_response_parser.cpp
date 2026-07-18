@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 namespace {
@@ -311,4 +311,4 @@ std::string CursorResponseParser::parse_agent_stream_body(
 }
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

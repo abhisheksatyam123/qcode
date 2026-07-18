@@ -6,7 +6,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace utils {
 
 // Convert `in` to valid UTF-8 by replacing any invalid byte sequence with the
@@ -116,4 +116,4 @@ inline void sanitize_json_strings(nlohmann::json& value) {
 }
 
 }  // namespace utils
-}  // namespace ai
+}  // namespace qcode

@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 namespace bus {
 
@@ -202,4 +202,4 @@ size_t BusRuntime::pending() const {
 
 } // namespace bus
 } // namespace tui
-} // namespace ai
+} // namespace qcode

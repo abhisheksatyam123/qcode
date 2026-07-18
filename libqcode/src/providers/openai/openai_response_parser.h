@@ -5,7 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace openai {
 
 class OpenAIResponseParser : public providers::ResponseParser {
@@ -26,4 +26,4 @@ class OpenAIResponseParser : public providers::ResponseParser {
 };
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

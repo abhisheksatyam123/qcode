@@ -8,7 +8,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 // Builds Cursor (protobuf / connect-es) requests.
@@ -49,4 +49,4 @@ class CursorRequestBuilder : public providers::RequestBuilder {
 };
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

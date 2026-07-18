@@ -5,7 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // ControllableOpenAIClient implementation
@@ -255,4 +255,4 @@ std::string ResponseBuilder::buildModelNotFoundResponse() {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

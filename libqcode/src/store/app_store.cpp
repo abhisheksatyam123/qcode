@@ -8,7 +8,7 @@
 #include <qcode/logger/logger.h>
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 AppStore::AppStore(bus::BusPort& bus) : bus_(bus) {
@@ -49,11 +49,11 @@ void AppStore::expire_toasts() {
 
 void AppStore::append_chat_message(const std::string& role, const std::string& text) {
     if (role == "User") {
-        state_.messages_history->emplace_back(ai::Message::user(text));
+        state_.messages_history->emplace_back(qcode::Message::user(text));
     } else if (role == "Assistant") {
-        state_.messages_history->emplace_back(ai::Message::assistant(text));
+        state_.messages_history->emplace_back(qcode::Message::assistant(text));
     } else {
-        state_.messages_history->emplace_back(ai::Message::system(text));
+        state_.messages_history->emplace_back(qcode::Message::system(text));
     }
     notify();
 }
@@ -63,23 +63,23 @@ void AppStore::append_assistant_chunk(const std::string& chunk) {
 
     if (!state_.messages_history->empty()) {
         auto& last = state_.messages_history->back();
-        if (last.role == ai::kMessageRoleAssistant) {
+        if (last.role == qcode::kMessageRoleAssistant) {
             bool found_text = false;
             for (auto& part : last.content) {
-                if (auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                if (auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                     tp->text += chunk;
                     found_text = true;
                     break;
                 }
             }
             if (!found_text) {
-                last.content.emplace_back(ai::TextContentPart{chunk});
+                last.content.emplace_back(qcode::TextContentPart{chunk});
             }
         } else {
-            state_.messages_history->emplace_back(ai::Message::assistant(chunk));
+            state_.messages_history->emplace_back(qcode::Message::assistant(chunk));
         }
     } else {
-        state_.messages_history->emplace_back(ai::Message::assistant(chunk));
+        state_.messages_history->emplace_back(qcode::Message::assistant(chunk));
     }
     notify();
 }
@@ -87,15 +87,15 @@ void AppStore::append_assistant_chunk(const std::string& chunk) {
 void AppStore::append_reasoning(const std::string& chunk,
                                 const std::string& signature) {
     if (state_.messages_history->empty() ||
-        state_.messages_history->back().role != ai::kMessageRoleAssistant) {
+        state_.messages_history->back().role != qcode::kMessageRoleAssistant) {
         if (chunk.empty()) return;
         state_.messages_history->emplace_back(
-            ai::Message::assistant_with_reasoning("", chunk, signature));
+            qcode::Message::assistant_with_reasoning("", chunk, signature));
     } else {
         auto& last = state_.messages_history->back();
         bool found = false;
         for (auto& part : last.content) {
-            if (auto* rp = std::get_if<ai::ReasoningContentPart>(&part)) {
+            if (auto* rp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                 rp->text += chunk;
                 if (!signature.empty()) rp->signature = signature;
                 found = true;
@@ -104,7 +104,7 @@ void AppStore::append_reasoning(const std::string& chunk,
         }
         if (!found && !chunk.empty()) {
             last.content.emplace_back(
-                ai::ReasoningContentPart{chunk, signature});
+                qcode::ReasoningContentPart{chunk, signature});
         }
     }
     notify();
@@ -113,11 +113,11 @@ void AppStore::append_reasoning(const std::string& chunk,
 std::string AppStore::latest_assistant_text() const {
     for (auto message = state_.messages_history->rbegin();
          message != state_.messages_history->rend(); ++message) {
-        if (message->role != ai::kMessageRoleAssistant) continue;
+        if (message->role != qcode::kMessageRoleAssistant) continue;
         std::string text;
         for (const auto& part : message->content) {
             if (const auto* content =
-                    std::get_if<ai::TextContentPart>(&part)) {
+                    std::get_if<qcode::TextContentPart>(&part)) {
                 text += content->text;
             }
         }
@@ -134,7 +134,7 @@ void AppStore::set_generating(bool v) {
 void AppStore::set_session_id(const std::string& id) {
     *state_.session_id = id;
     if (state_.session_title) {
-        *state_.session_title = ai::tui::session::get_session_title(id);
+        *state_.session_title = qcode::tui::session::get_session_title(id);
     }
     notify();
 }
@@ -293,7 +293,7 @@ void AppStore::wire() {
         if (p.done) {
             set_generating(false);
             const auto final_text = latest_assistant_text();
-            ai::tui::session::save_message(p.session_id, "Assistant", final_text);
+            qcode::tui::session::save_message(p.session_id, "Assistant", final_text);
         }
     }));
     subs_.push_back(bus_.subscribe<ReasoningDelta>([this](const ReasoningDelta::Payload& p) {
@@ -302,7 +302,7 @@ void AppStore::wire() {
     // ... remaining wire implementation same as before
     subs_.push_back(bus_.subscribe<CompactionResult>([this](const CompactionResult::Payload& p) {
         if (!p.error.empty()) {
-            state_.messages_history->emplace_back(ai::Message::system(p.error));
+            state_.messages_history->emplace_back(qcode::Message::system(p.error));
             add_toast(p.error, "error", 5000);
             set_status("idle");
             notify();
@@ -321,14 +321,14 @@ void AppStore::wire() {
         // Older turns are dropped from the UI and from subsequent model context
         // (apply_compaction_cutoff also cuts at the summary marker).
         const auto& hist = *state_.messages_history;
-        ai::Messages new_messages;
-        new_messages.push_back(ai::Message::system(note));
-        new_messages.push_back(ai::Message::user(summary_body));
+        qcode::Messages new_messages;
+        new_messages.push_back(qcode::Message::system(note));
+        new_messages.push_back(qcode::Message::user(summary_body));
 
-        auto is_prior_compaction_msg = [](const ai::Message& m) {
-            if (m.role == ai::kMessageRoleSystem) {
+        auto is_prior_compaction_msg = [](const qcode::Message& m) {
+            if (m.role == qcode::kMessageRoleSystem) {
                 for (const auto& part : m.content) {
-                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                    if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                         if (tp->text.find("Conversation compacted:") !=
                             std::string::npos) {
                             return true;
@@ -336,9 +336,9 @@ void AppStore::wire() {
                     }
                 }
             }
-            if (m.role == ai::kMessageRoleUser) {
+            if (m.role == qcode::kMessageRoleUser) {
                 for (const auto& part : m.content) {
-                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                    if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                         if (tp->text.find(
                                 "This conversation was compacted into a "
                                 "handoff packet") != std::string::npos) {
@@ -359,15 +359,15 @@ void AppStore::wire() {
             new_messages.push_back(hist[i]);
         }
 
-        state_.messages_history = std::make_shared<ai::Messages>(new_messages);
+        state_.messages_history = std::make_shared<qcode::Messages>(new_messages);
 
         // Context window resets to the compacted set (system notes are stripped
         // before generation; estimate matches what apply_compaction_cutoff keeps).
-        ai::Messages context_view = ai::apply_compaction_cutoff(*state_.messages_history);
+        qcode::Messages context_view = qcode::apply_compaction_cutoff(*state_.messages_history);
         context_view.erase(
             std::remove_if(context_view.begin(), context_view.end(),
-                           [](const ai::Message& m) {
-                               return m.role == ai::kMessageRoleSystem;
+                           [](const qcode::Message& m) {
+                               return m.role == qcode::kMessageRoleSystem;
                            }),
             context_view.end());
         const int reset_tokens = static_cast<int>(estimate_tokens(context_view));
@@ -381,7 +381,7 @@ void AppStore::wire() {
         bus_.publish<ContextSizeUpdated>({.context_tokens = reset_tokens});
 
         // Overwrite history in SQLite database to persist the compact set
-        ai::tui::session::overwrite_session_history(*state_.session_id, *state_.messages_history);
+        qcode::tui::session::overwrite_session_history(*state_.session_id, *state_.messages_history);
 
         add_toast("Compaction complete", "success", 3000);
         set_status("idle");
@@ -396,22 +396,22 @@ void AppStore::wire() {
         // Embed the unique tool_call_id so ToolCallCompleted can pair the result
         // with the exact started entry. Matching by tool_name alone is fragile
         // when multiple calls of the same tool run concurrently.
-        ai::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
+        qcode::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
         state_.messages_history->emplace_back(
-            ai::Message::assistant_with_tools("", {tc_part}));
+            qcode::Message::assistant_with_tools("", {tc_part}));
         // Structured JSON so session reload can rebuild pretty tool blocks.
         nlohmann::json call_json = {
             {"id", p.tool_call_id},
             {"name", p.tool_name},
             {"arguments", p.arguments},
         };
-        ai::tui::session::save_message(p.session_id, "ToolCall", call_json.dump());
+        qcode::tui::session::save_message(p.session_id, "ToolCall", call_json.dump());
         notify();
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
         state_.messages_history->emplace_back(
-            ai::Message::tool_results(
+            qcode::Message::tool_results(
                 {{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
         ++*state_.tool_call_count;
         *state_.total_tool_time_ms += p.duration_ms;
@@ -422,7 +422,7 @@ void AppStore::wire() {
             {"is_error", p.is_error},
             {"duration_ms", p.duration_ms},
         };
-        ai::tui::session::save_message(p.session_id, "ToolResult", result_json.dump());
+        qcode::tui::session::save_message(p.session_id, "ToolResult", result_json.dump());
         notify();
     }));
 
@@ -455,7 +455,7 @@ void AppStore::wire() {
                 msg = "Error: " + msg;
             }
             append_chat_message("System", msg);
-            ai::tui::session::save_message(p.session_id, "System", msg);
+            qcode::tui::session::save_message(p.session_id, "System", msg);
         }
     }));
 
@@ -494,4 +494,4 @@ void AppStore::notify_now() {
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

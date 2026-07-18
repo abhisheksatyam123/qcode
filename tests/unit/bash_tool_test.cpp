@@ -7,7 +7,7 @@
 #include <string>
 #include <unistd.h>
 
-namespace ai {
+namespace qcode {
 namespace {
 
 TEST(BashToolTest, SpillsLargeOutputWithoutReturningItInline) {
@@ -92,4 +92,4 @@ TEST(BashToolTest, TruncatesAtValidUtf8Boundary) {
 }
 
 }  // namespace
-}  // namespace ai
+}  // namespace qcode

@@ -1,8 +1,8 @@
 #pragma once
 
-#ifndef AI_SDK_HAS_ANTIGRAVITY
+#ifndef QCODE_HAS_ANTIGRAVITY
 #error \
-    "Antigravity component not available. Link with ai::antigravity or ai::sdk to use Antigravity functionality."
+    "Antigravity component not available. Link with qcode::antigravity or qcode::sdk to use Antigravity functionality."
 #endif
 
 #include <qcode/retry/retry_policy.h>
@@ -11,7 +11,7 @@
 #include <optional>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 
 struct Options {
@@ -33,4 +33,4 @@ Client create_client(const std::string& api_key, const std::string& base_url);
 Client create_client(const std::string& api_key, const Options& options);
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

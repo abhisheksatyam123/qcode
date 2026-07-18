@@ -8,7 +8,7 @@
 #include <vector>
 #include <random>
 
-namespace ai {
+namespace qcode {
 namespace retry {
 
 struct RetryConfig {
@@ -73,4 +73,4 @@ class RetryPolicy {
 };
 
 }  // namespace retry
-}  // namespace ai
+}  // namespace qcode

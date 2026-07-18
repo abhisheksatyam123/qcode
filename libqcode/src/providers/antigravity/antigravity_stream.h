@@ -2,7 +2,7 @@
 
 #include "providers/openai/openai_stream.h"
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 
 class AntigravityStreamImpl final : public openai::OpenAIStreamImpl {
@@ -12,4 +12,4 @@ class AntigravityStreamImpl final : public openai::OpenAIStreamImpl {
 };
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

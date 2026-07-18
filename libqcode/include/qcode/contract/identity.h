@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 namespace contract {
 
@@ -35,4 +35,4 @@ inline constexpr ModuleIdentity kBackendIdentity = {
 
 } // namespace contract
 } // namespace tui
-} // namespace ai
+} // namespace qcode

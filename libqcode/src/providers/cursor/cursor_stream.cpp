@@ -1,6 +1,6 @@
 #include "cursor_stream.h"
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 
 CursorBufferedStream::CursorBufferedStream() = default;
@@ -60,4 +60,4 @@ void CursorBufferedStream::start_thread(std::thread thread) {
 }
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

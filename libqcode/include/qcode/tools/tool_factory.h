@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 
 /// Build a tool with basic parameter schema validation.
 Tool create_simple_tool(const std::string& name,
@@ -34,4 +34,4 @@ ToolCall create_tool_call(const std::string& tool_name,
 /// Generate a unique tool call id.
 std::string generate_tool_call_id();
 
-}  // namespace ai
+}  // namespace qcode

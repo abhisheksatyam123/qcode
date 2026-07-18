@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 
 class Client {
  public:
@@ -85,4 +85,4 @@ class Client {
   std::unique_ptr<Client> pimpl_;
 };
 
-}  // namespace ai
+}  // namespace qcode

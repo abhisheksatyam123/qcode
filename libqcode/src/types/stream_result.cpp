@@ -1,6 +1,6 @@
 #include <qcode/types/stream_result.h>
 
-namespace ai {
+namespace qcode {
 
 // StreamResult iterator implementation
 StreamResult::iterator::iterator(const StreamResult* stream, bool end)
@@ -107,4 +107,4 @@ void StreamResult::stop() {
   }
 }
 
-}  // namespace ai
+}  // namespace qcode

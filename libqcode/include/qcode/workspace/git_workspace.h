@@ -2,11 +2,11 @@
 
 #include <qcode/state/state.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 /// Refresh ChatState.file_changes from `git diff` / `git status`.
 void update_modified_files(ChatState& state);
 
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

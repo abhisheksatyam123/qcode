@@ -12,7 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace providers {
 
 // Configuration for a provider
@@ -81,4 +81,4 @@ class BaseProviderClient : public Client {
 };
 
 }  // namespace providers
-}  // namespace ai
+}  // namespace qcode

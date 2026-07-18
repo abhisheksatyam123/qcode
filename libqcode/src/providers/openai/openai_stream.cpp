@@ -22,7 +22,7 @@ constexpr auto kConnectionTimeout = 30;  // seconds
 constexpr auto kReadTimeout = 300;       // 5 minutes for long generations
 }  // namespace
 
-namespace ai {
+namespace qcode {
 namespace openai {
 
 OpenAIStreamImpl::~OpenAIStreamImpl() {
@@ -444,4 +444,4 @@ Usage OpenAIStreamImpl::parse_usage(const nlohmann::json& usage_json) {
 }
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

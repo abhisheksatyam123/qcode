@@ -10,7 +10,7 @@
 #include <chrono>
 #include <utility>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 GenerationController::GenerationController(
@@ -136,7 +136,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
                     store_ptr->set_status("idle");
                 });
 
-            ai::logger::set_thread_name("llm");
+            qcode::logger::set_thread_name("llm");
             GenerationService backend{*bus_ptr, providers_copy};
             if (!app_running->load() || stop_token.stop_requested()) {
                 return;
@@ -155,12 +155,12 @@ void GenerationController::spawn_unlocked(std::string prompt,
             // Snapshot history via shared_ptr so compaction cannot race the
             // vector while we copy.
             const auto history = state_ptr->messages_history;
-            ai::Messages gen_messages = history ? *history : ai::Messages{};
-            gen_messages = ai::apply_compaction_cutoff(gen_messages);
+            qcode::Messages gen_messages = history ? *history : qcode::Messages{};
+            gen_messages = qcode::apply_compaction_cutoff(gen_messages);
             gen_messages.erase(
                 std::remove_if(gen_messages.begin(), gen_messages.end(),
-                               [](const ai::Message& message) {
-                                   return message.role == ai::kMessageRoleSystem;
+                               [](const qcode::Message& message) {
+                                   return message.role == qcode::kMessageRoleSystem;
                                }),
                 gen_messages.end());
 
@@ -269,4 +269,4 @@ void GenerationController::shutdown() {
 }
 
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

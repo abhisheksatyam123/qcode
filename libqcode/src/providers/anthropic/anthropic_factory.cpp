@@ -8,7 +8,7 @@
 #include <optional>
 #include <qcode/logger/logger.h>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 namespace {
@@ -60,4 +60,4 @@ std::optional<Client> try_create_client() {
 }
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

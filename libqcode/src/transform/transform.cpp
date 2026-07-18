@@ -6,7 +6,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace ai {
+namespace qcode {
 namespace ProviderTransform {
 
 // ── Helpers ──
@@ -213,4 +213,4 @@ std::string sdk_key(const std::string& provider_name) {
 }
 
 }  // namespace ProviderTransform
-}  // namespace ai
+}  // namespace qcode

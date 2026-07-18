@@ -5,7 +5,7 @@
 
 #include <unordered_set>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 nlohmann::json AnthropicRequestBuilder::build_request_json(
@@ -94,7 +94,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
           if (options.budget_tokens.has_value() && msg.has_reasoning()) {
             for (const auto& part : msg.content) {
               if (const auto* rp =
-                      std::get_if<ai::ReasoningContentPart>(&part)) {
+                      std::get_if<qcode::ReasoningContentPart>(&part)) {
                 if (!rp->text.empty()) {
                   nlohmann::json thinking;
                   thinking["type"] = "thinking";
@@ -231,4 +231,4 @@ httplib::Headers AnthropicRequestBuilder::build_headers(
 }
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

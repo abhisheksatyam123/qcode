@@ -32,10 +32,10 @@
 /// ```cpp
 /// #include <qcode/core_api.h>
 ///
-/// // Use core types like ai::GenerateOptions, ai::Message, etc.
-/// ai::GenerateOptions options{
+/// // Use core types like qcode::GenerateOptions, qcode::Message, etc.
+/// qcode::GenerateOptions options{
 ///     .model = "some-model",
 ///     .prompt = "Hello world"
 /// };
 /// ```
-namespace ai {}
+namespace qcode {}

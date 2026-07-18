@@ -3,7 +3,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace gemini {
 
 /// Random helpers (UUID v4 + hex). Shared by the Antigravity/Vertex envelope
@@ -36,4 +36,4 @@ nlohmann::json unwrap_envelope(const nlohmann::json& json);
 nlohmann::json normalize_gemini_response(const nlohmann::json& response);
 
 }  // namespace gemini
-}  // namespace ai
+}  // namespace qcode

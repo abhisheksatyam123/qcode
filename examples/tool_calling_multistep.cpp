@@ -1,5 +1,5 @@
 /**
- * Multi-Step Tool Calling Example - AI SDK C++
+ * Multi-Step Tool Calling Example - qcode
  *
  * This example demonstrates multi-step tool calling functionality.
  * It shows how to:
@@ -24,7 +24,7 @@
 #include <qcode/tools/tool_factory.h>
 
 // Simulated database of user profiles
-std::map<std::string, ai::JsonValue> user_database = {
+std::map<std::string, qcode::JsonValue> user_database = {
     {"alice",
      {{"name", "Alice Johnson"},
       {"email", "alice@example.com"},
@@ -39,8 +39,8 @@ std::map<std::string, ai::JsonValue> user_database = {
       {"city", "Paris"}}}};
 
 // Tool: Look up user information
-ai::JsonValue lookup_user(const ai::JsonValue& args,
-                          const ai::ToolExecutionContext& context) {
+qcode::JsonValue lookup_user(const qcode::JsonValue& args,
+                          const qcode::ToolExecutionContext& context) {
   std::string user_id = args["user_id"].get<std::string>();
 
   std::cout << "🔍 Looking up user: " << user_id << std::endl;
@@ -49,13 +49,13 @@ ai::JsonValue lookup_user(const ai::JsonValue& args,
   if (it != user_database.end()) {
     return it->second;
   } else {
-    return ai::JsonValue{{"error", "User not found"}};
+    return qcode::JsonValue{{"error", "User not found"}};
   }
 }
 
 // Tool: Get weather for a location
-ai::JsonValue get_weather(const ai::JsonValue& args,
-                          const ai::ToolExecutionContext& context) {
+qcode::JsonValue get_weather(const qcode::JsonValue& args,
+                          const qcode::ToolExecutionContext& context) {
   std::string location = args["location"].get<std::string>();
 
   std::cout << "🌤️  Getting weather for: " << location << std::endl;
@@ -68,15 +68,15 @@ ai::JsonValue get_weather(const ai::JsonValue& args,
                                          "Partly cloudy"};
   std::string condition = conditions[std::rand() % conditions.size()];
 
-  return ai::JsonValue{{"location", location},
+  return qcode::JsonValue{{"location", location},
                        {"temperature", temperature},
                        {"condition", condition},
                        {"unit", "Fahrenheit"}};
 }
 
 // Tool: Send email notification
-ai::JsonValue send_email(const ai::JsonValue& args,
-                         const ai::ToolExecutionContext& context) {
+qcode::JsonValue send_email(const qcode::JsonValue& args,
+                         const qcode::ToolExecutionContext& context) {
   std::string to = args["to"].get<std::string>();
   std::string subject = args["subject"].get<std::string>();
   std::string body = args["body"].get<std::string>();
@@ -85,14 +85,14 @@ ai::JsonValue send_email(const ai::JsonValue& args,
   std::cout << "   Subject: " << subject << std::endl;
 
   // Simulate email sending
-  return ai::JsonValue{{"status", "sent"},
+  return qcode::JsonValue{{"status", "sent"},
                        {"message_id", "msg_" + std::to_string(std::rand())},
                        {"recipient", to}};
 }
 
 // Tool: Get city recommendations
-ai::JsonValue get_recommendations(const ai::JsonValue& args,
-                                  const ai::ToolExecutionContext& context) {
+qcode::JsonValue get_recommendations(const qcode::JsonValue& args,
+                                  const qcode::ToolExecutionContext& context) {
   std::string city = args["city"].get<std::string>();
   std::string weather_condition =
       args.contains("weather") ? args["weather"].get<std::string>() : "unknown";
@@ -105,68 +105,68 @@ ai::JsonValue get_recommendations(const ai::JsonValue& args,
   std::vector<std::string> outdoor_activities = {
       "Walk in parks", "Visit landmarks", "Take photos", "Outdoor dining"};
 
-  ai::JsonValue activities;
+  qcode::JsonValue activities;
   if (weather_condition == "Rainy") {
     activities = indoor_activities;
   } else {
     // Mix of indoor and outdoor
-    activities = ai::JsonValue::array();
+    activities = qcode::JsonValue::array();
     for (int i = 0; i < 2; ++i) {
       activities.push_back(indoor_activities[i]);
       activities.push_back(outdoor_activities[i]);
     }
   }
 
-  return ai::JsonValue{{"city", city},
+  return qcode::JsonValue{{"city", city},
                        {"weather_condition", weather_condition},
                        {"recommendations", activities}};
 }
 
 int main() {
-  std::cout << "AI SDK C++ - Multi-Step Tool Calling Example\n";
+  std::cout << "qcode - Multi-Step Tool Calling Example\n";
   std::cout << "=============================================\n\n";
 
   // Create OpenAI client
-  auto client = ai::openai::create_client();
+  auto client = qcode::openai::create_client();
 
   // Define tools
-  ai::ToolSet tools = {
-      {"lookup_user", ai::create_simple_tool(
+  qcode::ToolSet tools = {
+      {"lookup_user", qcode::create_simple_tool(
                           "lookup_user", "Look up user information by user ID",
                           {{"user_id", "string"}}, lookup_user)},
-      {"get_weather", ai::create_simple_tool(
+      {"get_weather", qcode::create_simple_tool(
                           "get_weather", "Get current weather for a location",
                           {{"location", "string"}}, get_weather)},
       {"send_email",
-       ai::create_simple_tool(
+       qcode::create_simple_tool(
            "send_email", "Send an email notification",
            {{"to", "string"}, {"subject", "string"}, {"body", "string"}},
            send_email)},
       {"get_recommendations",
-       ai::create_simple_tool("get_recommendations",
+       qcode::create_simple_tool("get_recommendations",
                               "Get activity recommendations for a city, "
                               "optionally considering weather",
                               {{"city", "string"}, {"weather", "string"}},
                               get_recommendations)}};
 
   // Step callback to monitor progress
-  auto step_callback = [](const ai::GenerateStep& step) {
+  auto step_callback = [](const qcode::GenerateStep& step) {
     std::cout << "\n--- Step Completed ---\n";
     std::cout << "Text: " << step.text << "\n";
     std::cout << "Tool calls: " << step.tool_calls.size() << "\n";
     std::cout << "Tool results: " << step.tool_results.size() << "\n";
     std::cout << "Finish reason: ";
     switch (step.finish_reason) {
-      case ai::kFinishReasonStop:
+      case qcode::kFinishReasonStop:
         std::cout << "stop";
         break;
-      case ai::kFinishReasonLength:
+      case qcode::kFinishReasonLength:
         std::cout << "length";
         break;
-      case ai::kFinishReasonToolCalls:
+      case qcode::kFinishReasonToolCalls:
         std::cout << "tool_calls";
         break;
-      case ai::kFinishReasonError:
+      case qcode::kFinishReasonError:
         std::cout << "error";
         break;
       default:
@@ -181,8 +181,8 @@ int main() {
   std::cout << "Task: Look up user 'alice', get weather for her city, get "
                "recommendations, and send her an email\n\n";
 
-  ai::GenerateOptions options1;
-  options1.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options1;
+  options1.model = qcode::openai::models::kGpt54;
   options1.prompt = R"(
     Please help me with this task:
     1. Look up the user 'alice' to get her information
@@ -234,8 +234,8 @@ int main() {
   std::cout
       << "Task: Look up user 'bob' and create a personalized travel report\n\n";
 
-  ai::GenerateOptions options2;
-  options2.model = ai::openai::models::kGpt54;
+  qcode::GenerateOptions options2;
+  options2.model = qcode::openai::models::kGpt54;
   options2.prompt = R"(
     Create a personalized travel report for user 'bob':
     1. Look up Bob's profile to get his location

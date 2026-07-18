@@ -1,8 +1,8 @@
 #pragma once
 
-#ifndef AI_SDK_HAS_ANTHROPIC
+#ifndef QCODE_HAS_ANTHROPIC
 #error \
-    "Anthropic component not available. Link with ai::anthropic or ai::sdk to use Anthropic functionality."
+    "Anthropic component not available. Link with qcode::anthropic or qcode::sdk to use Anthropic functionality."
 #endif
 
 #include <qcode/types/client.h>
@@ -10,7 +10,7 @@
 #include <optional>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 namespace models {
@@ -64,4 +64,4 @@ Client create_client(const std::string& api_key, const std::string& base_url);
 std::optional<Client> try_create_client();
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

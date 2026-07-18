@@ -11,7 +11,7 @@
 // Note: These tests connect to the real OpenAI API when OPENAI_API_KEY is set
 // Otherwise they are skipped
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 class OpenAIEmbeddingsIntegrationTest : public AITestFixture {
@@ -24,7 +24,7 @@ class OpenAIEmbeddingsIntegrationTest : public AITestFixture {
 
     if (api_key != nullptr) {
       use_real_api_ = true;
-      client_ = ai::openai::create_client(api_key);
+      client_ = qcode::openai::create_client(api_key);
     } else {
       use_real_api_ = false;
       // Skip tests if no API key is available
@@ -58,7 +58,7 @@ class OpenAIEmbeddingsIntegrationTest : public AITestFixture {
   }
 
   bool use_real_api_;
-  std::optional<ai::Client> client_;
+  std::optional<qcode::Client> client_;
 };
 
 // Basic Embeddings Tests
@@ -194,7 +194,7 @@ TEST_F(OpenAIEmbeddingsIntegrationTest, EmbeddingSimilarity) {
 
 // Error Handling Tests
 TEST_F(OpenAIEmbeddingsIntegrationTest, InvalidApiKey) {
-  auto invalid_client = ai::openai::create_client("sk-invalid123");
+  auto invalid_client = qcode::openai::create_client("sk-invalid123");
 
   nlohmann::json input = "Test with invalid key";
   EmbeddingOptions options("text-embedding-3-small", input);
@@ -360,7 +360,7 @@ TEST_F(OpenAIEmbeddingsIntegrationTest, NetworkFailure) {
 
   // Test with localhost on unused port to simulate connection refused
   auto failing_client =
-      ai::openai::create_client(api_key, "http://localhost:59999");
+      qcode::openai::create_client(api_key, "http://localhost:59999");
 
   nlohmann::json input = "Test network failure";
   EmbeddingOptions options("text-embedding-3-small", input);
@@ -408,4 +408,4 @@ TEST_F(OpenAIEmbeddingsIntegrationTest, DifferentEmbeddingModels) {
 }
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

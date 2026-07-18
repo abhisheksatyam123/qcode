@@ -4,11 +4,11 @@
 /// Include this header to get access to all public APIs
 
 // Provider-specific clients (conditionally included)
-#ifdef AI_SDK_HAS_OPENAI
+#ifdef QCODE_HAS_OPENAI
 #include <qcode/providers/openai.h>
 #endif
 
-#ifdef AI_SDK_HAS_ANTHROPIC
+#ifdef QCODE_HAS_ANTHROPIC
 #include <qcode/providers/anthropic.h>
 #endif
 
@@ -42,10 +42,10 @@
 /// #include <iostream>
 ///
 /// // Ensure OPENAI_API_KEY environment variable is set
-/// auto client = ai::openai::create_client();
+/// auto client = qcode::openai::create_client();
 ///
 /// auto result = client.generate_text({
-///     .model = ai::openai::models::kGpt54,
+///     .model = qcode::openai::models::kGpt54,
 ///     .system = "You are a friendly assistant!",
 ///     .prompt = "Why is the sky blue?"
 /// });
@@ -57,10 +57,10 @@
 ///
 /// Streaming text generation:
 /// ```cpp
-/// auto client = ai::openai::create_client();
+/// auto client = qcode::openai::create_client();
 ///
 /// auto stream = client.stream_text({
-///     .model = ai::openai::models::kGpt54,
+///     .model = qcode::openai::models::kGpt54,
 ///     .system = "You are a helpful assistant.",
 ///     .prompt = "Write a short story about a robot."
 /// });
@@ -74,9 +74,9 @@
 ///
 /// Anthropic Integration:
 /// ```cpp
-/// auto client = ai::anthropic::create_client();
+/// auto client = qcode::anthropic::create_client();
 /// auto result = client.generate_text({
-///     .model = ai::anthropic::models::kClaudeSonnet46,
+///     .model = qcode::anthropic::models::kClaudeSonnet46,
 ///     .system = "You are a helpful assistant.",
 ///     .prompt = "Explain quantum computing in simple terms."
 /// });
@@ -85,4 +85,4 @@
 ///     std::cout << result->text << std::endl;
 /// }
 /// ```
-namespace ai {}
+namespace qcode {}

@@ -4,7 +4,7 @@
 
 #include <curl/curl.h>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 namespace {
 
@@ -136,4 +136,4 @@ Http2PostResult http2_post_stream(
 }
 
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

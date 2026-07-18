@@ -8,7 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 
 using JsonValue = nlohmann::json;
 
@@ -232,4 +232,4 @@ inline Messages apply_compaction_cutoff(const Messages& messages) {
   return messages;
 }
 
-}  // namespace ai
+}  // namespace qcode

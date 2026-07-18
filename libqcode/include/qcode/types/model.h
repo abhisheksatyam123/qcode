@@ -3,7 +3,7 @@
 #include <optional>
 #include <string>
 
-namespace ai {
+namespace qcode {
 
 struct Model {
   std::string name;
@@ -34,4 +34,4 @@ struct Model {
   bool operator!=(const Model& other) const { return !(*this == other); }
 };
 
-}  // namespace ai
+}  // namespace qcode

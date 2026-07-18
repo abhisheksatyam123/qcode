@@ -8,7 +8,7 @@
 
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 namespace {
 
@@ -155,4 +155,4 @@ TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
 
 }  // namespace
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

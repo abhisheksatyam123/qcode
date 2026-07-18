@@ -20,7 +20,7 @@
 
 #include <qcode/logger/logger.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 using ordered_json = nlohmann::ordered_json;
@@ -382,11 +382,11 @@ void hydrate_cursor_models(ProviderInfo& provider) {
     const auto token =
         provider.api_key.empty() ? get_cursor_access_token() : provider.api_key;
     if (!token.empty()) {
-        ai::cursor::Options options;
+        qcode::cursor::Options options;
         if (!provider.api_url.empty()) {
             options.agent_base_url = provider.api_url;
         }
-        const auto available = ai::cursor::list_models(token, options);
+        const auto available = qcode::cursor::list_models(token, options);
         if (!available.empty()) {
             std::vector<ModelInfo> live_models;
             live_models.reserve(available.size());
@@ -505,5 +505,5 @@ std::vector<ProviderInfo> load_providers_from_config() {
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode
 

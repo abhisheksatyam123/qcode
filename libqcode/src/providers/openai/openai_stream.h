@@ -12,7 +12,7 @@
 #include <nlohmann/json.hpp>
 #include <chrono>
 
-namespace ai {
+namespace qcode {
 namespace openai {
 
 enum class StreamProtocol { kOpenAI, kGeminiEnvelope };
@@ -42,7 +42,7 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   // QCODE_STREAM_EVENT_TIMEOUT_SEC overrides at stream start).
   void set_event_timeout(std::chrono::seconds t) { event_timeout_ = t; }
 
-#ifdef AI_SDK_TESTING
+#ifdef QCODE_TESTING
   // Allow unit tests to drive the SSE parser directly.
   void test_parse_sse_line(const std::string& line) { parse_sse_line(line); }
 #endif
@@ -72,4 +72,4 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
 };
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

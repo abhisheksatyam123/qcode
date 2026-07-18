@@ -8,7 +8,7 @@
 #include <qcode/session/session_store.h>
 #include <qcode/state/state.h>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 // Case-insensitive substring match used by model/session/theme pickers.
@@ -47,4 +47,4 @@ inline int index_of_session(const std::vector<session::SessionInfo>& entries,
 }
 
 }  // namespace tui
-}  // namespace ai
+}  // namespace qcode

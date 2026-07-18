@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 
 struct GenerateOptions {
   std::string model;
@@ -184,4 +184,4 @@ struct GenerateResult {
   }
 };
 
-}  // namespace ai
+}  // namespace qcode

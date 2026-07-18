@@ -8,7 +8,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // Base test fixture with common setup
@@ -125,4 +125,4 @@ class TestAssertions {
 };
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

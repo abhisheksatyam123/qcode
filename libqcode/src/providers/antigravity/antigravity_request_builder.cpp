@@ -4,7 +4,7 @@
 #include <qcode/logger/logger.h>
 #include "providers/openai/openai_request_builder.h"
 
-namespace ai {
+namespace qcode {
 namespace antigravity {
 
 nlohmann::json AntigravityRequestBuilder::build_request_json(
@@ -13,8 +13,8 @@ nlohmann::json AntigravityRequestBuilder::build_request_json(
   // Gemini generateContent shape and wrap in the Antigravity envelope.
   openai::OpenAIRequestBuilder inner;
   auto openai_req = inner.build_request_json(options);
-  auto gemini_req = ai::gemini::convert_openai_to_gemini(openai_req);
-  return ai::gemini::wrap_antigravity_envelope(
+  auto gemini_req = qcode::gemini::convert_openai_to_gemini(openai_req);
+  return qcode::gemini::wrap_antigravity_envelope(
       gemini_req, options.model, project_id_);
 }
 
@@ -42,4 +42,4 @@ httplib::Headers AntigravityRequestBuilder::build_headers(
 }
 
 }  // namespace antigravity
-}  // namespace ai
+}  // namespace qcode

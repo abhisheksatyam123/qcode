@@ -40,7 +40,7 @@
 #include <unistd.h>
 #include <sstream>
 
-using namespace ai::tui::contract;
+using namespace qcode::tui::contract;
 
 static std::string url_decode(const std::string& value) {
     std::string result;
@@ -66,15 +66,15 @@ static std::string url_decode(const std::string& value) {
 
 // ── Globals ──
 static std::atomic<bool> g_running{true};
-static std::shared_ptr<ai::tui::bus::BusRuntime> g_bus;
+static std::shared_ptr<qcode::tui::bus::BusRuntime> g_bus;
 
 void handle_signal(int) { g_running = false; }
 
 // ── Per-generation session state ──
 struct GenSession {
     std::string id;
-    ai::tui::GenerationContext ctx;
-    ai::Messages messages;
+    qcode::tui::GenerationContext ctx;
+    qcode::Messages messages;
     std::vector<nlohmann::json> event_queue;
     std::mutex queue_mutex;
     std::atomic<bool> done{false};
@@ -82,7 +82,7 @@ struct GenSession {
     std::string error;
     std::string assistant_text;  // accumulated (cumulative) assistant reply, for DB persistence
     std::string reasoning_text;  // accumulated reasoning, for DB persistence
-    std::shared_ptr<std::vector<ai::tui::bus::Subscription>> subs;
+    std::shared_ptr<std::vector<qcode::tui::bus::Subscription>> subs;
     // Live token accounting (accumulated from TokenUsageUpdated during generation).
     std::atomic<int> live_prompt_tokens{0};
     std::atomic<int> live_completion_tokens{0};
@@ -147,7 +147,7 @@ static std::vector<std::string> split_lines(const std::string& s) {
 static constexpr std::uintmax_t kMaxFsFileBytes = 2 * 1024 * 1024;  // 2 MiB
 
 static std::string resolve_session_workspace(const std::string& sid) {
-    std::string ws = ai::tui::session::get_session_workspace(sid);
+    std::string ws = qcode::tui::session::get_session_workspace(sid);
     if (!ws.empty()) ws = expand_tilde(ws);
     if (ws.empty()) {
         char cwd[4096] = {0};
@@ -294,16 +294,16 @@ static void destroy_terminal(const std::string& id) {
 }
 
 // ── Event collector: subscribes to bus and queues events for a session ──
-static std::vector<ai::tui::bus::Subscription> subscribe_session(
-    ai::tui::bus::BusRuntime& bus,
+static std::vector<qcode::tui::bus::Subscription> subscribe_session(
+    qcode::tui::bus::BusRuntime& bus,
     std::shared_ptr<GenSession> session)
 {
-    std::vector<ai::tui::bus::Subscription> subs;
+    std::vector<qcode::tui::bus::Subscription> subs;
 
     subs.push_back(bus.subscribe<MessageDelta>(
         [session](const MessageDelta::Payload& p) {
             if (p.session_id != session->ctx.session_id) return;
-            auto j = ai::server::message_delta_to_json(p);
+            auto j = qcode::server::message_delta_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
         }
@@ -317,9 +317,9 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
                 {"name", p.tool_name},
                 {"arguments", p.arguments},
             };
-            ai::tui::session::save_message(p.session_id, "ToolCall", call_json.dump());
+            qcode::tui::session::save_message(p.session_id, "ToolCall", call_json.dump());
 
-            auto j = ai::server::tool_call_started_to_json(p);
+            auto j = qcode::server::tool_call_started_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
         }
@@ -335,9 +335,9 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
                 {"is_error", p.is_error},
                 {"duration_ms", p.duration_ms},
             };
-            ai::tui::session::save_message(p.session_id, "ToolResult", result_json.dump());
+            qcode::tui::session::save_message(p.session_id, "ToolResult", result_json.dump());
 
-            auto j = ai::server::tool_call_completed_to_json(p);
+            auto j = qcode::server::tool_call_completed_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
         }
@@ -346,7 +346,7 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
     subs.push_back(bus.subscribe<SessionStatusChanged>(
         [session](const SessionStatusChanged::Payload& p) {
             if (p.session_id != session->ctx.session_id) return;
-            auto j = ai::server::session_status_to_json(p);
+            auto j = qcode::server::session_status_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
         }
@@ -355,7 +355,7 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
     subs.push_back(bus.subscribe<ErrorOccurred>(
         [session](const ErrorOccurred::Payload& p) {
             if (p.session_id != session->ctx.session_id) return;
-            auto j = ai::server::error_occurred_to_json(p);
+            auto j = qcode::server::error_occurred_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
         }
@@ -364,7 +364,7 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
     subs.push_back(bus.subscribe<ReasoningDelta>(
         [session](const ReasoningDelta::Payload& p) {
             if (p.session_id != session->ctx.session_id) return;
-            auto j = ai::server::reasoning_delta_to_json(p);
+            auto j = qcode::server::reasoning_delta_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
         }
@@ -375,7 +375,7 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
             session->live_prompt_tokens = p.prompt_tokens;
             session->live_completion_tokens = p.completion_tokens;
             session->live_total_tokens = p.total_tokens;
-            auto j = ai::server::token_usage_to_json(p);
+            auto j = qcode::server::token_usage_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
         }
@@ -385,8 +385,8 @@ static std::vector<ai::tui::bus::Subscription> subscribe_session(
 }
 
 int main(int argc, char* argv[]) {
-    ai::install_file_logger("/tmp/qcode-server.log", ai::logger::LogLevel::kLogLevelDebug);
-    ai::logger::set_thread_name("server");
+    qcode::install_file_logger("/tmp/qcode-server.log", qcode::logger::LogLevel::kLogLevelDebug);
+    qcode::logger::set_thread_name("server");
     LOG_INFO("QCode server starting...");
 
     // ── Parse args ──
@@ -402,16 +402,16 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Init bus, providers ──
-    g_bus = std::make_shared<ai::tui::bus::BusRuntime>();
+    g_bus = std::make_shared<qcode::tui::bus::BusRuntime>();
     register_all_events(*g_bus);
-    ai::providers::register_authenticated_providers();
+    qcode::providers::register_authenticated_providers();
 
     // Ensure the SQLite schema (sessions + messages) exists. The server owns
     // its DB so all session state is durably persisted, independent of the TUI.
-    ai::tui::session::init_database();
+    qcode::tui::session::init_database();
 
     // Load providers
-    auto providers_list = ai::tui::load_providers_from_config();
+    auto providers_list = qcode::tui::load_providers_from_config();
     if (providers_list.empty()) {
         LOG_ERROR("No providers configured. Create ~/.config/qcode/providers.json");
         return 1;
@@ -422,7 +422,7 @@ int main(int argc, char* argv[]) {
     std::string default_model = providers_list[0].models[0].id;
 
     // Backend service (uses the shared bus)
-    ai::tui::GenerationService backend(*g_bus, providers_list);
+    qcode::tui::GenerationService backend(*g_bus, providers_list);
 
     // ── Signal handling ──
     signal(SIGINT, handle_signal);
@@ -438,7 +438,7 @@ int main(int argc, char* argv[]) {
         if (pos != std::string::npos) webui_path = webui_path.substr(0, pos);
         webui_path += "/webui";
         if (access(webui_path.c_str(), F_OK) != 0) {
-            webui_path = AI_SERVER_WEBUI_DIR;
+            webui_path = QCODE_SERVER_WEBUI_DIR;
         }
         if (access(webui_path.c_str(), F_OK) == 0) {
             LOG_INFO("Serving Web UI from {}", webui_path);
@@ -514,7 +514,7 @@ int main(int argc, char* argv[]) {
             }
         }
         std::string system_prompt = body.value("system_prompt",
-            ai::tui::SystemPrompt::build_default());
+            qcode::tui::SystemPrompt::build_default());
         std::string reasoning_mode = body.value("reasoning_mode", "off");
 
         std::shared_ptr<GenSession> session;
@@ -559,12 +559,12 @@ int main(int argc, char* argv[]) {
         // Load (or reload) the entire session history from the SQLite database
         // to ensure we have the complete, up-to-date context (including ToolCall,
         // ToolResult, System, and Assistant messages).
-        session->messages = ai::tui::session::load_session_history_parsed(session->id);
+        session->messages = qcode::tui::session::load_session_history_parsed(session->id);
 
         // Set up generation context (reasoning mode can change per request)
         {
-            auto ws = ai::tui::session::get_session_workspace(session->id);
-            session->ctx = ai::tui::GenerationContext{
+            auto ws = qcode::tui::session::get_session_workspace(session->id);
+            session->ctx = qcode::tui::GenerationContext{
                 .session_id = session->id,
                 .reasoning_mode = reasoning_mode,
                 .workspace = ws
@@ -573,17 +573,17 @@ int main(int argc, char* argv[]) {
 
         // Subscribe to bus events for this session (once)
         if (!session->subs) {
-            session->subs = std::make_shared<std::vector<ai::tui::bus::Subscription>>(
+            session->subs = std::make_shared<std::vector<qcode::tui::bus::Subscription>>(
                 subscribe_session(*g_bus, session));
         }
 
         // Save user message and add to history
-        ai::tui::session::set_session_provider_model(session->id, provider, model);
-        ai::tui::session::save_message(session->id, "User", text);
-        session->messages.push_back(ai::Message::user(text));
+        qcode::tui::session::set_session_provider_model(session->id, provider, model);
+        qcode::tui::session::save_message(session->id, "User", text);
+        session->messages.push_back(qcode::Message::user(text));
 
         // Keep a local copy of messages for the generation thread, applying the compaction cutoff
-        ai::Messages messages = ai::apply_compaction_cutoff(session->messages);
+        qcode::Messages messages = qcode::apply_compaction_cutoff(session->messages);
 
         // ── Set up streaming response ──
         // Generation runs in a background thread. The chunked provider
@@ -663,10 +663,10 @@ int main(int argc, char* argv[]) {
                 if (session->done && events.empty()) {
                     // Persist the assistant reply so the session is resumable.
                     if (!session->assistant_text.empty()) {
-                        ai::tui::session::save_message(session->id, "Assistant", session->assistant_text);
+                        qcode::tui::session::save_message(session->id, "Assistant", session->assistant_text);
                     }
                     if (!session->reasoning_text.empty()) {
-                        ai::tui::session::save_message(session->id, "Reasoning", session->reasoning_text);
+                        qcode::tui::session::save_message(session->id, "Reasoning", session->reasoning_text);
                     }
                     nlohmann::json final_msg = {
                         {"type", "generation.complete"},
@@ -725,7 +725,7 @@ int main(int argc, char* argv[]) {
 
     // ── List sessions ──
     svr.Get("/sessions", [](const httplib::Request&, httplib::Response& res) {
-        auto list = ai::tui::session::list_sessions_full();
+        auto list = qcode::tui::session::list_sessions_full();
         nlohmann::json j = nlohmann::json::array();
         for (const auto& s : list) {
             j.push_back({{"id", s.id}, {"title", s.title}, {"workspace", s.workspace},
@@ -754,7 +754,7 @@ int main(int argc, char* argv[]) {
             res.set_content(R"({"error":"provider and model required"})", "application/json");
             return;
         }
-        auto id = ai::tui::session::create_new_session(provider, model, workspace, custom_id);
+        auto id = qcode::tui::session::create_new_session(provider, model, workspace, custom_id);
         res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}, {"title", id}}).dump(), "application/json");
     });
 
@@ -768,7 +768,7 @@ int main(int argc, char* argv[]) {
         }
         std::string session_id = body.value("session_id", "");
         std::string new_title = body.value("title", "");
-        if (session_id.empty() || !ai::tui::session::is_valid_session_id(session_id)) {
+        if (session_id.empty() || !qcode::tui::session::is_valid_session_id(session_id)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -778,7 +778,7 @@ int main(int argc, char* argv[]) {
             res.set_content(R"({"error":"title is required"})", "application/json");
             return;
         }
-        ai::tui::session::rename_session(session_id, new_title);
+        qcode::tui::session::rename_session(session_id, new_title);
         res.set_content(R"({"ok":true})", "application/json");
     });
 
@@ -884,13 +884,13 @@ int main(int argc, char* argv[]) {
 
     // ── Get last active session (with history) for client auto-restore ──
     svr.Get("/session/last", [](const httplib::Request&, httplib::Response& res) {
-        std::string sid = ai::tui::session::get_last_active_session();
+        std::string sid = qcode::tui::session::get_last_active_session();
         if (sid.empty()) {
             res.set_content(R"({"id":""})", "application/json");
             return;
         }
         nlohmann::json info = {{"id", sid}};
-        for (const auto& s : ai::tui::session::list_sessions_full()) {
+        for (const auto& s : qcode::tui::session::list_sessions_full()) {
             if (s.id == sid) {
                 info["title"] = s.title;
                 info["workspace"] = s.workspace;
@@ -900,7 +900,7 @@ int main(int argc, char* argv[]) {
             }
         }
         nlohmann::json msgs = nlohmann::json::array();
-        for (const auto& [sender, content] : ai::tui::session::load_session_messages(sid)) {
+        for (const auto& [sender, content] : qcode::tui::session::load_session_messages(sid)) {
             msgs.push_back({{"role", sender}, {"content", content}});
         }
         info["messages"] = std::move(msgs);
@@ -910,7 +910,7 @@ int main(int argc, char* argv[]) {
     // ── Get session info ──
     svr.Get("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        auto list = ai::tui::session::list_sessions_full();
+        auto list = qcode::tui::session::list_sessions_full();
         for (const auto& s : list) {
             if (s.id == sid) {
                 res.set_content(nlohmann::json({{"id", s.id}, {"title", s.title},
@@ -925,7 +925,7 @@ int main(int argc, char* argv[]) {
     // ── Delete session ──
     svr.Delete("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -945,7 +945,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Delete from database
-        ai::tui::session::delete_session(sid);
+        qcode::tui::session::delete_session(sid);
 
         res.set_content(R"({"ok":true})", "application/json");
     });
@@ -953,7 +953,7 @@ int main(int argc, char* argv[]) {
     // ── Clear session messages (truncate history) ──
     svr.Post("/session/([^/]+)/clear", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -970,7 +970,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Permanently truncate the persisted history in SQLite.
-        ai::tui::session::overwrite_session_history(sid, {});
+        qcode::tui::session::overwrite_session_history(sid, {});
 
         res.set_content(R"({"ok":true})", "application/json");
     });
@@ -978,12 +978,12 @@ int main(int argc, char* argv[]) {
     // ── Get session message history ──
     svr.Get("/session/([^/]+)/messages", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
         }
-        auto hist = ai::tui::session::load_session_messages(sid);
+        auto hist = qcode::tui::session::load_session_messages(sid);
         nlohmann::json j = nlohmann::json::array();
         for (const auto& [sender, content] : hist) {
             j.push_back({{"role", sender}, {"content", content}});
@@ -994,7 +994,7 @@ int main(int argc, char* argv[]) {
     // ── Compact session ──
     svr.Post("/session/([^/]+)/compact", [&providers_list](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -1014,7 +1014,7 @@ int main(int argc, char* argv[]) {
         int keep = body.value("keep", 5);
 
         // Load conversation messages from DB
-        auto snapshot = ai::tui::session::load_session_history_parsed(sid);
+        auto snapshot = qcode::tui::session::load_session_history_parsed(sid);
         if (snapshot.size() <= 2) {
             res.status = 400;
             res.set_content(R"({"error":"Nothing to compact: conversation is too short."})", "application/json");
@@ -1024,7 +1024,7 @@ int main(int argc, char* argv[]) {
         // Get session info to know which provider/model to use for compaction
         std::string provider_id = "";
         std::string model_id = "";
-        for (const auto& s : ai::tui::session::list_sessions_full()) {
+        for (const auto& s : qcode::tui::session::list_sessions_full()) {
             if (s.id == sid) {
                 provider_id = s.provider;
                 model_id = s.model;
@@ -1063,19 +1063,19 @@ int main(int argc, char* argv[]) {
         std::ostringstream transcript;
         for (const auto& m : snapshot) {
             std::string role_str;
-            if (m.role == ai::kMessageRoleUser) role_str = "User";
-            else if (m.role == ai::kMessageRoleAssistant) role_str = "Assistant";
-            else if (m.role == ai::kMessageRoleSystem) role_str = "System";
+            if (m.role == qcode::kMessageRoleUser) role_str = "User";
+            else if (m.role == qcode::kMessageRoleAssistant) role_str = "Assistant";
+            else if (m.role == qcode::kMessageRoleSystem) role_str = "System";
             else role_str = "Message";
             std::string text;
             for (const auto& part : m.content) {
-                if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                     text += tp->text + "\n";
-                } else if (const auto* tcp = std::get_if<ai::ToolCallContentPart>(&part)) {
+                } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
                     text += "[Tool call: " + tcp->tool_name + "]\n";
-                } else if (const auto* trp = std::get_if<ai::ToolResultContentPart>(&part)) {
+                } else if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
                     text += "[Tool result]\n";
-                } else if (const auto* rcp = std::get_if<ai::ReasoningContentPart>(&part)) {
+                } else if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                     if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";
                 }
             }
@@ -1096,14 +1096,14 @@ int main(int argc, char* argv[]) {
             "## Systems\n\n"
             "Use tools only when they improve summary accuracy; otherwise answer directly.";
 
-        ai::providers::register_authenticated_providers();
-        ai::providers::ProviderOptions provider_options;
+        qcode::providers::register_authenticated_providers();
+        qcode::providers::ProviderOptions provider_options;
         provider_options.base_url = sel.api_url;
         provider_options.api_key = sel.api_key;
         provider_options.headers = sel.headers;
         provider_options.protocol = sel.protocol;
         provider_options.project_id = sel.project_id;
-        auto resolution = ai::providers::ProviderRegistry::instance().resolve(
+        auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
             sel.id, provider_options);
         if (!resolution.ok()) {
             res.status = 500;
@@ -1111,14 +1111,14 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        ai::Client client = std::move(resolution.client);
+        qcode::Client client = std::move(resolution.client);
 
-        ai::GenerateOptions opts;
+        qcode::GenerateOptions opts;
         opts.model = providers_list[sp].models[sm].id;
         opts.system = compaction_instruction;
-        opts.messages = {ai::Message::user(transcript.str())};
+        opts.messages = {qcode::Message::user(transcript.str())};
 
-        ai::GenerateResult gen_res = client.generate_text(opts);
+        qcode::GenerateResult gen_res = client.generate_text(opts);
         if (!gen_res.is_success() || (gen_res.error && !gen_res.error->empty())) {
             res.status = 500;
             std::string err = gen_res.error && !gen_res.error->empty() ? *gen_res.error : gen_res.error_message();
@@ -1133,7 +1133,7 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        std::string notes_root = ai::tui::get_notes_root();
+        std::string notes_root = qcode::tui::get_notes_root();
         std::error_code ec;
         std::filesystem::create_directories(
             notes_root + "/scratchpad/task/qcode-tui/active", ec);
@@ -1158,14 +1158,14 @@ int main(int argc, char* argv[]) {
 
         // Replace history with the handoff summary + recent keep-tail messages.
         // Older turns are dropped so the message list and model context reset.
-        ai::Messages new_messages;
-        new_messages.push_back(ai::Message::system(note));
-        new_messages.push_back(ai::Message::user(summary_body));
+        qcode::Messages new_messages;
+        new_messages.push_back(qcode::Message::system(note));
+        new_messages.push_back(qcode::Message::user(summary_body));
 
-        auto is_prior_compaction_msg = [](const ai::Message& m) {
-            if (m.role == ai::kMessageRoleSystem) {
+        auto is_prior_compaction_msg = [](const qcode::Message& m) {
+            if (m.role == qcode::kMessageRoleSystem) {
                 for (const auto& part : m.content) {
-                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                    if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                         if (tp->text.find("Conversation compacted:") !=
                             std::string::npos) {
                             return true;
@@ -1173,9 +1173,9 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            if (m.role == ai::kMessageRoleUser) {
+            if (m.role == qcode::kMessageRoleUser) {
                 for (const auto& part : m.content) {
-                    if (const auto* tp = std::get_if<ai::TextContentPart>(&part)) {
+                    if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
                         if (tp->text.find(
                                 "This conversation was compacted into a "
                                 "handoff packet") != std::string::npos) {
@@ -1196,7 +1196,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Overwrite history in SQLite database to persist the compact set
-        ai::tui::session::overwrite_session_history(sid, new_messages);
+        qcode::tui::session::overwrite_session_history(sid, new_messages);
 
         nlohmann::json res_j;
         res_j["status"] = "success";
@@ -1211,7 +1211,7 @@ int main(int argc, char* argv[]) {
     // ── Get aggregate session statistics ──
     svr.Get("/session/([^/]+)/stats", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -1231,7 +1231,7 @@ int main(int argc, char* argv[]) {
                 live_total = it->second->live_total_tokens.load();
             }
         }
-        auto st = ai::tui::session::get_session_stats(sid, live_tool_calls, live_tool_time_ms,
+        auto st = qcode::tui::session::get_session_stats(sid, live_tool_calls, live_tool_time_ms,
                                                  live_prompt, live_completion, live_total);
         nlohmann::json j = {
             {"id", st.id}, {"title", st.title}, {"workspace", st.workspace},
@@ -1250,12 +1250,12 @@ int main(int argc, char* argv[]) {
     // change type + insertion/deletion counts.
     svr.Get("/session/([^/]+)/files", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
         }
-        std::string ws = ai::tui::session::get_session_workspace(sid);
+        std::string ws = qcode::tui::session::get_session_workspace(sid);
         if (!ws.empty()) ws = expand_tilde(ws);
         if (ws.empty()) {
             // Fall back to the server's current working directory.
@@ -1400,7 +1400,7 @@ int main(int argc, char* argv[]) {
     svr.Get("/session/([^/]+)/fs/list", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -1469,7 +1469,7 @@ int main(int argc, char* argv[]) {
     svr.Get("/session/([^/]+)/fs/read", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -1547,7 +1547,7 @@ int main(int argc, char* argv[]) {
     svr.Put("/session/([^/]+)/fs/write", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
         std::string sid = url_decode(req.matches[1]);
-        if (!ai::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::tui::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;

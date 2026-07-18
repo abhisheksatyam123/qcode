@@ -11,7 +11,7 @@
 // Test utilities
 #include "../utils/test_fixtures.h"
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 class OpenAIClientTest : public OpenAITestFixture {
@@ -19,7 +19,7 @@ class OpenAIClientTest : public OpenAITestFixture {
   void SetUp() override {
     OpenAITestFixture::SetUp();
     client_ =
-        std::make_unique<ai::openai::OpenAIClient>(kTestApiKey, kTestBaseUrl);
+        std::make_unique<qcode::openai::OpenAIClient>(kTestApiKey, kTestBaseUrl);
   }
 
   void TearDown() override {
@@ -27,12 +27,12 @@ class OpenAIClientTest : public OpenAITestFixture {
     OpenAITestFixture::TearDown();
   }
 
-  std::unique_ptr<ai::openai::OpenAIClient> client_;
+  std::unique_ptr<qcode::openai::OpenAIClient> client_;
 };
 
 // Constructor and Configuration Tests
 TEST_F(OpenAIClientTest, ConstructorWithValidApiKey) {
-  ai::openai::OpenAIClient client("sk-validkey123", "https://api.openai.com");
+  qcode::openai::OpenAIClient client("sk-validkey123", "https://api.openai.com");
 
   EXPECT_TRUE(client.is_valid());
   EXPECT_EQ(client.provider_name(), "openai");
@@ -47,14 +47,14 @@ TEST_F(OpenAIClientTest, ConstructorWithValidApiKey) {
 }
 
 TEST_F(OpenAIClientTest, ConstructorWithEmptyApiKey) {
-  ai::openai::OpenAIClient client("", "https://api.openai.com");
+  qcode::openai::OpenAIClient client("", "https://api.openai.com");
 
   // Real implementation should be invalid with empty API key
   EXPECT_FALSE(client.is_valid());
 }
 
 TEST_F(OpenAIClientTest, ConstructorWithCustomBaseUrl) {
-  ai::openai::OpenAIClient client("sk-test", "https://custom-api.example.com");
+  qcode::openai::OpenAIClient client("sk-test", "https://custom-api.example.com");
 
   EXPECT_TRUE(client.is_valid());
   EXPECT_EQ(client.provider_name(), "openai");
@@ -67,7 +67,7 @@ TEST_F(OpenAIClientTest, ConstructorWithCustomBaseUrl) {
 }
 
 TEST_F(OpenAIClientTest, ConstructorWithHttpUrl) {
-  ai::openai::OpenAIClient client("sk-test", "http://localhost:8080");
+  qcode::openai::OpenAIClient client("sk-test", "http://localhost:8080");
 
   EXPECT_TRUE(client.is_valid());
   // Commented out internal method tests that don't exist:
@@ -76,13 +76,13 @@ TEST_F(OpenAIClientTest, ConstructorWithHttpUrl) {
 }
 
 TEST_F(OpenAIClientTest, VersionedBaseUrlDoesNotDuplicateV1) {
-  ai::openai::OpenAIClient client(
+  qcode::openai::OpenAIClient client(
       "sk-test", "https://opencode.ai/zen/v1");
   EXPECT_EQ(client.get_completions_path(), "/chat/completions");
 }
 
 TEST_F(OpenAIClientTest, ResponsesProtocolUsesResponsesEndpoint) {
-  ai::openai::OpenAIClient client(
+  qcode::openai::OpenAIClient client(
       "sk-test", "https://opencode.ai/zen/v1", true, {});
   EXPECT_EQ(client.get_completions_path(), "/responses");
 }
@@ -110,7 +110,7 @@ TEST_F(OpenAIClientTest, DoesNotSupportInvalidModel) {
 
 // Text Generation Tests - Testing error handling without network calls
 TEST_F(OpenAIClientTest, GenerateTextWithInvalidApiKey) {
-  ai::openai::OpenAIClient client("invalid-key", "https://api.openai.com");
+  qcode::openai::OpenAIClient client("invalid-key", "https://api.openai.com");
   auto options = createBasicOptions();
 
   // This will attempt a real call and should fail gracefully
@@ -122,7 +122,7 @@ TEST_F(OpenAIClientTest, GenerateTextWithInvalidApiKey) {
 }
 
 TEST_F(OpenAIClientTest, GenerateTextWithBadUrl) {
-  ai::openai::OpenAIClient client(
+  qcode::openai::OpenAIClient client(
       "sk-test", "http://invalid-url-that-does-not-exist.example");
   auto options = createBasicOptions();
 
@@ -180,7 +180,7 @@ TEST_F(OpenAIClientTest, StreamTextBasicValidation) {
 TEST_F(OpenAIClientTest, TestInternalJsonBuilding) {
   auto options = createBasicOptions();
 
-  // Test the internal JSON building method (exposed via AI_SDK_TESTING)
+  // Test the internal JSON building method (exposed via QCODE_TESTING)
   auto json = client_->build_request_json(options);
 
   EXPECT_EQ(json["model"], kTestModel);
@@ -209,4 +209,4 @@ TEST_F(OpenAIClientTest, TestFinishReasonParsing) {
 */
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

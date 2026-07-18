@@ -9,7 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace http {
 
 struct HttpConfig {
@@ -59,4 +59,4 @@ class HttpRequestHandler {
 };
 
 }  // namespace http
-}  // namespace ai
+}  // namespace qcode

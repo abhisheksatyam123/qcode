@@ -10,7 +10,7 @@
 
 #include <gmock/gmock.h>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // Mock HTTP client for testing Anthropic network interactions
@@ -115,4 +115,4 @@ class AnthropicResponseBuilder {
 };
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

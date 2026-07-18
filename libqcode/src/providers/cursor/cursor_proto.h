@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace cursor {
 namespace proto {
 
@@ -37,4 +37,4 @@ std::string extract_text(const std::string& payload);
 
 }  // namespace proto
 }  // namespace cursor
-}  // namespace ai
+}  // namespace qcode

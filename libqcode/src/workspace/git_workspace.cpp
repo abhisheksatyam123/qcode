@@ -9,7 +9,7 @@
 #include <string>
 #include <unordered_set>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 namespace {
@@ -137,4 +137,4 @@ void update_modified_files(ChatState& state) {
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

@@ -8,7 +8,7 @@
 #include <map>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 namespace openai {
 
 class OpenAIClient : public providers::BaseProviderClient {
@@ -40,4 +40,4 @@ class OpenAIClient : public providers::BaseProviderClient {
 };
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

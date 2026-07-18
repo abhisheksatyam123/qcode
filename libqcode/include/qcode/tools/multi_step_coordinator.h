@@ -7,7 +7,7 @@
 #include <functional>
 #include <vector>
 
-namespace ai {
+namespace qcode {
 
 /// Coordinates multi-step tool-calling loops with the model.
 class MultiStepCoordinator {
@@ -27,4 +27,4 @@ class MultiStepCoordinator {
       const std::vector<ToolResult>& tool_results);
 };
 
-}  // namespace ai
+}  // namespace qcode

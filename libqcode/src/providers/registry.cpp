@@ -5,7 +5,7 @@
 
 #include <cstdlib>
 
-namespace ai {
+namespace qcode {
 namespace providers {
 
 ProviderRegistry& ProviderRegistry::instance() {
@@ -25,7 +25,7 @@ ClientResolution ProviderRegistry::resolve(const std::string& id,
     if (options.base_url.empty()) {
       return ClientResolution::fail("Unknown provider: " + id);
     }
-    ai::openai::CompatibleOptions compatible;
+    qcode::openai::CompatibleOptions compatible;
     compatible.base_url = options.base_url;
     compatible.protocol = options.protocol;
     compatible.headers = options.headers;
@@ -33,7 +33,7 @@ ClientResolution ProviderRegistry::resolve(const std::string& id,
       return ClientResolution::fail("No API key configured for provider: " + id);
     }
     return ClientResolution{
-        ai::openai::create_client(options.api_key, compatible)};
+        qcode::openai::create_client(options.api_key, compatible)};
   }
   return it->second(options);
 }
@@ -62,13 +62,13 @@ void register_core_providers() {
             "OPENCODE_API_KEY).");
       }
     }
-    ai::openai::CompatibleOptions compatible;
+    qcode::openai::CompatibleOptions compatible;
     compatible.base_url = options.base_url.empty()
                               ? "https://opencode.ai/zen/v1"
                               : options.base_url;
     compatible.protocol = options.protocol;
     compatible.headers = options.headers;
-    return ClientResolution{ai::openai::create_client(api_key, compatible)};
+    return ClientResolution{qcode::openai::create_client(api_key, compatible)};
   };
   reg.register_provider("openai", [](const ProviderOptions& options) {
     const char* key = std::getenv("OPENAI_API_KEY");
@@ -77,13 +77,13 @@ void register_core_providers() {
                              : (key ? std::string(key) : "");
     if (api_key.empty())
       return ClientResolution::fail("OPENAI_API_KEY not set.");
-    ai::openai::CompatibleOptions compatible;
+    qcode::openai::CompatibleOptions compatible;
     compatible.base_url = options.base_url.empty()
                               ? "https://api.openai.com"
                               : options.base_url;
     compatible.protocol = options.protocol;
     compatible.headers = options.headers;
-    return ClientResolution{ai::openai::create_client(api_key, compatible)};
+    return ClientResolution{qcode::openai::create_client(api_key, compatible)};
   });
   reg.register_provider("opencode", generic);
 
@@ -94,29 +94,29 @@ void register_core_providers() {
                              : (key ? std::string(key) : "");
     if (api_key.empty())
       return ClientResolution::fail("OPENROUTER_API_KEY not set.");
-    ai::openai::CompatibleOptions compatible;
+    qcode::openai::CompatibleOptions compatible;
     compatible.base_url = options.base_url.empty()
                               ? "https://openrouter.ai/api"
                               : options.base_url;
     compatible.protocol = options.protocol;
     compatible.headers = options.headers;
-    return ClientResolution{ai::openai::create_client(api_key, compatible)};
+    return ClientResolution{qcode::openai::create_client(api_key, compatible)};
   });
 
   reg.register_provider("qpilot", [](const ProviderOptions&) {
     char* key = std::getenv("QPILOT_API_KEY");
     if (!key) return ClientResolution::fail("QPILOT_API_KEY not set.");
     return ClientResolution{
-        ai::openai::create_client(key, "https://qpilot-api.qualcomm.com")};
+        qcode::openai::create_client(key, "https://qpilot-api.qualcomm.com")};
   });
 
   reg.register_provider("qgenie", [](const ProviderOptions&) {
     char* key = std::getenv("QPILOT_API_KEY");
     if (!key) return ClientResolution::fail("QPILOT_API_KEY not set.");
     return ClientResolution{
-        ai::openai::create_client(key, "https://qgenie-api.qualcomm.com")};
+        qcode::openai::create_client(key, "https://qgenie-api.qualcomm.com")};
   });
 }
 
 }  // namespace providers
-}  // namespace ai
+}  // namespace qcode

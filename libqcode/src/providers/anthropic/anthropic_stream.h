@@ -11,7 +11,7 @@
 #include <nlohmann/json.hpp>
 #include <chrono>
 
-namespace ai {
+namespace qcode {
 namespace anthropic {
 
 class AnthropicStreamImpl : public internal::StreamResultImpl {
@@ -59,4 +59,4 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
 };
 
 }  // namespace anthropic
-}  // namespace ai
+}  // namespace qcode

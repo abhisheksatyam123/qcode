@@ -5,7 +5,7 @@
 #include <sstream>
 #include <algorithm>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 using namespace ftxui;
@@ -262,4 +262,4 @@ Element BashToolRender(const std::string& command, const std::string& output,
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

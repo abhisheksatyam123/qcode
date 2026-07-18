@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-namespace ai {
+namespace qcode {
 
 namespace internal {
 class StreamResultImpl {
@@ -81,4 +81,4 @@ class StreamResult {
   std::unique_ptr<internal::StreamResultImpl> stream_result_impl_;
 };
 
-}  // namespace ai
+}  // namespace qcode

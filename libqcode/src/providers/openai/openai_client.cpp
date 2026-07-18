@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <memory>
 
-namespace ai {
+namespace qcode {
 
 namespace {
 bool has_version_suffix(const std::string& base_url) {
@@ -148,4 +148,4 @@ std::string OpenAIClient::default_model() const {
 }
 
 }  // namespace openai
-}  // namespace ai
+}  // namespace qcode

@@ -15,7 +15,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-namespace ai {
+namespace qcode {
 namespace test {
 
 // Test for issue #26: Tools executed twice in multi-step mode
@@ -32,8 +32,8 @@ class MultiStepDuplicateExecutionTest
       const char* api_key = std::getenv("OPENAI_API_KEY");
       if (api_key) {
         use_real_api_ = true;
-        client_ = ai::openai::create_client(api_key);
-        model_ = ai::openai::models::kGpt4oMini;
+        client_ = qcode::openai::create_client(api_key);
+        model_ = qcode::openai::models::kGpt4oMini;
       } else {
         use_real_api_ = false;
       }
@@ -41,8 +41,8 @@ class MultiStepDuplicateExecutionTest
       const char* api_key = std::getenv("ANTHROPIC_API_KEY");
       if (api_key) {
         use_real_api_ = true;
-        client_ = ai::anthropic::create_client(api_key);
-        model_ = ai::anthropic::models::kClaudeSonnet45;
+        client_ = qcode::anthropic::create_client(api_key);
+        model_ = qcode::anthropic::models::kClaudeSonnet45;
       } else {
         use_real_api_ = false;
       }
@@ -50,7 +50,7 @@ class MultiStepDuplicateExecutionTest
   }
 
   bool use_real_api_ = false;
-  std::optional<ai::Client> client_;
+  std::optional<qcode::Client> client_;
   std::string model_;
 };
 
@@ -70,7 +70,7 @@ TEST_P(MultiStepDuplicateExecutionTest, ToolsExecutedOncePerStepNotTwice) {
                         const ToolExecutionContext& context) {
         int count = execution_count->fetch_add(1) + 1;
         std::string message = args["message"].get<std::string>();
-        ai::logger::log_info("Counter tool executed! Count: {}, Message: {}",
+        qcode::logger::log_info("Counter tool executed! Count: {}, Message: {}",
                              count, message);
         return JsonValue{{"count", count}, {"message", message}};
       });
@@ -105,7 +105,7 @@ TEST_P(MultiStepDuplicateExecutionTest, ToolsExecutedOncePerStepNotTwice) {
 
   // Log the execution count
   int final_count = execution_count->load();
-  ai::logger::log_info(
+  qcode::logger::log_info(
       "Final execution count: {} (expected 1 per tool call, got {})",
       final_count, result.tool_calls.size());
 
@@ -123,7 +123,7 @@ TEST_P(MultiStepDuplicateExecutionTest, ToolsExecutedOncePerStepNotTwice) {
         << "Tool execution failed: " << tool_result.error_message();
 
     if (tool_result.is_success() && tool_result.result.contains("count")) {
-      ai::logger::log_info("Tool result count: {}",
+      qcode::logger::log_info("Tool result count: {}",
                            tool_result.result["count"].get<int>());
     }
   }
@@ -148,7 +148,7 @@ TEST_P(MultiStepDuplicateExecutionTest, MultipleStepsNoDuplicateExecution) {
         double b = args["b"].get<double>();
         double result = a + b;
 
-        ai::logger::log_info(
+        qcode::logger::log_info(
             "Calculator executed (execution #{}): {} + {} = {}", exec_num, a, b,
             result);
 
@@ -182,11 +182,11 @@ TEST_P(MultiStepDuplicateExecutionTest, MultipleStepsNoDuplicateExecution) {
   EXPECT_TRUE(result.has_tool_calls()) << "Expected tool calls to be made";
 
   // Log step information
-  ai::logger::log_info("Total steps executed: {}", result.steps.size());
-  ai::logger::log_info("Total tool calls: {}", result.tool_calls.size());
+  qcode::logger::log_info("Total steps executed: {}", result.steps.size());
+  qcode::logger::log_info("Total tool calls: {}", result.tool_calls.size());
 
   int final_count = execution_count->load();
-  ai::logger::log_info("Total tool executions: {}", final_count);
+  qcode::logger::log_info("Total tool executions: {}", final_count);
 
   // CRITICAL ASSERTION: Total executions should equal total tool calls
   EXPECT_EQ(final_count, static_cast<int>(result.tool_calls.size()))
@@ -199,13 +199,13 @@ TEST_P(MultiStepDuplicateExecutionTest, MultipleStepsNoDuplicateExecution) {
   for (size_t i = 0; i < result.steps.size(); ++i) {
     const auto& step = result.steps[i];
     if (!step.tool_results.empty()) {
-      ai::logger::log_info("Step {} had {} tool results", i + 1,
+      qcode::logger::log_info("Step {} had {} tool results", i + 1,
                            step.tool_results.size());
       for (const auto& tool_result : step.tool_results) {
         if (tool_result.is_success() &&
             tool_result.result.contains("execution_number")) {
           int exec_num = tool_result.result["execution_number"].get<int>();
-          ai::logger::log_info("  - Execution number: {}", exec_num);
+          qcode::logger::log_info("  - Execution number: {}", exec_num);
         }
       }
     }
@@ -223,4 +223,4 @@ INSTANTIATE_TEST_SUITE_P(
     });
 
 }  // namespace test
-}  // namespace ai
+}  // namespace qcode

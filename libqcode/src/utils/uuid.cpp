@@ -1,7 +1,7 @@
 #include <qcode/utils/uuid.h>
 #include <uuid.h>
 
-namespace ai {
+namespace qcode {
 namespace utils {
 
 std::string generate_uuid() {
@@ -12,4 +12,4 @@ std::string generate_uuid() {
 }
 
 } // namespace utils
-} // namespace ai
+} // namespace qcode

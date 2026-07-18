@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <string>
 
-namespace ai {
+namespace qcode {
 namespace tui {
 
 void copy_to_clipboard(const std::string& text) {
@@ -20,4 +20,4 @@ void copy_to_clipboard(const std::string& text) {
 }
 
 } // namespace tui
-} // namespace ai
+} // namespace qcode

@@ -8,7 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ai {
+namespace qcode {
 namespace utils {
 
 // Parse a generic error response that follows the common pattern of
@@ -21,7 +21,7 @@ inline GenerateResult parse_standard_error_response(
                         status_code, body);
 
   GenerateResult result;
-  result.is_retryable = ai::is_status_code_retryable(status_code);
+  result.is_retryable = qcode::is_status_code_retryable(status_code);
 
   try {
     auto json = nlohmann::json::parse(body);
@@ -53,4 +53,4 @@ inline GenerateResult parse_standard_error_response(
 }
 
 }  // namespace utils
-}  // namespace ai
+}  // namespace qcode

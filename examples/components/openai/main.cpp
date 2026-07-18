@@ -3,19 +3,19 @@
 #include <qcode/qcode.h>
 
 int main() {
-  std::cout << "AI SDK C++ - OpenAI Component Demo\n";
+  std::cout << "qcode - OpenAI Component Demo\n";
   std::cout << "==================================\n\n";
 
   std::cout << "Available components:\n";
   std::cout << "- Core: YES\n";
 
-#ifdef AI_SDK_HAS_OPENAI
+#ifdef QCODE_HAS_OPENAI
   std::cout << "- OpenAI: YES\n";
 #else
   std::cout << "- OpenAI: NO\n";
 #endif
 
-#ifdef AI_SDK_HAS_ANTHROPIC
+#ifdef QCODE_HAS_ANTHROPIC
   std::cout << "- Anthropic: YES\n";
 #else
   std::cout << "- Anthropic: NO\n";
@@ -25,19 +25,19 @@ int main() {
 
   // Test core functionality
   std::cout << "Testing core functionality...\n";
-  ai::GenerateOptions options;
+  qcode::GenerateOptions options;
   options.model = "gpt-5.4";
   options.prompt = "Hello world";
   std::cout << "✓ Core types work fine\n\n";
 
   // Test OpenAI functionality
-#ifdef AI_SDK_HAS_OPENAI
+#ifdef QCODE_HAS_OPENAI
   std::cout << "Testing OpenAI functionality...\n";
   try {
-    auto client = ai::openai::create_client();
+    auto client = qcode::openai::create_client();
     std::cout << "✓ OpenAI client created successfully\n";
-    std::cout << "✓ Available models: " << ai::openai::models::kGpt54 << ", "
-              << ai::openai::models::kGpt54Mini << "\n";
+    std::cout << "✓ Available models: " << qcode::openai::models::kGpt54 << ", "
+              << qcode::openai::models::kGpt54Mini << "\n";
   } catch (const std::exception& e) {
     std::cout << "✗ OpenAI client failed: " << e.what() << "\n";
   }
@@ -46,18 +46,18 @@ int main() {
 #endif
 
   // Demonstrate that Anthropic is NOT available
-#ifdef AI_SDK_HAS_ANTHROPIC
+#ifdef QCODE_HAS_ANTHROPIC
   std::cout << "\nTesting Anthropic functionality...\n";
   // This would work if Anthropic was linked
-  auto anthropic_client = ai::anthropic::create_client();
+  auto anthropic_client = qcode::anthropic::create_client();
   std::cout << "✓ Anthropic client created\n";
 #else
   std::cout << "\nAnthropie functionality intentionally not available in this "
                "build\n";
-  std::cout << "This example only links ai::openai component\n";
+  std::cout << "This example only links qcode::openai component\n";
 
   // Uncommenting the next line would cause a compile error:
-  // auto anthropic_client = ai::anthropic::create_client(); // ERROR!
+  // auto anthropic_client = qcode::anthropic::create_client(); // ERROR!
 #endif
 
   return 0;
