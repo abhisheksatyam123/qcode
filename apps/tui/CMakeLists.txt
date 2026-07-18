@@ -14,6 +14,7 @@ target_link_libraries(qcode-tui PRIVATE
 )
 
 target_include_directories(qcode-tui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 

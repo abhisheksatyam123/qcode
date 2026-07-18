@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ai/types/tool.h"
+#include <qcode/types/tool.h>
 
 #include <functional>
 #include <map>

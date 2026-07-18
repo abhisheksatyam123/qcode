@@ -5,8 +5,8 @@
 #include <memory>
 #include <thread>
 
-#include <ai/tui/state.h>
-#include <ai/tui/bus/port.h>
+#include <qcode/state/state.h>
+#include <qcode/bus/port.h>
 
 namespace ai {
 namespace tui {

@@ -22,7 +22,7 @@
 #include <ai/tui/db.h>
 #include <ai/tui/state.h>
 #include <ai/tui/system_prompt.h>
-#include <ai/tui/views.h>
+#include <views.h>
 #include <ai/tui/store.h>
 #include <ai/tui/generation_controller.h>
 #include <ai/tui/bus/impl.h>

@@ -1,7 +1,7 @@
-#include <ai/tui/message_render.h>
-#include <ai/tui/views.h>
-#include <ai/tui/db.h>
-#include <ai/logger.h>
+#include <qcode/render/message_render.h>
+#include <views.h>
+#include <qcode/db/db.h>
+#include <qcode/logger/logger.h>
 
 #include <filesystem>
 #include <fstream>

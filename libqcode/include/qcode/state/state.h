@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include <ai/types/message.h>
+#include <qcode/types/message.h>
 
 namespace ai {
 namespace tui {

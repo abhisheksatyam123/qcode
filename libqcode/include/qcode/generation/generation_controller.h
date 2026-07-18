@@ -1,8 +1,8 @@
 #pragma once
 
-#include <ai/tui/bus/impl.h>
-#include <ai/tui/state.h>
-#include <ai/tui/store.h>
+#include <qcode/bus/impl.h>
+#include <qcode/state/state.h>
+#include <qcode/store/store.h>
 
 #include <atomic>
 #include <memory>

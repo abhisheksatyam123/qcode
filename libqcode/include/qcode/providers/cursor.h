@@ -5,7 +5,7 @@
     "Cursor component not available. Link with ai::cursor or ai::sdk to use Cursor functionality."
 #endif
 
-#include "types/client.h"
+#include <qcode/types/client.h>
 
 #include <string>
 #include <vector>

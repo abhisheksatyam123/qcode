@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include <ai/tui/tools.h>
+#include <qcode/tools/tool_descriptors.h>
 
 namespace ai {
 namespace tui {

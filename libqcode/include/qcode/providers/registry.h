@@ -5,7 +5,7 @@
     "Provider registry not available. Link with ai::registry or ai::sdk to use provider dispatch."
 #endif
 
-#include "ai/types/client.h"
+#include <qcode/types/client.h>
 
 #include <functional>
 #include <map>

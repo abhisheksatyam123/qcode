@@ -2,7 +2,7 @@
 #include <ai/tui/db.h>
 #include <ai/tui/config.h>
 #include <ai/tui/contract/event.h>
-#include <ai/tui/themes.h>
+#include <qcode/render/themes.h>
 #include <ai/logger.h>
 #include <ai/types/client.h>
 #include "ai/registry.h"

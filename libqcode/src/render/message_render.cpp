@@ -2,12 +2,12 @@
 #include <unordered_set>
 #include <algorithm>
 #include <cstdio>
-#include <ai/tui/tool_renderers.h>
-#include <ai/tui/message_render.h>
-#include <ai/tui/themes.h>
-#include <ai/tui/views.h>
+#include <qcode/render/tool_renderers.h>
+#include <qcode/render/message_render.h>
+#include <qcode/render/markdown.h>
+#include <qcode/render/themes.h>
 #include <nlohmann/json.hpp>
-#include <ai/logger.h>
+#include <qcode/logger/logger.h>
 
 namespace ai {
 namespace tui {

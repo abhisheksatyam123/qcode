@@ -1,9 +1,9 @@
 #pragma once
 
 // Include all tool-related headers for convenience
-#include "types/generate_options.h"
-#include "types/message.h"
-#include "types/tool.h"
+#include <qcode/types/generate_options.h>
+#include <qcode/types/message.h>
+#include <qcode/types/tool.h>
 
 namespace ai {
 

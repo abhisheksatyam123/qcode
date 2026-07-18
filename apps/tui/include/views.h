@@ -1,0 +1,55 @@
+#pragma once
+
+#include <qcode/commands/commands.h>
+#include <qcode/db/db.h>
+#include <qcode/render/markdown.h>  // render_markdown
+#include <qcode/render/themes.h>
+#include <qcode/state/state.h>
+#include <qcode/store/store.h>
+#include <ftxui/component/component.hpp>
+#include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/color.hpp>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace ai {
+namespace tui {
+
+ftxui::Element render_logo();
+
+ftxui::Element render_view(
+    const ChatState& state,
+    const std::vector<ProviderInfo>& providers_list,
+    int selected_provider,
+    int selected_model,
+    bool enable_tools,
+    const std::string& prompt_input,
+    bool show_slash,
+    int slash_idx,
+    const std::vector<SlashCommand>& slash_commands,
+    bool show_model_select,
+    int model_select_idx,
+    const std::vector<ModelEntry>& model_entries,
+    const std::string& model_query,
+    bool show_session_select,
+    int session_select_idx,
+    const std::vector<db::SessionInfo>& session_entries,
+    const std::string& session_query,
+    bool show_theme_select,
+    int theme_select_idx,
+    const std::vector<ThemeEntry>& theme_entries,
+    const std::string& theme_query,
+    const ftxui::Component& tab_toggle,
+    const std::shared_ptr<int>& scroll_line,
+    const ftxui::Component& input
+);
+
+// Toast overlay
+ftxui::Element render_toast_overlay(
+    const std::vector<Toast>& toasts,
+    const std::string& theme
+);
+
+}  // namespace tui
+}  // namespace ai

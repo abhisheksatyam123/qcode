@@ -5,7 +5,7 @@
     "Anthropic component not available. Link with ai::anthropic or ai::sdk to use Anthropic functionality."
 #endif
 
-#include "types/client.h"
+#include <qcode/types/client.h>
 
 #include <optional>
 #include <string>

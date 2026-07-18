@@ -1,7 +1,7 @@
 #pragma once
-#include <ai/tui/bus/port.h>
-#include <ai/tui/contract/event.h>
-#include <ai/tui/state.h>
+#include <qcode/bus/port.h>
+#include <qcode/contract/event.h>
+#include <qcode/state/state.h>
 #include <atomic>
 #include <functional>
 #include <memory>

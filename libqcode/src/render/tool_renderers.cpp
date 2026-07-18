@@ -1,7 +1,6 @@
-#include <ai/tui/tool_renderers.h>
-#include <ai/tui/themes.h>
-#include <ai/tui/message_render.h>
-#include <ai/tui/views.h>
+#include <qcode/render/tool_renderers.h>
+#include <qcode/render/themes.h>
+#include <qcode/render/message_render.h>
 #include <ftxui/dom/elements.hpp>
 #include <sstream>
 #include <algorithm>

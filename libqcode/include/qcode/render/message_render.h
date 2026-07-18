@@ -1,7 +1,7 @@
 #pragma once
 #include <ftxui/dom/elements.hpp>
-#include <ai/types/message.h>
-#include <ai/tui/state.h>
+#include <qcode/types/message.h>
+#include <qcode/state/state.h>
 
 namespace ai {
 namespace tui {

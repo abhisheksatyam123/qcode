@@ -23,14 +23,11 @@ find_package(CURL REQUIRED)
 add_library(qcode-core)
 
 # Include directories.
-# Sources still include <ai/...> during the apps/libqcode migration, so keep the
-# legacy top-level include/ tree on the path alongside libqcode/include/qcode.
+# Canonical public API: <qcode/...> via libqcode/include.
+# Legacy <ai/...> shims live under ${CMAKE_SOURCE_DIR}/include.
 target_include_directories(qcode-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    # Legacy ai/ headers use relative includes like "types/foo.h"; keep that
-    # search root so partially-migrated qcode/ headers resolve the same way.
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/ai>
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/third_party/md4c>
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/third_party/httplib-header-only>
     $<INSTALL_INTERFACE:include>

@@ -5,8 +5,8 @@
     "Antigravity component not available. Link with ai::antigravity or ai::sdk to use Antigravity functionality."
 #endif
 
-#include "retry/retry_policy.h"
-#include "types/client.h"
+#include <qcode/retry/retry_policy.h>
+#include <qcode/types/client.h>
 
 #include <optional>
 #include <string>
