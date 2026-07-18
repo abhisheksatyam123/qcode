@@ -1,8 +1,8 @@
-#include <qcode/chat/chat_bus.h>
+#include <qcode/generation/generation_service.h>
 #include <qcode/config/config.h>
-#include <qcode/context/context_manager.h>
+#include <qcode/context/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
-#include <qcode/db/db.h>
+#include <qcode/session/session_store.h>
 #include <qcode/contract/event.h>
 
 #include <atomic>
@@ -18,7 +18,7 @@
 #include <qcode/logger/logger.h>
 #include <qcode/providers/openai.h>
 #include <qcode/providers/registry.h>
-#include <qcode/providers/app_providers.h>
+#include <qcode/providers/authenticated_providers.h>
 
 namespace ai {
 namespace tui {
@@ -86,7 +86,7 @@ static void run_tools_generation_bus(
       [&bus, &ctx, assistant_text,
        callback_mutex](const ai::GenerateStep& step) {
         std::lock_guard<std::mutex> lock(*callback_mutex);
-        LOG_DEBUG("chat_bus: on_step_finish text_len={}", step.text.size());
+        LOG_DEBUG("generation_service: on_step_finish text_len={}", step.text.size());
         if (step.text.empty()) return;
         if (*assistant_text == "  \u23f3 Working...") {
           *assistant_text = step.text;
@@ -106,7 +106,7 @@ static void run_tools_generation_bus(
       [&bus, &ctx, tool_starts, step_counter, max_steps,
        callback_mutex](const ai::ToolCall& call) {
         std::lock_guard<std::mutex> lock(*callback_mutex);
-        LOG_DEBUG("chat_bus: on_tool_call_start tool={} step={}/{}", call.tool_name, (int)*step_counter, max_steps);
+        LOG_DEBUG("generation_service: on_tool_call_start tool={} step={}/{}", call.tool_name, (int)*step_counter, max_steps);
         auto now = std::chrono::steady_clock::now();
         (*tool_starts)[call.id] = now;
         (*step_counter)++;
@@ -129,9 +129,9 @@ static void run_tools_generation_bus(
           auto start_it_tmp = tool_starts->find(res.tool_call_id);
           if (start_it_tmp != tool_starts->end()) {
             double d = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_it_tmp->second).count();
-            LOG_DEBUG("chat_bus: on_tool_call_finish tool={} success={} duration={:.1f}s", res.tool_name, res.is_success(), d);
+            LOG_DEBUG("generation_service: on_tool_call_finish tool={} success={} duration={:.1f}s", res.tool_name, res.is_success(), d);
           } else {
-            LOG_DEBUG("chat_bus: on_tool_call_finish tool={} success={} duration=unknown", res.tool_name, res.is_success());
+            LOG_DEBUG("generation_service: on_tool_call_finish tool={} success={} duration=unknown", res.tool_name, res.is_success());
           }
         }
         auto start_it = tool_starts->find(res.tool_call_id);
@@ -651,7 +651,7 @@ void run_generation_with_bus(
       }
     }
 
-    LOG_DEBUG("chat_bus: resolved provider={} api_url={}", provider_id,
+    LOG_DEBUG("generation_service: resolved provider={} api_url={}", provider_id,
               provider_options.base_url);
 
     if (provider_id.empty()) {
@@ -727,7 +727,7 @@ void run_generation_with_bus(
             provider_name.find("Antigravity") != std::string::npos) {
           const auto fresh = get_antigravity_token(/*force_refresh=*/true);
           if (fresh.empty()) {
-            LOG_ERROR("chat_bus: Antigravity token refresh returned empty");
+            LOG_ERROR("generation_service: Antigravity token refresh returned empty");
             return false;
           }
           provider_options.api_key = fresh;
@@ -736,11 +736,11 @@ void run_generation_with_bus(
             ai::providers::ProviderRegistry::instance().resolve(
                 provider_id, provider_options);
         if (!resolution.ok()) {
-          LOG_ERROR("chat_bus: credential refresh failed: {}", resolution.error);
+          LOG_ERROR("generation_service: credential refresh failed: {}", resolution.error);
           return false;
         }
         out_client = std::move(resolution.client);
-        LOG_INFO("chat_bus: refreshed provider credentials for {}", provider_id);
+        LOG_INFO("generation_service: refreshed provider credentials for {}", provider_id);
         return true;
       };
       run_tools_generation_bus(client, std::move(base_opts), bus, ctx,
@@ -773,10 +773,10 @@ void run_generation_with_bus(
 } // namespace tui
 
 // ════════════════════════════════════════════════════════════════════════════
-//  BackendService implementation
+//  GenerationService implementation
 // ════════════════════════════════════════════════════════════════════════════
 
-void ai::tui::BackendService::run_generation(
+void ai::tui::GenerationService::run_generation(
     const std::string& provider_name,
     const std::string& model_id,
     const std::string& system_prompt,

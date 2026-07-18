@@ -1,4 +1,4 @@
-#include <qcode/providers/errors.h>
+#include <qcode/errors/errors.h>
 #include <qcode/types/enums.h>
 #include <qcode/types/generate_options.h>
 #include <qcode/types/message.h>

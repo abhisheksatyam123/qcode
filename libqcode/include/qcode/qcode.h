@@ -26,9 +26,11 @@
 
 // Tool functionality
 #include <qcode/tools/tool_executor.h>
+#include <qcode/tools/tool_factory.h>
+#include <qcode/tools/multi_step_coordinator.h>
 
 // Error handling
-#include <qcode/providers/errors.h>
+#include <qcode/errors/errors.h>
 
 /// qcode - C++ toolkit for AI-powered coding agents
 ///

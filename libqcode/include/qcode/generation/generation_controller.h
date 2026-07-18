@@ -2,7 +2,7 @@
 
 #include <qcode/bus/in_process_bus.h>
 #include <qcode/state/state.h>
-#include <qcode/store/store.h>
+#include <qcode/store/app_store.h>
 
 #include <atomic>
 #include <memory>

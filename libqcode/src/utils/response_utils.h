@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/providers/errors.h>
+#include <qcode/errors/errors.h>
 #include <qcode/logger/logger.h>
 #include <qcode/types/generate_options.h>
 

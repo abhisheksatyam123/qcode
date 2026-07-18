@@ -15,21 +15,22 @@
 #include <climits>
 
 #include <qcode/logger/file_logger.h>
-#include <qcode/chat/chat_bus.h>
-#include <qcode/providers/app_providers.h>
+#include <qcode/generation/generation_service.h>
+#include <qcode/providers/authenticated_providers.h>
 #include <qcode/commands/commands.h>
 #include <qcode/config/config.h>
-#include <qcode/db/db.h>
+#include <qcode/session/session_store.h>
 #include <qcode/state/state.h>
 #include <qcode/system_prompt/system_prompt.h>
 #include <views.h>
-#include <qcode/store/store.h>
+#include <qcode/store/app_store.h>
 #include <qcode/generation/generation_controller.h>
 #include <qcode/bus/in_process_bus.h>
 #include <qcode/contract/event.h>
-#include <qcode/context/context_manager.h>
+#include <qcode/context/token_budget.h>
 #include <qcode/contract/identity.h>
-#include "tui_helpers.h"
+#include <qcode/workspace/git_workspace.h>
+#include "picker_helpers.h"
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -68,7 +69,7 @@ int main() {
     bus->set_wake_callback([&screen]() { screen.Post(Event::Custom); });
     // Populate the provider registry once, before any generation thread starts,
     // so resolve() only ever reads a fully-initialized registry.
-    ai::providers::register_app_providers();
+    ai::providers::register_authenticated_providers();
     ai::tui::AppStore store(*bus);
 
     // Wire bus events to store mutations
@@ -117,22 +118,22 @@ int main() {
         break;
     }
 
-    ai::tui::db::init_database();
-    std::string last_session = ai::tui::db::get_last_active_session();
+    ai::tui::session::init_database();
+    std::string last_session = ai::tui::session::get_last_active_session();
     if (last_session.empty() && !providers_list.empty()) {
         std::string prov = providers_list[selected_provider].name;
         std::string mod = providers_list[selected_provider].models[selected_model].name;
-        last_session = ai::tui::db::create_new_session(prov, mod);
+        last_session = ai::tui::session::create_new_session(prov, mod);
     }
     store.set_session_id(last_session);
     if (!store.session_id().empty()) {
-        ai::tui::db::reload_session_history(store.session_id(), state);
+        ai::tui::session::reload_session_history(store.session_id(), state);
 
         // Restore provider and model from the loaded session so the UI
         // matches what was used when the session was last active.
         std::string loaded_prov_id;
         std::string loaded_model_id;
-        for (const auto& s : ai::tui::db::list_sessions_full()) {
+        for (const auto& s : ai::tui::session::list_sessions_full()) {
             if (s.id == last_session) {
                 loaded_prov_id = s.provider;
                 loaded_model_id = s.model;
@@ -142,7 +143,7 @@ int main() {
         }
         if (state.session_title && state.session_title->empty()) {
             *state.session_title =
-                ai::tui::db::get_session_title(store.session_id());
+                ai::tui::session::get_session_title(store.session_id());
         }
         if (!loaded_prov_id.empty() && !loaded_model_id.empty()) {
             for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
@@ -170,8 +171,8 @@ int main() {
     bool show_session_select = false;
     int session_select_idx = 0;
     std::string session_query = "";
-    std::vector<ai::tui::db::SessionInfo> session_entries =
-        ai::tui::db::list_sessions_full();
+    std::vector<ai::tui::session::SessionInfo> session_entries =
+        ai::tui::session::list_sessions_full();
 
     bool show_theme_select = false;
     int theme_select_idx = 0;
@@ -248,7 +249,7 @@ int main() {
 
             if (cmd == "session" || cmd == "list") {
                 prompt_input = "";
-                session_entries = ai::tui::db::list_sessions_full();
+                session_entries = ai::tui::session::list_sessions_full();
                 if (!session_entries.empty()) {
                     show_session_select = true;
                     session_query = "";
@@ -361,7 +362,7 @@ int main() {
 
         // ── Session select popup ──
         if (show_session_select) {
-            std::vector<ai::tui::db::SessionInfo> filtered_session_entries;
+            std::vector<ai::tui::session::SessionInfo> filtered_session_entries;
             for (const auto& entry : session_entries) {
                 if (matches_query(entry.title, session_query) ||
                     matches_query(entry.id, session_query) ||
@@ -389,7 +390,7 @@ int main() {
                     store.set_session_id(picked.id);
                     sync_session_title(state, picked.title);
                     state.messages_history->clear();
-                    ai::tui::db::reload_session_history(picked.id, state);
+                    ai::tui::session::reload_session_history(picked.id, state);
                     if (state.retry_available) *state.retry_available = false;
                 }
                 show_session_select = false;
@@ -400,8 +401,8 @@ int main() {
             if (e == Event::Special(std::string(1, '\x04'))) { // Ctrl-D
                 if (!filtered_session_entries.empty()) {
                     std::string sid = filtered_session_entries[session_select_idx].id;
-                    ai::tui::db::delete_session(sid);
-                    session_entries = ai::tui::db::list_sessions_full();
+                    ai::tui::session::delete_session(sid);
+                    session_entries = ai::tui::session::list_sessions_full();
                     filtered_session_entries.clear();
                     for (const auto& entry : session_entries) {
                         if (matches_query(entry.title, session_query) ||
@@ -521,7 +522,7 @@ int main() {
                         state.slash_suggestion_idx = 0;
 
                         if (cmd_name == "session" || cmd_name == "list") {
-                            session_entries = ai::tui::db::list_sessions_full();
+                            session_entries = ai::tui::session::list_sessions_full();
                             if (!session_entries.empty()) {
                                 show_session_select = true;
                                 session_query = "";
@@ -935,7 +936,7 @@ int main() {
         }
 
         // ── Filter sessions dynamically for display ──
-        std::vector<ai::tui::db::SessionInfo> filtered_session_entries;
+        std::vector<ai::tui::session::SessionInfo> filtered_session_entries;
         for (const auto& e : session_entries) {
             if (matches_query(e.title, session_query) ||
                 matches_query(e.id, session_query) ||

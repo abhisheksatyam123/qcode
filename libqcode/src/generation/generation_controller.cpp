@@ -1,10 +1,10 @@
 #include <qcode/generation/generation_controller.h>
 
 #include <qcode/logger/logger.h>
-#include <qcode/chat/chat_bus.h>
-#include <qcode/context/context_manager.h>
+#include <qcode/generation/generation_service.h>
+#include <qcode/context/token_budget.h>
 #include <qcode/contract/event.h>
-#include <qcode/db/db.h>
+#include <qcode/session/session_store.h>
 
 #include <algorithm>
 #include <chrono>
@@ -100,7 +100,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
     }
     if (request.append_user_message) {
         store_.append_chat_message("User", prompt);
-        db::save_message(store_.session_id(), "User", prompt);
+        session::save_message(store_.session_id(), "User", prompt);
     }
 
     const auto& providers = request.providers;
@@ -137,7 +137,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
                 });
 
             ai::logger::set_thread_name("llm");
-            BackendService backend{*bus_ptr, providers_copy};
+            GenerationService backend{*bus_ptr, providers_copy};
             if (!app_running->load() || stop_token.stop_requested()) {
                 return;
             }
@@ -146,7 +146,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
             GenerationContext ctx{
                 .session_id = *state_ptr->session_id,
                 .reasoning_mode = *state_ptr->reasoning_mode,
-                .workspace = db::get_session_workspace(*state_ptr->session_id),
+                .workspace = session::get_session_workspace(*state_ptr->session_id),
                 .abort_flag = state_ptr->abort_flag};
             if (state_ptr->abort_flag) {
                 state_ptr->abort_flag->store(false, std::memory_order_release);

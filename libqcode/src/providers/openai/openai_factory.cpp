@@ -1,6 +1,6 @@
 #include "openai_factory.h"
 
-#include <qcode/providers/errors.h>
+#include <qcode/errors/errors.h>
 #include <qcode/providers/openai.h>
 #include "openai_client.h"
 

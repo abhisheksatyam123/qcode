@@ -1,7 +1,7 @@
-#include <qcode/store/store.h>
+#include <qcode/store/app_store.h>
 #include <qcode/bus/in_process_bus.h>
-#include <qcode/context/context_manager.h>
-#include <qcode/db/db.h>
+#include <qcode/context/token_budget.h>
+#include <qcode/session/session_store.h>
 #include <algorithm>
 #include <climits>
 #include <qcode/types/message.h>
@@ -134,7 +134,7 @@ void AppStore::set_generating(bool v) {
 void AppStore::set_session_id(const std::string& id) {
     *state_.session_id = id;
     if (state_.session_title) {
-        *state_.session_title = ai::tui::db::get_session_title(id);
+        *state_.session_title = ai::tui::session::get_session_title(id);
     }
     notify();
 }
@@ -293,7 +293,7 @@ void AppStore::wire() {
         if (p.done) {
             set_generating(false);
             const auto final_text = latest_assistant_text();
-            ai::tui::db::save_message(p.session_id, "Assistant", final_text);
+            ai::tui::session::save_message(p.session_id, "Assistant", final_text);
         }
     }));
     subs_.push_back(bus_.subscribe<ReasoningDelta>([this](const ReasoningDelta::Payload& p) {
@@ -381,7 +381,7 @@ void AppStore::wire() {
         bus_.publish<ContextSizeUpdated>({.context_tokens = reset_tokens});
 
         // Overwrite history in SQLite database to persist the compact set
-        ai::tui::db::overwrite_session_history(*state_.session_id, *state_.messages_history);
+        ai::tui::session::overwrite_session_history(*state_.session_id, *state_.messages_history);
 
         add_toast("Compaction complete", "success", 3000);
         set_status("idle");
@@ -405,7 +405,7 @@ void AppStore::wire() {
             {"name", p.tool_name},
             {"arguments", p.arguments},
         };
-        ai::tui::db::save_message(p.session_id, "ToolCall", call_json.dump());
+        ai::tui::session::save_message(p.session_id, "ToolCall", call_json.dump());
         notify();
     }));
 
@@ -422,7 +422,7 @@ void AppStore::wire() {
             {"is_error", p.is_error},
             {"duration_ms", p.duration_ms},
         };
-        ai::tui::db::save_message(p.session_id, "ToolResult", result_json.dump());
+        ai::tui::session::save_message(p.session_id, "ToolResult", result_json.dump());
         notify();
     }));
 
@@ -455,7 +455,7 @@ void AppStore::wire() {
                 msg = "Error: " + msg;
             }
             append_chat_message("System", msg);
-            ai::tui::db::save_message(p.session_id, "System", msg);
+            ai::tui::session::save_message(p.session_id, "System", msg);
         }
     }));
 

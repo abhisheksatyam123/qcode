@@ -36,12 +36,12 @@ struct GenerationContext {
 
 
 /**
- * BackendService: high-level interface for LLM generation.
+ * GenerationService: high-level interface for LLM generation.
  * Wraps bus + providers and exposes a clean run_generation method.
  */
-class BackendService {
+class GenerationService {
 public:
-    BackendService(bus::BusPort& bus, const std::vector<ProviderInfo>& providers)
+    GenerationService(bus::BusPort& bus, const std::vector<ProviderInfo>& providers)
         : bus_(bus), providers_(providers) {}
 
     /**

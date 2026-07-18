@@ -8,7 +8,7 @@
 /// Usage:
 /// ```cpp
 /// #include <qcode/qcode.h>
-/// #include <qcode/langfuse/langfuse.h>
+/// #include <qcode/langfuse/tracer.h>
 ///
 /// ai::langfuse::Tracer tracer({
 ///     .host = "https://cloud.langfuse.com",

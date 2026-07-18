@@ -17,7 +17,7 @@ using namespace ftxui;
 namespace {
 class ReflectSimple : public ftxui::Node {
  public:
-  ReflectSimple(ftxui::Element child, SimpleBox& box)
+  ReflectSimple(ftxui::Element child, HitBox& box)
       : ftxui::Node(unpack(std::move(child))), reflected_box_(box) {}
 
   void ComputeRequirement() final {
@@ -35,10 +35,10 @@ class ReflectSimple : public ftxui::Node {
   }
 
  private:
-  SimpleBox& reflected_box_;
+  HitBox& reflected_box_;
 };
 
-ftxui::Decorator reflect_simple(SimpleBox& box) {
+ftxui::Decorator reflect_simple(HitBox& box) {
   return [&](ftxui::Element child) -> ftxui::Element {
     return std::make_shared<ReflectSimple>(std::move(child), box);
   };

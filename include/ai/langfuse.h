@@ -1,3 +1,3 @@
 #pragma once
 
-#include <qcode/langfuse/langfuse.h>
+#include <qcode/langfuse/tracer.h>

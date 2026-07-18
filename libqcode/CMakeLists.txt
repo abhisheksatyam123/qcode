@@ -50,7 +50,7 @@ target_sources(qcode-core PRIVATE
     # Providers
     src/providers/base_provider_client.cpp
     src/providers/registry.cpp
-    src/providers/app_providers.cpp
+    src/providers/authenticated_providers.cpp
     src/providers/openai/openai_client.cpp
     src/providers/openai/openai_request_builder.cpp
     src/providers/openai/openai_response_parser.cpp
@@ -96,13 +96,17 @@ target_sources(qcode-core PRIVATE
     src/generation/generation_controller.cpp
 
     # Context
-    src/context/context_manager.cpp
+    src/context/token_budget.cpp
 
     # Config
     src/config/config.cpp
 
-    # DB
-    src/db/db.cpp
+    # Workspace
+    src/workspace/git_workspace.cpp
+    src/workspace/clipboard.cpp
+
+    # Session persistence
+    src/session/session_store.cpp
 
     # Bus
     src/bus/in_process_bus.cpp
@@ -117,10 +121,10 @@ target_sources(qcode-core PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/md4c/md4c.c
 
     # Store
-    src/store/store.cpp
+    src/store/app_store.cpp
 
     # Chat
-    src/chat/chat_bus.cpp
+    src/generation/generation_service.cpp
 
     # Commands
     src/commands/commands.cpp

@@ -1,12 +1,12 @@
 #include <qcode/commands/commands.h>
-#include <qcode/db/db.h>
+#include <qcode/session/session_store.h>
 #include <qcode/config/config.h>
 #include <qcode/contract/event.h>
 #include <qcode/render/themes.h>
 #include <qcode/logger/logger.h>
 #include <qcode/types/client.h>
 #include <qcode/providers/registry.h>
-#include <qcode/providers/app_providers.h>
+#include <qcode/providers/authenticated_providers.h>
 #include <memory>
 #include <filesystem>
 #include <fstream>
@@ -188,10 +188,10 @@ bool handle_slash_command(
             }
         }
 
-        std::string new_id = db::create_new_session(prov, mod, ws, custom_id);
+        std::string new_id = session::create_new_session(prov, mod, ws, custom_id);
         *state.session_id = new_id;
         state.messages_history->clear();
-        std::string display_title = db::get_session_title(new_id);
+        std::string display_title = session::get_session_title(new_id);
         if (display_title.empty()) {
             display_title = custom_id.empty() ? ("Session - " + mod) : custom_id;
         }
@@ -225,7 +225,7 @@ bool handle_slash_command(
             append_system_message(state, "No active session to rename. Start or load one first.");
             return true;
         }
-        db::rename_session(*state.session_id, new_title);
+        session::rename_session(*state.session_id, new_title);
         if (state.session_title) *state.session_title = new_title;
         append_system_message(state, "Renamed session to: " + new_title);
         return true;
@@ -245,12 +245,12 @@ bool handle_slash_command(
             return true;
         }
 
-        if (!db::is_valid_session_id(target_id)) {
+        if (!session::is_valid_session_id(target_id)) {
             append_system_message(state, "Invalid session id: " + target_id);
             return true;
         }
 
-        auto list = db::list_sessions();
+        auto list = session::list_sessions();
         bool found = false;
         for (auto& s : list) {
             if (s.first == target_id) {
@@ -261,12 +261,12 @@ bool handle_slash_command(
 
         if (found) {
             *state.session_id = target_id;
-            db::reload_session_history(target_id, state);
+            session::reload_session_history(target_id, state);
             
             // Restore provider and model from the loaded session!
             std::string loaded_prov_id;
             std::string loaded_model_id;
-            for (const auto& s : db::list_sessions_full()) {
+            for (const auto& s : session::list_sessions_full()) {
                 if (s.id == target_id) {
                     loaded_prov_id = s.provider;
                     loaded_model_id = s.model;
@@ -487,7 +487,7 @@ void run_compaction(
             "Use tools only when they improve summary accuracy; otherwise answer directly.";
 
         const auto& sel = providers_copy[sp];
-        ai::providers::register_app_providers();
+        ai::providers::register_authenticated_providers();
         ai::providers::ProviderOptions provider_options;
         provider_options.base_url = sel.api_url;
         provider_options.api_key = sel.api_key;

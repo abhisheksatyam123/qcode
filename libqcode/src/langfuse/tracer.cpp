@@ -1,4 +1,4 @@
-#include <qcode/langfuse/langfuse.h>
+#include <qcode/langfuse/tracer.h>
 #include <qcode/logger/logger.h>
 
 #include <cstdio>

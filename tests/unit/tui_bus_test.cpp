@@ -106,8 +106,8 @@ TEST(TuiBusTest, RewakesWhenDrainBatchLimitLeavesEvents) {
 }  // namespace
 }  // namespace ai::tui::bus
 
-#include <qcode/store/store.h>
-#include <qcode/db/db.h>
+#include <qcode/store/app_store.h>
+#include <qcode/session/session_store.h>
 #include <cstdlib>
 #include <cstdio>
 
@@ -120,7 +120,7 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
   setenv("QCODE_DB_PATH", "tui_store_test_temp.db", 1);
   
   // Initialize database
-  db::init_database();
+  session::init_database();
 
   bus::BusRuntime bus;
   bus.register_event<contract::ErrorOccurred>();
@@ -128,7 +128,7 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
   AppStore store(bus);
   store.wire();
 
-  std::string test_session_id = db::create_new_session("openai", "gpt-4o");
+  std::string test_session_id = session::create_new_session("openai", "gpt-4o");
   store.set_session_id(test_session_id);
 
   // Publish ErrorOccurred with an error that already has "Error: " prefix
@@ -141,7 +141,7 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
   bus.drain();
 
   // Load messages from DB to check formatting
-  auto messages = db::load_session_messages(test_session_id);
+  auto messages = session::load_session_messages(test_session_id);
   ASSERT_EQ(messages.size(), 1U);
   EXPECT_EQ(messages[0].second, "Error: Upstream request failed");
 
@@ -154,7 +154,7 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
 
   bus.drain();
 
-  messages = db::load_session_messages(test_session_id);
+  messages = session::load_session_messages(test_session_id);
   ASSERT_EQ(messages.size(), 2U);
   EXPECT_EQ(messages[1].second, "Error: Upstream request failed");
 

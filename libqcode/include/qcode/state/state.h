@@ -13,7 +13,7 @@
 namespace ai {
 namespace tui {
 
-struct SimpleBox {
+struct HitBox {
     int x_min = 0;
     int x_max = 0;
     int y_min = 0;
@@ -73,8 +73,8 @@ struct ChatState {
     // Files tab: list of changed files, or the selected file's unified diff.
     bool files_detail_open = false;
     // Hit boxes for clickable file rows in the list view (index == file index).
-    std::shared_ptr<std::vector<SimpleBox>> file_row_boxes =
-        std::make_shared<std::vector<SimpleBox>>();
+    std::shared_ptr<std::vector<HitBox>> file_row_boxes =
+        std::make_shared<std::vector<HitBox>>();
     std::shared_ptr<int> scroll_line = std::make_shared<int>(INT_MAX);
     std::shared_ptr<bool> auto_scroll = std::make_shared<bool>(true);
     // First message in the bounded render window. The complete history remains
@@ -148,15 +148,9 @@ struct ChatState {
     std::shared_ptr<std::vector<std::string>> tool_block_order =
         std::make_shared<std::vector<std::string>>();
     std::shared_ptr<int> focused_tool_index = std::make_shared<int>(-1);
-    std::shared_ptr<std::unordered_map<std::string, SimpleBox>> tool_arrow_boxes =
-        std::make_shared<std::unordered_map<std::string, SimpleBox>>();
+    std::shared_ptr<std::unordered_map<std::string, HitBox>> tool_arrow_boxes =
+        std::make_shared<std::unordered_map<std::string, HitBox>>();
 };
-
-// Helper to scan for modified files using git status
-void update_modified_files(ChatState& state);
-
-// Helper to copy text to system clipboard
-void copy_to_clipboard(const std::string& text);
 
 } // namespace tui
 } // namespace ai

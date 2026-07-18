@@ -1,6 +1,6 @@
 #include <qcode/render/message_render.h>
 #include <views.h>
-#include <qcode/db/db.h>
+#include <qcode/session/session_store.h>
 #include <qcode/logger/logger.h>
 
 #include <filesystem>
@@ -23,7 +23,7 @@ namespace {
 // Reflect layout box into ChatState hit-testing (file list rows, etc.).
 class ReflectSimple : public ftxui::Node {
  public:
-  ReflectSimple(ftxui::Element child, SimpleBox& box)
+  ReflectSimple(ftxui::Element child, HitBox& box)
       : ftxui::Node(unpack(std::move(child))), reflected_box_(box) {}
 
   void ComputeRequirement() final {
@@ -41,10 +41,10 @@ class ReflectSimple : public ftxui::Node {
   }
 
  private:
-  SimpleBox& reflected_box_;
+  HitBox& reflected_box_;
 };
 
-ftxui::Decorator reflect_box(SimpleBox& box) {
+ftxui::Decorator reflect_box(HitBox& box) {
   return [&box](ftxui::Element child) -> ftxui::Element {
     return std::make_shared<ReflectSimple>(std::move(child), box);
   };
@@ -280,7 +280,7 @@ ftxui::Element build_model_popup(
     const std::string& theme
 );
 ftxui::Element build_session_popup(
-    const std::vector<db::SessionInfo>& entries,
+    const std::vector<session::SessionInfo>& entries,
     int select_idx,
     const std::string& active_session_id,
     const std::string& query,
@@ -370,7 +370,7 @@ ftxui::Element render_view(
     const std::string& model_query,
     bool show_session_select,
     int session_select_idx,
-    const std::vector<db::SessionInfo>& session_entries,
+    const std::vector<session::SessionInfo>& session_entries,
     const std::string& session_query,
     bool show_theme_select,
     int theme_select_idx,
@@ -1083,7 +1083,7 @@ ftxui::Element build_model_popup(
 
 // ── Session selector popup ──
 ftxui::Element build_session_popup(
-    const std::vector<db::SessionInfo>& entries,
+    const std::vector<session::SessionInfo>& entries,
     int select_idx,
     const std::string& active_session_id,
     const std::string& query,

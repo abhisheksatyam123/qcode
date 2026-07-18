@@ -1,3 +1,3 @@
 #pragma once
 
-#include <qcode/providers/app_providers.h>
+#include <qcode/providers/authenticated_providers.h>

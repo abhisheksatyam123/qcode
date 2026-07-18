@@ -1,6 +1,7 @@
 #include "base_provider_client.h"
 
 #include <qcode/logger/logger.h>
+#include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/tools/tool_executor.h>
 
 namespace ai {

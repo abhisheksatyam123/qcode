@@ -1,6 +1,6 @@
 #include "anthropic_factory.h"
 
-#include <qcode/providers/errors.h>
+#include <qcode/errors/errors.h>
 #include "anthropic_client.h"
 
 #include <cstdlib>

@@ -1,3 +1,3 @@
 #pragma once
 
-#include <qcode/chat/chat_bus.h>
+#include <qcode/generation/generation_service.h>

@@ -18,7 +18,7 @@
 #include <map>
 #include <string>
 
-#include <qcode/langfuse/langfuse.h>
+#include <qcode/langfuse/tracer.h>
 #include <qcode/providers/openai.h>
 #include <qcode/tools/tool_executor.h>
 

@@ -1,11 +1,11 @@
 #pragma once
 
 #include <qcode/commands/commands.h>
-#include <qcode/db/db.h>
+#include <qcode/session/session_store.h>
 #include <qcode/render/markdown.h>  // render_markdown
 #include <qcode/render/themes.h>
 #include <qcode/state/state.h>
-#include <qcode/store/store.h>
+#include <qcode/store/app_store.h>
 #include <ftxui/component/component.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/color.hpp>
@@ -34,7 +34,7 @@ ftxui::Element render_view(
     const std::string& model_query,
     bool show_session_select,
     int session_select_idx,
-    const std::vector<db::SessionInfo>& session_entries,
+    const std::vector<session::SessionInfo>& session_entries,
     const std::string& session_query,
     bool show_theme_select,
     int theme_select_idx,

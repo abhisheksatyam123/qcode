@@ -1,3 +1,3 @@
 #pragma once
 
-#include <qcode/providers/errors.h>
+#include <qcode/errors/errors.h>

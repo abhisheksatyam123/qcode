@@ -8,7 +8,7 @@
 
 namespace ai {
 namespace tui {
-namespace db {
+namespace session {
 
 // Initialize SQLite database (~/.qcode.db) and create tables
 void init_database();
@@ -96,6 +96,6 @@ SessionStats get_session_stats(const std::string& session_id,
 // Delete a session and its associated messages
 void delete_session(const std::string& session_id);
 
-} // namespace db
+} // namespace session
 } // namespace tui
 } // namespace ai

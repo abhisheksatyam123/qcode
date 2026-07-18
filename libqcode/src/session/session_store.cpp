@@ -1,4 +1,4 @@
-#include <qcode/db/db.h>
+#include <qcode/session/session_store.h>
 
 #include <sqlite3.h>
 #include <uuid.h>
@@ -20,7 +20,7 @@
 
 namespace ai {
 namespace tui {
-namespace db {
+namespace session {
 
 static std::string get_db_path() {
     // Configurable via QCODE_DB_PATH / OPENCODE_DB_PATH; falls back to ~/.qcode.db.
@@ -870,6 +870,6 @@ void delete_session(const std::string& session_id) {
     sqlite3_close(db);
 }
 
-} // namespace db
+} // namespace session
 } // namespace tui
 } // namespace ai
