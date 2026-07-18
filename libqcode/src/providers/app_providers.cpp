@@ -1,4 +1,4 @@
-#include <qcode/providers/provider_registry_init.h>
+#include <qcode/providers/app_providers.h>
 
 #include <qcode/providers/antigravity.h>
 #include <qcode/providers/cursor.h>
@@ -10,12 +10,12 @@ namespace ai {
 namespace providers {
 
 namespace {
-std::once_flag g_tui_providers_registered;
+std::once_flag g_app_providers_registered;
 }  // namespace
 
-void register_tui_providers() {
+void register_app_providers() {
   // Register exactly once, even if called from multiple generations or threads.
-  std::call_once(g_tui_providers_registered, [] {
+  std::call_once(g_app_providers_registered, [] {
     register_core_providers();
     // Antigravity auth lives in the TUI (keyring + oauth token refresh), so it is
     // registered here rather than in the core registry.

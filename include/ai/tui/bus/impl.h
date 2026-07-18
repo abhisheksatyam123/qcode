@@ -1,3 +1,3 @@
 #pragma once
 
-#include <qcode/bus/impl.h>
+#include <qcode/bus/in_process_bus.h>

@@ -16,7 +16,7 @@
 
 #include <qcode/providers/anthropic.h>
 #include <qcode/providers/openai.h>
-#include <qcode/tools/tools.h>
+#include <qcode/tools/tool_executor.h>
 
 // Simple test tool
 ai::JsonValue simple_test_tool(const ai::JsonValue& args,

@@ -1,4 +1,4 @@
-#include <qcode/bus/impl.h>
+#include <qcode/bus/in_process_bus.h>
 #include <qcode/contract/event.h>
 
 #include <gtest/gtest.h>

@@ -20,7 +20,7 @@
 
 #include <qcode/langfuse/langfuse.h>
 #include <qcode/providers/openai.h>
-#include <qcode/tools/tools.h>
+#include <qcode/tools/tool_executor.h>
 
 namespace {
 

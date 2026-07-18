@@ -1,4 +1,4 @@
-#include <qcode/tools/tool_descriptors.h>
+#include <qcode/tools/tool_catalog.h>
 
 #include <sstream>
 #include <qcode/logger/logger.h>
@@ -12,7 +12,7 @@
 namespace ai {
 namespace tui {
 
-std::vector<ToolDescriptor> Tools::descriptors() {
+std::vector<ToolDescriptor> ToolCatalog::descriptors() {
   return {
     {
       "bash",
@@ -44,7 +44,7 @@ task.lifecycle/model = { op: "kill"|"pause"|"resume"|"resurrect"|"model",
   };
 }
 
-std::string Tools::build_tool_section(const ToolConfig& cfg) {
+std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
   LOG_DEBUG("Tools: build_tool_section bash={} task={}", cfg.enable_bash, cfg.enable_task);
   std::ostringstream ss;
   ss << "### Core Tool Contract\n\n";
@@ -81,7 +81,7 @@ std::string Tools::build_tool_section(const ToolConfig& cfg) {
   return ss.str();
 }
 
-ai::ToolSet Tools::build_definitions(const ToolConfig& cfg) {
+ai::ToolSet ToolCatalog::build_definitions(const ToolConfig& cfg) {
   LOG_DEBUG("Tools: build_definitions bash={} task={}", cfg.enable_bash, cfg.enable_task);
   ai::ToolSet tools;
   if (cfg.enable_bash)
@@ -98,7 +98,7 @@ static std::string pretty_json(const nlohmann::json& j) {
 }
 
 
-std::string Tools::format_tool_call(const std::string& tool_name,
+std::string ToolCatalog::format_tool_call(const std::string& tool_name,
                                     const std::string& args,
                                     int step_number,
                                     int max_steps) {
@@ -173,7 +173,7 @@ std::string Tools::format_tool_call(const std::string& tool_name,
   return formatted;
 }
 
-std::string Tools::format_tool_result(const std::string& tool_name,
+std::string ToolCatalog::format_tool_result(const std::string& tool_name,
                                       bool success,
                                       const std::string& result_or_error,
                                       int truncate_at,

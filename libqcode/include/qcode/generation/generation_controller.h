@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/bus/impl.h>
+#include <qcode/bus/in_process_bus.h>
 #include <qcode/state/state.h>
 #include <qcode/store/store.h>
 

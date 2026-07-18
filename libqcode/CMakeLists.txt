@@ -50,7 +50,7 @@ target_sources(qcode-core PRIVATE
     # Providers
     src/providers/base_provider_client.cpp
     src/providers/registry.cpp
-    src/providers/registry_init.cpp
+    src/providers/app_providers.cpp
     src/providers/openai/openai_client.cpp
     src/providers/openai/openai_request_builder.cpp
     src/providers/openai/openai_response_parser.cpp
@@ -79,7 +79,7 @@ target_sources(qcode-core PRIVATE
     src/tools/bash_tool.cpp
     src/tools/task_tool.cpp
     src/tools/multi_step_coordinator.cpp
-    src/tools/tool_descriptors.cpp
+    src/tools/tool_catalog.cpp
 
     # HTTP
     src/http/http_request_handler.cpp
@@ -105,7 +105,7 @@ target_sources(qcode-core PRIVATE
     src/db/db.cpp
 
     # Bus
-    src/bus/impl.cpp
+    src/bus/in_process_bus.cpp
 
     # System prompt
     src/system_prompt/system_prompt.cpp

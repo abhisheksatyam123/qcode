@@ -3,12 +3,12 @@
 #include <filesystem>
 #include <fstream>
 #include <qcode/chat/chat_bus.h>
-#include <qcode/providers/provider_registry_init.h>
+#include <qcode/providers/app_providers.h>
 #include <qcode/config/config.h>
 #include <qcode/db/db.h>
 #include <qcode/state/state.h>
 #include <qcode/system_prompt/system_prompt.h>
-#include <qcode/bus/impl.h>
+#include <qcode/bus/in_process_bus.h>
 #include <qcode/contract/event.h>
 #include <qcode/http/json_codec.h>
 #include <qcode/utils/uuid.h>
@@ -404,7 +404,7 @@ int main(int argc, char* argv[]) {
     // ── Init bus, providers ──
     g_bus = std::make_shared<ai::tui::bus::BusRuntime>();
     register_all_events(*g_bus);
-    ai::providers::register_tui_providers();
+    ai::providers::register_app_providers();
 
     // Ensure the SQLite schema (sessions + messages) exists. The server owns
     // its DB so all session state is durably persisted, independent of the TUI.
@@ -1096,7 +1096,7 @@ int main(int argc, char* argv[]) {
             "## Systems\n\n"
             "Use tools only when they improve summary accuracy; otherwise answer directly.";
 
-        ai::providers::register_tui_providers();
+        ai::providers::register_app_providers();
         ai::providers::ProviderOptions provider_options;
         provider_options.base_url = sel.api_url;
         provider_options.api_key = sel.api_key;

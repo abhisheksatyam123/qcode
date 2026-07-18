@@ -1,6 +1,6 @@
 #pragma once
 
-/// Main convenience header for AI SDK C++
+/// Main convenience header for qcode
 /// Include this header to get access to all public APIs
 
 // Provider-specific clients (conditionally included)
@@ -25,18 +25,18 @@
 #include <qcode/types/usage.h>
 
 // Tool functionality
-#include <qcode/tools/tools.h>
+#include <qcode/tools/tool_executor.h>
 
 // Error handling
 #include <qcode/providers/errors.h>
 
-/// AI SDK C++ - Modern C++ toolkit for AI-powered applications
+/// qcode - C++ toolkit for AI-powered coding agents
 ///
 /// Usage Examples:
 ///
 /// OpenAI Integration:
 /// ```cpp
-/// #include <qcode/ai.h>
+/// #include <qcode/qcode.h>
 /// #include <iostream>
 ///
 /// // Ensure OPENAI_API_KEY environment variable is set

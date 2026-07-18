@@ -1,3 +1,3 @@
 #pragma once
 
-#include <qcode/providers/provider_registry_init.h>
+#include <qcode/providers/app_providers.h>

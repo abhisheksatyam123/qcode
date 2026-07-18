@@ -1,6 +1,6 @@
 #include <qcode/providers/anthropic.h>
 #include <qcode/providers/openai.h>
-#include <qcode/tools/tools.h>
+#include <qcode/tools/tool_executor.h>
 #include <qcode/types/generate_options.h>
 #include <qcode/types/tool.h>
 

@@ -23,7 +23,7 @@
 
 #include <qcode/providers/anthropic.h>
 #include <qcode/providers/openai.h>
-#include <qcode/tools/tools.h>
+#include <qcode/tools/tool_executor.h>
 
 // Async tool: Simulate web API call
 std::future<ai::JsonValue> fetch_news_async(

@@ -16,7 +16,7 @@
 #include <iostream>
 #include <string>
 
-#include <qcode/ai.h>
+#include <qcode/qcode.h>
 
 void demonstrate_api_errors() {
   std::cout << "1. API Error Handling\n";

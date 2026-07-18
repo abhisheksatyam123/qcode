@@ -1,6 +1,6 @@
 #pragma once
 
-/// Core AI SDK C++ header - Base functionality only
+/// Core qcode API — types, tools, and errors (no provider clients)
 /// Use this when you only need core types and tools without specific providers
 
 // Type definitions
@@ -16,19 +16,19 @@
 #include <qcode/types/usage.h>
 
 // Tool functionality
-#include <qcode/tools/tools.h>
+#include <qcode/tools/tool_executor.h>
 
 // Error handling
 #include <qcode/providers/errors.h>
 
-/// AI SDK C++ Core - Base functionality
+/// qcode core API
 ///
 /// This header provides access to core types and functionality
 /// without pulling in specific provider implementations.
 ///
 /// Usage:
 /// ```cpp
-/// #include <qcode/core.h>
+/// #include <qcode/core_api.h>
 ///
 /// // Use core types like ai::GenerateOptions, ai::Message, etc.
 /// ai::GenerateOptions options{

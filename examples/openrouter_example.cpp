@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 
-#include <qcode/ai.h>
+#include <qcode/qcode.h>
 #include <qcode/logger/logger.h>
 
 int main() {

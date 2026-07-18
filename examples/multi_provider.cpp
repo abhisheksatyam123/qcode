@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-#include <qcode/ai.h>
+#include <qcode/qcode.h>
 
 struct ProviderResult {
   std::string provider_name;

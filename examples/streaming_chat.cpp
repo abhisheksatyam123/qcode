@@ -16,7 +16,7 @@
 #include <iostream>
 #include <string>
 
-#include <qcode/ai.h>
+#include <qcode/qcode.h>
 
 int main() {
   std::cout << "AI SDK C++ - Streaming Chat Example\n";

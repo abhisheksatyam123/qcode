@@ -19,7 +19,7 @@
 #include <string>
 
 #include <qcode/providers/openai.h>
-#include <qcode/tools/tools.h>
+#include <qcode/tools/tool_executor.h>
 
 // Example tool function: Get weather information
 ai::JsonValue get_weather(const ai::JsonValue& args,

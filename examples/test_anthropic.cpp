@@ -2,7 +2,7 @@
 
 #include <iostream>
 
-#include <qcode/ai.h>
+#include <qcode/qcode.h>
 
 int main() {
   try {

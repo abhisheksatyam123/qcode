@@ -16,7 +16,7 @@
 
 #include <qcode/logger/file_logger.h>
 #include <qcode/chat/chat_bus.h>
-#include <qcode/providers/provider_registry_init.h>
+#include <qcode/providers/app_providers.h>
 #include <qcode/commands/commands.h>
 #include <qcode/config/config.h>
 #include <qcode/db/db.h>
@@ -25,7 +25,7 @@
 #include <views.h>
 #include <qcode/store/store.h>
 #include <qcode/generation/generation_controller.h>
-#include <qcode/bus/impl.h>
+#include <qcode/bus/in_process_bus.h>
 #include <qcode/contract/event.h>
 #include <qcode/context/context_manager.h>
 #include <qcode/contract/identity.h>
@@ -68,7 +68,7 @@ int main() {
     bus->set_wake_callback([&screen]() { screen.Post(Event::Custom); });
     // Populate the provider registry once, before any generation thread starts,
     // so resolve() only ever reads a fully-initialized registry.
-    ai::providers::register_tui_providers();
+    ai::providers::register_app_providers();
     ai::tui::AppStore store(*bus);
 
     // Wire bus events to store mutations

@@ -17,7 +17,7 @@ add_executable(ai_tests
     unit/tui_config_test.cpp
     unit/tui_bus_test.cpp
     ../libqcode/src/config/config.cpp
-    ../libqcode/src/bus/impl.cpp
+    ../libqcode/src/bus/in_process_bus.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp

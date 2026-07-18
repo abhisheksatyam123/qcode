@@ -1,7 +1,7 @@
 #include <qcode/chat/chat_bus.h>
 #include <qcode/config/config.h>
 #include <qcode/context/context_manager.h>
-#include <qcode/tools/tool_descriptors.h>
+#include <qcode/tools/tool_catalog.h>
 #include <qcode/db/db.h>
 #include <qcode/contract/event.h>
 
@@ -18,7 +18,7 @@
 #include <qcode/logger/logger.h>
 #include <qcode/providers/openai.h>
 #include <qcode/providers/registry.h>
-#include <qcode/providers/provider_registry_init.h>
+#include <qcode/providers/app_providers.h>
 
 namespace ai {
 namespace tui {
@@ -716,7 +716,7 @@ void run_generation_with_bus(
     // and can truncate multi-step agent turns. Always stream Cursor.
     const bool cursor_native_agent = (provider_id == "cursor");
     if (enable_tools && !cursor_native_agent) {
-      ai::ToolSet tools = Tools::build_definitions(ToolConfig{true, true});
+      ai::ToolSet tools = ToolCatalog::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
       // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
       constexpr int kMaxToolSteps = 1000;

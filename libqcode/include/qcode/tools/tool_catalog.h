@@ -25,9 +25,9 @@ struct ToolConfig {
   // Reserved for future tools
 };
 
-// ── Tools module ──
+// ── Agent tool catalog (prompt + ToolSet) ──
 
-class Tools {
+class ToolCatalog {
  public:
   // Get tool descriptors for the system prompt
   static std::vector<ToolDescriptor> descriptors();

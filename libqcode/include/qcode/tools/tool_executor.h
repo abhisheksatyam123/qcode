@@ -1,6 +1,6 @@
 #pragma once
 
-// Include all tool-related headers for convenience
+// ToolExecutor — runs tool calls (single + multi-step).
 #include <qcode/types/generate_options.h>
 #include <qcode/types/message.h>
 #include <qcode/types/tool.h>

@@ -60,7 +60,7 @@ std::string SystemPrompt::build(const std::string& identity,
                                  const ToolConfig& tool_cfg) {
   std::ostringstream ss;
   ss << identity << "\n\n";
-  ss << Tools::build_tool_section(tool_cfg);
+  ss << ToolCatalog::build_tool_section(tool_cfg);
   return ss.str();
 }
 

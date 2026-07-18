@@ -20,7 +20,7 @@
 #include <string>
 
 #include <qcode/providers/openai.h>
-#include <qcode/tools/tools.h>
+#include <qcode/tools/tool_executor.h>
 
 // Simulated database of user profiles
 std::map<std::string, ai::JsonValue> user_database = {

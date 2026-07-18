@@ -1,5 +1,5 @@
 #include <qcode/store/store.h>
-#include <qcode/bus/impl.h>
+#include <qcode/bus/in_process_bus.h>
 #include <qcode/context/context_manager.h>
 #include <qcode/db/db.h>
 #include <algorithm>

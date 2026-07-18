@@ -6,7 +6,7 @@
 #include <qcode/logger/logger.h>
 #include <qcode/types/client.h>
 #include <qcode/providers/registry.h>
-#include <qcode/providers/provider_registry_init.h>
+#include <qcode/providers/app_providers.h>
 #include <memory>
 #include <filesystem>
 #include <fstream>
@@ -487,7 +487,7 @@ void run_compaction(
             "Use tools only when they improve summary accuracy; otherwise answer directly.";
 
         const auto& sel = providers_copy[sp];
-        ai::providers::register_tui_providers();
+        ai::providers::register_app_providers();
         ai::providers::ProviderOptions provider_options;
         provider_options.base_url = sel.api_url;
         provider_options.api_key = sel.api_key;

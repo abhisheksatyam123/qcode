@@ -7,7 +7,7 @@
 ///
 /// Usage:
 /// ```cpp
-/// #include <qcode/ai.h>
+/// #include <qcode/qcode.h>
 /// #include <qcode/langfuse/langfuse.h>
 ///
 /// ai::langfuse::Tracer tracer({
