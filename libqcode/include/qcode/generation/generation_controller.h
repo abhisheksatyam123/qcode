@@ -20,6 +20,8 @@ struct GenerationRequest {
     int model_idx = 0;
     std::string system_prompt;
     bool tools_enabled = true;
+    // False for retry: user message is already in history/DB.
+    bool append_user_message = true;
 };
 
 // Owns the generation worker thread and the busy/abort contract.

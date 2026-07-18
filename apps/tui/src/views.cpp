@@ -390,12 +390,21 @@ ftxui::Element render_view(
     // is the session lifetime total and is shown in the Stats tab instead.)
     std::string hdr_tokens;
     int ctx_used = *state.current_context_tokens;
+    int ctx_pct = 0;
+    Color ctx_color = Color::Default;
     if (hdr_model_info.context_window > 0) {
-      if (ctx_used > 0)
+      if (ctx_used > 0) {
+        ctx_pct = static_cast<int>(ctx_used * 100 /
+                                   hdr_model_info.context_window);
         hdr_tokens = format_tokens(ctx_used) + " / " +
-                     format_tokens(hdr_model_info.context_window) + " tok";
-      else
+                     format_tokens(hdr_model_info.context_window) + " (" +
+                     std::to_string(ctx_pct) + "%)";
+        ctx_color = ctx_pct >= 85   ? Color::Red
+                    : ctx_pct >= 70 ? Color::Yellow
+                                    : accent2(theme);
+      } else {
         hdr_tokens = format_tokens(hdr_model_info.context_window) + " tok";
+      }
     } else {
       hdr_tokens = format_tokens(ctx_used > 0 ? ctx_used : *state.total_tokens) + " tok";
     }
@@ -403,19 +412,29 @@ ftxui::Element render_view(
     // Status (compact, no spinner — spinner is rendered in the header below)
     Color status_color = accent2(theme);
     std::string hdr_status;
-    if (*state.is_generating) {
+    const bool agent_busy =
+        *state.is_generating ||
+        (state.status && (*state.status == "generating" ||
+                          *state.status == "agent"));
+    if (agent_busy) {
         static const std::array<const char*, 10> sp = {
             "\u280b", "\u2819", "\u2839", "\u2838", "\u283c",
             "\u2834", "\u2836", "\u2837", "\u280f", "\u280b"
         };
         int frame = *state.generation_frame % sp.size();
-        hdr_status = std::string(sp[frame]) + " gen...";
+        const bool is_agent =
+            state.status && *state.status == "agent";
+        hdr_status = std::string(sp[frame]) +
+                     (is_agent ? " agent..." : " gen...");
     } else if (state.status && *state.status == "error") {
         hdr_status = "\u26a0 error";
         status_color = Color::RGB(0xCC, 0x33, 0x33);
     } else if (state.status && *state.status == "warn") {
         // "warn" reflects an empty model response (see chat_bus.cpp)
         hdr_status = "\u26a0 empty";
+        status_color = Color::Yellow;
+    } else if (state.retry_available && *state.retry_available) {
+        hdr_status = "r retry";
         status_color = Color::Yellow;
     }
 
@@ -426,15 +445,33 @@ ftxui::Element render_view(
     }
 
     
+    std::string hdr_session;
+    if (state.session_title && !state.session_title->empty()) {
+        hdr_session = *state.session_title;
+        if (hdr_session.size() > 28) {
+            hdr_session = hdr_session.substr(0, 27) + "…";
+        }
+    } else if (state.session_id && state.session_id->size() >= 8) {
+        hdr_session = state.session_id->substr(0, 8);
+    }
+
     auto header = hbox({
         text(" QCODE ") | bold | bgcolor(accent(theme)) | color(Color::White),
         text("  "),
         tab_toggle->Render(),
         filler(),
-        // Right side: compact model, tokens, status
+        // Right side: session, model, tokens, status
+        (hdr_session.empty()
+             ? emptyElement()
+             : hbox({text(" " + hdr_session + " ") | dim, separatorLight()})),
         text(" " + hdr_model + " ") | color(accent2(theme)) | bold,
         separatorLight(),
-        text(" " + hdr_tokens + " ") | dim,
+        text(" " + hdr_tokens + " ") |
+            (ctx_pct > 0 ? color(ctx_color) : dim),
+        (ctx_pct >= 70
+             ? hbox({separatorLight(),
+                     text(" /compact? ") | color(Color::Yellow) | dim})
+             : emptyElement()),
         (hdr_queue.empty() ? emptyElement() : hbox({
             separatorLight(),
             text(" " + hdr_queue + " ") | color(queue_amber()) | bold,
@@ -471,8 +508,10 @@ ftxui::Element render_view(
             // message on every token made render cost grow without bound.
             Elements msgs;
             const auto history_size = state.messages_history->size();
+            // Keep the rendered window tight so stream frames stay cheap even
+            // on long sessions (older messages stay in history/DB).
             const auto window_size = static_cast<size_t>(
-                std::max(32, state.terminal_height * 2));
+                std::max(24, state.terminal_height + 8));
             const auto max_start =
                 history_size > window_size ? history_size - window_size : 0;
             if (*state.auto_scroll) {
@@ -1119,59 +1158,6 @@ ftxui::Element render_toast_overlay(
     return vbox(std::move(toast_elems)) | size(WIDTH, LESS_THAN, 72) | hcenter;
 }
 
-// ── Dynamic footer with model, token, session info ────────────────────────────
-ftxui::Element render_dynamic_footer(
-    const ChatState& state,
-    const std::vector<ProviderInfo>& providers_list,
-    int selected_provider,
-    int selected_model,
-    const std::string& status)
-{
-    using namespace ftxui;
-    std::string theme = state.theme ? *state.theme : "orange";
-    
-    // Left: model badge
-    std::string model_str = providers_list[selected_provider].models[selected_model].name;
-    std::string provider_str = providers_list[selected_provider].name;
-    
-    // Center: status
-    std::string status_str;
-    if (!status.empty()) {
-        status_str = status;
-    } else if (*state.is_generating) {
-        static const std::array<const char*, 10> spinner = {
-            "⠋", "⠙", "⠹", "⠸", "⠼",
-            "⠴", "⠦", "⠧", "⠏", "⠋"
-        };
-        int frame = *state.generation_frame % spinner.size();
-        status_str = std::string(spinner[frame]) + " Generating...";
-    }
-    
-    // Right: token count (current usage / context-window size)
-    const auto& footer_model = providers_list[selected_provider].models[selected_model];
-    std::string token_str;
-    int foot_used = *state.current_context_tokens;
-    if (footer_model.context_window > 0) {
-      if (foot_used > 0)
-        token_str = format_tokens(foot_used) + " / " +
-                    format_tokens(footer_model.context_window) + " tok";
-      else
-        token_str = format_tokens(footer_model.context_window) + " tok";
-    } else {
-      token_str = format_tokens(foot_used > 0 ? foot_used : *state.total_tokens) + " tok";
-    }
-    
-    std::string session_short = state.session_id->substr(0, 8);
-    
-    Elements footer_elems;
-    footer_elems.push_back(text(" " + provider_str + "/" + model_str + " ") | color(accent(theme)) | dim);
-    footer_elems.push_back(separatorLight());
-    footer_elems.push_back(text(" " + session_short + " ") | dim);
-    footer_elems.push_back(separatorLight());
-    footer_elems.push_back(text(" " + token_str + " ") | dim);
-    footer_elems.push_back(filler());
-    footer_elems.push_back(text(status_str + " ") | color(accent2(theme)) | bold);
-    return hbox(std::move(footer_elems)) | borderLight | color(accent(theme));
-}
 } // namespace tui
 } // namespace ai
+

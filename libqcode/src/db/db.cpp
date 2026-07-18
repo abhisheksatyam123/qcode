@@ -683,6 +683,27 @@ std::string get_session_workspace(const std::string& session_id) {
     return result;
 }
 
+std::string get_session_title(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return "";
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return "";
+
+    std::string result;
+    const char* sql = "SELECT COALESCE(title, '') FROM sessions WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char* val = sqlite3_column_text(stmt, 0);
+            result = val ? reinterpret_cast<const char*>(val) : "";
+        }
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
+    return result;
+}
+
 SessionStats get_session_stats(const std::string& session_id,
                                int live_tool_calls,
                                double live_tool_time_ms,

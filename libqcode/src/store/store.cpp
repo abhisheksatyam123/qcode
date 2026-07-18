@@ -133,6 +133,14 @@ void AppStore::set_generating(bool v) {
 
 void AppStore::set_session_id(const std::string& id) {
     *state_.session_id = id;
+    if (state_.session_title) {
+        *state_.session_title = ai::tui::db::get_session_title(id);
+    }
+    notify();
+}
+
+void AppStore::set_session_title(const std::string& title) {
+    if (state_.session_title) *state_.session_title = title;
     notify();
 }
 
@@ -153,7 +161,32 @@ void AppStore::set_error(const std::string& msg) {
     if (state_.status) *state_.status = "error";
     if (state_.last_error) *state_.last_error = msg;
     *state_.is_generating = false;
-    add_toast(msg, "error", 8000);
+    if (state_.retry_available && state_.last_user_prompt &&
+        !state_.last_user_prompt->empty()) {
+        *state_.retry_available = true;
+    }
+    add_toast(msg + "  · press r to retry", "error", 8000);
+    notify();
+}
+
+void AppStore::clear_error() {
+    last_error_.clear();
+    if (state_.last_error) state_.last_error->clear();
+    if (status_ == "error") {
+        status_ = "idle";
+        if (state_.status) *state_.status = "idle";
+    }
+    notify();
+}
+
+void AppStore::mark_retry_available(const std::string& prompt) {
+    if (state_.last_user_prompt) *state_.last_user_prompt = prompt;
+    if (state_.retry_available) *state_.retry_available = !prompt.empty();
+    notify();
+}
+
+void AppStore::clear_retry() {
+    if (state_.retry_available) *state_.retry_available = false;
     notify();
 }
 
@@ -402,8 +435,15 @@ void AppStore::wire() {
         if (p.severity == "warning") {
             LOG_WARN("Store: warning message={}", p.message);
             set_generating(false);
-            add_toast("\u26a0 " + p.message, "warning", 6000);
-            if (status_ == "generating") {
+            if (state_.last_user_prompt && !state_.last_user_prompt->empty() &&
+                state_.retry_available) {
+                *state_.retry_available = true;
+                add_toast("\u26a0 " + p.message + "  · press r to retry",
+                          "warning", 6000);
+            } else {
+                add_toast("\u26a0 " + p.message, "warning", 6000);
+            }
+            if (status_ == "generating" || status_ == "agent") {
                 set_status("idle");
             } else {
                 notify();

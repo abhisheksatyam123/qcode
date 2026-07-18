@@ -95,8 +95,13 @@ struct ChatState {
     // Color Theme Option (orange, green, blue, purple, monochrome)
     std::shared_ptr<std::string> theme = std::make_shared<std::string>("orange");
 
-    // Active persistent session ID (UUID)
+    // Active persistent session ID (UUID) + display title
     std::shared_ptr<std::string> session_id = std::make_shared<std::string>();
+    std::shared_ptr<std::string> session_title = std::make_shared<std::string>();
+
+    // Last user prompt for one-key retry after a failed/stopped turn.
+    std::shared_ptr<std::string> last_user_prompt = std::make_shared<std::string>();
+    std::shared_ptr<bool> retry_available = std::make_shared<bool>(false);
 
     // Slash command autocomplete suggestions state
     bool slash_suggestion_mode = false;

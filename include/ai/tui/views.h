@@ -51,14 +51,6 @@ ftxui::Element render_toast_overlay(
     const std::string& theme
 );
 
-// Dynamic footer with model, token, session info
-ftxui::Element render_dynamic_footer(
-    const ChatState& state,
-    const std::vector<ProviderInfo>& providers_list,
-    int selected_provider,
-    int selected_model,
-    const std::string& status
-);
-
 }  // namespace tui
 }  // namespace ai
+

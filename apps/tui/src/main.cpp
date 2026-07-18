@@ -29,24 +29,16 @@
 #include <ai/tui/contract/event.h>
 #include <ai/tui/context_manager.h>
 #include <ai/tui/contract/identity.h>
+#include "tui_helpers.h"
 #include <atomic>
 #include <chrono>
 #include <functional>
 
 using namespace ftxui;
 using namespace ai::tui::contract;
-
-static bool matches_query(const std::string& target, const std::string& query) {
-    if (query.empty()) return true;
-    auto it = std::search(
-        target.begin(), target.end(),
-        query.begin(), query.end(),
-        [](unsigned char ch1, unsigned char ch2) {
-            return std::tolower(ch1) == std::tolower(ch2);
-        }
-    );
-    return it != target.end();
-}
+using ai::tui::matches_query;
+using ai::tui::sync_session_title;
+using ai::tui::index_of_session;
 
 int main() {
     // Rotate oversized logs so a prior debug flood cannot keep filling the disk.
@@ -92,7 +84,8 @@ int main() {
         ai::logger::set_thread_name("spinner");
         while (app_running->load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            if (store.is_generating()) {
+            const auto& st = store.status();
+            if (store.is_generating() || st == "generating" || st == "agent") {
                 store.advance_frame();
             }
         }
@@ -143,8 +136,13 @@ int main() {
             if (s.id == last_session) {
                 loaded_prov_id = s.provider;
                 loaded_model_id = s.model;
+                if (state.session_title) *state.session_title = s.title;
                 break;
             }
+        }
+        if (state.session_title && state.session_title->empty()) {
+            *state.session_title =
+                ai::tui::db::get_session_title(store.session_id());
         }
         if (!loaded_prov_id.empty() && !loaded_model_id.empty()) {
             for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
@@ -253,14 +251,9 @@ int main() {
                 session_entries = ai::tui::db::list_sessions_full();
                 if (!session_entries.empty()) {
                     show_session_select = true;
-                    session_select_idx = 0;
                     session_query = "";
-                    for (int i = 0; i < static_cast<int>(session_entries.size()); i++) {
-                        if (session_entries[i].id == store.session_id()) {
-                            session_select_idx = i;
-                            break;
-                        }
-                    }
+                    session_select_idx =
+                        index_of_session(session_entries, store.session_id());
                 } else {
                     store.append_chat_message("System", "No saved sessions found.");
                 }
@@ -391,10 +384,13 @@ int main() {
             }
             if (e == Event::Return) {
                 if (!filtered_session_entries.empty()) {
-                    std::string sid = filtered_session_entries[session_select_idx].id;
-                    store.set_session_id(sid);
+                    const auto& picked =
+                        filtered_session_entries[session_select_idx];
+                    store.set_session_id(picked.id);
+                    sync_session_title(state, picked.title);
                     state.messages_history->clear();
-                    ai::tui::db::reload_session_history(sid, state);
+                    ai::tui::db::reload_session_history(picked.id, state);
+                    if (state.retry_available) *state.retry_available = false;
                 }
                 show_session_select = false;
                 session_query = "";
@@ -528,14 +524,9 @@ int main() {
                             session_entries = ai::tui::db::list_sessions_full();
                             if (!session_entries.empty()) {
                                 show_session_select = true;
-                                session_select_idx = 0;
                                 session_query = "";
-                                for (int i = 0; i < static_cast<int>(session_entries.size()); i++) {
-                                    if (session_entries[i].id == store.session_id()) {
-                                        session_select_idx = i;
-                                        break;
-                                    }
-                                }
+                                session_select_idx = index_of_session(
+                                    session_entries, store.session_id());
                             } else {
                                 store.append_chat_message("System", "No saved sessions found.");
                             }
@@ -688,6 +679,23 @@ int main() {
                 return true;
             }
         }
+        // One-key retry after a failed / stopped turn (prompt must be empty).
+        if (prompt_input.empty() && !show_model_select && !show_session_select &&
+            !show_theme_select && !state.slash_suggestion_mode &&
+            !generation.is_active() && state.retry_available &&
+            *state.retry_available && state.last_user_prompt &&
+            !state.last_user_prompt->empty() &&
+            (e == Event::Character('r') || e == Event::Character('R'))) {
+            auto req = make_generation_request();
+            req.append_user_message = false;
+            store.clear_retry();
+            store.clear_error();
+            store.add_toast("Retrying last prompt…", "info", 1500);
+            generation.spawn(*state.last_user_prompt, std::move(req));
+            screen.Post(Event::Custom);
+            return true;
+        }
+
         // ── Tool block keyboard navigation (only when prompt is empty) ──
         // j/k focus tools, h/← collapse (3 lines), l/→ expand (full), Enter toggles.
         const bool tool_keys_active =

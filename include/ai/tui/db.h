@@ -25,6 +25,9 @@ std::string get_last_active_session();
 // Get workspace for a session
 std::string get_session_workspace(const std::string& session_id);
 
+// Get display title for a session (empty if unknown)
+std::string get_session_title(const std::string& session_id);
+
 // Validate that an id has the canonical 36-char RFC 4122 UUID form.
 bool is_valid_session_id(const std::string& id);
 

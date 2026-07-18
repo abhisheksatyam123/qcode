@@ -57,8 +57,12 @@ public:
                           const std::string& signature = "");
     void set_generating(bool v);
     void set_session_id(const std::string& id);
+    void set_session_title(const std::string& title);
     void set_status(const std::string& s);
     void set_error(const std::string& msg);
+    void clear_error();
+    void mark_retry_available(const std::string& prompt);
+    void clear_retry();
     void advance_frame();
 
     using Callback = std::function<void()>;

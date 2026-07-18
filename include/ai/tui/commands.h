@@ -36,11 +36,11 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
     return {
         {"model",    "Switch model",  "Select a model from any provider",  "Model"},
         {"theme",    "Switch theme",  "Select a UI theme color",           "Theme"},
-        {"new",      "New session",   "Start a new clean chat session",    "Session"},
-        {"rename",   "Rename session", "Rename the current session",       "Session"},
+        {"new",      "New session",   "/new [name] [workspace]",           "Session"},
+        {"rename",   "Rename session", "/rename <new name>",               "Session"},
         {"session",  "Select session", "Manage and load saved sessions",   "Session"},
         {"compact",  "Compact",       "Summarize conversation to save context", "Session"},
-        {"reasoning", "Reasoning", "Set reasoning level: off|low|medium|high", "Session"},
+        {"reasoning", "Reasoning", "/reasoning off|low|medium|high",       "Session"},
     };
 }
 

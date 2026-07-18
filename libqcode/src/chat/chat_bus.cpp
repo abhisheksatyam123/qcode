@@ -45,6 +45,25 @@ static std::string tool_calls_fingerprint(
   return fp;
 }
 
+// Fingerprint of tool results so "same call, new output" is not treated as a
+// stuck loop (e.g. re-read after edit, poll/retry bash).
+static std::string tool_results_fingerprint(
+    const std::vector<ai::ToolResult>& results) {
+  std::string fp;
+  for (const auto& res : results) {
+    fp += res.tool_name;
+    fp += ':';
+    fp += res.is_success() ? "ok:" : "err:";
+    fp += res.result.dump();
+    if (res.error) {
+      fp += ':';
+      fp += *res.error;
+    }
+    fp += '|';
+  }
+  return fp;
+}
+
 // ──────────────────────────────────────────────────────────────
 //  Tools-enabled generation path (bus version)
 // ──────────────────────────────────────────────────────────────
@@ -157,9 +176,10 @@ static void run_tools_generation_bus(
   bool aborted = false;
   bool stuck = false;
   bool auth_retried = false;
-  int tool_only_streak = 0;
-  int identical_repeat = 0;
-  std::string last_tool_fp;
+  // Consecutive steps with the same tool calls AND the same results.
+  // Same-args retries with changing output (re-read, poll) are allowed.
+  int no_progress_repeat = 0;
+  std::string last_progress_fp;
 
   LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", options.max_steps);
   while (step < options.max_steps && !finished) {
@@ -218,29 +238,6 @@ static void run_tools_generation_bus(
 
       LOG_DEBUG("run_tools_generation_bus: step={} has_tool_calls={} text_len={}", step, step_res.has_tool_calls(), step_res.text.size());
       if (step_res.has_tool_calls()) {
-        ++tool_only_streak;
-        const auto fp = tool_calls_fingerprint(step_res.tool_calls);
-        if (!fp.empty() && fp == last_tool_fp) {
-          ++identical_repeat;
-        } else {
-          last_tool_fp = fp;
-          identical_repeat = 1;
-        }
-        // Models sometimes wedge into identical bash loops; stop early.
-        // Allow a generous streak of same-args retries (read/bash) before
-        // treating it as stuck — 3 was too aggressive for real agents.
-        constexpr int kMaxIdenticalRepeats = 12;
-        constexpr int kMaxToolOnlyStreak = 32;
-        if (identical_repeat >= kMaxIdenticalRepeats ||
-            tool_only_streak >= kMaxToolOnlyStreak) {
-          LOG_WARN(
-              "run_tools_generation_bus: stuck tool loop detected "
-              "(identical_repeat={} tool_only_streak={} step={})",
-              identical_repeat, tool_only_streak, step);
-          stuck = true;
-          // Still record this step's tools so the UI shows what was stuck.
-        }
-
         std::vector<ai::ToolCallContentPart> tool_parts;
         for (const auto& call : step_res.tool_calls) {
           tool_parts.emplace_back(call.id, call.tool_name, call.arguments,
@@ -255,6 +252,27 @@ static void run_tools_generation_bus(
           gen_result.tool_results.push_back(res);
         }
         response_messages.push_back(ai::Message::tool_results(result_parts));
+
+        // Detect true no-progress wedges only: identical calls *and* identical
+        // results. Do not stop on long tool-only streaks or same-args retries
+        // that return new data — max_steps remains the runaway cap.
+        const auto progress_fp =
+            tool_calls_fingerprint(step_res.tool_calls) + "#" +
+            tool_results_fingerprint(step_res.tool_results);
+        if (!progress_fp.empty() && progress_fp == last_progress_fp) {
+          ++no_progress_repeat;
+        } else {
+          last_progress_fp = progress_fp;
+          no_progress_repeat = 1;
+        }
+        constexpr int kMaxNoProgressRepeats = 25;
+        if (no_progress_repeat >= kMaxNoProgressRepeats) {
+          LOG_WARN(
+              "run_tools_generation_bus: no-progress tool loop detected "
+              "(no_progress_repeat={} step={})",
+              no_progress_repeat, step);
+          stuck = true;
+        }
 
         // Re-publish the live context size after each tool call so the TUI's
         // context window updates dynamically as messages are appended.
@@ -282,9 +300,8 @@ static void run_tools_generation_bus(
         }
         if (stuck) break;
       } else {
-        tool_only_streak = 0;
-        identical_repeat = 0;
-        last_tool_fp.clear();
+        no_progress_repeat = 0;
+        last_progress_fp.clear();
         LOG_DEBUG("run_tools_generation_bus: step={} no tool calls, finishing", step);
         response_messages.push_back(ai::Message::assistant(step_res.text));
         if (options.on_step_finish) {
@@ -327,8 +344,9 @@ static void run_tools_generation_bus(
     bus.publish<ErrorOccurred>({
         .session_id = ctx.session_id,
         .message =
-            "Stopped: model was stuck repeating the same tool calls. "
-            "Try a clearer prompt or /compact, then continue.",
+            "Stopped: tool calls produced no new progress (same calls and "
+            "results repeated). Try a clearer prompt, /compact, or press r "
+            "to retry.",
         .severity = "warning"
     });
     bus.publish<MessageDelta>({
@@ -731,6 +749,10 @@ void run_generation_with_bus(
       if (cursor_native_agent) {
         LOG_INFO("ChatBus: Cursor native agent stream (session_id={})",
                  ctx.session_id);
+        bus.publish<SessionStatusChanged>({
+            .session_id = ctx.session_id,
+            .status = "agent",
+        });
       }
       run_stream_generation_bus(client, std::move(base_opts), bus, ctx);
     }

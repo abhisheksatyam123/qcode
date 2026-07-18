@@ -191,16 +191,13 @@ bool handle_slash_command(
         std::string new_id = db::create_new_session(prov, mod, ws, custom_id);
         *state.session_id = new_id;
         state.messages_history->clear();
-        std::string display_title = custom_id.empty()
-                                        ? ("Session - " + mod)
-                                        : custom_id;
-        // Resolve actual title (may have (N) suffix on collision).
-        for (const auto& s : db::list_sessions_full()) {
-            if (s.id == new_id) {
-                display_title = s.title;
-                break;
-            }
+        std::string display_title = db::get_session_title(new_id);
+        if (display_title.empty()) {
+            display_title = custom_id.empty() ? ("Session - " + mod) : custom_id;
         }
+        if (state.session_title) *state.session_title = display_title;
+        if (state.retry_available) *state.retry_available = false;
+        if (state.last_user_prompt) state.last_user_prompt->clear();
         if (!ws.empty()) {
             append_system_message(state, "Started new session: " + display_title +
                                              " (workspace: " + ws + ")");
@@ -229,6 +226,7 @@ bool handle_slash_command(
             return true;
         }
         db::rename_session(*state.session_id, new_title);
+        if (state.session_title) *state.session_title = new_title;
         append_system_message(state, "Renamed session to: " + new_title);
         return true;
     }
@@ -358,13 +356,14 @@ bool handle_slash_command(
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
-          << "  /new [name]       - start a new persistent session (optional name/description)\n"
+          << "  /new [name] [workspace] - new session (optional title + workspace path)\n"
           << "  /session <id>     - load a persistent session by id\n"
-          << "  /rename <name>    - rename the current session\n"
+          << "  /rename <name>    - rename the current session title\n"
           << "  /reasoning [off|low|medium|high] - set reasoning effort\n"
           << "  /compact [keep]   - compress conversation into a handoff summary\n"
           << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
           << "  /help             - show this help\n"
+          << "Keys: Esc stop · r retry last failed turn · F3 copy mode\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
         append_system_message(state, h.str());
         return true;

@@ -25,8 +25,10 @@ GenerationController::GenerationController(
 GenerationController::~GenerationController() { shutdown(); }
 
 bool GenerationController::is_active() const noexcept {
-    return store_.is_generating() || is_busy() ||
-           (store_.state().status && *store_.state().status == "generating");
+    const auto& st =
+        store_.state().status ? *store_.state().status : std::string{};
+    return store_.is_generating() || is_busy() || st == "generating" ||
+           st == "agent";
 }
 
 void GenerationController::request_abort() {
@@ -46,7 +48,14 @@ void GenerationController::force_stop_ui() {
     request_abort();
     store_.set_generating(false);
     store_.set_status("idle");
-    store_.add_toast("Generation force-stopped", "warning", 2500);
+    if (store_.state().last_user_prompt &&
+        !store_.state().last_user_prompt->empty()) {
+        store_.mark_retry_available(*store_.state().last_user_prompt);
+        store_.add_toast("Generation force-stopped  · press r to retry",
+                         "warning", 2500);
+    } else {
+        store_.add_toast("Generation force-stopped", "warning", 2500);
+    }
 }
 
 void GenerationController::spawn(std::string prompt, GenerationRequest request) {
@@ -82,19 +91,28 @@ void GenerationController::spawn_unlocked(std::string prompt,
 
     busy_->store(true, std::memory_order_release);
     store_.set_generating(true);
+    store_.clear_error();
+    store_.clear_retry();
     *store_.state().auto_scroll = true;
-    store_.append_chat_message("User", prompt);
-    db::save_message(store_.session_id(), "User", prompt);
+    if (store_.state().last_user_prompt) {
+        // Keep for retry even if this turn later fails.
+        *store_.state().last_user_prompt = prompt;
+    }
+    if (request.append_user_message) {
+        store_.append_chat_message("User", prompt);
+        db::save_message(store_.session_id(), "User", prompt);
+    }
 
     const auto& providers = request.providers;
     const int sel_prov = request.provider_idx;
     const int sel_mod = request.model_idx;
     LOG_INFO(
         "GenerationController: spawn prompt_len={} queue_remaining={} "
-        "provider={} model={}",
+        "provider={} model={} append_user={}",
         prompt.size(), store_.queue_size(),
         providers[sel_prov].name,
-        providers[sel_prov].models[sel_mod].name);
+        providers[sel_prov].models[sel_mod].name,
+        request.append_user_message);
 
     auto bus_ptr = bus_;
     auto state_ptr = &store_.state();
