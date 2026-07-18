@@ -22,9 +22,15 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   request["max_tokens"] = max_tokens;
   request["messages"] = nlohmann::json::array();
 
-  // Handle system message
+  // Automatic prompt caching: breakpoint advances with the conversation.
+  request["cache_control"] = {{"type", "ephemeral"}};
+
+  // Handle system message — content-block form so we can mark it cacheable.
   if (!options.system.empty()) {
-    request["system"] = options.system;
+    request["system"] = nlohmann::json::array(
+        {{{"type", "text"},
+          {"text", options.system},
+          {"cache_control", {{"type", "ephemeral"}}}}});
   }
 
   // Build messages array

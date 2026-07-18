@@ -670,19 +670,23 @@ void run_generation_with_bus(
     base_opts.system = system_prompt;
     base_opts.messages = messages;
     base_opts.workspace = ctx.workspace;
+    base_opts.session_id = ctx.session_id;
     base_opts.abort_flag = ctx.abort_flag;
 
     // ── Opt-in extended thinking / reasoning ──
+    // Native Anthropic uses budget_tokens. Everyone else (OpenAI, OpenRouter,
+    // Antigravity/Gemini, Cursor, OpenCode Zen) uses reasoning_effort — even
+    // when the model id contains "claude" (those paths go through OpenAI/Gemini
+    // transforms that read reasoning_effort, not Anthropic thinking).
     const std::string& rm = ctx.reasoning_mode;
     if (rm == "low" || rm == "medium" || rm == "high") {
-      bool is_anthropic =
-          (provider_id.find("anthropic") != std::string::npos) ||
-          (resolved_model_id.find("claude") != std::string::npos);
-      if (is_anthropic) {
+      const bool is_native_anthropic =
+          provider_id.find("anthropic") != std::string::npos;
+      if (is_native_anthropic) {
         int budget = (rm == "low") ? 2000 : (rm == "medium") ? 8000 : 16000;
         base_opts.budget_tokens = budget;
       } else {
-        base_opts.reasoning_effort = rm;  // openai o-series / openrouter / etc.
+        base_opts.reasoning_effort = rm;
       }
     }
 

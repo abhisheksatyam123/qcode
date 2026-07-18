@@ -107,8 +107,18 @@ bool is_connect_heartbeat(const std::string& payload) {
 }
 
 bool looks_like_json_error(const std::string& payload) {
-  return payload.find("\"error\"") != std::string::npos ||
-         payload.find("\"message\"") != std::string::npos;
+  if (payload.empty()) return false;
+  // JSON must start with '{' after optional whitespace
+  size_t start = payload.find_first_not_of(" \t\r\n");
+  if (start == std::string::npos || payload[start] != '{') {
+    return false;
+  }
+  try {
+    auto j = nlohmann::json::parse(payload);
+    return j.is_object() && (j.contains("error") || j.contains("message") || j.contains("code"));
+  } catch (...) {
+    return false;
+  }
 }
 
 // application/connect+proto body: repeated <flag:1><len:4 BE><payload>

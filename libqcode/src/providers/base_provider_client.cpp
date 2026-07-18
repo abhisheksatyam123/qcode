@@ -90,10 +90,12 @@ GenerateResult BaseProviderClient::generate_text_single_step(
       json_response = nlohmann::json::parse(result.text);
     } catch (const nlohmann::json::exception& e) {
       LOG_ERROR("Failed to parse response JSON: {}", e.what());
-      LOG_DEBUG("Raw response text: {}", result.text);
+      LOG_INFO("Raw response text: {}", result.text);
       return GenerateResult("Failed to parse response: " +
                             std::string(e.what()));
     }
+
+    LOG_INFO("Raw response text: {}", result.text);
 
     LOG_INFO(
         "Text generation successful - model: {}, response_id: {}",

@@ -25,7 +25,16 @@ std::string random_id() {
 // conversation in a stable prefix so subsequent turns can reuse that cache.
 std::string build_conversation_prompt(const GenerateOptions& options) {
   std::ostringstream prompt;
-  if (!options.system.empty()) {
+  if (options.reasoning_effort && !options.reasoning_effort->empty()) {
+    // Stable first line so cache prefixes stay aligned across turns.
+    prompt << "System:\nReasoning effort: " << *options.reasoning_effort
+           << ".\n";
+    if (!options.system.empty()) {
+      prompt << options.system << "\n\n";
+    } else {
+      prompt << "\n";
+    }
+  } else if (!options.system.empty()) {
     prompt << "System:\n" << options.system << "\n\n";
   }
 
@@ -57,6 +66,15 @@ std::string build_conversation_prompt(const GenerateOptions& options) {
     prompt << "user:\n" << options.prompt;
   }
   return prompt.str();
+}
+
+// Prefer the TUI/server session id so multi-turn requests share one Cursor
+// conversation id (helps backend prompt cache). Fall back to a random id.
+std::string stable_conversation_id(const GenerateOptions& options) {
+  if (!options.session_id.empty()) {
+    return options.session_id;
+  }
+  return random_id();
 }
 
 // agent.v1.AgentMode.AGENT_MODE_AGENT
@@ -95,7 +113,7 @@ std::string CursorRequestBuilder::build_agent_run_request(
     const GenerateOptions& options) const {
   const std::string model = options.model.empty() ? "default" : options.model;
   const std::string prompt = build_conversation_prompt(options);
-  const std::string conversation_id = random_id();
+  const std::string conversation_id = stable_conversation_id(options);
   const std::string message_id = random_id();
 
   // ConversationState: for a fresh turn an empty state is valid; the action

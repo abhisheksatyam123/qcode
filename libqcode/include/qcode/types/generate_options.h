@@ -35,6 +35,9 @@ struct GenerateOptions {
   // Tool calling support
   ToolSet tools;
   std::string workspace;
+  // Stable conversation key for providers that reuse a conversation id
+  // across turns (e.g. Cursor). Usually the TUI/server session UUID.
+  std::string session_id;
   ToolChoice tool_choice = ToolChoice::auto_choice();
   int max_steps = 1;
   std::vector<std::string> active_tools;

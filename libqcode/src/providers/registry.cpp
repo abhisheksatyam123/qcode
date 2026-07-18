@@ -50,13 +50,17 @@ void register_core_providers() {
 
   auto generic = [](const ProviderOptions& options) {
     const char* env_key = std::getenv("OPENCODE_API_KEY");
-    const auto api_key =
+    auto api_key =
         !options.api_key.empty() ? options.api_key
                                  : (env_key ? std::string(env_key) : "");
     if (api_key.empty()) {
-      return ClientResolution::fail(
-          "OpenCode Zen API key not configured (set options.apiKey or "
-          "OPENCODE_API_KEY).");
+      if (options.base_url.empty() || options.base_url.find("opencode.ai/zen") != std::string::npos) {
+        api_key = "__EMPTY__";
+      } else {
+        return ClientResolution::fail(
+            "OpenCode Zen API key not configured (set options.apiKey or "
+            "OPENCODE_API_KEY).");
+      }
     }
     ai::openai::CompatibleOptions compatible;
     compatible.base_url = options.base_url.empty()

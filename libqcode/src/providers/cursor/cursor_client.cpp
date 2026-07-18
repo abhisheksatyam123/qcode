@@ -74,11 +74,16 @@ std::vector<std::pair<std::string, std::string>> cursor_headers(
   };
 }
 
-std::string workspace_path() {
+std::string default_workspace_path() {
   std::error_code ec;
   auto path = std::filesystem::current_path(ec);
   if (ec) return ".";
   return path.string();
+}
+
+std::string resolve_workspace(const GenerateOptions& options) {
+  if (!options.workspace.empty()) return options.workspace;
+  return default_workspace_path();
 }
 
 }  // namespace
@@ -231,7 +236,8 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
                   if (context_replied.exchange(true)) break;
                   const auto reply =
                       cursor_request_builder_->build_request_context_reply(
-                          ev.exec_id, ev.exec_id_str, workspace_path());
+                          ev.exec_id, ev.exec_id_str,
+                          resolve_workspace(options));
                   if (!bidi_append(reply)) {
                     stream_error = "Cursor request_context BidiAppend failed";
                     return false;
@@ -396,7 +402,8 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                     if (context_replied.exchange(true)) break;
                     const auto reply =
                         builder->build_request_context_reply(
-                            ev.exec_id, ev.exec_id_str, workspace_path());
+                            ev.exec_id, ev.exec_id_str,
+                            resolve_workspace(options));
                     if (!bidi_append(reply)) {
                       stream_error = "Cursor request_context BidiAppend failed";
                       return false;

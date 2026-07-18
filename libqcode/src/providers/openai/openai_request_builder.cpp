@@ -218,6 +218,18 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     }
   }
 
+  // OpenRouter / Anthropic-compatible Claude routes honor top-level
+  // cache_control. Pure OpenAI ignores unknown fields safely.
+  {
+    const auto& model_id = options.model;
+    const bool looks_claude =
+        model_id.find("claude") != std::string::npos ||
+        model_id.find("anthropic") != std::string::npos;
+    if (looks_claude) {
+      request["cache_control"] = {{"type", "ephemeral"}};
+    }
+  }
+
   if (!use_responses_) return request;
 
   nlohmann::json responses{{"model", request["model"]},
@@ -300,7 +312,7 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
   httplib::Headers headers;
 
   // Add auth header if api key is provided and not empty
-  if (!config.api_key.empty()) {
+  if (!config.api_key.empty() && config.api_key != "__EMPTY__") {
     headers.emplace(config.auth_header_name, config.auth_header_prefix + config.api_key);
   }
 
