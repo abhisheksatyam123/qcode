@@ -4,3 +4,6 @@ apps/webui/node_modules/
 
 # Personal working notes / scratchpad (task handoff notes, not source)
 scratchpad/
+
+# CMake/gtest discovery scratch files
+tests/cmake_test_discovery_*.json
