@@ -46,12 +46,11 @@ public:
     bool is_active() const noexcept;
 
     // Cooperative stop (checked between tool steps / stream events).
-    // Does not clear the prompt queue — callers that cancel everything
-    // (Esc force-stop / shutdown) clear the queue explicitly.
+    // Does not clear the prompt queue.
     void request_abort();
 
     // Unstick the UI immediately without joining the worker.
-    // Also drops any queued prompts (full cancel).
+    // Preserves queued prompts (same as request_abort).
     void force_stop_ui();
 
     // Start a turn, or queue the prompt if a worker is still alive.

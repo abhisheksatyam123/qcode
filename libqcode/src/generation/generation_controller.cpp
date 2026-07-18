@@ -42,8 +42,8 @@ void GenerationController::request_abort() {
 }
 
 void GenerationController::force_stop_ui() {
+    // Unstick the UI only — keep any queued prompts so they can still run.
     request_abort();
-    store_.clear_prompt_queue();
     store_.set_generating(false);
     store_.set_status("idle");
     store_.add_toast("Generation force-stopped", "warning", 2500);
@@ -128,6 +128,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
             GenerationContext ctx{
                 .session_id = *state_ptr->session_id,
                 .reasoning_mode = *state_ptr->reasoning_mode,
+                .workspace = db::get_session_workspace(*state_ptr->session_id),
                 .abort_flag = state_ptr->abort_flag};
             if (state_ptr->abort_flag) {
                 state_ptr->abort_flag->store(false, std::memory_order_release);

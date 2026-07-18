@@ -2,6 +2,7 @@
 
 #include <sqlite3.h>
 #include <uuid.h>
+#include <climits>
 #include <cstdlib>
 #include <random>
 #include <sstream>
@@ -416,7 +417,23 @@ std::vector<ai::Message> load_session_history_parsed(const std::string& session_
 }
 
 void reload_session_history(const std::string& session_id, ChatState& state) {
-    state.messages_history = std::make_shared<ai::Messages>(load_session_history_parsed(session_id));
+    state.messages_history =
+        std::make_shared<ai::Messages>(load_session_history_parsed(session_id));
+    // Live counters belong to the previous session — clear them so header/Stats
+    // don't keep showing stale totals after a switch.
+    if (state.total_prompt_tokens) *state.total_prompt_tokens = 0;
+    if (state.total_completion_tokens) *state.total_completion_tokens = 0;
+    if (state.total_tokens) *state.total_tokens = 0;
+    if (state.current_context_tokens) *state.current_context_tokens = 0;
+    if (state.tool_call_count) *state.tool_call_count = 0;
+    if (state.total_tool_time_ms) *state.total_tool_time_ms = 0;
+    if (state.last_actual_prompt_tokens) *state.last_actual_prompt_tokens = 0;
+    if (state.last_estimated_tokens) *state.last_estimated_tokens = 0;
+    if (state.consecutive_prunes) *state.consecutive_prunes = 0;
+    if (state.history_window_start) *state.history_window_start = 0;
+    if (state.auto_scroll) *state.auto_scroll = true;
+    if (state.scroll_line) *state.scroll_line = INT_MAX;
+    state.files_detail_open = false;
 }
 
 void overwrite_session_history(const std::string& session_id, const std::vector<ai::Message>& messages) {

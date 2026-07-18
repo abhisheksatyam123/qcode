@@ -228,7 +228,7 @@ static void run_tools_generation_bus(
         }
         // Models sometimes wedge into identical bash loops; stop early.
         constexpr int kMaxIdenticalRepeats = 3;
-        constexpr int kMaxToolOnlyStreak = 1000000; // effectively infinite
+        constexpr int kMaxToolOnlyStreak = 32;
         if (identical_repeat >= kMaxIdenticalRepeats ||
             tool_only_streak >= kMaxToolOnlyStreak) {
           LOG_WARN(
@@ -690,8 +690,8 @@ void run_generation_with_bus(
     if (enable_tools) {
       ai::ToolSet tools = Tools::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
-      // Soft cap: runaway sessions previously burned 200 steps with no answer.
-      constexpr int kMaxToolSteps = 1000000; // effectively infinite
+      // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
+      constexpr int kMaxToolSteps = 64;
       base_opts.max_steps = kMaxToolSteps;
       auto refresh_client = [&](ai::Client& out_client) -> bool {
         // Re-read Antigravity OAuth (force refresh on 401).

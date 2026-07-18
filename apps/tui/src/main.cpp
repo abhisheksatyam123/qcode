@@ -256,6 +256,21 @@ int main() {
                 return;
             }
 
+            if (cmd == "model" || cmd == "models") {
+                prompt_input = "";
+                show_model_select = true;
+                model_select_idx = 0;
+                model_query = "";
+                for (int i = 0; i < static_cast<int>(model_entries.size()); i++) {
+                    if (model_entries[i].provider_idx == selected_provider &&
+                        model_entries[i].model_idx == selected_model) {
+                        model_select_idx = i;
+                        break;
+                    }
+                }
+                return;
+            }
+
             prompt_input = "";
             ai::tui::handle_slash_command(raw, prompt_input, providers_list,
                                           selected_provider, selected_model,
@@ -755,21 +770,33 @@ int main() {
         constexpr int kLinesPerPage = 20;
         if (e == Event::PageUp) {
             *state.auto_scroll = false;
-            const auto page = static_cast<size_t>(std::max(8, state.terminal_height / 2));
-            *state.history_window_start =
-                *state.history_window_start > page
-                    ? *state.history_window_start - page
-                    : 0;
-            *state.scroll_line = 0;
+            if (state.tab_selected == 0) {
+                const auto page =
+                    static_cast<size_t>(std::max(8, state.terminal_height / 2));
+                *state.history_window_start =
+                    *state.history_window_start > page
+                        ? *state.history_window_start - page
+                        : 0;
+                *state.scroll_line = 0;
+            } else {
+                *state.scroll_line =
+                    std::max(0, *state.scroll_line - kLinesPerPage);
+            }
             return true;
         }
         if (e == Event::PageDown) {
             *state.auto_scroll = false;
-            const auto page = static_cast<size_t>(std::max(8, state.terminal_height / 2));
-            *state.history_window_start = std::min(
-                state.messages_history->size(),
-                *state.history_window_start + page);
-            *state.scroll_line = INT_MAX;
+            if (state.tab_selected == 0) {
+                const auto page =
+                    static_cast<size_t>(std::max(8, state.terminal_height / 2));
+                *state.history_window_start = std::min(
+                    state.messages_history->size(),
+                    *state.history_window_start + page);
+                *state.scroll_line = INT_MAX;
+            } else {
+                *state.scroll_line =
+                    std::min(INT_MAX, *state.scroll_line + kLinesPerPage);
+            }
             return true;
         }
         if (e == Event::End) {
@@ -779,7 +806,9 @@ int main() {
         }
         if (e == Event::Home) {
             *state.auto_scroll = false;
-            *state.history_window_start = 0;
+            if (state.tab_selected == 0) {
+                *state.history_window_start = 0;
+            }
             *state.scroll_line = 0;
             return true;
         }

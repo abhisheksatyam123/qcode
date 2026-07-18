@@ -3,6 +3,8 @@
 #include "ai/logger.h"
 #include "utils/message_utils.h"
 
+#include <unordered_set>
+
 namespace ai {
 namespace anthropic {
 
@@ -27,6 +29,10 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
   // Build messages array
   if (!options.messages.empty()) {
+    // Drop tool_results whose tool_use_id was never seen — Claude 400s on
+    // orphans left behind by compaction / incomplete history reloads.
+    std::unordered_set<std::string> seen_tool_use_ids;
+
     // Use provided messages
     for (const auto& msg : options.messages) {
       nlohmann::json message;
@@ -38,6 +44,14 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
         message["content"] = nlohmann::json::array();
 
         for (const auto& result : msg.get_tool_results()) {
+          if (!result.tool_call_id.empty() &&
+              !seen_tool_use_ids.contains(result.tool_call_id)) {
+            LOG_WARN(
+                "anthropic_request_builder: dropping orphaned tool_result "
+                "tool_use_id={}",
+                result.tool_call_id);
+            continue;
+          }
           nlohmann::json tool_result_content;
           tool_result_content["type"] = "tool_result";
           tool_result_content["tool_use_id"] = result.tool_call_id;
@@ -51,6 +65,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
           message["content"].push_back(tool_result_content);
         }
+        if (message["content"].empty()) continue;
       } else {
         // Handle messages with text and/or tool calls
         message["role"] = utils::message_role_to_string(msg.role);
@@ -58,6 +73,9 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
         // Get text content and tool calls
         std::string text_content = msg.get_text();
         auto tool_calls = msg.get_tool_calls();
+        for (const auto& tool_call : tool_calls) {
+          if (!tool_call.id.empty()) seen_tool_use_ids.insert(tool_call.id);
+        }
 
         // Anthropic expects content as array for mixed content or tool calls
         if (!tool_calls.empty() ||

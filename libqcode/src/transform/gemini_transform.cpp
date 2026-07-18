@@ -1,4 +1,5 @@
 #include "ai/gemini_transform.h"
+#include "ai/logger.h"
 #include "ai/utils/random.h"
 
 #include <chrono>
@@ -62,6 +63,15 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
         }
       }
       if (role == "tool") {
+        const auto call_id = msg.value("tool_call_id", "");
+        // Skip orphaned tool results whose tool_call_id has no matching
+        // tool_use (functionCall) in a preceding assistant message.  Claude
+        // models reject these with a 400 "unexpected tool_use_id" error.
+        if (!call_id.empty() && !tool_names.contains(call_id)) {
+          LOG_WARN("gemini_transform: dropping orphaned tool result "
+                   "tool_call_id={}", call_id);
+          continue;
+        }
         auto response = msg.value("content", nlohmann::json{});
         if (response.is_string()) {
           try {
@@ -70,7 +80,6 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
             response = {{"result", response}};
           }
         }
-        const auto call_id = msg.value("tool_call_id", "");
         parts.push_back(
             {{"functionResponse",
               {{"id", call_id},

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <unordered_set>
 
 #include "ai/logger.h"
 #include "ai/utils/random.h"
@@ -29,6 +30,10 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       request["messages"].push_back(
           {{"role", "system"}, {"content", options.system}});
     }
+    // Track assistant tool_call ids so orphaned tool results (common after
+    // compaction / DB reload) are not sent — Claude rejects those with 400.
+    std::unordered_set<std::string> seen_tool_call_ids;
+
     // Use provided messages
     for (const auto& msg : options.messages) {
       nlohmann::json message;
@@ -38,6 +43,14 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
         // OpenAI expects each tool result as a separate message with role
         // "tool"
         for (const auto& result : msg.get_tool_results()) {
+          if (!result.tool_call_id.empty() &&
+              !seen_tool_call_ids.contains(result.tool_call_id)) {
+            LOG_WARN(
+                "openai_request_builder: dropping orphaned tool result "
+                "tool_call_id={}",
+                result.tool_call_id);
+            continue;
+          }
           nlohmann::json tool_message;
           tool_message["role"] = "tool";
           tool_message["tool_call_id"] = result.tool_call_id;
@@ -62,6 +75,9 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
       // Get tool calls
       auto tool_calls = msg.get_tool_calls();
+      for (const auto& tool_call : tool_calls) {
+        if (!tool_call.id.empty()) seen_tool_call_ids.insert(tool_call.id);
+      }
 
       // Set content - OpenAI expects both text and tool calls in the same
       // message
