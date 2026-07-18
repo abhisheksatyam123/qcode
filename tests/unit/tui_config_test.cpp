@@ -143,6 +143,13 @@ TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
   EXPECT_TRUE(has_model("claude-fable-5-high"));
   EXPECT_TRUE(has_model("claude-fable-5-thinking-high"));
   EXPECT_FALSE(has_model("claude-opus-4.8"));
+  const auto grok = std::find_if(
+      models.begin(), models.end(), [](const ModelInfo& model) {
+        return model.id == "cursor-grok-4.5-high";
+      });
+  ASSERT_NE(grok, models.end());
+  EXPECT_EQ(grok->context_window, 200000);
+  EXPECT_TRUE(grok->tool_call);
   std::filesystem::remove(path);
 }
 

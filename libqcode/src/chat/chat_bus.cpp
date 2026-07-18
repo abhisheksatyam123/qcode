@@ -227,7 +227,9 @@ static void run_tools_generation_bus(
           identical_repeat = 1;
         }
         // Models sometimes wedge into identical bash loops; stop early.
-        constexpr int kMaxIdenticalRepeats = 3;
+        // Allow a generous streak of same-args retries (read/bash) before
+        // treating it as stuck — 3 was too aggressive for real agents.
+        constexpr int kMaxIdenticalRepeats = 12;
         constexpr int kMaxToolOnlyStreak = 32;
         if (identical_repeat >= kMaxIdenticalRepeats ||
             tool_only_streak >= kMaxToolOnlyStreak) {
@@ -691,7 +693,11 @@ void run_generation_with_bus(
     }
 
     // ── Dispatch ──
-    if (enable_tools) {
+    // Cursor AgentService owns its own autonomous tool loop server-side.
+    // Wrapping it in qcode's local tool loop is useless (no tool_calls returned)
+    // and can truncate multi-step agent turns. Always stream Cursor.
+    const bool cursor_native_agent = (provider_id == "cursor");
+    if (enable_tools && !cursor_native_agent) {
       ai::ToolSet tools = Tools::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
       // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
@@ -722,6 +728,10 @@ void run_generation_with_bus(
       run_tools_generation_bus(client, std::move(base_opts), bus, ctx,
                                refresh_client);
     } else {
+      if (cursor_native_agent) {
+        LOG_INFO("ChatBus: Cursor native agent stream (session_id={})",
+                 ctx.session_id);
+      }
       run_stream_generation_bus(client, std::move(base_opts), bus, ctx);
     }
 

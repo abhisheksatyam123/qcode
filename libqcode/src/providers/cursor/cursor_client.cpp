@@ -86,6 +86,20 @@ std::string resolve_workspace(const GenerateOptions& options) {
   return default_workspace_path();
 }
 
+// Cursor often omits turn_ended on short replies. Heartbeats must NOT end the
+// turn (they arrive while the agent is still tool-calling). End only when:
+//   - explicit turn_ended, or
+//   - stream closes, or
+//   - idle: heartbeats keep arriving but no text/exec for kIdleEndTimeout.
+constexpr auto kIdleEndTimeout = std::chrono::seconds(45);
+
+bool idle_end_on_heartbeat(
+    bool has_text,
+    std::chrono::steady_clock::time_point last_activity) {
+  if (!has_text) return false;
+  return std::chrono::steady_clock::now() - last_activity >= kIdleEndTimeout;
+}
+
 }  // namespace
 
 CursorClient::CursorClient(const std::string& access_token,
@@ -177,6 +191,7 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
     std::string stream_error;
     std::atomic<bool> turn_ended{false};
     std::atomic<bool> context_replied{false};
+    auto last_activity = std::chrono::steady_clock::now();
     ConnectFrameBuffer frame_buf;
 
     auto bidi_append = [&](const std::string& client_message) -> bool {
@@ -213,16 +228,21 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
               using Kind = AgentStreamEvent::Kind;
               switch (ev.kind) {
                 case Kind::kHeartbeat:
-                  // Connect keepalives arrive while the stream is idle. After
-                  // assistant text has started, the first keepalive is a reliable
-                  // end-of-turn signal (Cursor often omits turn_ended).
-                  if (!collected_text.empty()) {
+                  // Keepalives arrive during tool loops — never treat the first
+                  // post-text heartbeat as end-of-turn. Only finish on idle.
+                  if (idle_end_on_heartbeat(!collected_text.empty(),
+                                            last_activity)) {
+                    LOG_INFO(
+                        "Cursor generate_text: idle end after heartbeat "
+                        "(text_len={})",
+                        collected_text.size());
                     turn_ended = true;
                     return false;
                   }
                   break;
                 case Kind::kTextDelta:
                   collected_text += ev.text;
+                  last_activity = std::chrono::steady_clock::now();
                   break;
                 case Kind::kTurnEnded:
                   collected_text += ev.text;
@@ -231,8 +251,10 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
                 case Kind::kPostTextTokenDelta:
                   // Token accounting frames; do not end the turn here — longer
                   // replies interleave token_delta between text_delta chunks.
+                  last_activity = std::chrono::steady_clock::now();
                   break;
                 case Kind::kRequestContext: {
+                  last_activity = std::chrono::steady_clock::now();
                   if (context_replied.exchange(true)) break;
                   const auto reply =
                       cursor_request_builder_->build_request_context_reply(
@@ -248,12 +270,15 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
                   stream_error = ev.error;
                   return false;
                 case Kind::kOther:
+                  // Exec/tool frames while the native agent is working —
+                  // keep the stream open and refresh activity.
+                  last_activity = std::chrono::steady_clock::now();
                   break;
               }
             }
             return true;
           },
-          /*timeout_sec=*/180);
+          /*timeout_sec=*/300);
     });
 
     // Give the stream a moment to establish before appending the request.
@@ -325,6 +350,7 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
       std::string stream_error;
       std::atomic<bool> turn_ended{false};
       std::atomic<bool> context_replied{false};
+      auto last_activity = std::chrono::steady_clock::now();
       ConnectFrameBuffer frame_buf;
 
       auto build_connect_headers = [](const std::string& token) {
@@ -376,15 +402,24 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                 using Kind = AgentStreamEvent::Kind;
                 switch (ev.kind) {
                   case Kind::kHeartbeat:
-                    if (!collected_text.empty()) {
+                    // Do not abort on the first post-text keepalive — Cursor
+                    // keeps heartbeating while the native agent uses tools.
+                    if (idle_end_on_heartbeat(!collected_text.empty(),
+                                              last_activity)) {
+                      LOG_INFO(
+                          "Cursor stream_text: idle end after heartbeat "
+                          "(text_len={})",
+                          collected_text.size());
                       turn_ended = true;
-                      impl_ptr->push_event(StreamEvent(kStreamEventTypeFinish));
+                      impl_ptr->push_event(
+                          StreamEvent(kStreamEventTypeFinish));
                       impl_ptr->mark_done();
                       return false;
                     }
                     break;
                   case Kind::kTextDelta:
                     collected_text += ev.text;
+                    last_activity = std::chrono::steady_clock::now();
                     impl_ptr->push_event(StreamEvent(ev.text));
                     break;
                   case Kind::kTurnEnded:
@@ -397,8 +432,10 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                     turn_ended = true;
                     return false;
                   case Kind::kPostTextTokenDelta:
+                    last_activity = std::chrono::steady_clock::now();
                     break;
                   case Kind::kRequestContext: {
+                    last_activity = std::chrono::steady_clock::now();
                     if (context_replied.exchange(true)) break;
                     const auto reply =
                         builder->build_request_context_reply(
@@ -414,12 +451,13 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                     stream_error = ev.error;
                     return false;
                   case Kind::kOther:
+                    last_activity = std::chrono::steady_clock::now();
                     break;
                 }
               }
               return true;
             },
-            /*timeout_sec=*/180);
+            /*timeout_sec=*/300);
       };
 
       auto stream_future = std::async(std::launch::async, http_stream_task);

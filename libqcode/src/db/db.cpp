@@ -211,16 +211,19 @@ std::string create_new_session(const std::string& provider, const std::string& m
         return "";
     }
 
-    std::string final_id = custom_id.empty() ? generate_uuid() : custom_id;
+    // Always use a UUID primary key. custom_id is the optional display title.
+    const std::string final_id = generate_uuid();
+    std::string title =
+        custom_id.empty() ? ("Session - " + model) : custom_id;
     if (!custom_id.empty()) {
-        std::string base_id = custom_id;
+        std::string base_title = custom_id;
         int counter = 1;
         while (true) {
-            const char* check_sql = "SELECT COUNT(*) FROM sessions WHERE id = ?;";
+            const char* check_sql = "SELECT COUNT(*) FROM sessions WHERE title = ?;";
             sqlite3_stmt* check_stmt = nullptr;
             int count = 0;
             if (prepare_stmt(db, check_sql, &check_stmt)) {
-                sqlite3_bind_text(check_stmt, 1, final_id.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(check_stmt, 1, title.c_str(), -1, SQLITE_STATIC);
                 if (sqlite3_step(check_stmt) == SQLITE_ROW) {
                     count = sqlite3_column_int(check_stmt, 0);
                 }
@@ -229,15 +232,12 @@ std::string create_new_session(const std::string& provider, const std::string& m
             if (count == 0) {
                 break;
             }
-            final_id = base_id + " (" + std::to_string(counter++) + ")";
+            title = base_title + " (" + std::to_string(counter++) + ")";
         }
     }
 
     auto now = std::chrono::system_clock::now();
     long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-    
-    // Default title is "Session - <model_name>" or final_id if custom_id was provided
-    std::string title = custom_id.empty() ? ("Session - " + model) : final_id;
 
     const char* sql = "INSERT INTO sessions (id, title, provider, model, created_at, workspace) VALUES (?, ?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt = nullptr;

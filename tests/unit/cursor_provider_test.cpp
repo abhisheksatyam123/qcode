@@ -111,6 +111,34 @@ TEST(CursorProviderTest, ClassifyAgentPayloadHandlesErrorsAndPreventsFalsePositi
   EXPECT_NE(ev3.kind, AgentStreamEvent::Kind::kError);
 }
 
+TEST(CursorProviderTest, ConnectHeartbeatIsNotTurnEnded) {
+  // Connect keepalive: field 1 = "j\0" (0a 02 6a 00). Must stay heartbeat so
+  // the client can keep the native agent tool loop open across keepalives.
+  const std::string heartbeat("\x0a\x02\x6a\x00", 4);
+  const auto ev = CursorResponseParser::classify_agent_payload(heartbeat);
+  EXPECT_EQ(ev.kind, AgentStreamEvent::Kind::kHeartbeat);
+}
+
+TEST(CursorProviderTest, MultiTurnPromptIncludesPriorTurns) {
+  GenerateOptions options;
+  options.model = "composer-2.5";
+  options.session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  options.system = "Be helpful.";
+  options.messages = {
+      Message::user("First question"),
+      Message::assistant("First answer"),
+      Message::user("Follow up"),
+  };
+
+  CursorRequestBuilder builder;
+  const auto request = builder.build_agent_run_request(options);
+
+  EXPECT_NE(request.find(options.session_id), std::string::npos);
+  EXPECT_NE(request.find("First question"), std::string::npos);
+  EXPECT_NE(request.find("First answer"), std::string::npos);
+  EXPECT_NE(request.find("Follow up"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace cursor
 }  // namespace ai

@@ -13,7 +13,8 @@ namespace db {
 // Initialize SQLite database (~/.qcode.db) and create tables
 void init_database();
 
-// Create a new session row in the database and return its UUID
+// Create a new session row and return its UUID id.
+// custom_id is an optional display title (not the primary key).
 std::string create_new_session(const std::string& provider, const std::string& model,
                                const std::string& workspace = "",
                                const std::string& custom_id = "");

@@ -69,7 +69,8 @@ std::string build_conversation_prompt(const GenerateOptions& options) {
 }
 
 // Prefer the TUI/server session id so multi-turn requests share one Cursor
-// conversation id (helps backend prompt cache). Fall back to a random id.
+// conversation id (backend prompt cache + agent continuity across user turns).
+// Fall back to a random id only when the caller has no session.
 std::string stable_conversation_id(const GenerateOptions& options) {
   if (!options.session_id.empty()) {
     return options.session_id;

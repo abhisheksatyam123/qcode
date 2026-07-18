@@ -191,10 +191,22 @@ bool handle_slash_command(
         std::string new_id = db::create_new_session(prov, mod, ws, custom_id);
         *state.session_id = new_id;
         state.messages_history->clear();
+        std::string display_title = custom_id.empty()
+                                        ? ("Session - " + mod)
+                                        : custom_id;
+        // Resolve actual title (may have (N) suffix on collision).
+        for (const auto& s : db::list_sessions_full()) {
+            if (s.id == new_id) {
+                display_title = s.title;
+                break;
+            }
+        }
         if (!ws.empty()) {
-            append_system_message(state, "Started new session: " + new_id + " (workspace: " + ws + ")");
+            append_system_message(state, "Started new session: " + display_title +
+                                             " (workspace: " + ws + ")");
         } else {
-            append_system_message(state, "Started new persistent session: " + new_id);
+            append_system_message(state,
+                                 "Started new session: " + display_title);
         }
         return true;
     }

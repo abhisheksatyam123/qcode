@@ -65,6 +65,20 @@ static std::string resolve_config_value(const ordered_json& value) {
     return text;
 }
 
+static ModelInfo make_default_model(std::string name,
+                                    std::string id,
+                                    int context_window,
+                                    int output_limit,
+                                    bool tool_call = true,
+                                    bool reasoning = false) {
+    ModelInfo model{std::move(name), std::move(id)};
+    model.context_window = context_window;
+    model.output_limit = output_limit;
+    model.tool_call = tool_call;
+    model.reasoning = reasoning;
+    return model;
+}
+
 static ProviderInfo default_opencode_provider() {
     ProviderInfo provider;
     provider.name = "OpenCode Zen";
@@ -72,9 +86,13 @@ static ProviderInfo default_opencode_provider() {
     provider.api_url = "https://opencode.ai/zen/v1";
     provider.protocol = "chat_completions";
     provider.models = {
-        {"Nemotron 3 Ultra", "nemotron-3-ultra-free"},
-        {"DeepSeek V4 Flash", "deepseek-v4-flash-free"},
-        {"North Mini Code", "north-mini-code-free"}};
+        make_default_model("Tencent HY3 (Free)", "hy3-free", 262144, 64000),
+        make_default_model("Nemotron 3 Ultra (Free)", "nemotron-3-ultra-free",
+                           1000000, 128000, true, true),
+        make_default_model("DeepSeek V4 Flash (Free)", "deepseek-v4-flash-free",
+                           1000000, 65536),
+        make_default_model("North Mini Code (Free)", "north-mini-code-free",
+                           256000, 64000)};
     return provider;
 }
 
@@ -326,6 +344,10 @@ ModelInfo make_cursor_model(const std::string& id, std::string name = "") {
     model.reasoning = id.find("thinking") != std::string::npos ||
                       id.find("gpt-5") != std::string::npos;
     model.tool_call = true;
+    // Cursor catalog does not expose context limits; use a sane default so
+    // TUI prune/warn and footer windows are not blind (0).
+    model.context_window = 200000;
+    model.output_limit = 8192;
     return model;
 }
 
