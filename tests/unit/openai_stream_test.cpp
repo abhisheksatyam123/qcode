@@ -1,8 +1,8 @@
 #include "../utils/mock_openai_client.h"
 #include "../utils/test_fixtures.h"
-#include "ai/types/stream_event.h"
-#include "ai/types/stream_options.h"
-#include "ai/types/stream_result.h"
+#include <qcode/types/stream_event.h>
+#include <qcode/types/stream_options.h>
+#include <qcode/types/stream_result.h>
 #include "providers/openai/openai_stream.h"
 
 #include <gmock/gmock.h>

@@ -1,7 +1,7 @@
-#include "ai/registry.h"
-#include <ai/logger.h>
+#include <qcode/providers/registry.h>
+#include <qcode/logger/logger.h>
 
-#include "ai/openai.h"
+#include <qcode/providers/openai.h>
 
 #include <cstdlib>
 

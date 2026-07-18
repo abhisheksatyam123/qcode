@@ -17,8 +17,8 @@
 #include <iostream>
 #include <string>
 
-#include <ai/openai.h>
-#include <ai/retry/retry_policy.h>
+#include <qcode/providers/openai.h>
+#include <qcode/retry/retry_policy.h>
 
 int main() {
   std::cout << "AI SDK C++ - Retry Configuration Example\n";

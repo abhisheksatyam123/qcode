@@ -1,6 +1,6 @@
 #include <iostream>
 
-#include <ai/ai.h>
+#include <qcode/ai.h>
 
 int main() {
   std::cout << "AI SDK C++ - Anthropic Component Demo\n";

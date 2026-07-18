@@ -1,10 +1,10 @@
-#include <ai/tui/generation_controller.h>
+#include <qcode/generation/generation_controller.h>
 
-#include <ai/logger.h>
-#include <ai/tui/chat_bus.h>
-#include <ai/tui/context_manager.h>
-#include <ai/tui/contract/event.h>
-#include <ai/tui/db.h>
+#include <qcode/logger/logger.h>
+#include <qcode/chat/chat_bus.h>
+#include <qcode/context/context_manager.h>
+#include <qcode/contract/event.h>
+#include <qcode/db/db.h>
 
 #include <algorithm>
 #include <chrono>

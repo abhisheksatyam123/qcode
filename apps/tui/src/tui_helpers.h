@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-#include <ai/tui/db.h>
-#include <ai/tui/state.h>
+#include <qcode/db/db.h>
+#include <qcode/state/state.h>
 
 namespace ai {
 namespace tui {

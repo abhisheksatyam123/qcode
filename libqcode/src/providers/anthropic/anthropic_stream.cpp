@@ -1,6 +1,6 @@
 #include "anthropic_stream.h"
 
-#include "ai/logger.h"
+#include <qcode/logger/logger.h>
 
 #include <chrono>
 #include <cstdlib>

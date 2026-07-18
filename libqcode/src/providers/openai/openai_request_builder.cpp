@@ -4,8 +4,8 @@
 #include <functional>
 #include <unordered_set>
 
-#include "ai/logger.h"
-#include "ai/utils/random.h"
+#include <qcode/logger/logger.h>
+#include <qcode/utils/random.h>
 #include "utils/message_utils.h"
 
 namespace ai {

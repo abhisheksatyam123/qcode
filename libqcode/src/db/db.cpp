@@ -1,4 +1,4 @@
-#include <ai/tui/db.h>
+#include <qcode/db/db.h>
 
 #include <sqlite3.h>
 #include <uuid.h>
@@ -14,8 +14,8 @@
 #include <mutex>
 #include <cctype>
 
-#include <ai/logger.h>
-#include <ai/types/message.h>
+#include <qcode/logger/logger.h>
+#include <qcode/types/message.h>
 #include <nlohmann/json.hpp>
 
 namespace ai {

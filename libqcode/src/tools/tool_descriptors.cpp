@@ -1,13 +1,13 @@
-#include <ai/tui/tools.h>
+#include <qcode/tools/tool_descriptors.h>
 
 #include <sstream>
-#include <ai/logger.h>
+#include <qcode/logger/logger.h>
 #include <nlohmann/json.hpp>
 
 #include <iomanip>
 
-#include <ai/tools/bash_tool.h>
-#include <ai/tools/task_tool.h>
+#include <qcode/tools/bash_tool.h>
+#include <qcode/tools/task_tool.h>
 
 namespace ai {
 namespace tui {

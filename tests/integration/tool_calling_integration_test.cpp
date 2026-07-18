@@ -1,10 +1,10 @@
 #include "../utils/test_fixtures.h"
-#include "ai/anthropic.h"
-#include "ai/logger.h"
-#include "ai/openai.h"
-#include "ai/tools.h"
-#include "ai/types/generate_options.h"
-#include "ai/types/tool.h"
+#include <qcode/providers/anthropic.h>
+#include <qcode/logger/logger.h>
+#include <qcode/providers/openai.h>
+#include <qcode/tools/tools.h>
+#include <qcode/types/generate_options.h>
+#include <qcode/types/tool.h>
 
 #include <chrono>
 #include <future>

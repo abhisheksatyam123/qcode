@@ -1,6 +1,6 @@
 #include "../utils/test_fixtures.h"
-#include "ai/openai.h"
-#include "ai/types/embedding_options.h"
+#include <qcode/providers/openai.h>
+#include <qcode/types/embedding_options.h>
 
 #include <cmath>
 #include <optional>

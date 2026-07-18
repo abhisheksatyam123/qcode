@@ -1,12 +1,12 @@
 #include "anthropic_factory.h"
 
-#include "ai/errors.h"
+#include <qcode/providers/errors.h>
 #include "anthropic_client.h"
 
 #include <cstdlib>
 #include <memory>
 #include <optional>
-#include <ai/logger.h>
+#include <qcode/logger/logger.h>
 
 namespace ai {
 namespace anthropic {

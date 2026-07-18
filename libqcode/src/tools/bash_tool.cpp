@@ -1,7 +1,7 @@
 #include <random>
 #include <csignal>
-#include "ai/tools/bash_tool.h"
-#include <ai/logger.h>
+#include <qcode/tools/bash_tool.h>
+#include <qcode/logger/logger.h>
 
 #include <algorithm>
 #include <array>

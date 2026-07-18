@@ -1,7 +1,7 @@
 #include "../utils/test_fixtures.h"
-#include "ai/openai.h"
-#include "ai/types/generate_options.h"
-#include "ai/types/stream_options.h"
+#include <qcode/providers/openai.h>
+#include <qcode/types/generate_options.h>
+#include <qcode/types/stream_options.h>
 
 #include <future>
 #include <optional>

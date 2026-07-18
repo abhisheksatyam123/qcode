@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ai/types/generate_options.h"
-#include "ai/types/message.h"
+#include <qcode/types/generate_options.h>
+#include <qcode/types/message.h>
 
 #include <string>
 

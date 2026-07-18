@@ -1,5 +1,5 @@
-#include "ai/langfuse.h"
-#include "ai/logger.h"
+#include <qcode/langfuse/langfuse.h>
+#include <qcode/logger/logger.h>
 
 #include <cstdio>
 #include <ctime>

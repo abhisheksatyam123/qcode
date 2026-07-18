@@ -1,6 +1,6 @@
-#include "ai/gemini_transform.h"
-#include "ai/logger.h"
-#include "ai/utils/random.h"
+#include <qcode/transform/gemini_transform.h>
+#include <qcode/logger/logger.h>
+#include <qcode/utils/random.h>
 
 #include <chrono>
 #include <unordered_map>

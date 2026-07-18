@@ -1,9 +1,9 @@
-#include "ai/tui/provider_registry_init.h"
+#include <qcode/providers/provider_registry_init.h>
 
-#include "ai/antigravity.h"
-#include "ai/cursor.h"
-#include "ai/tui/config.h"
-#include "ai/registry.h"
+#include <qcode/providers/antigravity.h>
+#include <qcode/providers/cursor.h>
+#include <qcode/config/config.h>
+#include <qcode/providers/registry.h>
 #include <mutex>
 
 namespace ai {

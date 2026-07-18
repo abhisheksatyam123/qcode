@@ -1,6 +1,6 @@
-#include "ai/antigravity.h"
-#include "ai/tui/config.h"
-#include "ai/types/generate_options.h"
+#include <qcode/providers/antigravity.h>
+#include <qcode/config/config.h>
+#include <qcode/types/generate_options.h>
 #include "providers/antigravity/antigravity_request_builder.h"
 
 #include <gmock/gmock.h>

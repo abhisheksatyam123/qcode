@@ -1,5 +1,5 @@
-#include <ai/tui/config.h>
-#include <ai/cursor.h>
+#include <qcode/config/config.h>
+#include <qcode/providers/cursor.h>
 
 #include <algorithm>
 #include <array>
@@ -18,7 +18,7 @@
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 
-#include <ai/logger.h>
+#include <qcode/logger/logger.h>
 
 namespace ai {
 namespace tui {

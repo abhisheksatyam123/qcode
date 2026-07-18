@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ai/types/embedding_options.h"
-#include "ai/types/generate_options.h"
+#include <qcode/types/embedding_options.h>
+#include <qcode/types/generate_options.h>
 #include "providers/base_provider_client.h"
 
 #include <nlohmann/json.hpp>

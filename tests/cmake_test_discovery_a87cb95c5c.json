@@ -1,0 +1,1549 @@
+{
+  "tests": 252,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "OpenAIClientTest",
+      "tests": 13,
+      "testsuite": [
+        {
+          "name": "ConstructorWithValidApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 34
+        },
+        {
+          "name": "ConstructorWithEmptyApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 49
+        },
+        {
+          "name": "ConstructorWithCustomBaseUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 56
+        },
+        {
+          "name": "ConstructorWithHttpUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 69
+        },
+        {
+          "name": "SupportedModelsContainsExpectedModels",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 79
+        },
+        {
+          "name": "SupportsValidModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 88
+        },
+        {
+          "name": "DoesNotSupportInvalidModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 93
+        },
+        {
+          "name": "GenerateTextWithInvalidApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 100
+        },
+        {
+          "name": "GenerateTextWithBadUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 112
+        },
+        {
+          "name": "ConfigurationInfoContainsExpectedData",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 125
+        },
+        {
+          "name": "ProviderNameIsConsistent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 133
+        },
+        {
+          "name": "ValidateOptionsValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 138
+        },
+        {
+          "name": "StreamTextBasicValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_client_test.cpp",
+          "line": 149
+        }
+      ]
+    },
+    {
+      "name": "AnthropicClientTest",
+      "tests": 13,
+      "testsuite": [
+        {
+          "name": "ConstructorWithValidApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 34
+        },
+        {
+          "name": "ConstructorWithEmptyApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 50
+        },
+        {
+          "name": "ConstructorWithCustomBaseUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 57
+        },
+        {
+          "name": "ConstructorWithHttpUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 71
+        },
+        {
+          "name": "SupportedModelsContainsExpectedModels",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 81
+        },
+        {
+          "name": "SupportsValidModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 91
+        },
+        {
+          "name": "DoesNotSupportInvalidModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 97
+        },
+        {
+          "name": "GenerateTextWithInvalidApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 104
+        },
+        {
+          "name": "GenerateTextWithBadUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 117
+        },
+        {
+          "name": "ConfigurationInfoContainsExpectedData",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 130
+        },
+        {
+          "name": "ProviderNameIsConsistent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 138
+        },
+        {
+          "name": "ValidateOptionsValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 143
+        },
+        {
+          "name": "StreamTextBasicValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_client_test.cpp",
+          "line": 154
+        }
+      ]
+    },
+    {
+      "name": "GenerateOptionsTest",
+      "tests": 8,
+      "testsuite": [
+        {
+          "name": "DefaultConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 17
+        },
+        {
+          "name": "ConstructorWithModelAndPrompt",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 29
+        },
+        {
+          "name": "ConstructorWithSystemPrompt",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 39
+        },
+        {
+          "name": "ConstructorWithMessages",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 48
+        },
+        {
+          "name": "ValidationEmptyModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 59
+        },
+        {
+          "name": "ValidationEmptyPromptAndMessages",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 65
+        },
+        {
+          "name": "ValidationWithValidMessages",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 71
+        },
+        {
+          "name": "OptionalParametersSet",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 78
+        }
+      ]
+    },
+    {
+      "name": "GenerateResultTest",
+      "tests": 6,
+      "testsuite": [
+        {
+          "name": "DefaultConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 99
+        },
+        {
+          "name": "SuccessConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 109
+        },
+        {
+          "name": "ErrorConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 122
+        },
+        {
+          "name": "FinishReasonToString",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 132
+        },
+        {
+          "name": "MetadataFields",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 151
+        },
+        {
+          "name": "ResponseMessages",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 167
+        }
+      ]
+    },
+    {
+      "name": "MessageTest",
+      "tests": 4,
+      "testsuite": [
+        {
+          "name": "Constructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 180
+        },
+        {
+          "name": "SystemMessage",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 187
+        },
+        {
+          "name": "AssistantMessage",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 194
+        },
+        {
+          "name": "EmptyContent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 201
+        }
+      ]
+    },
+    {
+      "name": "UsageTest",
+      "tests": 3,
+      "testsuite": [
+        {
+          "name": "DefaultConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 211
+        },
+        {
+          "name": "ParameterizedConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 219
+        },
+        {
+          "name": "Addition",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 227
+        }
+      ]
+    },
+    {
+      "name": "ErrorClassesTest",
+      "tests": 7,
+      "testsuite": [
+        {
+          "name": "AIErrorBase",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 239
+        },
+        {
+          "name": "APIError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 245
+        },
+        {
+          "name": "AuthenticationError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 253
+        },
+        {
+          "name": "RateLimitError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 262
+        },
+        {
+          "name": "ConfigurationError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 272
+        },
+        {
+          "name": "NetworkError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 281
+        },
+        {
+          "name": "ModelError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 289
+        }
+      ]
+    },
+    {
+      "name": "EnumTest",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "MessageRoleValues",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 300
+        },
+        {
+          "name": "FinishReasonValues",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 307
+        }
+      ]
+    },
+    {
+      "name": "TypeIntegrationTest",
+      "tests": 3,
+      "testsuite": [
+        {
+          "name": "CompleteWorkflow",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 347
+        },
+        {
+          "name": "ErrorToSuccessWorkflow",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 364
+        },
+        {
+          "name": "MessageConversationFlow",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 379
+        }
+      ]
+    },
+    {
+      "name": "OpenAIStreamTest",
+      "tests": 5,
+      "testsuite": [
+        {
+          "name": "StreamOptionsBasicConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 17
+        },
+        {
+          "name": "StreamOptionsWithSystemPrompt",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 26
+        },
+        {
+          "name": "StreamOptionsWithMessages",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 35
+        },
+        {
+          "name": "StreamOptionsValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 44
+        },
+        {
+          "name": "StreamResultBasicConstruction",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 56
+        }
+      ]
+    },
+    {
+      "name": "StreamEventTest",
+      "tests": 5,
+      "testsuite": [
+        {
+          "name": "ParseServerSentEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 68
+        },
+        {
+          "name": "ParseCompletionEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 80
+        },
+        {
+          "name": "ParseErrorEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 86
+        },
+        {
+          "name": "BuildStreamingEvents",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 143
+        },
+        {
+          "name": "StreamEventValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 163
+        }
+      ]
+    },
+    {
+      "name": "StreamMockTest",
+      "tests": 1,
+      "testsuite": [
+        {
+          "name": "MockStreamBasicOperations",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 106
+        }
+      ]
+    },
+    {
+      "name": "StreamErrorTest",
+      "tests": 3,
+      "testsuite": [
+        {
+          "name": "HandleStreamConnectionError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 182
+        },
+        {
+          "name": "HandleStreamTimeout",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 195
+        },
+        {
+          "name": "HandleMalformedStreamData",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 206
+        }
+      ]
+    },
+    {
+      "name": "StreamPerformanceTest",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "HandleLargeStreamResponse",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 226
+        },
+        {
+          "name": "HandleManySmallChunks",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 245
+        }
+      ]
+    },
+    {
+      "name": "StreamIntegrationTest",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "StreamOptionsFromGenerateOptions",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 259
+        },
+        {
+          "name": "StreamWithClientConfiguration",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 271
+        }
+      ]
+    },
+    {
+      "name": "StreamEdgeCaseTest",
+      "tests": 3,
+      "testsuite": [
+        {
+          "name": "EmptyStreamResponse",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 290
+        },
+        {
+          "name": "SingleCharacterStream",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 298
+        },
+        {
+          "name": "UnicodeInStream",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 314
+        }
+      ]
+    },
+    {
+      "name": "AntigravityStreamTest",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "UnwrapsResponseEnvelopeAndExtractsText",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 339
+        },
+        {
+          "name": "SurfacesProviderErrorInsteadOfEmpty",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_stream_test.cpp",
+          "line": 376
+        }
+      ]
+    },
+    {
+      "name": "AnthropicStreamTest",
+      "tests": 5,
+      "testsuite": [
+        {
+          "name": "StreamOptionsBasicConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 16
+        },
+        {
+          "name": "StreamOptionsWithSystemPrompt",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 26
+        },
+        {
+          "name": "StreamOptionsWithMessages",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 35
+        },
+        {
+          "name": "StreamOptionsValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 45
+        },
+        {
+          "name": "StreamResultBasicConstruction",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 59
+        }
+      ]
+    },
+    {
+      "name": "AnthropicStreamEventTest",
+      "tests": 5,
+      "testsuite": [
+        {
+          "name": "ParseServerSentEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 71
+        },
+        {
+          "name": "ParseCompletionEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 85
+        },
+        {
+          "name": "ParseErrorEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 91
+        },
+        {
+          "name": "BuildStreamingEvents",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 150
+        },
+        {
+          "name": "StreamEventValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 171
+        }
+      ]
+    },
+    {
+      "name": "AnthropicStreamMockTest",
+      "tests": 1,
+      "testsuite": [
+        {
+          "name": "MockStreamBasicOperations",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 113
+        }
+      ]
+    },
+    {
+      "name": "AnthropicStreamErrorTest",
+      "tests": 3,
+      "testsuite": [
+        {
+          "name": "HandleStreamConnectionError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 190
+        },
+        {
+          "name": "HandleStreamTimeout",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 204
+        },
+        {
+          "name": "HandleMalformedStreamData",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 216
+        }
+      ]
+    },
+    {
+      "name": "AnthropicStreamPerformanceTest",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "HandleLargeStreamResponse",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 236
+        },
+        {
+          "name": "HandleManySmallChunks",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 255
+        }
+      ]
+    },
+    {
+      "name": "AnthropicStreamIntegrationTest",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "StreamOptionsFromGenerateOptions",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 269
+        },
+        {
+          "name": "StreamWithClientConfiguration",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 281
+        }
+      ]
+    },
+    {
+      "name": "AnthropicStreamEdgeCaseTest",
+      "tests": 3,
+      "testsuite": [
+        {
+          "name": "EmptyStreamResponse",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 301
+        },
+        {
+          "name": "SingleCharacterStream",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 309
+        },
+        {
+          "name": "UnicodeInStream",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 325
+        }
+      ]
+    },
+    {
+      "name": "AnthropicStreamEventTypesTest",
+      "tests": 5,
+      "testsuite": [
+        {
+          "name": "MessageStartEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 346
+        },
+        {
+          "name": "ContentBlockStartEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 359
+        },
+        {
+          "name": "ContentBlockDeltaEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 369
+        },
+        {
+          "name": "ContentBlockStopEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 380
+        },
+        {
+          "name": "MessageStopEvent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/anthropic_stream_test.cpp",
+          "line": 387
+        }
+      ]
+    },
+    {
+      "name": "OpenAIEmbeddingsTest",
+      "tests": 20,
+      "testsuite": [
+        {
+          "name": "EmbeddingOptionsDefaultConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 33
+        },
+        {
+          "name": "EmbeddingOptionsBasicConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 40
+        },
+        {
+          "name": "EmbeddingOptionsWithDimensions",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 50
+        },
+        {
+          "name": "EmbeddingOptionsWithEncodingFormat",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 58
+        },
+        {
+          "name": "EmbeddingOptionsWithArrayInput",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 67
+        },
+        {
+          "name": "EmbeddingOptionsInvalidEmptyModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 78
+        },
+        {
+          "name": "EmbeddingOptionsInvalidNullInput",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 85
+        },
+        {
+          "name": "EmbeddingResultDefaultConstructor",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 94
+        },
+        {
+          "name": "EmbeddingResultWithError",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 101
+        },
+        {
+          "name": "EmbeddingResultBoolConversion",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 108
+        },
+        {
+          "name": "EmbeddingsWithInvalidApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 117
+        },
+        {
+          "name": "EmbeddingsWithBadUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 131
+        },
+        {
+          "name": "EmbeddingsWithInvalidOptions",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 145
+        },
+        {
+          "name": "ValidateEmbeddingOptionsValidation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 153
+        },
+        {
+          "name": "EmbeddingsWithSingleString",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 170
+        },
+        {
+          "name": "EmbeddingsWithMultipleStrings",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 178
+        },
+        {
+          "name": "EmbeddingsWithOptionalUser",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 190
+        },
+        {
+          "name": "EmbeddingsWithCustomDimensions",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 200
+        },
+        {
+          "name": "EmbeddingsWithBase64Encoding",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 210
+        },
+        {
+          "name": "EmbeddingsWithDifferentModels",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/openai_embeddings_test.cpp",
+          "line": 221
+        }
+      ]
+    },
+    {
+      "name": "RegistryTest",
+      "tests": 8,
+      "testsuite": [
+        {
+          "name": "CoreProvidersRegisterAndResolveOpenAI",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/registry_test.cpp",
+          "line": 38
+        },
+        {
+          "name": "GenericProviderResolves",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/registry_test.cpp",
+          "line": 45
+        },
+        {
+          "name": "UnknownProviderFallsBackToGeneric",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/registry_test.cpp",
+          "line": 51
+        },
+        {
+          "name": "OpenRouterRequiresKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/registry_test.cpp",
+          "line": 59
+        },
+        {
+          "name": "OpenRouterSucceedsWithKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/registry_test.cpp",
+          "line": 69
+        },
+        {
+          "name": "QpilotRequiresKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/registry_test.cpp",
+          "line": 78
+        },
+        {
+          "name": "CustomProviderCanBeRegistered",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/registry_test.cpp",
+          "line": 86
+        },
+        {
+          "name": "ResolutionFailureHelper",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/registry_test.cpp",
+          "line": 99
+        }
+      ]
+    },
+    {
+      "name": "GeminiTransformTest",
+      "tests": 13,
+      "testsuite": [
+        {
+          "name": "NewUuidHasCanonicalShape",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 20
+        },
+        {
+          "name": "NewUuidIsUniqueAcrossCalls",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 28
+        },
+        {
+          "name": "RandomHexHasExpectedLengthAndCharset",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 32
+        },
+        {
+          "name": "ConvertMapsRolesAndSystem",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 42
+        },
+        {
+          "name": "ConvertEmptyRequestYieldsEmptyStructures",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 70
+        },
+        {
+          "name": "WrapEnvelopeWrapsRequestAndMapsFlashModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 79
+        },
+        {
+          "name": "WrapEnvelopeLeavesNonFlashModelUnchanged",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 91
+        },
+        {
+          "name": "UnwrapExtractsInnerResponse",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 98
+        },
+        {
+          "name": "UnwrapPassesThroughWhenNoResponseKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 103
+        },
+        {
+          "name": "NormalizeUnwrapsAndShapesOpenAI",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 110
+        },
+        {
+          "name": "NormalizeMapsFinishReasons",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 136
+        },
+        {
+          "name": "NormalizeUsesResponseIdWhenPresent",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 150
+        },
+        {
+          "name": "NormalizeReturnsNonCandidatePayloadUnchanged",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/gemini_transform_test.cpp",
+          "line": 156
+        }
+      ]
+    },
+    {
+      "name": "AntigravityClientTest",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "CreateClientIsValidAndNamed",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/antigravity_client_test.cpp",
+          "line": 13
+        },
+        {
+          "name": "RequestBuilderProducesAntigravityEnvelope",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/antigravity_client_test.cpp",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "name": "OpenAIIntegrationTest",
+      "tests": 18,
+      "testsuite": [
+        {
+          "name": "BasicTextGeneration",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 42
+        },
+        {
+          "name": "TextGenerationWithSystemPrompt",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 60
+        },
+        {
+          "name": "TextGenerationWithParameters",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 83
+        },
+        {
+          "name": "ConversationWithMessages",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 104
+        },
+        {
+          "name": "DifferentModelSupport",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 131
+        },
+        {
+          "name": "InvalidApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 159
+        },
+        {
+          "name": "InvalidModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 174
+        },
+        {
+          "name": "RateLimitHandling",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 190
+        },
+        {
+          "name": "BasicStreaming",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 213
+        },
+        {
+          "name": "ConcurrentRequests",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 245
+        },
+        {
+          "name": "LargePromptHandling",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 271
+        },
+        {
+          "name": "CustomBaseUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 292
+        },
+        {
+          "name": "EmptyPrompt",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 311
+        },
+        {
+          "name": "VeryLongResponse",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 326
+        },
+        {
+          "name": "NetworkTimeout",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 345
+        },
+        {
+          "name": "NetworkFailure",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 367
+        },
+        {
+          "name": "DefaultModelGeneration",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 439
+        },
+        {
+          "name": "DefaultModelStreaming",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 461
+        }
+      ]
+    },
+    {
+      "name": "EnvironmentConfigTest",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "ConfigurationFromEnvironment",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 407
+        },
+        {
+          "name": "DefaultClientCreation",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_integration_test.cpp",
+          "line": 421
+        }
+      ]
+    },
+    {
+      "name": "AnthropicIntegrationTest",
+      "tests": 20,
+      "testsuite": [
+        {
+          "name": "BasicTextGeneration",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 42
+        },
+        {
+          "name": "TextGenerationWithSystemPrompt",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 60
+        },
+        {
+          "name": "TextGenerationWithParameters",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 83
+        },
+        {
+          "name": "ConversationWithMessages",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 104
+        },
+        {
+          "name": "DifferentModelSupport",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 131
+        },
+        {
+          "name": "InvalidApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 160
+        },
+        {
+          "name": "InvalidModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 175
+        },
+        {
+          "name": "RateLimitHandling",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 191
+        },
+        {
+          "name": "BasicStreaming",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 214
+        },
+        {
+          "name": "ConcurrentRequests",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 246
+        },
+        {
+          "name": "LargePromptHandling",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 272
+        },
+        {
+          "name": "CustomBaseUrl",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 292
+        },
+        {
+          "name": "EmptyPrompt",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 311
+        },
+        {
+          "name": "VeryLongResponse",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 326
+        },
+        {
+          "name": "NetworkTimeout",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 345
+        },
+        {
+          "name": "NetworkFailure",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 368
+        },
+        {
+          "name": "MaxTokensRequired",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 424
+        },
+        {
+          "name": "SystemMessageHandling",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 441
+        },
+        {
+          "name": "DefaultModelGeneration",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 460
+        },
+        {
+          "name": "DefaultModelStreaming",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 486
+        }
+      ]
+    },
+    {
+      "name": "AnthropicEnvironmentConfigTest",
+      "tests": 1,
+      "testsuite": [
+        {
+          "name": "ConfigurationFromEnvironment",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/anthropic_integration_test.cpp",
+          "line": 409
+        }
+      ]
+    },
+    {
+      "name": "OpenAISpecificToolTest",
+      "tests": 1,
+      "testsuite": [
+        {
+          "name": "ToolChoiceNoneSupport",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 651
+        }
+      ]
+    },
+    {
+      "name": "AnthropicSpecificToolTest",
+      "tests": 1,
+      "testsuite": [
+        {
+          "name": "MaxTokensRequiredWithTools",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 690
+        }
+      ]
+    },
+    {
+      "name": "OpenAIEmbeddingsIntegrationTest",
+      "tests": 15,
+      "testsuite": [
+        {
+          "name": "BasicSingleStringEmbedding",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 65
+        },
+        {
+          "name": "MultipleStringsEmbedding",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 92
+        },
+        {
+          "name": "EmbeddingWithCustomDimensions",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 119
+        },
+        {
+          "name": "EmbeddingWithLargeModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 138
+        },
+        {
+          "name": "EmbeddingSimilarity",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 157
+        },
+        {
+          "name": "InvalidApiKey",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 196
+        },
+        {
+          "name": "InvalidModel",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 211
+        },
+        {
+          "name": "EmptyStringEmbedding",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 229
+        },
+        {
+          "name": "LongTextEmbedding",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 244
+        },
+        {
+          "name": "SpecialCharactersEmbedding",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 271
+        },
+        {
+          "name": "EmbeddingWithUserIdentifier",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 295
+        },
+        {
+          "name": "EmbeddingWithBase64Encoding",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 311
+        },
+        {
+          "name": "TokenUsageTracking",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 332
+        },
+        {
+          "name": "NetworkFailure",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 355
+        },
+        {
+          "name": "DifferentEmbeddingModels",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/openai_embeddings_integration_test.cpp",
+          "line": 378
+        }
+      ]
+    },
+    {
+      "name": "PromptVariations\/TypesEdgeCaseTest",
+      "tests": 7,
+      "testsuite": [
+        {
+          "name": "GenerateOptionsWithVariousPrompts\/0",
+          "value_param": "\"\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 319
+        },
+        {
+          "name": "GenerateOptionsWithVariousPrompts\/1",
+          "value_param": "\"Hello\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 319
+        },
+        {
+          "name": "GenerateOptionsWithVariousPrompts\/2",
+          "value_param": "\"A very long prompt that contains many words and should still work fine with the system\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 319
+        },
+        {
+          "name": "GenerateOptionsWithVariousPrompts\/3",
+          "value_param": "\"Prompt with\\nnewlines\\nand\\ttabs\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 319
+        },
+        {
+          "name": "GenerateOptionsWithVariousPrompts\/4",
+          "value_param": "\"Unicode test: \\xE4\\xBD\\xA0\\xE5\\xA5\\xBD\\xE4\\xB8\\x96\\xE7\\x95\\x8C \\xF0\\x9F\\x8C\\x8D\"\n    As Text: \"Unicode test: \u00E4\u00BD\u00A0\u00E5\u00A5\u00BD\u00E4\u00B8\u0096\u00E7\u0095\u008C \u00F0\u009F\u008C\u008D\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 319
+        },
+        {
+          "name": "GenerateOptionsWithVariousPrompts\/5",
+          "value_param": "\"Special chars: !@#$%^&*()[]{}|;':\\\",.\/<>?\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 319
+        },
+        {
+          "name": "GenerateOptionsWithVariousPrompts\/6",
+          "value_param": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/unit\/types_test.cpp",
+          "line": 319
+        }
+      ]
+    },
+    {
+      "name": "ProviderTests\/ToolCallingIntegrationTest",
+      "tests": 26,
+      "testsuite": [
+        {
+          "name": "SingleToolCall\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 165
+        },
+        {
+          "name": "SingleToolCall\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 165
+        },
+        {
+          "name": "MultipleDifferentToolCalls\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 198
+        },
+        {
+          "name": "MultipleDifferentToolCalls\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 198
+        },
+        {
+          "name": "ForcedToolChoice\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 237
+        },
+        {
+          "name": "ForcedToolChoice\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 237
+        },
+        {
+          "name": "AutoToolChoice\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 263
+        },
+        {
+          "name": "AutoToolChoice\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 263
+        },
+        {
+          "name": "NoToolChoice\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 297
+        },
+        {
+          "name": "NoToolChoice\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 297
+        },
+        {
+          "name": "RequiredToolChoice\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 322
+        },
+        {
+          "name": "RequiredToolChoice\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 322
+        },
+        {
+          "name": "ComplexToolParameters\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 347
+        },
+        {
+          "name": "ComplexToolParameters\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 347
+        },
+        {
+          "name": "ToolExecutionResults\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 380
+        },
+        {
+          "name": "ToolExecutionResults\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 380
+        },
+        {
+          "name": "AsyncToolExecution\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 415
+        },
+        {
+          "name": "AsyncToolExecution\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 415
+        },
+        {
+          "name": "ToolExecutionError\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 446
+        },
+        {
+          "name": "ToolExecutionError\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 446
+        },
+        {
+          "name": "InvalidToolArguments\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 486
+        },
+        {
+          "name": "InvalidToolArguments\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 486
+        },
+        {
+          "name": "ConcurrentToolCalls\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 527
+        },
+        {
+          "name": "ConcurrentToolCalls\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 527
+        },
+        {
+          "name": "ToolSchemaValidation\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 561
+        },
+        {
+          "name": "ToolSchemaValidation\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/tool_calling_integration_test.cpp",
+          "line": 561
+        }
+      ]
+    },
+    {
+      "name": "Providers\/ClickHouseIntegrationTest",
+      "tests": 6,
+      "testsuite": [
+        {
+          "name": "CreateTableForGithubEvents\/0",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/clickhouse_integration_test.cpp",
+          "line": 316
+        },
+        {
+          "name": "CreateTableForGithubEvents\/1",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/clickhouse_integration_test.cpp",
+          "line": 316
+        },
+        {
+          "name": "InsertAndQueryData\/0",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/clickhouse_integration_test.cpp",
+          "line": 348
+        },
+        {
+          "name": "InsertAndQueryData\/1",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/clickhouse_integration_test.cpp",
+          "line": 348
+        },
+        {
+          "name": "ExploreExistingSchema\/0",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/clickhouse_integration_test.cpp",
+          "line": 381
+        },
+        {
+          "name": "ExploreExistingSchema\/1",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/clickhouse_integration_test.cpp",
+          "line": 381
+        }
+      ]
+    },
+    {
+      "name": "ProviderTests\/MultiStepDuplicateExecutionTest",
+      "tests": 4,
+      "testsuite": [
+        {
+          "name": "ToolsExecutedOncePerStepNotTwice\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/multi_step_duplicate_execution_test.cpp",
+          "line": 57
+        },
+        {
+          "name": "ToolsExecutedOncePerStepNotTwice\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/multi_step_duplicate_execution_test.cpp",
+          "line": 57
+        },
+        {
+          "name": "MultipleStepsNoDuplicateExecution\/openai",
+          "value_param": "\"openai\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/multi_step_duplicate_execution_test.cpp",
+          "line": 132
+        },
+        {
+          "name": "MultipleStepsNoDuplicateExecution\/anthropic",
+          "value_param": "\"anthropic\"",
+          "file": "\/home\/abhi\/projects\/qcode\/tests\/integration\/multi_step_duplicate_execution_test.cpp",
+          "line": 132
+        }
+      ]
+    }
+  ]
+}

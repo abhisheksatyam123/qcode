@@ -1,9 +1,9 @@
 #include <map>
 
-#include <ai/logger.h>
-#include <ai/tools.h>
-#include <ai/types/enums.h>
-#include <ai/types/tool.h>
+#include <qcode/logger/logger.h>
+#include <qcode/tools/tools.h>
+#include <qcode/types/enums.h>
+#include <qcode/types/tool.h>
 
 namespace ai {
 

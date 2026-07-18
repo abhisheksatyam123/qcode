@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ai/cursor.h"
-#include "ai/types/client.h"
+#include <qcode/providers/cursor.h>
+#include <qcode/types/client.h>
 
 #include <string>
 #include <vector>

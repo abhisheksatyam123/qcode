@@ -1,6 +1,6 @@
 #include "antigravity_factory.h"
 
-#include "ai/antigravity.h"
+#include <qcode/providers/antigravity.h>
 #include "antigravity_client.h"
 
 #include <memory>

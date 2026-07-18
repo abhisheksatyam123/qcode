@@ -1,13 +1,13 @@
 #include <algorithm>
-#include <ai/logger.h>
+#include <qcode/logger/logger.h>
 #include <chrono>
 #include <future>
 #include <random>
 #include <thread>
 
-#include <ai/tools.h>
-#include <ai/types/tool.h>
-#include <ai/utils/utf8.h>
+#include <qcode/tools/tools.h>
+#include <qcode/types/tool.h>
+#include <qcode/utils/utf8.h>
 
 namespace ai {
 

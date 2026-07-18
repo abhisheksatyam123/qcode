@@ -2,8 +2,8 @@
 #include <gtest/gtest.h>
 
 // Include the OpenAI client headers
-#include "ai/types/generate_options.h"
-#include "ai/types/stream_options.h"
+#include <qcode/types/generate_options.h>
+#include <qcode/types/stream_options.h>
 
 // Include the real OpenAI client implementation for testing
 #include "providers/openai/openai_client.h"

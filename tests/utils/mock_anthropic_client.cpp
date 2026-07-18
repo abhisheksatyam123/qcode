@@ -1,7 +1,7 @@
 #include "mock_anthropic_client.h"
 
-#include "ai/types/enums.h"
-#include "ai/types/stream_result.h"
+#include <qcode/types/enums.h>
+#include <qcode/types/stream_result.h>
 
 #include <nlohmann/json.hpp>
 

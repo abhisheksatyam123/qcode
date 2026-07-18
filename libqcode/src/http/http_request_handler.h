@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ai/retry/retry_policy.h"
-#include "ai/types/generate_options.h"
+#include <qcode/retry/retry_policy.h>
+#include <qcode/types/generate_options.h>
 
 #include <functional>
 #include <httplib.h>

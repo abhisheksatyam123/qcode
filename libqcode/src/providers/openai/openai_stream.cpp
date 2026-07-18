@@ -1,6 +1,6 @@
 #include "openai_stream.h"
 
-#include "ai/logger.h"
+#include <qcode/logger/logger.h>
 #include "http/http_request_handler.h"
 
 #include <chrono>

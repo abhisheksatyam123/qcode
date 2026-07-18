@@ -1,9 +1,9 @@
-#include <ai/tui/chat_bus.h>
-#include <ai/tui/config.h>
-#include <ai/tui/context_manager.h>
-#include <ai/tui/tools.h>
-#include <ai/tui/db.h>
-#include <ai/tui/contract/event.h>
+#include <qcode/chat/chat_bus.h>
+#include <qcode/config/config.h>
+#include <qcode/context/context_manager.h>
+#include <qcode/tools/tool_descriptors.h>
+#include <qcode/db/db.h>
+#include <qcode/contract/event.h>
 
 #include <atomic>
 #include <chrono>
@@ -14,11 +14,11 @@
 #include <string>
 #include <utility>
 
-#include <ai/types/client.h>
-#include <ai/logger.h>
-#include <ai/openai.h>
-#include "ai/registry.h"
-#include "ai/tui/provider_registry_init.h"
+#include <qcode/types/client.h>
+#include <qcode/logger/logger.h>
+#include <qcode/providers/openai.h>
+#include <qcode/providers/registry.h>
+#include <qcode/providers/provider_registry_init.h>
 
 namespace ai {
 namespace tui {

@@ -1,7 +1,7 @@
-#include "ai/tools/task_tool.h"
+#include <qcode/tools/task_tool.h>
 
 #include <algorithm>
-#include <ai/logger.h>
+#include <qcode/logger/logger.h>
 #include <chrono>
 #include <ctime>
 #include <random>

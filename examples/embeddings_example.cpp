@@ -19,8 +19,8 @@
 #include <string>
 #include <vector>
 
-#include <ai/openai.h>
-#include <ai/types/embedding_options.h>
+#include <qcode/providers/openai.h>
+#include <qcode/types/embedding_options.h>
 
 // Helper function to calculate cosine similarity between two embeddings
 double cosine_similarity(const std::vector<double>& a,

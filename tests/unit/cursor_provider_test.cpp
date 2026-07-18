@@ -1,4 +1,4 @@
-#include "ai/types/generate_options.h"
+#include <qcode/types/generate_options.h>
 #include "providers/cursor/cursor_proto.h"
 #include "providers/cursor/cursor_request_builder.h"
 #include "providers/cursor/cursor_response_parser.h"

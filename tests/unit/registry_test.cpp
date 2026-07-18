@@ -1,4 +1,4 @@
-#include "ai/registry.h"
+#include <qcode/providers/registry.h>
 
 #include <cstdlib>
 #include <algorithm>
@@ -6,8 +6,8 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "ai/types/generate_options.h"
-#include "ai/tui/config.h"
+#include <qcode/types/generate_options.h>
+#include <qcode/config/config.h>
 
 namespace ai {
 namespace providers {

@@ -1,5 +1,5 @@
-#include <ai/tui/bus/impl.h>
-#include <ai/tui/contract/event.h>
+#include <qcode/bus/impl.h>
+#include <qcode/contract/event.h>
 
 #include <gtest/gtest.h>
 
@@ -106,8 +106,8 @@ TEST(TuiBusTest, RewakesWhenDrainBatchLimitLeavesEvents) {
 }  // namespace
 }  // namespace ai::tui::bus
 
-#include <ai/tui/store.h>
-#include <ai/tui/db.h>
+#include <qcode/store/store.h>
+#include <qcode/db/db.h>
 #include <cstdlib>
 #include <cstdio>
 

@@ -18,9 +18,9 @@
 #include <map>
 #include <string>
 
-#include <ai/langfuse.h>
-#include <ai/openai.h>
-#include <ai/tools.h>
+#include <qcode/langfuse/langfuse.h>
+#include <qcode/providers/openai.h>
+#include <qcode/tools/tools.h>
 
 namespace {
 

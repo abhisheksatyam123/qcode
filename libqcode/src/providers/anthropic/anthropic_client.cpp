@@ -1,7 +1,7 @@
 #include "anthropic_client.h"
 
-#include "ai/anthropic.h"
-#include "ai/logger.h"
+#include <qcode/providers/anthropic.h>
+#include <qcode/logger/logger.h>
 #include "anthropic_request_builder.h"
 #include "anthropic_response_parser.h"
 #include "anthropic_stream.h"

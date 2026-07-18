@@ -1,7 +1,7 @@
 #include "http_request_handler.h"
 
-#include "ai/logger.h"
-#include "ai/retry/retry_policy.h"
+#include <qcode/logger/logger.h>
+#include <qcode/retry/retry_policy.h>
 #include "utils/response_utils.h"
 
 namespace ai {

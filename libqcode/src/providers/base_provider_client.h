@@ -1,10 +1,10 @@
 #pragma once
 
-#include "ai/retry/retry_policy.h"
-#include "ai/types/client.h"
-#include "ai/types/embedding_options.h"
-#include "ai/types/generate_options.h"
-#include "ai/types/stream_options.h"
+#include <qcode/retry/retry_policy.h>
+#include <qcode/types/client.h>
+#include <qcode/types/embedding_options.h>
+#include <qcode/types/generate_options.h>
+#include <qcode/types/stream_options.h>
 #include "http/http_request_handler.h"
 
 #include <memory>

@@ -1,13 +1,13 @@
 #include "openai_factory.h"
 
-#include "ai/errors.h"
-#include "ai/openai.h"
+#include <qcode/providers/errors.h>
+#include <qcode/providers/openai.h>
 #include "openai_client.h"
 
 #include <cstdlib>
 #include <memory>
 #include <optional>
-#include <ai/logger.h>
+#include <qcode/logger/logger.h>
 
 namespace ai {
 namespace openai {

@@ -1,7 +1,7 @@
 #include "base_provider_client.h"
 
-#include "ai/logger.h"
-#include "ai/tools.h"
+#include <qcode/logger/logger.h>
+#include <qcode/tools/tools.h>
 
 namespace ai {
 namespace providers {

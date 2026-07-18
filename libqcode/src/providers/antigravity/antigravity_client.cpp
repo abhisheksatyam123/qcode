@@ -1,6 +1,6 @@
 #include "antigravity_client.h"
 
-#include "ai/logger.h"
+#include <qcode/logger/logger.h>
 #include "providers/antigravity/antigravity_request_builder.h"
 #include "providers/antigravity/antigravity_response_parser.h"
 #include "providers/antigravity/antigravity_stream.h"

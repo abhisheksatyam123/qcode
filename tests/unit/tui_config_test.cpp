@@ -1,4 +1,4 @@
-#include "ai/tui/config.h"
+#include <qcode/config/config.h>
 
 #include <algorithm>
 #include <cstdlib>

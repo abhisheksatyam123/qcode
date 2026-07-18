@@ -1,11 +1,11 @@
-#include <ai/tui/store.h>
-#include <ai/tui/bus/impl.h>
-#include <ai/tui/context_manager.h>
-#include <ai/tui/db.h>
+#include <qcode/store/store.h>
+#include <qcode/bus/impl.h>
+#include <qcode/context/context_manager.h>
+#include <qcode/db/db.h>
 #include <algorithm>
 #include <climits>
-#include <ai/types/message.h>
-#include <ai/logger.h>
+#include <qcode/types/message.h>
+#include <qcode/logger/logger.h>
 #include <nlohmann/json.hpp>
 
 namespace ai {

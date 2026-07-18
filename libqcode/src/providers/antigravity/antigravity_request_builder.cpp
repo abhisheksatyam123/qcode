@@ -1,7 +1,7 @@
 #include "antigravity_request_builder.h"
 
-#include "ai/gemini_transform.h"
-#include "ai/logger.h"
+#include <qcode/transform/gemini_transform.h>
+#include <qcode/logger/logger.h>
 #include "providers/openai/openai_request_builder.h"
 
 namespace ai {

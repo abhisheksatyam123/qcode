@@ -19,8 +19,8 @@
 #include <map>
 #include <string>
 
-#include <ai/openai.h>
-#include <ai/tools.h>
+#include <qcode/providers/openai.h>
+#include <qcode/tools/tools.h>
 
 // Simulated database of user profiles
 std::map<std::string, ai::JsonValue> user_database = {

@@ -1,7 +1,7 @@
-#include <ai/tui/system_prompt.h>
+#include <qcode/system_prompt/system_prompt.h>
 
 #include <sstream>
-#include <ai/logger.h>
+#include <qcode/logger/logger.h>
 
 namespace ai {
 namespace tui {

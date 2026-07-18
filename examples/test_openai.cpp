@@ -1,8 +1,8 @@
-#include "ai/logger.h"
+#include <qcode/logger/logger.h>
 
 #include <iostream>
 
-#include <ai/ai.h>
+#include <qcode/ai.h>
 
 int main() {
   try {

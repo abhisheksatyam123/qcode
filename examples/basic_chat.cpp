@@ -16,8 +16,8 @@
 #include <iostream>
 #include <string>
 
-#include <ai/anthropic.h>
-#include <ai/openai.h>
+#include <qcode/providers/anthropic.h>
+#include <qcode/providers/openai.h>
 
 int main() {
   std::cout << "AI SDK C++ - Basic Chat Example\n";

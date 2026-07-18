@@ -1,6 +1,6 @@
 #include "cursor_factory.h"
 
-#include "ai/cursor.h"
+#include <qcode/providers/cursor.h>
 #include "cursor_client.h"
 
 #include <memory>

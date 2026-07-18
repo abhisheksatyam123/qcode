@@ -1,8 +1,8 @@
-#include "ai/errors.h"
-#include "ai/types/enums.h"
-#include "ai/types/generate_options.h"
-#include "ai/types/message.h"
-#include "ai/types/usage.h"
+#include <qcode/providers/errors.h>
+#include <qcode/types/enums.h>
+#include <qcode/types/generate_options.h>
+#include <qcode/types/message.h>
+#include <qcode/types/usage.h>
 #include "test_fixtures.h"
 
 #include <gmock/gmock.h>
