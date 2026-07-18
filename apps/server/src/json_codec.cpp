@@ -7,7 +7,7 @@
 namespace qcode {
 namespace server {
 
-using namespace qcode::tui::contract;
+using namespace qcode::contract;
 
 nlohmann::json message_delta_to_json(const MessageDelta::Payload& p) {
     return {
@@ -105,7 +105,7 @@ std::optional<nlohmann::json> serialize_event(
     return std::nullopt;
 }
 
-bool dispatch_json(const nlohmann::json& msg, qcode::tui::bus::BusPort& bus) {
+bool dispatch_json(const nlohmann::json& msg, qcode::bus::BusPort& bus) {
     if (!msg.contains("type")) return false;
     std::string type = msg["type"];
 

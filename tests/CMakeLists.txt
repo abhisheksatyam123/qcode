@@ -47,7 +47,6 @@ target_include_directories(qcode_tests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/utils
         ${CMAKE_SOURCE_DIR}/third_party/httplib-header-only
-        ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/libqcode/src
         ${CMAKE_SOURCE_DIR}/libqcode/include
 )

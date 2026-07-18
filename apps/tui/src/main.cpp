@@ -36,7 +36,7 @@
 #include <functional>
 
 using namespace ftxui;
-using namespace qcode::tui::contract;
+using namespace qcode::contract;
 using qcode::tui::matches_query;
 using qcode::tui::sync_session_title;
 using qcode::tui::index_of_session;
@@ -64,13 +64,13 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     //  1. Initialize the message bus + store
     // ═══════════════════════════════════════════════════════════
-    auto bus = std::make_shared<qcode::tui::bus::BusRuntime>();
+    auto bus = std::make_shared<qcode::bus::BusRuntime>();
     register_all_events(*bus);
     bus->set_wake_callback([&screen]() { screen.Post(Event::Custom); });
     // Populate the provider registry once, before any generation thread starts,
     // so resolve() only ever reads a fully-initialized registry.
     qcode::providers::register_authenticated_providers();
-    qcode::tui::AppStore store(*bus);
+    qcode::AppStore store(*bus);
 
     // Wire bus events to store mutations
     store.wire();
@@ -78,7 +78,7 @@ int main() {
     // ── Legacy state access ──
     auto& state = store.state();
 
-    qcode::tui::GenerationController generation(store, bus, app_running);
+    qcode::GenerationController generation(store, bus, app_running);
 
     // ── Spinner: advance frame periodically ──
     std::thread spinner_thread([&store, app_running]() {
@@ -98,18 +98,18 @@ int main() {
     //  2. Provider & Config setup
     // ═══════════════════════════════════════════════════════════
     std::string prompt_input;
-    qcode::tui::ToolConfig tool_cfg{true, true};
-    std::string system_prompt = qcode::tui::SystemPrompt::build_default(tool_cfg);
+    qcode::ToolConfig tool_cfg{true, true};
+    std::string system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
     bool enable_tools = true;
 
-    auto providers_list = qcode::tui::load_providers_from_config();
+    auto providers_list = qcode::load_providers_from_config();
     int selected_provider = 0;
     int selected_model = 0;
 
     // Surface expired Antigravity credentials early instead of failing mid-turn.
     for (const auto& provider : providers_list) {
         if (provider.id.find("antigravity") == std::string::npos) continue;
-        if (qcode::tui::antigravity_token_needs_refresh()) {
+        if (qcode::antigravity_token_needs_refresh()) {
             store.add_toast(
                 "Antigravity token expired — re-login with the Antigravity CLI "
                 "or set ANTIGRAVITY_API_KEY",
@@ -118,22 +118,22 @@ int main() {
         break;
     }
 
-    qcode::tui::session::init_database();
-    std::string last_session = qcode::tui::session::get_last_active_session();
+    qcode::session::init_database();
+    std::string last_session = qcode::session::get_last_active_session();
     if (last_session.empty() && !providers_list.empty()) {
         std::string prov = providers_list[selected_provider].name;
         std::string mod = providers_list[selected_provider].models[selected_model].name;
-        last_session = qcode::tui::session::create_new_session(prov, mod);
+        last_session = qcode::session::create_new_session(prov, mod);
     }
     store.set_session_id(last_session);
     if (!store.session_id().empty()) {
-        qcode::tui::session::reload_session_history(store.session_id(), state);
+        qcode::session::reload_session_history(store.session_id(), state);
 
         // Restore provider and model from the loaded session so the UI
         // matches what was used when the session was last active.
         std::string loaded_prov_id;
         std::string loaded_model_id;
-        for (const auto& s : qcode::tui::session::list_sessions_full()) {
+        for (const auto& s : qcode::session::list_sessions_full()) {
             if (s.id == last_session) {
                 loaded_prov_id = s.provider;
                 loaded_model_id = s.model;
@@ -143,7 +143,7 @@ int main() {
         }
         if (state.session_title && state.session_title->empty()) {
             *state.session_title =
-                qcode::tui::session::get_session_title(store.session_id());
+                qcode::session::get_session_title(store.session_id());
         }
         if (!loaded_prov_id.empty() && !loaded_model_id.empty()) {
             for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
@@ -160,29 +160,29 @@ int main() {
             }
         }
     }
-    qcode::tui::update_modified_files(state);
+    qcode::update_modified_files(state);
 
     // ── Popups state ──
     bool show_model_select = false;
     int model_select_idx = 0;
     std::string model_query = "";
-    auto model_entries = qcode::tui::build_model_entries(providers_list);
+    auto model_entries = qcode::build_model_entries(providers_list);
 
     bool show_session_select = false;
     int session_select_idx = 0;
     std::string session_query = "";
-    std::vector<qcode::tui::session::SessionInfo> session_entries =
-        qcode::tui::session::list_sessions_full();
+    std::vector<qcode::session::SessionInfo> session_entries =
+        qcode::session::list_sessions_full();
 
     bool show_theme_select = false;
     int theme_select_idx = 0;
     std::string theme_query = "";
-    std::vector<qcode::tui::ThemeEntry> theme_entries =
-        qcode::tui::builtin_theme_entries();
+    std::vector<qcode::ThemeEntry> theme_entries =
+        qcode::builtin_theme_entries();
 
     bool show_slash = false;
     int slash_idx = 0;
-    auto slash_commands = qcode::tui::builtin_slash_commands();
+    auto slash_commands = qcode::builtin_slash_commands();
 
     // ── TUI Components ──
     std::vector<std::string> tab_values = {"Chat", "Files", "Stats"};
@@ -202,8 +202,8 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     //  3. Submit handler (uses bus-aware chat)
     // ═══════════════════════════════════════════════════════════
-    auto make_generation_request = [&]() -> qcode::tui::GenerationRequest {
-        return qcode::tui::GenerationRequest{
+    auto make_generation_request = [&]() -> qcode::GenerationRequest {
+        return qcode::GenerationRequest{
             .providers = providers_list,
             .provider_idx = selected_provider,
             .model_idx = selected_model,
@@ -249,7 +249,7 @@ int main() {
 
             if (cmd == "session" || cmd == "list") {
                 prompt_input = "";
-                session_entries = qcode::tui::session::list_sessions_full();
+                session_entries = qcode::session::list_sessions_full();
                 if (!session_entries.empty()) {
                     show_session_select = true;
                     session_query = "";
@@ -292,7 +292,7 @@ int main() {
             }
 
             prompt_input = "";
-            qcode::tui::handle_slash_command(raw, prompt_input, providers_list,
+            qcode::handle_slash_command(raw, prompt_input, providers_list,
                                           selected_provider, selected_model,
                                           enable_tools, system_prompt, state,
                                           compaction_thread, *bus);
@@ -312,7 +312,7 @@ int main() {
     input |= CatchEvent([&](Event e) {
         // ── Model select popup ──
         if (show_model_select) {
-            std::vector<qcode::tui::ModelEntry> filtered_model_entries;
+            std::vector<qcode::ModelEntry> filtered_model_entries;
             for (const auto& entry : model_entries) {
                 if (matches_query(entry.model_name, model_query) ||
                     matches_query(entry.model_id, model_query) ||
@@ -338,7 +338,7 @@ int main() {
                     auto& entry = filtered_model_entries[model_select_idx];
                     selected_provider = entry.provider_idx;
                     selected_model = entry.model_idx;
-                    system_prompt = qcode::tui::SystemPrompt::build_default(tool_cfg);
+                    system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
                 }
                 show_model_select = false;
                 model_query = "";
@@ -362,7 +362,7 @@ int main() {
 
         // ── Session select popup ──
         if (show_session_select) {
-            std::vector<qcode::tui::session::SessionInfo> filtered_session_entries;
+            std::vector<qcode::session::SessionInfo> filtered_session_entries;
             for (const auto& entry : session_entries) {
                 if (matches_query(entry.title, session_query) ||
                     matches_query(entry.id, session_query) ||
@@ -390,7 +390,7 @@ int main() {
                     store.set_session_id(picked.id);
                     sync_session_title(state, picked.title);
                     state.messages_history->clear();
-                    qcode::tui::session::reload_session_history(picked.id, state);
+                    qcode::session::reload_session_history(picked.id, state);
                     if (state.retry_available) *state.retry_available = false;
                 }
                 show_session_select = false;
@@ -401,8 +401,8 @@ int main() {
             if (e == Event::Special(std::string(1, '\x04'))) { // Ctrl-D
                 if (!filtered_session_entries.empty()) {
                     std::string sid = filtered_session_entries[session_select_idx].id;
-                    qcode::tui::session::delete_session(sid);
-                    session_entries = qcode::tui::session::list_sessions_full();
+                    qcode::session::delete_session(sid);
+                    session_entries = qcode::session::list_sessions_full();
                     filtered_session_entries.clear();
                     for (const auto& entry : session_entries) {
                         if (matches_query(entry.title, session_query) ||
@@ -432,7 +432,7 @@ int main() {
 
         // ── Theme select popup ──
         if (show_theme_select) {
-            std::vector<qcode::tui::ThemeEntry> filtered_theme_entries;
+            std::vector<qcode::ThemeEntry> filtered_theme_entries;
             for (const auto& entry : theme_entries) {
                 if (matches_query(entry.name, theme_query) ||
                     matches_query(entry.description, theme_query)) {
@@ -483,7 +483,7 @@ int main() {
         // ── Slash completion popup ──
         if (!prompt_input.empty() && prompt_input[0] == '/') {
             std::string partial = prompt_input.substr(1);
-            std::vector<qcode::tui::SlashCommand> command_matches;
+            std::vector<qcode::SlashCommand> command_matches;
             for (const auto& cmd : slash_commands) {
                 if (cmd.name.find(partial) != std::string::npos) {
                     command_matches.push_back(cmd);
@@ -522,7 +522,7 @@ int main() {
                         state.slash_suggestion_idx = 0;
 
                         if (cmd_name == "session" || cmd_name == "list") {
-                            session_entries = qcode::tui::session::list_sessions_full();
+                            session_entries = qcode::session::list_sessions_full();
                             if (!session_entries.empty()) {
                                 show_session_select = true;
                                 session_query = "";
@@ -555,7 +555,7 @@ int main() {
                             }
                         } else {
                             std::string raw = "/" + cmd_name;
-                            qcode::tui::handle_slash_command(raw, prompt_input, providers_list,
+                            qcode::handle_slash_command(raw, prompt_input, providers_list,
                                                           selected_provider, selected_model,
                                                           enable_tools, system_prompt, state,
                                                           compaction_thread, *bus);
@@ -794,7 +794,7 @@ int main() {
                 }
             }
             if (e == Event::Character('r') || e == Event::Character('R')) {
-                qcode::tui::update_modified_files(state);
+                qcode::update_modified_files(state);
                 state.files_detail_open = false;
                 store.add_toast("Refreshed git changes", "info", 1000);
                 screen.Post(Event::Custom);
@@ -907,14 +907,14 @@ int main() {
         // (all bus event handlers run synchronously during drain)
         bus->drain();
         if (was_generating && !store.is_generating()) {
-            qcode::tui::update_modified_files(state);
+            qcode::update_modified_files(state);
         }
 
         // Start queued work only after the prior worker has fully exited.
         generation.maybe_start_queued(make_generation_request());
         was_generating = store.is_generating();
         if (state.tab_selected == 1 && previous_tab != 1) {
-            qcode::tui::update_modified_files(state);
+            qcode::update_modified_files(state);
             state.files_detail_open = false;
             *state.scroll_line = 0;
         }
@@ -926,7 +926,7 @@ int main() {
         // Status rendered inline in header strip
         
         // ── Filter models dynamically for display ──
-        std::vector<qcode::tui::ModelEntry> filtered_model_entries;
+        std::vector<qcode::ModelEntry> filtered_model_entries;
         for (const auto& e : model_entries) {
             if (matches_query(e.model_name, model_query) ||
                 matches_query(e.model_id, model_query) ||
@@ -936,7 +936,7 @@ int main() {
         }
 
         // ── Filter sessions dynamically for display ──
-        std::vector<qcode::tui::session::SessionInfo> filtered_session_entries;
+        std::vector<qcode::session::SessionInfo> filtered_session_entries;
         for (const auto& e : session_entries) {
             if (matches_query(e.title, session_query) ||
                 matches_query(e.id, session_query) ||
@@ -946,7 +946,7 @@ int main() {
         }
 
         // ── Filter themes dynamically for display ──
-        std::vector<qcode::tui::ThemeEntry> filtered_theme_entries;
+        std::vector<qcode::ThemeEntry> filtered_theme_entries;
         for (const auto& e : theme_entries) {
             if (matches_query(e.name, theme_query) ||
                 matches_query(e.description, theme_query)) {

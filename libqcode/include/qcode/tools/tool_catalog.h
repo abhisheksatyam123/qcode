@@ -6,7 +6,6 @@
 #include <qcode/types/tool.h>
 
 namespace qcode {
-namespace tui {
 
 // ── Tool descriptors for the system prompt ──
 
@@ -52,5 +51,4 @@ class ToolCatalog {
                                         double duration_seconds = -1.0);
 };
 
-} // namespace tui
 } // namespace qcode

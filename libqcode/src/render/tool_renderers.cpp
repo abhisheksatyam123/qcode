@@ -6,7 +6,6 @@
 #include <algorithm>
 
 namespace qcode {
-namespace tui {
 
 using namespace ftxui;
 
@@ -261,5 +260,4 @@ Element BashToolRender(const std::string& command, const std::string& output,
                       status, status_color, 0.0, false, true, false, command);
 }
 
-} // namespace tui
 } // namespace qcode

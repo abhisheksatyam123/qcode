@@ -11,7 +11,6 @@
 #include <utility>
 
 namespace qcode {
-namespace tui {
 
 GenerationController::GenerationController(
     AppStore& store,
@@ -268,5 +267,4 @@ void GenerationController::shutdown() {
     busy_->store(false, std::memory_order_release);
 }
 
-}  // namespace tui
 }  // namespace qcode

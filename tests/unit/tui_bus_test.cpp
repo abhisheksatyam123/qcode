@@ -5,7 +5,7 @@
 
 #include <string>
 
-namespace qcode::tui::bus {
+namespace qcode::bus {
 namespace {
 
 using contract::MessageDelta;
@@ -104,14 +104,14 @@ TEST(TuiBusTest, RewakesWhenDrainBatchLimitLeavesEvents) {
 
 
 }  // namespace
-}  // namespace qcode::tui::bus
+}  // namespace qcode::bus
 
 #include <qcode/store/app_store.h>
 #include <qcode/session/session_store.h>
 #include <cstdlib>
 #include <cstdio>
 
-namespace qcode::tui {
+namespace qcode {
 namespace {
 
 TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
@@ -170,4 +170,4 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
 }
 
 }  // namespace
-}  // namespace qcode::tui
+}  // namespace qcode

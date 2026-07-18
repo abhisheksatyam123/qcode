@@ -8,7 +8,6 @@
 #include <any>
 
 namespace qcode {
-namespace tui {
 namespace bus {
 
 // ── Concept: an event definition ───────────────────────────────────────────────
@@ -57,5 +56,4 @@ public:
 };
 
 } // namespace bus
-} // namespace tui
 } // namespace qcode

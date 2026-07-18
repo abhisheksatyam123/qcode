@@ -4,7 +4,6 @@
 #include <string>
 
 namespace qcode {
-namespace tui {
 
 void copy_to_clipboard(const std::string& text) {
     // Try xclip
@@ -19,5 +18,4 @@ void copy_to_clipboard(const std::string& text) {
     }
 }
 
-} // namespace tui
 } // namespace qcode

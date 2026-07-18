@@ -9,7 +9,6 @@
 #include <vector>
 
 namespace qcode {
-namespace tui {
 
 // ── Bus-aware generation entry points ────────────────────────────────
 // These replace the old run_llm_generation / run_stream_generation from chat.h.
@@ -33,7 +32,6 @@ struct GenerationContext {
     int tool_call_count = 0;
     double total_tool_time_ms = 0.0;
 };
-
 
 /**
  * GenerationService: high-level interface for LLM generation.
@@ -78,5 +76,4 @@ void run_generation_with_bus(
     bus::BusPort& bus,
     GenerationContext& ctx);
 
-} // namespace tui
 } // namespace qcode

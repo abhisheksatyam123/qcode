@@ -22,7 +22,6 @@
 #include <atomic>
 
 namespace qcode {
-namespace tui {
 
 namespace {
 void append_system_message(ChatState& state, std::string text) {
@@ -329,10 +328,6 @@ bool handle_slash_command(
         return true;
     }
 
-
-
-
-
     if (cmd == "tools") {
         LOG_DEBUG("Commands: /tools args='{}'", args);
         if (args.empty()) {
@@ -372,7 +367,6 @@ bool handle_slash_command(
     return true;
 }
 
-
 void run_compaction(
     ChatState& state,
     const std::vector<ProviderInfo>& providers_list,
@@ -393,7 +387,7 @@ void run_compaction(
 
     if (compaction_busy.exchange(true)) {
         append_system_message(state, "Compaction already in progress.");
-        bus.publish<qcode::tui::contract::ToastRequested>({
+        bus.publish<qcode::contract::ToastRequested>({
             .message = "Compaction already in progress",
             .variant = "warning",
             .duration_ms = 2500});
@@ -407,11 +401,11 @@ void run_compaction(
     int sm = selected_model;
     std::string sid = *state.session_id;
 
-    bus.publish<qcode::tui::contract::ToastRequested>({
+    bus.publish<qcode::contract::ToastRequested>({
         .message = "Compacting conversation...",
         .variant = "info",
         .duration_ms = 4000});
-    bus.publish<qcode::tui::contract::SessionStatusChanged>({
+    bus.publish<qcode::contract::SessionStatusChanged>({
         .session_id = sid,
         .status = "generating"});
 
@@ -424,7 +418,7 @@ void run_compaction(
     *compaction_thread = std::jthread(
         [providers_copy, sp, sm, snapshot, keep, sid,
          &bus](std::stop_token stop_token) mutable {
-        qcode::tui::contract::CompactionResult::Payload result;
+        qcode::contract::CompactionResult::Payload result;
         result.keep = keep;
         result.original_size = snapshot.size();
 
@@ -432,7 +426,7 @@ void run_compaction(
 
         auto fail = [&](const std::string& msg) {
             result.error = msg;
-            bus.publish<qcode::tui::contract::CompactionResult>(result);
+            bus.publish<qcode::contract::CompactionResult>(result);
             finish_busy();
         };
 
@@ -528,7 +522,7 @@ void run_compaction(
             return;
         }
 
-        std::string notes_root = qcode::tui::get_notes_root();
+        std::string notes_root = qcode::get_notes_root();
 
         std::error_code ec;
         std::filesystem::create_directories(
@@ -547,7 +541,7 @@ void run_compaction(
         result.summary = std::move(summary);
         result.todo_path = std::move(todo_path);
         result.wrote = wrote;
-        bus.publish<qcode::tui::contract::CompactionResult>(result);
+        bus.publish<qcode::contract::CompactionResult>(result);
         finish_busy();
         } catch (const std::exception& e) {
             fail(std::string("Compaction failed: ") + e.what());
@@ -556,5 +550,4 @@ void run_compaction(
         }
         });
 }
-} // namespace tui
 } // namespace qcode

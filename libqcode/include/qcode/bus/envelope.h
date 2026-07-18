@@ -12,7 +12,6 @@
 #include <vector>
 
 namespace qcode {
-namespace tui {
 namespace bus {
 
 // ── Subscription token (RAII) ──────────────────────────────────────────────────
@@ -51,5 +50,4 @@ struct EventEnvelope {
 using EventCallback = std::function<void(const EventEnvelope&)>;
 
 } // namespace bus
-} // namespace tui
 } // namespace qcode

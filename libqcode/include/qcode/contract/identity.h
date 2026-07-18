@@ -3,7 +3,6 @@
 #include <string>
 
 namespace qcode {
-namespace tui {
 namespace contract {
 
 // ── Module Identity ───────────────────────────────────────────────────────────
@@ -34,5 +33,4 @@ inline constexpr ModuleIdentity kBackendIdentity = {
 };
 
 } // namespace contract
-} // namespace tui
 } // namespace qcode

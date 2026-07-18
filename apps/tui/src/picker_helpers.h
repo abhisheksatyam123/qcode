@@ -34,11 +34,11 @@ inline void sync_session_title(ChatState& state,
         state.session_title->clear();
         return;
     }
-    *state.session_title = session::get_session_title(*state.session_id);
+    *state.session_title = qcode::session::get_session_title(*state.session_id);
 }
 
 // Select the active session row index after a list refresh.
-inline int index_of_session(const std::vector<session::SessionInfo>& entries,
+inline int index_of_session(const std::vector<qcode::session::SessionInfo>& entries,
                             const std::string& session_id) {
     for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
         if (entries[i].id == session_id) return i;

@@ -2,7 +2,6 @@
 #include <sstream>
 
 namespace qcode {
-namespace tui {
 
 // ── Token estimation ─────────────────────────────────────────────
 // Heuristic: ~4 chars per token (good for English + code).
@@ -113,12 +112,10 @@ qcode::Messages prune_context(const qcode::Messages& messages,
     return result;
 }
 
-} // namespace tui
 } // namespace qcode
 
 // ── Calibration ──────────────────────────────────────────────────
 namespace qcode {
-namespace tui {
 
 size_t calibrate_estimate(size_t heuristic,
                           size_t last_actual,
@@ -130,5 +127,4 @@ size_t calibrate_estimate(size_t heuristic,
     return (size_t)(heuristic * ratio);
 }
 
-} // namespace tui
 } // namespace qcode

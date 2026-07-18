@@ -14,7 +14,6 @@
 #include <queue>
 
 namespace qcode {
-namespace tui {
 
 namespace bus {
 class BusRuntime;
@@ -98,5 +97,4 @@ private:
     void sync_queue_mirror_unlocked();
 };
 
-} // namespace tui
 } // namespace qcode

@@ -10,7 +10,6 @@ add_library(qcode::core ALIAS qcode-core)
 
 target_include_directories(qcode-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/third_party/md4c>
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/third_party/httplib-header-only>
     $<INSTALL_INTERFACE:include>

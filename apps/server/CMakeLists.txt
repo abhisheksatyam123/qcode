@@ -5,6 +5,9 @@ set(QCODE_WEBUI_SRC "${CMAKE_SOURCE_DIR}/apps/webui/src")
 add_executable(qcode-server
     src/server_main.cpp
     src/json_codec.cpp
+    src/http_utils.cpp
+    src/workspace_fs.cpp
+    src/terminal_pty.cpp
 )
 
 target_include_directories(qcode-server PRIVATE

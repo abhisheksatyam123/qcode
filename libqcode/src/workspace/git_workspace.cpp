@@ -10,7 +10,6 @@
 #include <unordered_set>
 
 namespace qcode {
-namespace tui {
 
 namespace {
 
@@ -136,5 +135,4 @@ void update_modified_files(ChatState& state) {
     }
 }
 
-} // namespace tui
 } // namespace qcode

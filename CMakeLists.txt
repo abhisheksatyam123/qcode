@@ -88,10 +88,6 @@ install(DIRECTORY libqcode/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
 )
-install(DIRECTORY include/ai
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    FILES_MATCHING PATTERN "*.h"
-)
 
 install(EXPORT qcode-targets
     FILE qcode-targets.cmake

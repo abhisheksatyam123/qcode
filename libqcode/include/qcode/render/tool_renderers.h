@@ -4,7 +4,6 @@
 #include <string>
 
 namespace qcode {
-namespace tui {
 
 // ── Tool icon lookup ──
 // Returns a Unicode icon for the given tool name
@@ -51,5 +50,4 @@ ftxui::Element BashToolRender(const std::string& command,
                                bool is_running,
                                const std::string& workdir = "");
 
-} // namespace tui
 } // namespace qcode

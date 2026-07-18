@@ -18,7 +18,6 @@
 using namespace ftxui;
 
 namespace qcode {
-namespace tui {
 
 // ── Inline styling state ────────────────────────────────────────────────────
 struct MStyle {
@@ -477,5 +476,4 @@ ftxui::Elements render_markdown(const std::string& input_text, const std::string
   return ctx.result;
 }
 
-}  // namespace tui
 }  // namespace qcode

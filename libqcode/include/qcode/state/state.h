@@ -11,7 +11,6 @@
 #include <qcode/types/message.h>
 
 namespace qcode {
-namespace tui {
 
 struct HitBox {
     int x_min = 0;
@@ -152,5 +151,4 @@ struct ChatState {
         std::make_shared<std::unordered_map<std::string, HitBox>>();
 };
 
-} // namespace tui
 } // namespace qcode

@@ -19,7 +19,6 @@
 #include <nlohmann/json.hpp>
 
 namespace qcode {
-namespace tui {
 namespace session {
 
 static std::string get_db_path() {
@@ -577,7 +576,6 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
     sqlite3_close(db);
 }
 
-
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
     std::vector<std::pair<std::string, std::string>> out;
     if (session_id.empty() || !is_valid_session_id(session_id)) return out;
@@ -628,7 +626,6 @@ std::vector<std::pair<std::string, std::string>> list_sessions() {
     sqlite3_close(db);
     return sessions;
 }
-
 
 std::vector<SessionInfo> list_sessions_full() {
     std::vector<SessionInfo> sessions;
@@ -793,8 +790,6 @@ SessionStats get_session_stats(const std::string& session_id,
     return stats;
 }
 
-
-
 void rename_session(const std::string& session_id, const std::string& new_title) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
@@ -871,5 +866,4 @@ void delete_session(const std::string& session_id) {
 }
 
 } // namespace session
-} // namespace tui
 } // namespace qcode

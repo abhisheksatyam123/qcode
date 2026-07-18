@@ -6,7 +6,6 @@
 #include <qcode/state/state.h>
 
 namespace qcode {
-namespace tui {
 
 // Retrieve antigravity API token from env var or keyring.
 // When force_refresh is true, always attempt an OAuth refresh (used after 401).
@@ -27,5 +26,4 @@ std::string get_notes_root();
 // Load providers (and per-model context/cost/capabilities) from opencode.json.
 std::vector<ProviderInfo> load_providers_from_config();
 
-} // namespace tui
 } // namespace qcode

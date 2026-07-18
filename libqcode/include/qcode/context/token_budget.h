@@ -3,7 +3,6 @@
 #include <string>
 
 namespace qcode {
-namespace tui {
 
 // Estimate token count from a messages vector.
 // Uses chars÷4 heuristic + per-message overhead.
@@ -28,5 +27,4 @@ size_t calibrate_estimate(size_t heuristic,
                           size_t last_actual,
                           size_t last_estimated);
 
-} // namespace tui
 } // namespace qcode

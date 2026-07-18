@@ -7,7 +7,6 @@
 #include <qcode/state/state.h>
 
 namespace qcode {
-namespace tui {
 namespace session {
 
 // Initialize SQLite database (~/.qcode.db) and create tables
@@ -97,5 +96,4 @@ SessionStats get_session_stats(const std::string& session_id,
 void delete_session(const std::string& session_id);
 
 } // namespace session
-} // namespace tui
 } // namespace qcode

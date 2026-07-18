@@ -4,7 +4,6 @@
 #include <qcode/state/state.h>
 
 namespace qcode {
-namespace tui {
 
 // OpenCode-inspired shell session block:
 //   ▸ # description                              ✓ 4ms
@@ -47,5 +46,4 @@ ftxui::Element render_truncated_output(const std::string& output,
                                         const std::string& theme = "orange",
                                         bool is_error = false);
 
-} // namespace tui
 } // namespace qcode

@@ -5,7 +5,6 @@
 #include <qcode/tools/tool_catalog.h>
 
 namespace qcode {
-namespace tui {
 
 // ── System prompt builder ──
 // Mirrors opencode's _shared/base.md pattern: identity + values + tool contract.
@@ -23,5 +22,4 @@ class SystemPrompt {
   static std::string build_default(const ToolConfig& tool_cfg = {});
 };
 
-} // namespace tui
 } // namespace qcode

@@ -10,7 +10,7 @@ namespace qcode {
 namespace cursor {
 
 // Create a Cursor client.
-// @param access_token Cursor access token (from qcode::tui::get_cursor_access_token()).
+// @param access_token Cursor access token (from qcode::get_cursor_access_token()).
 Client create_client(const std::string& access_token);
 Client create_client(const std::string& access_token, const Options& options);
 Client create_client(const std::string& access_token,

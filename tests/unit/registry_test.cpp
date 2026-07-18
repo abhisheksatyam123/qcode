@@ -159,7 +159,7 @@ TEST(RegistryTest, OpenCodeZenE2E) {
   if (std::getenv("QCODE_RUN_LIVE_TESTS") == nullptr) {
     GTEST_SKIP() << "Live provider tests disabled";
   }
-  const auto providers = tui::load_providers_from_config();
+  const auto providers = qcode::load_providers_from_config();
   const auto it = std::find_if(
       providers.begin(), providers.end(),
       [](const auto& provider) { return provider.id == "opencode"; });

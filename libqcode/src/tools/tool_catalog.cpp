@@ -10,7 +10,6 @@
 #include <qcode/tools/task_tool.h>
 
 namespace qcode {
-namespace tui {
 
 std::vector<ToolDescriptor> ToolCatalog::descriptors() {
   return {
@@ -96,7 +95,6 @@ static std::string pretty_json(const nlohmann::json& j) {
   if (j.is_string()) return j.get<std::string>();
   return j.dump(2);
 }
-
 
 std::string ToolCatalog::format_tool_call(const std::string& tool_name,
                                     const std::string& args,
@@ -311,5 +309,4 @@ std::string ToolCatalog::format_tool_result(const std::string& tool_name,
   return formatted;
 }
 
-} // namespace tui
 } // namespace qcode

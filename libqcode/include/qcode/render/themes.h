@@ -5,7 +5,6 @@
 #include <vector>
 
 namespace qcode {
-namespace tui {
 
 struct ThemeEntry {
     std::string name;
@@ -116,7 +115,6 @@ inline ftxui::Color theme_focus_bg(const std::string& theme) {
     return ftxui::Color::RGB(0x32, 0x20, 0x18);
 }
 
-
 inline bool is_known_theme(const std::string& theme) {
     return theme == "orange" || theme == "green" || theme == "blue" ||
            theme == "purple" || theme == "monochrome" || theme == "pastel" ||
@@ -148,5 +146,4 @@ inline std::vector<ThemeEntry> builtin_theme_entries() {
     };
 }
 
-}  // namespace tui
 }  // namespace qcode

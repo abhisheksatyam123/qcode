@@ -21,7 +21,6 @@
 #include <qcode/logger/logger.h>
 
 namespace qcode {
-namespace tui {
 
 using ordered_json = nlohmann::ordered_json;
 // OpenCode uses these bundled Antigravity OAuth client credentials to refresh
@@ -252,7 +251,6 @@ bool antigravity_token_needs_refresh() {
         return true;
     }
 }
-
 
 std::string get_cursor_access_token() {
     if (const char* token = std::getenv("CURSOR_API_KEY");
@@ -504,6 +502,5 @@ std::vector<ProviderInfo> load_providers_from_config() {
     return loaded;
 }
 
-} // namespace tui
 } // namespace qcode
 

@@ -11,7 +11,6 @@
 #include <vector>
 
 namespace qcode {
-namespace tui {
 
 // Snapshot of provider selection captured when a turn starts.
 struct GenerationRequest {
@@ -74,5 +73,4 @@ private:
     std::jthread worker_;
 };
 
-}  // namespace tui
 }  // namespace qcode

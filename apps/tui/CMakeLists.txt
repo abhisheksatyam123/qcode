@@ -4,6 +4,9 @@
 add_executable(qcode-tui
     src/main.cpp
     src/views.cpp
+    src/views_pickers.cpp
+    src/views_toast.cpp
+    src/file_diff_preview.cpp
 )
 
 target_link_libraries(qcode-tui PRIVATE

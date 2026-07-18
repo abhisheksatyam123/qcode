@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <memory>
 
-namespace qcode::tui {
+namespace qcode {
 struct Scrollable {
   std::shared_ptr<int> scroll_offset = std::make_shared<int>(0);
   virtual void scroll_up(int amount = 10) {

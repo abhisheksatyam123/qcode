@@ -7,7 +7,6 @@
 #include <qcode/bus/port.h>
 
 namespace qcode {
-namespace tui {
 namespace contract {
 
 // ─── TUI → Backend (User-initiated) ───────────────────────────────────────────
@@ -180,5 +179,4 @@ inline void register_all_events(bus::BusPort& bus) {
 }
 
 } // namespace contract
-} // namespace tui
 } // namespace qcode

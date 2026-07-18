@@ -9,7 +9,6 @@
 #include <nlohmann/json.hpp>
 
 namespace qcode {
-namespace tui {
 
 AppStore::AppStore(bus::BusPort& bus) : bus_(bus) {
     runtime_ = dynamic_cast<bus::BusRuntime*>(&bus_);
@@ -134,7 +133,7 @@ void AppStore::set_generating(bool v) {
 void AppStore::set_session_id(const std::string& id) {
     *state_.session_id = id;
     if (state_.session_title) {
-        *state_.session_title = qcode::tui::session::get_session_title(id);
+        *state_.session_title = qcode::session::get_session_title(id);
     }
     notify();
 }
@@ -293,7 +292,7 @@ void AppStore::wire() {
         if (p.done) {
             set_generating(false);
             const auto final_text = latest_assistant_text();
-            qcode::tui::session::save_message(p.session_id, "Assistant", final_text);
+            qcode::session::save_message(p.session_id, "Assistant", final_text);
         }
     }));
     subs_.push_back(bus_.subscribe<ReasoningDelta>([this](const ReasoningDelta::Payload& p) {
@@ -381,7 +380,7 @@ void AppStore::wire() {
         bus_.publish<ContextSizeUpdated>({.context_tokens = reset_tokens});
 
         // Overwrite history in SQLite database to persist the compact set
-        qcode::tui::session::overwrite_session_history(*state_.session_id, *state_.messages_history);
+        qcode::session::overwrite_session_history(*state_.session_id, *state_.messages_history);
 
         add_toast("Compaction complete", "success", 3000);
         set_status("idle");
@@ -405,7 +404,7 @@ void AppStore::wire() {
             {"name", p.tool_name},
             {"arguments", p.arguments},
         };
-        qcode::tui::session::save_message(p.session_id, "ToolCall", call_json.dump());
+        qcode::session::save_message(p.session_id, "ToolCall", call_json.dump());
         notify();
     }));
 
@@ -422,7 +421,7 @@ void AppStore::wire() {
             {"is_error", p.is_error},
             {"duration_ms", p.duration_ms},
         };
-        qcode::tui::session::save_message(p.session_id, "ToolResult", result_json.dump());
+        qcode::session::save_message(p.session_id, "ToolResult", result_json.dump());
         notify();
     }));
 
@@ -455,7 +454,7 @@ void AppStore::wire() {
                 msg = "Error: " + msg;
             }
             append_chat_message("System", msg);
-            qcode::tui::session::save_message(p.session_id, "System", msg);
+            qcode::session::save_message(p.session_id, "System", msg);
         }
     }));
 
@@ -493,5 +492,4 @@ void AppStore::notify_now() {
     for (auto& entry : cbs) { entry.second(); }
 }
 
-} // namespace tui
 } // namespace qcode

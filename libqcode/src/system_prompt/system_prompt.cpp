@@ -4,7 +4,6 @@
 #include <qcode/logger/logger.h>
 
 namespace qcode {
-namespace tui {
 
 std::string SystemPrompt::default_identity() {
   return R"QCODESYSPROMPT(### Identity
@@ -69,5 +68,4 @@ std::string SystemPrompt::build_default(const ToolConfig& tool_cfg) {
   return build(default_identity(), tool_cfg);
 }
 
-} // namespace tui
 } // namespace qcode

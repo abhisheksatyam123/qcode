@@ -13,6 +13,10 @@
 #include <qcode/server/bus_json_codec.h>
 #include <qcode/utils/uuid.h>
 
+#include "http_utils.h"
+#include "terminal_pty.h"
+#include "workspace_fs.h"
+
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <unistd.h>
@@ -36,44 +40,34 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
-#include <termios.h>
-#include <unistd.h>
 #include <sstream>
 
-using namespace qcode::tui::contract;
 
-static std::string url_decode(const std::string& value) {
-    std::string result;
-    result.reserve(value.size());
-    for (size_t i = 0; i < value.size(); ++i) {
-        if (value[i] == '%') {
-            if (i + 2 < value.size()) {
-                char hex[3] = { value[i+1], value[i+2], '\0' };
-                result += static_cast<char>(std::strtol(hex, nullptr, 16));
-                i += 2;
-            } else {
-                result += '%';
-            }
-        } else if (value[i] == '+') {
-            result += ' ';
-        } else {
-            result += value[i];
-        }
-    }
-    return result;
-}
-
+using namespace qcode::contract;
+using qcode::server::url_decode;
+using qcode::server::shell_quote;
+using qcode::server::exec_capture;
+using qcode::server::expand_tilde;
+using qcode::server::split_lines;
+using qcode::server::kMaxFsFileBytes;
+using qcode::server::resolve_session_workspace;
+using qcode::server::resolve_workspace_path;
+using qcode::server::looks_binary;
+using qcode::server::TerminalSession;
+using qcode::server::create_terminal;
+using qcode::server::destroy_terminal;
+using qcode::server::find_terminal;
 
 // ── Globals ──
 static std::atomic<bool> g_running{true};
-static std::shared_ptr<qcode::tui::bus::BusRuntime> g_bus;
+static std::shared_ptr<qcode::bus::BusRuntime> g_bus;
 
 void handle_signal(int) { g_running = false; }
 
 // ── Per-generation session state ──
 struct GenSession {
     std::string id;
-    qcode::tui::GenerationContext ctx;
+    qcode::GenerationContext ctx;
     qcode::Messages messages;
     std::vector<nlohmann::json> event_queue;
     std::mutex queue_mutex;
@@ -82,7 +76,7 @@ struct GenSession {
     std::string error;
     std::string assistant_text;  // accumulated (cumulative) assistant reply, for DB persistence
     std::string reasoning_text;  // accumulated reasoning, for DB persistence
-    std::shared_ptr<std::vector<qcode::tui::bus::Subscription>> subs;
+    std::shared_ptr<std::vector<qcode::bus::Subscription>> subs;
     // Live token accounting (accumulated from TokenUsageUpdated during generation).
     std::atomic<int> live_prompt_tokens{0};
     std::atomic<int> live_completion_tokens{0};
@@ -92,213 +86,12 @@ struct GenSession {
 static std::mutex g_sessions_mutex;
 static std::unordered_map<std::string, std::shared_ptr<GenSession>> g_sessions;
 
-// ── Terminal PTY manager ──────────────────────────────────────────
-struct TerminalSession {
-    std::string id;
-    int master_fd = -1;
-    pid_t child_pid = -1;
-    std::string workspace;
-    bool alive = true;
-};
-
-// ── Small shell/string helpers (used by the /files endpoint) ──
-static std::string shell_quote(const std::string& s) {
-    std::string out = "'";
-    for (char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out += c;
-    }
-    out += "'";
-    return out;
-}
-
-static std::string exec_capture(const std::string& cmd) {
-    std::string result;
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return result;
-    char buf[4096];
-    while (fgets(buf, sizeof(buf), pipe) != nullptr) result += buf;
-    pclose(pipe);
-    return result;
-}
-
-static std::string expand_tilde(const std::string& s) {
-    if (s == "~" || s.rfind("~/", 0) == 0) {
-        const char* home = std::getenv("HOME");
-        std::string base = home ? std::string(home) : "";
-        if (s.size() == 1) return base;
-        return base + s.substr(1);
-    }
-    return s;
-}
-
-static std::vector<std::string> split_lines(const std::string& s) {
-    std::vector<std::string> out;
-    std::string cur;
-    for (char c : s) {
-        if (c == '\n') { out.push_back(cur); cur.clear(); }
-        else if (c != '\r') cur += c;
-    }
-    if (!cur.empty()) out.push_back(cur);
-    return out;
-}
-
-// ── Workspace filesystem helpers (WebUI file browser / editor) ──
-static constexpr std::uintmax_t kMaxFsFileBytes = 2 * 1024 * 1024;  // 2 MiB
-
-static std::string resolve_session_workspace(const std::string& sid) {
-    std::string ws = qcode::tui::session::get_session_workspace(sid);
-    if (!ws.empty()) ws = expand_tilde(ws);
-    if (ws.empty()) {
-        char cwd[4096] = {0};
-        if (getcwd(cwd, sizeof(cwd))) ws = cwd;
-    }
-    return ws;
-}
-
-// Resolve a client-relative path against the session workspace. Rejects
-// absolute paths and any path that escapes the workspace root.
-// On success: sets abs_out to the absolute path and rel_out to the
-// normalized relative path ("" for workspace root). Returns error message or "".
-static std::string resolve_workspace_path(const std::string& workspace,
-                                          const std::string& rel_in,
-                                          std::string& abs_out,
-                                          std::string& rel_out) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-
-    if (workspace.empty()) return "no workspace";
-    if (!rel_in.empty() && rel_in[0] == '/') return "absolute paths not allowed";
-    if (rel_in.find('\0') != std::string::npos) return "invalid path";
-
-    fs::path root = fs::weakly_canonical(fs::path(workspace), ec);
-    if (ec || root.empty()) {
-        // Workspace may not exist yet — fall back to absolute() if present.
-        root = fs::absolute(fs::path(workspace), ec);
-        if (ec) return "invalid workspace";
-    }
-
-    fs::path candidate = root;
-    if (!rel_in.empty() && rel_in != ".") {
-        candidate = root / fs::path(rel_in);
-    }
-    candidate = fs::weakly_canonical(candidate, ec);
-    if (ec) {
-        // Parent may exist while leaf does not (for create/write).
-        candidate = fs::absolute(root / fs::path(rel_in.empty() ? "." : rel_in), ec);
-        if (ec) return "invalid path";
-    }
-
-    std::string root_s = root.string();
-    std::string cand_s = candidate.string();
-    // Ensure cand is root or under root/
-    if (cand_s != root_s) {
-        std::string prefix = root_s;
-        if (!prefix.empty() && prefix.back() != '/') prefix += '/';
-        if (cand_s.rfind(prefix, 0) != 0) return "path escapes workspace";
-    }
-
-    abs_out = cand_s;
-    if (cand_s == root_s) {
-        rel_out.clear();
-    } else {
-        rel_out = cand_s.substr(root_s.size() + 1);
-    }
-    return "";
-}
-
-static bool looks_binary(const std::string& data) {
-    // NUL byte or high ratio of non-printable bytes → treat as binary.
-    size_t n = std::min(data.size(), size_t(8192));
-    if (n == 0) return false;
-    size_t bad = 0;
-    for (size_t i = 0; i < n; i++) {
-        unsigned char c = static_cast<unsigned char>(data[i]);
-        if (c == 0) return true;
-        if (c < 9 || (c > 13 && c < 32)) bad++;
-    }
-    return bad * 10 > n;  // >10% control chars
-}
-
-static std::mutex g_terminal_mutex;
-static std::unordered_map<std::string, std::shared_ptr<TerminalSession>> g_terminals;
-
-static std::string generate_terminal_id() {
-    static thread_local std::mt19937 eng{std::random_device{}()};
-    static thread_local std::uniform_int_distribution<uint64_t> dist;
-    uint64_t v = dist(eng);
-    char buf[17];
-    snprintf(buf, sizeof(buf), "%016llx", (unsigned long long)v);
-    return std::string(buf);
-}
-
-static std::shared_ptr<TerminalSession> create_terminal(const std::string& workspace) {
-    int master = posix_openpt(O_RDWR | O_NOCTTY);
-    if (master < 0) return nullptr;
-    grantpt(master);
-    unlockpt(master);
-    char* sname = ptsname(master);
-    if (!sname) { close(master); return nullptr; }
-
-    pid_t pid = fork();
-    if (pid < 0) { close(master); return nullptr; }
-
-    if (pid == 0) {
-        // Child process
-        setsid();
-        int slave = open(sname, O_RDWR);
-        if (slave < 0) _exit(1);
-        dup2(slave, STDIN_FILENO);
-        dup2(slave, STDOUT_FILENO);
-        dup2(slave, STDERR_FILENO);
-        if (slave > 2) close(slave);
-        close(master);
-        if (!workspace.empty()) chdir(workspace.c_str());
-        setenv("TERM", "xterm-256color", 1);
-        const char* shell = getenv("SHELL");
-        if (!shell) shell = "/bin/sh";
-        execlp(shell, shell, nullptr);
-        _exit(1);
-    }
-
-    // Parent: master fd stays open
-    auto session = std::make_shared<TerminalSession>();
-    session->id = generate_terminal_id();
-    session->master_fd = master;
-    session->child_pid = pid;
-    session->workspace = workspace;
-    session->alive = true;
-
-    std::lock_guard<std::mutex> lock(g_terminal_mutex);
-    g_terminals[session->id] = session;
-    return session;
-}
-
-static void destroy_terminal(const std::string& id) {
-    std::shared_ptr<TerminalSession> ts;
-    {
-        std::lock_guard<std::mutex> lock(g_terminal_mutex);
-        auto it = g_terminals.find(id);
-        if (it == g_terminals.end()) return;
-        ts = it->second;
-        g_terminals.erase(it);
-    }
-    if (ts->alive) {
-        ts->alive = false;
-        if (ts->master_fd >= 0) close(ts->master_fd);
-        if (ts->child_pid > 0) {
-            kill(ts->child_pid, SIGHUP);
-            waitpid(ts->child_pid, nullptr, WNOHANG);
-        }
-    }
-}
-
 // ── Event collector: subscribes to bus and queues events for a session ──
-static std::vector<qcode::tui::bus::Subscription> subscribe_session(
-    qcode::tui::bus::BusRuntime& bus,
+static std::vector<qcode::bus::Subscription> subscribe_session(
+    qcode::bus::BusRuntime& bus,
     std::shared_ptr<GenSession> session)
 {
-    std::vector<qcode::tui::bus::Subscription> subs;
+    std::vector<qcode::bus::Subscription> subs;
 
     subs.push_back(bus.subscribe<MessageDelta>(
         [session](const MessageDelta::Payload& p) {
@@ -317,7 +110,7 @@ static std::vector<qcode::tui::bus::Subscription> subscribe_session(
                 {"name", p.tool_name},
                 {"arguments", p.arguments},
             };
-            qcode::tui::session::save_message(p.session_id, "ToolCall", call_json.dump());
+            qcode::session::save_message(p.session_id, "ToolCall", call_json.dump());
 
             auto j = qcode::server::tool_call_started_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
@@ -335,7 +128,7 @@ static std::vector<qcode::tui::bus::Subscription> subscribe_session(
                 {"is_error", p.is_error},
                 {"duration_ms", p.duration_ms},
             };
-            qcode::tui::session::save_message(p.session_id, "ToolResult", result_json.dump());
+            qcode::session::save_message(p.session_id, "ToolResult", result_json.dump());
 
             auto j = qcode::server::tool_call_completed_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
@@ -402,16 +195,16 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Init bus, providers ──
-    g_bus = std::make_shared<qcode::tui::bus::BusRuntime>();
+    g_bus = std::make_shared<qcode::bus::BusRuntime>();
     register_all_events(*g_bus);
     qcode::providers::register_authenticated_providers();
 
     // Ensure the SQLite schema (sessions + messages) exists. The server owns
     // its DB so all session state is durably persisted, independent of the TUI.
-    qcode::tui::session::init_database();
+    qcode::session::init_database();
 
     // Load providers
-    auto providers_list = qcode::tui::load_providers_from_config();
+    auto providers_list = qcode::load_providers_from_config();
     if (providers_list.empty()) {
         LOG_ERROR("No providers configured. Create ~/.config/qcode/providers.json");
         return 1;
@@ -422,7 +215,7 @@ int main(int argc, char* argv[]) {
     std::string default_model = providers_list[0].models[0].id;
 
     // Backend service (uses the shared bus)
-    qcode::tui::GenerationService backend(*g_bus, providers_list);
+    qcode::GenerationService backend(*g_bus, providers_list);
 
     // ── Signal handling ──
     signal(SIGINT, handle_signal);
@@ -514,7 +307,7 @@ int main(int argc, char* argv[]) {
             }
         }
         std::string system_prompt = body.value("system_prompt",
-            qcode::tui::SystemPrompt::build_default());
+            qcode::SystemPrompt::build_default());
         std::string reasoning_mode = body.value("reasoning_mode", "off");
 
         std::shared_ptr<GenSession> session;
@@ -559,12 +352,12 @@ int main(int argc, char* argv[]) {
         // Load (or reload) the entire session history from the SQLite database
         // to ensure we have the complete, up-to-date context (including ToolCall,
         // ToolResult, System, and Assistant messages).
-        session->messages = qcode::tui::session::load_session_history_parsed(session->id);
+        session->messages = qcode::session::load_session_history_parsed(session->id);
 
         // Set up generation context (reasoning mode can change per request)
         {
-            auto ws = qcode::tui::session::get_session_workspace(session->id);
-            session->ctx = qcode::tui::GenerationContext{
+            auto ws = qcode::session::get_session_workspace(session->id);
+            session->ctx = qcode::GenerationContext{
                 .session_id = session->id,
                 .reasoning_mode = reasoning_mode,
                 .workspace = ws
@@ -573,13 +366,13 @@ int main(int argc, char* argv[]) {
 
         // Subscribe to bus events for this session (once)
         if (!session->subs) {
-            session->subs = std::make_shared<std::vector<qcode::tui::bus::Subscription>>(
+            session->subs = std::make_shared<std::vector<qcode::bus::Subscription>>(
                 subscribe_session(*g_bus, session));
         }
 
         // Save user message and add to history
-        qcode::tui::session::set_session_provider_model(session->id, provider, model);
-        qcode::tui::session::save_message(session->id, "User", text);
+        qcode::session::set_session_provider_model(session->id, provider, model);
+        qcode::session::save_message(session->id, "User", text);
         session->messages.push_back(qcode::Message::user(text));
 
         // Keep a local copy of messages for the generation thread, applying the compaction cutoff
@@ -663,10 +456,10 @@ int main(int argc, char* argv[]) {
                 if (session->done && events.empty()) {
                     // Persist the assistant reply so the session is resumable.
                     if (!session->assistant_text.empty()) {
-                        qcode::tui::session::save_message(session->id, "Assistant", session->assistant_text);
+                        qcode::session::save_message(session->id, "Assistant", session->assistant_text);
                     }
                     if (!session->reasoning_text.empty()) {
-                        qcode::tui::session::save_message(session->id, "Reasoning", session->reasoning_text);
+                        qcode::session::save_message(session->id, "Reasoning", session->reasoning_text);
                     }
                     nlohmann::json final_msg = {
                         {"type", "generation.complete"},
@@ -725,7 +518,7 @@ int main(int argc, char* argv[]) {
 
     // ── List sessions ──
     svr.Get("/sessions", [](const httplib::Request&, httplib::Response& res) {
-        auto list = qcode::tui::session::list_sessions_full();
+        auto list = qcode::session::list_sessions_full();
         nlohmann::json j = nlohmann::json::array();
         for (const auto& s : list) {
             j.push_back({{"id", s.id}, {"title", s.title}, {"workspace", s.workspace},
@@ -754,7 +547,7 @@ int main(int argc, char* argv[]) {
             res.set_content(R"({"error":"provider and model required"})", "application/json");
             return;
         }
-        auto id = qcode::tui::session::create_new_session(provider, model, workspace, custom_id);
+        auto id = qcode::session::create_new_session(provider, model, workspace, custom_id);
         res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}, {"title", id}}).dump(), "application/json");
     });
 
@@ -768,7 +561,7 @@ int main(int argc, char* argv[]) {
         }
         std::string session_id = body.value("session_id", "");
         std::string new_title = body.value("title", "");
-        if (session_id.empty() || !qcode::tui::session::is_valid_session_id(session_id)) {
+        if (session_id.empty() || !qcode::session::is_valid_session_id(session_id)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -778,7 +571,7 @@ int main(int argc, char* argv[]) {
             res.set_content(R"({"error":"title is required"})", "application/json");
             return;
         }
-        qcode::tui::session::rename_session(session_id, new_title);
+        qcode::session::rename_session(session_id, new_title);
         res.set_content(R"({"ok":true})", "application/json");
     });
 
@@ -842,13 +635,8 @@ int main(int argc, char* argv[]) {
             res.status = 400; res.set_content(R"({"error":"invalid JSON"})", "application/json"); return;
         }
         std::string data = body.value("data", "");
-        std::shared_ptr<TerminalSession> ts;
-        {
-            std::lock_guard<std::mutex> lock(g_terminal_mutex);
-            auto it = g_terminals.find(id);
-            if (it == g_terminals.end()) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
-            ts = it->second;
-        }
+        auto ts = find_terminal(id);
+        if (!ts) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
         if (ts->master_fd >= 0 && ts->alive) {
             write(ts->master_fd, data.c_str(), data.size());
         }
@@ -858,13 +646,8 @@ int main(int argc, char* argv[]) {
     // ── Terminal: output stream (long-poll read from PTY) ──
     svr.Get("/terminal/([a-f0-9]+)/stream", [](const httplib::Request& req, httplib::Response& res) {
         std::string id = req.matches[1];
-        std::shared_ptr<TerminalSession> ts;
-        {
-            std::lock_guard<std::mutex> lock(g_terminal_mutex);
-            auto it = g_terminals.find(id);
-            if (it == g_terminals.end()) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
-            ts = it->second;
-        }
+        auto ts = find_terminal(id);
+        if (!ts) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
         // Non-blocking read from PTY master, return available data
         std::string output;
         char buf[4096];
@@ -884,13 +667,13 @@ int main(int argc, char* argv[]) {
 
     // ── Get last active session (with history) for client auto-restore ──
     svr.Get("/session/last", [](const httplib::Request&, httplib::Response& res) {
-        std::string sid = qcode::tui::session::get_last_active_session();
+        std::string sid = qcode::session::get_last_active_session();
         if (sid.empty()) {
             res.set_content(R"({"id":""})", "application/json");
             return;
         }
         nlohmann::json info = {{"id", sid}};
-        for (const auto& s : qcode::tui::session::list_sessions_full()) {
+        for (const auto& s : qcode::session::list_sessions_full()) {
             if (s.id == sid) {
                 info["title"] = s.title;
                 info["workspace"] = s.workspace;
@@ -900,7 +683,7 @@ int main(int argc, char* argv[]) {
             }
         }
         nlohmann::json msgs = nlohmann::json::array();
-        for (const auto& [sender, content] : qcode::tui::session::load_session_messages(sid)) {
+        for (const auto& [sender, content] : qcode::session::load_session_messages(sid)) {
             msgs.push_back({{"role", sender}, {"content", content}});
         }
         info["messages"] = std::move(msgs);
@@ -910,7 +693,7 @@ int main(int argc, char* argv[]) {
     // ── Get session info ──
     svr.Get("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        auto list = qcode::tui::session::list_sessions_full();
+        auto list = qcode::session::list_sessions_full();
         for (const auto& s : list) {
             if (s.id == sid) {
                 res.set_content(nlohmann::json({{"id", s.id}, {"title", s.title},
@@ -925,7 +708,7 @@ int main(int argc, char* argv[]) {
     // ── Delete session ──
     svr.Delete("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -945,7 +728,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Delete from database
-        qcode::tui::session::delete_session(sid);
+        qcode::session::delete_session(sid);
 
         res.set_content(R"({"ok":true})", "application/json");
     });
@@ -953,7 +736,7 @@ int main(int argc, char* argv[]) {
     // ── Clear session messages (truncate history) ──
     svr.Post("/session/([^/]+)/clear", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -970,7 +753,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Permanently truncate the persisted history in SQLite.
-        qcode::tui::session::overwrite_session_history(sid, {});
+        qcode::session::overwrite_session_history(sid, {});
 
         res.set_content(R"({"ok":true})", "application/json");
     });
@@ -978,12 +761,12 @@ int main(int argc, char* argv[]) {
     // ── Get session message history ──
     svr.Get("/session/([^/]+)/messages", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
         }
-        auto hist = qcode::tui::session::load_session_messages(sid);
+        auto hist = qcode::session::load_session_messages(sid);
         nlohmann::json j = nlohmann::json::array();
         for (const auto& [sender, content] : hist) {
             j.push_back({{"role", sender}, {"content", content}});
@@ -994,7 +777,7 @@ int main(int argc, char* argv[]) {
     // ── Compact session ──
     svr.Post("/session/([^/]+)/compact", [&providers_list](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -1014,7 +797,7 @@ int main(int argc, char* argv[]) {
         int keep = body.value("keep", 5);
 
         // Load conversation messages from DB
-        auto snapshot = qcode::tui::session::load_session_history_parsed(sid);
+        auto snapshot = qcode::session::load_session_history_parsed(sid);
         if (snapshot.size() <= 2) {
             res.status = 400;
             res.set_content(R"({"error":"Nothing to compact: conversation is too short."})", "application/json");
@@ -1024,7 +807,7 @@ int main(int argc, char* argv[]) {
         // Get session info to know which provider/model to use for compaction
         std::string provider_id = "";
         std::string model_id = "";
-        for (const auto& s : qcode::tui::session::list_sessions_full()) {
+        for (const auto& s : qcode::session::list_sessions_full()) {
             if (s.id == sid) {
                 provider_id = s.provider;
                 model_id = s.model;
@@ -1133,7 +916,7 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        std::string notes_root = qcode::tui::get_notes_root();
+        std::string notes_root = qcode::get_notes_root();
         std::error_code ec;
         std::filesystem::create_directories(
             notes_root + "/scratchpad/task/qcode-tui/active", ec);
@@ -1196,7 +979,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Overwrite history in SQLite database to persist the compact set
-        qcode::tui::session::overwrite_session_history(sid, new_messages);
+        qcode::session::overwrite_session_history(sid, new_messages);
 
         nlohmann::json res_j;
         res_j["status"] = "success";
@@ -1211,7 +994,7 @@ int main(int argc, char* argv[]) {
     // ── Get aggregate session statistics ──
     svr.Get("/session/([^/]+)/stats", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -1231,7 +1014,7 @@ int main(int argc, char* argv[]) {
                 live_total = it->second->live_total_tokens.load();
             }
         }
-        auto st = qcode::tui::session::get_session_stats(sid, live_tool_calls, live_tool_time_ms,
+        auto st = qcode::session::get_session_stats(sid, live_tool_calls, live_tool_time_ms,
                                                  live_prompt, live_completion, live_total);
         nlohmann::json j = {
             {"id", st.id}, {"title", st.title}, {"workspace", st.workspace},
@@ -1250,12 +1033,12 @@ int main(int argc, char* argv[]) {
     // change type + insertion/deletion counts.
     svr.Get("/session/([^/]+)/files", [](const httplib::Request& req, httplib::Response& res) {
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
         }
-        std::string ws = qcode::tui::session::get_session_workspace(sid);
+        std::string ws = qcode::session::get_session_workspace(sid);
         if (!ws.empty()) ws = expand_tilde(ws);
         if (ws.empty()) {
             // Fall back to the server's current working directory.
@@ -1400,7 +1183,7 @@ int main(int argc, char* argv[]) {
     svr.Get("/session/([^/]+)/fs/list", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -1469,7 +1252,7 @@ int main(int argc, char* argv[]) {
     svr.Get("/session/([^/]+)/fs/read", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;
@@ -1547,7 +1330,7 @@ int main(int argc, char* argv[]) {
     svr.Put("/session/([^/]+)/fs/write", [](const httplib::Request& req, httplib::Response& res) {
         namespace fs = std::filesystem;
         std::string sid = url_decode(req.matches[1]);
-        if (!qcode::tui::session::is_valid_session_id(sid)) {
+        if (!qcode::session::is_valid_session_id(sid)) {
             res.status = 400;
             res.set_content(R"({"error":"invalid session_id"})", "application/json");
             return;

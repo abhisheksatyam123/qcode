@@ -5,7 +5,6 @@
 #include <utility>
 
 namespace qcode {
-namespace tui {
 namespace bus {
 
 BusRuntime::~BusRuntime() {
@@ -201,5 +200,4 @@ size_t BusRuntime::pending() const {
 }
 
 } // namespace bus
-} // namespace tui
 } // namespace qcode

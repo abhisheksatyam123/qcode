@@ -53,13 +53,13 @@ TEST(AntigravityClientTest, GenerateTextE2E) {
   if (std::getenv("QCODE_RUN_LIVE_TESTS") == nullptr) {
     GTEST_SKIP() << "Set QCODE_RUN_LIVE_TESTS=1 to run provider E2E tests";
   }
-  const auto access_token = qcode::tui::get_antigravity_token();
+  const auto access_token = qcode::get_antigravity_token();
   if (access_token.empty()) {
     GTEST_SKIP() << "No usable Antigravity credential";
   }
 
   Options client_options;
-  for (const auto& provider : qcode::tui::load_providers_from_config()) {
+  for (const auto& provider : qcode::load_providers_from_config()) {
     if (provider.id == "antigravity") {
       client_options.base_url = provider.api_url;
       client_options.project_id = provider.project_id;
@@ -82,13 +82,13 @@ TEST(AntigravityClientTest, CompactionLiveTest) {
   if (std::getenv("QCODE_RUN_LIVE_TESTS") == nullptr) {
     GTEST_SKIP() << "Set QCODE_RUN_LIVE_TESTS=1 to run provider E2E tests";
   }
-  const auto access_token = qcode::tui::get_antigravity_token();
+  const auto access_token = qcode::get_antigravity_token();
   if (access_token.empty()) {
     GTEST_SKIP() << "No usable Antigravity credential";
   }
 
   Options client_options;
-  for (const auto& provider : qcode::tui::load_providers_from_config()) {
+  for (const auto& provider : qcode::load_providers_from_config()) {
     if (provider.id == "antigravity") {
       client_options.base_url = provider.api_url;
       client_options.project_id = provider.project_id;

@@ -21,7 +21,7 @@ void register_authenticated_providers() {
     // registered here rather than in the core registry.
     ProviderRegistry::instance().register_provider(
         "antigravity", [](const ProviderOptions& options) {
-          std::string token = qcode::tui::get_antigravity_token();
+          std::string token = qcode::get_antigravity_token();
           if (token.empty()) {
             return ClientResolution::fail("Antigravity token failed.");
           }
@@ -42,7 +42,7 @@ void register_authenticated_providers() {
     ProviderRegistry::instance().register_provider(
         "cursor", [](const ProviderOptions& options) {
           std::string token = options.api_key.empty()
-                                  ? qcode::tui::get_cursor_access_token()
+                                  ? qcode::get_cursor_access_token()
                                   : options.api_key;
           if (token.empty()) {
             return ClientResolution::fail("Cursor access token failed.");

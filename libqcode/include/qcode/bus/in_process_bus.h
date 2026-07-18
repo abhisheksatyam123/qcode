@@ -10,7 +10,6 @@
 #include <vector>
 
 namespace qcode {
-namespace tui {
 namespace bus {
 
 // ── BusRuntime: in-process event bus ─────────────────────────────────────────
@@ -76,5 +75,4 @@ private:
 };
 
 } // namespace bus
-} // namespace tui
 } // namespace qcode

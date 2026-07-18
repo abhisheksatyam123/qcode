@@ -5,7 +5,6 @@
 #include <vector>
 
 namespace qcode {
-namespace tui {
 
 // Render a GitHub-flavored Markdown string into ftxui Elements.
 // Uses the vendored md4c parser (third_party/md4c) for fidelity close to
@@ -13,5 +12,4 @@ namespace tui {
 // strikethrough, task lists, autolinks).
 ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme = "orange");
 
-}  // namespace tui
 }  // namespace qcode

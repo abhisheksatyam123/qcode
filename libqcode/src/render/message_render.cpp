@@ -10,7 +10,6 @@
 #include <qcode/logger/logger.h>
 
 namespace qcode {
-namespace tui {
 
 using namespace ftxui;
 
@@ -43,7 +42,6 @@ ftxui::Decorator reflect_simple(HitBox& box) {
     return std::make_shared<ReflectSimple>(std::move(child), box);
   };
 }
-
 
 Color prompt_green(const std::string& theme) { return theme_prompt(theme); }
 Color command_fg() { return Color::RGB(0xE5, 0xE5, 0xE5); }
@@ -151,7 +149,6 @@ Element ToolBlock(const std::string& icon,
         description.find(title) == std::string::npos) {
         title_row.push_back(text(" · " + title) | dim | color(muted_fg(theme)));
     }
-
 
     title_row.push_back(filler());
 
@@ -562,5 +559,4 @@ static Element render_tool_pair(const qcode::ToolCallContentPart& call_part,
         collapsible, focused, command, theme, const_cast<ChatState*>(&state), call_part.id);
 }
 
-}  // namespace tui
 }  // namespace qcode

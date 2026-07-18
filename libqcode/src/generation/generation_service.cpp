@@ -21,7 +21,6 @@
 #include <qcode/providers/authenticated_providers.h>
 
 namespace qcode {
-namespace tui {
 
 using namespace contract;
 
@@ -770,13 +769,11 @@ void run_generation_with_bus(
   }
 }
 
-} // namespace tui
-
 // ════════════════════════════════════════════════════════════════════════════
 //  GenerationService implementation
 // ════════════════════════════════════════════════════════════════════════════
 
-void qcode::tui::GenerationService::run_generation(
+void qcode::GenerationService::run_generation(
     const std::string& provider_name,
     const std::string& model_id,
     const std::string& system_prompt,
@@ -784,7 +781,7 @@ void qcode::tui::GenerationService::run_generation(
     bool enable_tools,
     GenerationContext& ctx)
 {
-    qcode::tui::run_generation_with_bus(provider_name, model_id, system_prompt,
+    qcode::run_generation_with_bus(provider_name, model_id, system_prompt,
                             messages, enable_tools, providers_, bus_, ctx);
 }
 } // namespace qcode

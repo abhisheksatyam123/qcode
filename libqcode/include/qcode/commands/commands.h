@@ -9,7 +9,6 @@
 #include <qcode/bus/port.h>
 
 namespace qcode {
-namespace tui {
 
 // ── Model selector entry (flat list across all providers) ──
 
@@ -76,5 +75,4 @@ void run_compaction(
     bus::BusPort& bus
 );
 
-} // namespace tui
 } // namespace qcode

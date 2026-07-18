@@ -9,7 +9,6 @@
 #include <gtest/gtest.h>
 
 namespace qcode {
-namespace tui {
 namespace {
 
 class ScopedEnv {
@@ -154,5 +153,4 @@ TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
 }
 
 }  // namespace
-}  // namespace tui
 }  // namespace qcode

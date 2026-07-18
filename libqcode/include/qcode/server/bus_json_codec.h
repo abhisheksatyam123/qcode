@@ -23,18 +23,18 @@ std::optional<nlohmann::json> serialize_event(
  * Publishes the deserialized event onto the given bus.
  * Returns true if the event was recognized and published.
  */
-bool dispatch_json(const nlohmann::json& msg, qcode::tui::bus::BusPort& bus);
+bool dispatch_json(const nlohmann::json& msg, qcode::bus::BusPort& bus);
 
 /**
  * Convert bus events to/from JSON for WebSocket streaming.
  */
-nlohmann::json message_delta_to_json(const qcode::tui::contract::MessageDelta::Payload& p);
-nlohmann::json tool_call_started_to_json(const qcode::tui::contract::ToolCallStarted::Payload& p);
-nlohmann::json tool_call_completed_to_json(const qcode::tui::contract::ToolCallCompleted::Payload& p);
-nlohmann::json session_status_to_json(const qcode::tui::contract::SessionStatusChanged::Payload& p);
-nlohmann::json error_occurred_to_json(const qcode::tui::contract::ErrorOccurred::Payload& p);
-nlohmann::json reasoning_delta_to_json(const qcode::tui::contract::ReasoningDelta::Payload& p);
-nlohmann::json token_usage_to_json(const qcode::tui::contract::TokenUsageUpdated::Payload& p);
+nlohmann::json message_delta_to_json(const qcode::contract::MessageDelta::Payload& p);
+nlohmann::json tool_call_started_to_json(const qcode::contract::ToolCallStarted::Payload& p);
+nlohmann::json tool_call_completed_to_json(const qcode::contract::ToolCallCompleted::Payload& p);
+nlohmann::json session_status_to_json(const qcode::contract::SessionStatusChanged::Payload& p);
+nlohmann::json error_occurred_to_json(const qcode::contract::ErrorOccurred::Payload& p);
+nlohmann::json reasoning_delta_to_json(const qcode::contract::ReasoningDelta::Payload& p);
+nlohmann::json token_usage_to_json(const qcode::contract::TokenUsageUpdated::Payload& p);
 
 } // namespace server
 } // namespace qcode
