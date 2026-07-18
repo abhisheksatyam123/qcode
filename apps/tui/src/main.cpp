@@ -134,6 +134,32 @@ int main() {
     store.set_session_id(last_session);
     if (!store.session_id().empty()) {
         ai::tui::db::reload_session_history(store.session_id(), state);
+
+        // Restore provider and model from the loaded session so the UI
+        // matches what was used when the session was last active.
+        std::string loaded_prov_id;
+        std::string loaded_model_id;
+        for (const auto& s : ai::tui::db::list_sessions_full()) {
+            if (s.id == last_session) {
+                loaded_prov_id = s.provider;
+                loaded_model_id = s.model;
+                break;
+            }
+        }
+        if (!loaded_prov_id.empty() && !loaded_model_id.empty()) {
+            for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
+                if (providers_list[i].name == loaded_prov_id || providers_list[i].id == loaded_prov_id) {
+                    for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
+                        if (providers_list[i].models[j].name == loaded_model_id || providers_list[i].models[j].id == loaded_model_id) {
+                            selected_provider = i;
+                            selected_model = j;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
     }
     ai::tui::update_modified_files(state);
 
