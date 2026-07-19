@@ -309,6 +309,68 @@ static std::string extract_result_output(const qcode::ToolResultContentPart& par
     return part.result.dump(2);
 }
 
+static Element render_tool_input(const std::string& tool_name,
+                                 const nlohmann::json& args,
+                                 const std::string& theme) {
+    if (is_bash_tool(tool_name)) {
+        return emptyElement();
+    }
+    if (!args.is_object() || args.empty()) {
+        return emptyElement();
+    }
+
+    Elements rows;
+    std::string large_text;
+    std::string large_key;
+
+    for (auto it = args.begin(); it != args.end(); ++it) {
+        const std::string& key = it.key();
+        if (key == "description" || key == "desc" || key == "command" || key == "cmd") {
+            continue;
+        }
+        if (key == "content" || key == "code" || key == "text" || key == "patch" || key == "prompt") {
+            if (it.value().is_string()) {
+                large_text = it.value().get<std::string>();
+                large_key = key;
+            }
+            continue;
+        }
+
+        std::string val_str;
+        if (it.value().is_string()) {
+            val_str = it.value().get<std::string>();
+        } else {
+            val_str = it.value().dump();
+        }
+        rows.push_back(hbox({
+            text("  " + key + ": ") | dim | color(muted_fg(theme)),
+            text(val_str) | color(prompt_green(theme)),
+        }));
+    }
+
+    Elements result;
+    if (!rows.empty()) {
+        result.push_back(vbox(std::move(rows)));
+    }
+
+    if (!large_text.empty()) {
+        result.push_back(text("  " + large_key + ":") | dim | color(muted_fg(theme)));
+        Elements lines;
+        std::istringstream iss(large_text);
+        std::string line;
+        while (std::getline(iss, line)) {
+            lines.push_back(hbox({
+                text("    "),
+                text(line) | color(Color::RGB(0xE0, 0xE0, 0xE0)),
+            }));
+        }
+        result.push_back(vbox(std::move(lines)));
+    }
+
+    if (result.empty()) return emptyElement();
+    return vbox(std::move(result));
+}
+
 static Element render_shell_output(const qcode::ToolCallContentPart& call_part,
                                    const qcode::ToolResultContentPart& result_part,
                                    const std::string& theme,
@@ -316,20 +378,35 @@ static Element render_shell_output(const qcode::ToolCallContentPart& call_part,
     Elements body;
     constexpr int kCollapsedPreviewLines = 3;
 
-    if (!collapsed && is_bash_tool(call_part.tool_name) &&
-        call_part.arguments.is_object()) {
-        const auto workdir =
-            json_string(call_part.arguments, {"workdir", "cwd"});
-        if (!workdir.empty()) {
-            body.push_back(hbox({
-                text("in ") | dim | color(muted_fg(theme)),
-                text(workdir) | dim | color(Color::RGB(0x7A, 0xA2, 0xF7)),
-            }));
+    if (!collapsed) {
+        if (is_bash_tool(call_part.tool_name) && call_part.arguments.is_object()) {
+            const auto workdir =
+                json_string(call_part.arguments, {"workdir", "cwd"});
+            if (!workdir.empty()) {
+                body.push_back(hbox({
+                    text("in ") | dim | color(muted_fg(theme)),
+                    text(workdir) | dim | color(Color::RGB(0x7A, 0xA2, 0xF7)),
+                }));
+            }
+        } else {
+            auto input_el = render_tool_input(call_part.tool_name, call_part.arguments, theme);
+            if (input_el != emptyElement()) {
+                body.push_back(hbox({
+                    text("Input:") | bold | color(accent(theme)),
+                }));
+                body.push_back(input_el);
+            }
         }
     }
 
     const auto output = extract_result_output(result_part);
     if (!output.empty()) {
+        if (!collapsed) {
+            body.push_back(text(""));
+            body.push_back(hbox({
+                text("Output:") | bold | color(accent(theme)),
+            }));
+        }
         body.push_back(render_truncated_output(
             output, collapsed ? kCollapsedPreviewLines : 0, theme,
             result_part.is_error));
@@ -357,9 +434,22 @@ static Element render_tool_call(const qcode::ToolCallContentPart& part,
                                  const ChatState& state) {
     const auto command = extract_shell_command(part);
     const auto desc = extract_tool_description(part);
+    
+    Elements body;
+    body.push_back(text("running…") | dim | color(Color::Yellow));
+    
+    auto input_el = render_tool_input(part.tool_name, part.arguments, theme);
+    if (input_el != emptyElement()) {
+        body.push_back(text(""));
+        body.push_back(hbox({
+            text("Input:") | bold | color(accent(theme)),
+        }));
+        body.push_back(input_el);
+    }
+
     return ToolBlock(tool_icon(part.tool_name),
                       tool_display_name(part.tool_name), desc,
-                      text("running…") | dim | color(Color::Yellow), true,
+                      vbox(std::move(body)), true,
                       "calling", accent(theme), 0.0, false, false, false,
                       command, theme, const_cast<ChatState*>(&state), part.id);
 }

@@ -40,6 +40,7 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"session",  "Select session", "Manage and load saved sessions",   "Session"},
         {"compact",  "Compact",       "Summarize conversation to save context", "Session"},
         {"reasoning", "Reasoning", "/reasoning off|low|medium|high",       "Session"},
+        {"clear-queue", "Clear queue", "Clear all queued prompts",          "Session"},
     };
 }
 

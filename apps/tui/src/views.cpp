@@ -361,28 +361,43 @@ ftxui::Element render_view(
                     dim | hcenter);
             }
 
-            // Queued prompts appear at the end of the message list (Grok-style)
-            // so pending turns are first-class chat rows, not only a header badge.
+            // Queued prompts appear at the end of the message list (unified pretty card block)
             const auto* queue =
                 state.queued_prompt_texts ? state.queued_prompt_texts.get()
                                           : nullptr;
             if (queue && !queue->empty() && last >= history_size) {
-                msgs.push_back(hbox({
-                    text(" ─── ") | dim | color(queue_amber()),
-                    text("queue") | bold | color(queue_amber()),
-                    text(" · " + std::to_string(queue->size()) +
-                         " waiting · Esc clears queue ") |
-                        dim | color(Color::GrayDark),
-                    text("───") | dim | color(queue_amber()),
-                    filler(),
-                }));
+                Elements items;
                 for (size_t qi = 0; qi < queue->size(); ++qi) {
-                    msgs.push_back(
-                        render_queued_prompt((*queue)[qi], qi, queue->size(),
-                                             theme));
-                    msgs.push_back(separatorLight() | color(queue_amber()) |
-                                   dim);
+                    std::string text_preview = (*queue)[qi];
+                    
+                    Elements card_lines;
+                    std::istringstream iss(text_preview);
+                    std::string line;
+                    while (std::getline(iss, line)) {
+                        card_lines.push_back(text("  " + line) | dim | color(Color::GrayLight));
+                    }
+                    
+                    items.push_back(vbox({
+                        hbox({
+                            text(" #" + std::to_string(qi + 1) + " You") | bold | color(queue_amber()),
+                            text(" · queued") | dim | color(Color::GrayDark)
+                        }),
+                        vbox(std::move(card_lines)),
+                    }));
+                    
+                    if (qi + 1 < queue->size()) {
+                        items.push_back(separatorLight() | color(Color::GrayDark) | dim);
+                    }
                 }
+                
+                msgs.push_back(vbox({
+                    text(""),
+                    hbox({
+                        text(" ⏳ QUEUE ") | bold | color(queue_amber()),
+                        text("· " + std::to_string(queue->size()) + " waiting · /clear-queue to cancel") | dim | color(Color::GrayDark),
+                    }),
+                    vbox(std::move(items)) | borderLight | color(queue_amber()) | dim,
+                }));
             }
 
             // Clean input bar: prompt prefix + input; subtle queue hint when busy
@@ -403,7 +418,7 @@ ftxui::Element render_view(
                             dim | color(queue_amber()),
                         text("  ·  next runs when this turn finishes") | dim,
                         filler(),
-                        text("Esc cancels queue") | dim | color(Color::GrayDark),
+                        text("/clear-queue cancels queue") | dim | color(Color::GrayDark),
                         text("  "),
                     }),
                 });

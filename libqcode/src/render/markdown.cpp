@@ -165,7 +165,7 @@ static Element flush_inline(const std::vector<IItem>& items, int avail,
     }
     int w = (int)tk.w.size();
     int allowance =
-        cwdt == 0 ? std::max(1, avail - prefix_cols) : std::max(1, avail - hang);
+        lines.empty() ? std::max(1, avail - prefix_cols) : std::max(1, avail - hang);
     if (!cl.empty() && cwdt + 1 + w > allowance) newline();
     if (!cl.empty()) cwdt += 1;
     cl.push_back(tk);
@@ -248,6 +248,86 @@ static int md_enter_block(MD_BLOCKTYPE type, void* detail, void* ud) {
   c->stack.push_back(b);
   return 0;
 }
+
+static std::vector<std::string> wrap_text(const std::string& str, int width) {
+  std::vector<std::string> lines;
+  if (width <= 0) {
+    lines.push_back(str);
+    return lines;
+  }
+  
+  std::vector<std::string> paragraphs;
+  std::string current;
+  for (char c : str) {
+    if (c == '\n') {
+      paragraphs.push_back(current);
+      current.clear();
+    } else {
+      current.push_back(c);
+    }
+  }
+  paragraphs.push_back(current);
+  
+  for (const auto& p : paragraphs) {
+    std::vector<std::string> words;
+    std::string word;
+    for (char c : p) {
+      if (c == ' ') {
+        if (!word.empty()) {
+          words.push_back(word);
+          word.clear();
+        }
+      } else {
+        word.push_back(c);
+      }
+    }
+    if (!word.empty()) {
+      words.push_back(word);
+    }
+    
+    if (words.empty()) {
+      lines.push_back("");
+      continue;
+    }
+    
+    std::string line;
+    for (const auto& w : words) {
+      if (line.empty()) {
+        if (static_cast<int>(w.size()) > width) {
+          int start = 0;
+          while (start + width < static_cast<int>(w.size())) {
+            lines.push_back(w.substr(start, width));
+            start += width;
+          }
+          line = w.substr(start);
+        } else {
+          line = w;
+        }
+      } else {
+        if (static_cast<int>(line.size() + 1 + w.size()) <= width) {
+          line += " " + w;
+        } else {
+          lines.push_back(line);
+          if (static_cast<int>(w.size()) > width) {
+            int start = 0;
+            while (start + width < static_cast<int>(w.size())) {
+              lines.push_back(w.substr(start, width));
+              start += width;
+            }
+            line = w.substr(start);
+          } else {
+            line = w;
+          }
+        }
+      }
+    }
+    if (!line.empty()) {
+      lines.push_back(line);
+    }
+  }
+  return lines;
+}
+
 
 static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
   Ctx* c = static_cast<Ctx*>(ud);
@@ -337,22 +417,126 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
       break;
     }
     case MD_BLOCK_TABLE: {
-      std::vector<std::vector<Element>> cells;
+      if (c->table_grid.empty()) {
+        el = emptyElement();
+        c->in_table = false;
+        c->table_row = -1;
+        break;
+      }
+      size_t C = 0;
       for (const auto& row : c->table_grid) {
+        C = std::max(C, row.size());
+      }
+      if (C == 0) {
+        el = emptyElement();
+        c->in_table = false;
+        c->table_row = -1;
+        break;
+      }
+      std::vector<int> col_widths(C, 0);
+      int total_max = 0;
+      std::vector<int> max_col_width(C, 0);
+      for (size_t col = 0; col < C; ++col) {
+        for (const auto& row : c->table_grid) {
+          if (col < row.size()) {
+            max_col_width[col] = std::max(max_col_width[col], static_cast<int>(row[col].size()));
+          }
+        }
+        total_max += max_col_width[col];
+      }
+      int avail_content = avail - static_cast<int>(C + 1);
+      if (avail_content < static_cast<int>(C)) {
+        avail_content = static_cast<int>(C);
+      }
+      if (total_max <= avail_content) {
+        for (size_t col = 0; col < C; ++col) {
+          col_widths[col] = max_col_width[col];
+        }
+      } else {
+        int remaining_width = avail_content;
+        int remaining_cols = static_cast<int>(C);
+        std::vector<bool> allocated(C, false);
+        int min_w = 5;
+        if (avail_content < static_cast<int>(C) * min_w) {
+          min_w = std::max(1, avail_content / static_cast<int>(C));
+        }
+        for (size_t col = 0; col < C; ++col) {
+          if (max_col_width[col] <= min_w) {
+            col_widths[col] = std::max(1, max_col_width[col]);
+            remaining_width -= col_widths[col];
+            remaining_cols--;
+            allocated[col] = true;
+          }
+        }
+        int sum_remaining_max = 0;
+        for (size_t col = 0; col < C; ++col) {
+          if (!allocated[col]) {
+            sum_remaining_max += max_col_width[col];
+          }
+        }
+        for (size_t col = 0; col < C; ++col) {
+          if (!allocated[col]) {
+            if (remaining_cols == 1) {
+              col_widths[col] = std::max(min_w, remaining_width);
+            } else {
+              int w = (max_col_width[col] * remaining_width) / sum_remaining_max;
+              w = std::max(min_w, w);
+              col_widths[col] = w;
+              remaining_width -= w;
+              remaining_cols--;
+              if (remaining_cols <= 0) remaining_cols = 1;
+            }
+          }
+        }
+      }
+      std::vector<std::vector<Element>> cells;
+      for (size_t row_idx = 0; row_idx < c->table_grid.size(); ++row_idx) {
+        const auto& row = c->table_grid[row_idx];
         std::vector<Element> r;
-        for (const auto& cell : row) r.push_back(paragraph(cell));
+        for (size_t col = 0; col < C; ++col) {
+          std::string cell_text = "";
+          if (col < row.size()) {
+            cell_text = row[col];
+          }
+          int w = std::max(1, col_widths[col]);
+          std::vector<std::string> lines = wrap_text(cell_text, w);
+          MD_ALIGN align = MD_ALIGN_DEFAULT;
+          if (row_idx < c->table_align.size() && col < c->table_align[row_idx].size()) {
+            align = c->table_align[row_idx][col];
+          }
+          Elements line_elements;
+          for (const auto& line : lines) {
+            std::string padded = line;
+            int pad_size = w - static_cast<int>(line.size());
+            if (pad_size > 0) {
+              if (align == MD_ALIGN_RIGHT) {
+                padded = std::string(pad_size, ' ') + line;
+              } else if (align == MD_ALIGN_CENTER) {
+                int left_pad = pad_size / 2;
+                int right_pad = pad_size - left_pad;
+                padded = std::string(left_pad, ' ') + line + std::string(right_pad, ' ');
+              } else {
+                padded = line + std::string(pad_size, ' ');
+              }
+            }
+            line_elements.push_back(text(padded));
+          }
+          r.push_back(vbox(std::move(line_elements)));
+        }
         cells.push_back(std::move(r));
       }
       Table t(cells);
       t.SelectAll().Border(LIGHT);
       t.SelectAll().Separator(LIGHT);
-      if (!c->table_grid.empty() && !c->table_grid[0].empty())
+      if (!c->table_grid.empty() && !c->table_grid[0].empty()) {
         t.SelectRow(0).Decorate(bold);
+      }
       el = std::move(t).Render();
       c->in_table = false;
       c->table_row = -1;
       break;
     }
+
     default:
       el = b.children.empty() ? vbox({}) : vbox(std::move(b.children));
       break;
@@ -426,7 +610,18 @@ static int md_text(MD_TEXTTYPE type, const MD_CHAR* txt, MD_SIZE size, void* ud)
     return 0;
   }
   if (c->in_cell) {
-    c->cell_buf += decode_entity(s);
+    if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
+      c->cell_buf += "\n";
+    } else if (type == MD_TEXT_HTML) {
+      std::string clean = s;
+      clean.erase(std::remove_if(clean.begin(), clean.end(), [](unsigned char x) { return std::isspace(x); }), clean.end());
+      for (auto& ch : clean) ch = std::tolower(ch);
+      if (clean == "<br>" || clean == "<br/>") {
+        c->cell_buf += "\n";
+      }
+    } else {
+      c->cell_buf += decode_entity(s);
+    }
     return 0;
   }
   if (type == MD_TEXT_HTML) return 0;  // strip raw HTML

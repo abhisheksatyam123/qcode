@@ -247,6 +247,22 @@ int main() {
                 return !std::isspace(ch);
             }).base(), cmd.end());
 
+            if (cmd == "clear-queue" || cmd == "clearqueue" || cmd == "cq") {
+                prompt_input = "";
+                if (store.has_queued_prompt()) {
+                    const auto n = store.queue_size();
+                    store.clear_prompt_queue();
+                    store.add_toast(
+                        n == 1 ? "Cleared 1 queued prompt"
+                               : ("Cleared " + std::to_string(n) + " queued prompts"),
+                        "info", 1500);
+                } else {
+                    store.add_toast("No queued prompts to clear", "info", 1500);
+                }
+                screen.Post(Event::Custom);
+                return;
+            }
+
             if (cmd == "session" || cmd == "list") {
                 prompt_input = "";
                 session_entries = qcode::session::list_sessions_full();
@@ -648,18 +664,7 @@ int main() {
                 screen.Post(Event::Custom);
                 return true;
             }
-            // Queued prompts first: Esc cancels the queue without stopping the
-            // in-flight turn (Grok-style). A second Esc then aborts generation.
-            if (store.has_queued_prompt()) {
-                const auto n = store.queue_size();
-                store.clear_prompt_queue();
-                store.add_toast(
-                    n == 1 ? "Cleared 1 queued prompt"
-                           : ("Cleared " + std::to_string(n) + " queued prompts"),
-                    "info", 1200);
-                screen.Post(Event::Custom);
-                return true;
-            }
+
             // Abort takes priority over clearing the prompt while a turn runs
             // (or while a force-stopped worker is still finishing HTTP).
             if (generation.is_active()) {

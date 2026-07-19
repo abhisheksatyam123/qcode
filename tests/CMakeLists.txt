@@ -3,6 +3,8 @@
 add_executable(qcode_tests
     # Unit tests
     unit/openai_client_test.cpp
+    unit/markdown_test.cpp
+    unit/tool_timeout_test.cpp
     unit/openai_responses_test.cpp
     unit/anthropic_client_test.cpp
     unit/anthropic_request_builder_test.cpp

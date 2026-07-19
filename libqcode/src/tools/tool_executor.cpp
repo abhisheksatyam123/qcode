@@ -58,14 +58,18 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   context.messages = messages;
   if (options) {
     context.workspace = options->workspace;
-    context.abort_flag = options->abort_flag;
+  }
+  if (options && options->abort_flag) {
+    context.abort_flag = std::make_shared<std::atomic<bool>>(options->abort_flag->load());
+  } else {
+    context.abort_flag = std::make_shared<std::atomic<bool>>(false);
   }
 
   try {
     if (tool.is_async()) {
-      return execute_async_tool(tool_call, tool, context);
+      return execute_async_tool(tool_call, tool, context, options);
     } else {
-      return execute_sync_tool(tool_call, tool, context);
+      return execute_sync_tool(tool_call, tool, context, options);
     }
   } catch (const std::exception& e) {
     // Return error result instead of throwing to allow graceful handling
@@ -213,20 +217,84 @@ bool ToolExecutor::tool_exists(const std::string& tool_name,
   return tools.find(tool_name) != tools.end();
 }
 
+static std::chrono::milliseconds get_tool_timeout(const ToolCall& tool_call) {
+  if (tool_call.arguments.is_object() && tool_call.arguments.contains("timeout")) {
+    try {
+      auto t = tool_call.arguments["timeout"];
+      if (t.is_number()) {
+        int val = t.get<int>();
+        if (val > 0) {
+          return std::chrono::milliseconds(val);
+        }
+      }
+    } catch (...) {}
+  }
+  if (const char* e = std::getenv("QCODE_TOOL_TIMEOUT_MS")) {
+    try { return std::chrono::milliseconds(std::stoll(e)); } catch (...) {}
+  }
+  return std::chrono::minutes(5);
+}
+
 ToolResult ToolExecutor::execute_sync_tool(
     const ToolCall& tool_call,
     const Tool& tool,
-    const ToolExecutionContext& context) {
+    const ToolExecutionContext& context,
+    const GenerateOptions* options) {
   if (!tool.execute) {
     return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
                       std::string("Tool has no synchronous execute function"));
   }
 
+  auto exec_func = tool.execute.value();
+  auto args = tool_call.arguments;
+  auto ctx = context;
+
+  auto future = std::async(std::launch::async, [exec_func, args, ctx]() {
+    return exec_func(args, ctx);
+  });
+
+  const std::chrono::milliseconds timeout = get_tool_timeout(tool_call);
+  const auto start_time = std::chrono::steady_clock::now();
+  bool timed_out = false;
+  bool user_aborted = false;
+
+  while (true) {
+    if (future.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
+      break;
+    }
+    if (options && options->abort_flag && options->abort_flag->load()) {
+      user_aborted = true;
+      break;
+    }
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time);
+    if (elapsed >= timeout) {
+      timed_out = true;
+      break;
+    }
+  }
+
+  if (user_aborted || timed_out) {
+    if (context.abort_flag) {
+      context.abort_flag->store(true);
+    }
+    std::thread([f = std::move(future)]() mutable {
+      try { f.get(); } catch (...) {}
+    }).detach();
+
+    if (user_aborted) {
+      return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                        std::string("Tool execution aborted by user"));
+    } else {
+      LOG_WARN("ToolExecutor: tool '{}' timed out after {} ms", tool_call.tool_name, timeout.count());
+      return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                        std::string("Tool execution timed out after ") +
+                            std::to_string(timeout.count()) + " ms");
+    }
+  }
+
   try {
-    JsonValue result = tool.execute.value()(tool_call.arguments, context);
-    // Tool output is untrusted external text (command stdout, file content,
-    // etc.) and may contain invalid UTF-8; sanitize so it never breaks JSON
-    // serialization downstream (see base_provider_client request building).
+    JsonValue result = future.get();
     qcode::utils::sanitize_json_strings(result);
     return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
                       result);
@@ -237,17 +305,13 @@ ToolResult ToolExecutor::execute_sync_tool(
   }
 }
 
-static std::chrono::milliseconds async_tool_timeout() {
-  if (const char* e = std::getenv("QCODE_TOOL_TIMEOUT_MS")) {
-    try { return std::chrono::milliseconds(std::stoll(e)); } catch (...) {}
-  }
-  return std::chrono::minutes(5);
-}
+
 
 ToolResult ToolExecutor::execute_async_tool(
     const ToolCall& tool_call,
     const Tool& tool,
-    const ToolExecutionContext& context) {
+    const ToolExecutionContext& context,
+    const GenerateOptions* options) {
   if (!tool.execute_async) {
     return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
                       std::string("Tool has no asynchronous execute function"));
@@ -255,21 +319,49 @@ ToolResult ToolExecutor::execute_async_tool(
 
   try {
     auto future = tool.execute_async.value()(tool_call.arguments, context);
-    // Bound the wait so a hung async tool cannot block the tool loop forever.
-    const std::chrono::milliseconds timeout = async_tool_timeout();
-    if (future.wait_for(timeout) == std::future_status::ready) {
-      JsonValue result = future.get();
-      qcode::utils::sanitize_json_strings(result);
-      return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments, result);
+    const std::chrono::milliseconds timeout = get_tool_timeout(tool_call);
+    const auto start_time = std::chrono::steady_clock::now();
+    bool timed_out = false;
+    bool user_aborted = false;
+
+    while (true) {
+      if (future.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
+        break;
+      }
+      if (options && options->abort_flag && options->abort_flag->load()) {
+        user_aborted = true;
+        break;
+      }
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - start_time);
+      if (elapsed >= timeout) {
+        timed_out = true;
+        break;
+      }
     }
-    // Timed out: move the still-running future into a detached background
-    // thread (so its destructor does not block) and report the timeout.
-    std::thread([f = std::move(future)]() mutable {
-      try { f.get(); } catch (...) {}
-    }).detach();
-    return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
-                      std::string("Async tool execution timed out after ") +
-                          std::to_string(timeout.count()) + " ms");
+
+    if (user_aborted || timed_out) {
+      if (context.abort_flag) {
+        context.abort_flag->store(true);
+      }
+      std::thread([f = std::move(future)]() mutable {
+        try { f.get(); } catch (...) {}
+      }).detach();
+
+      if (user_aborted) {
+        return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                          std::string("Tool execution aborted by user"));
+      } else {
+        LOG_WARN("ToolExecutor: async tool '{}' timed out after {} ms", tool_call.tool_name, timeout.count());
+        return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                          std::string("Async tool execution timed out after ") +
+                              std::to_string(timeout.count()) + " ms");
+      }
+    }
+
+    JsonValue result = future.get();
+    qcode::utils::sanitize_json_strings(result);
+    return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments, result);
   } catch (const std::exception& e) {
     return ToolResult(
         tool_call.id, tool_call.tool_name, tool_call.arguments,

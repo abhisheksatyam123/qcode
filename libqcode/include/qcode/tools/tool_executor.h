@@ -34,11 +34,13 @@ class ToolExecutor {
  private:
   static ToolResult execute_sync_tool(const ToolCall& tool_call,
                                       const Tool& tool,
-                                      const ToolExecutionContext& context);
+                                      const ToolExecutionContext& context,
+                                      const GenerateOptions* options = nullptr);
 
   static ToolResult execute_async_tool(const ToolCall& tool_call,
                                        const Tool& tool,
-                                       const ToolExecutionContext& context);
+                                       const ToolExecutionContext& context,
+                                       const GenerateOptions* options = nullptr);
 
   static bool validate_json_schema(const JsonValue& data,
                                    const JsonValue& schema);
