@@ -16,6 +16,13 @@
 namespace qcode {
 namespace tui {
 
+// Debounced terminal size. Transient PTY size fluctuations (common during
+// heavy I/O such as long bash tool runs with streaming "working" messages)
+// would otherwise flip FTXUI's resize detection and the chat render cache key
+// every frame, forcing full-screen clear+repaint (visible flicker). This
+// commits to a new size only after it is observed stable for a few frames.
+ftxui::Dimensions stable_terminal_size();
+
 ftxui::Element render_logo();
 
 ftxui::Element render_view(

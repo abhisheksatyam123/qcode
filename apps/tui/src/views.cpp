@@ -288,7 +288,7 @@ ftxui::Element render_view(
             static std::string cached_session;
             static bool cached_thinking = false;
             static std::unordered_map<size_t, Element> message_cache;
-            const auto terminal_width = Terminal::Size().dimx;
+            const auto terminal_width = stable_terminal_size().dimx;
             if (cache_owner != state.messages_history.get() ||
                 history_size < cached_history_size ||
                 terminal_width != cached_width ||
@@ -793,6 +793,26 @@ ftxui::Element render_view(
     }
 
     return main_layout;
+}
+
+
+ftxui::Dimensions stable_terminal_size() {
+  static ftxui::Dimensions stable{0, 0};
+  static ftxui::Dimensions candidate{0, 0};
+  static int stable_frames = 0;
+  const auto current = ftxui::Terminal::Size();
+  if (current.dimx <= 0 || current.dimy <= 0) {
+    // Ignore bogus reads (e.g. PTY temporarily reports 0).
+    return stable;
+  }
+  if (current.dimx != candidate.dimx || current.dimy != candidate.dimy) {
+    candidate = current;
+    stable_frames = 0;
+  } else if (++stable_frames >= 2) {
+    stable = candidate;
+  }
+  if (stable.dimx == 0 && stable.dimy == 0) stable = candidate;
+  return stable;
 }
 
 }  // namespace tui

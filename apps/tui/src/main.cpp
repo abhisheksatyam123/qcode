@@ -227,9 +227,11 @@ int main() {
                     : "info",
                 1200);
             LOG_INFO("Main: prompt queued (queue_size={})", store.queue_size());
-            if (generation.is_busy() && !store.is_generating()) {
-                generation.request_abort();
-            }
+            // Stop the current turn after its current tool output is pushed so
+            // the queued prompt actually runs next (instead of waiting for the
+            // whole agent loop to finish and stalling in the queue forever).
+            // The agent loop checks abort_flag between tool steps.
+            generation.request_abort();
             prompt_input = "";
             *state.auto_scroll = true;
             return;
@@ -685,11 +687,12 @@ int main() {
                 return true;
             }
         }
-        // One-key retry after a failed / stopped turn (prompt must be empty).
+        // One-key retry / regenerate the last prompt (prompt must be empty).
+        // Works after a normal turn AND after an error/force-stop: the user
+        // message is already in history, so we resend without re-appending it.
         if (prompt_input.empty() && !show_model_select && !show_session_select &&
             !show_theme_select && !state.slash_suggestion_mode &&
-            !generation.is_active() && state.retry_available &&
-            *state.retry_available && state.last_user_prompt &&
+            !generation.is_active() && state.last_user_prompt &&
             !state.last_user_prompt->empty() &&
             (e == Event::Character('r') || e == Event::Character('R'))) {
             auto req = make_generation_request();
@@ -905,9 +908,10 @@ int main() {
     bool was_generating = store.is_generating();
     int previous_tab = state.tab_selected;
     auto renderer = Renderer(main_container, [&] {
-        // Track terminal height for mouse selection calculations
-        auto screen_box = ftxui::Terminal::Size();
-        state.terminal_height = screen_box.dimy;
+        // Track terminal height for mouse selection calculations. Use the
+        // debounced stable size so transient PTY size churn during long bash
+        // tool runs does not flip FTXUI's resize detection / force clears.
+        state.terminal_height = qcode::tui::stable_terminal_size().dimy;
         // Drain bus events on the UI thread — this is where store mutations happen
         // (all bus event handlers run synchronously during drain)
         bus->drain();
