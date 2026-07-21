@@ -85,7 +85,6 @@ static ProviderInfo default_opencode_provider() {
     provider.api_url = "https://opencode.ai/zen/v1";
     provider.protocol = "chat_completions";
     provider.models = {
-        make_default_model("Tencent HY3 (Free)", "hy3-free", 262144, 64000),
         make_default_model("Nemotron 3 Ultra (Free)", "nemotron-3-ultra-free",
                            1000000, 128000, true, true),
         make_default_model("DeepSeek V4 Flash (Free)", "deepseek-v4-flash-free",
