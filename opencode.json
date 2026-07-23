@@ -1,0 +1,255 @@
+{
+  "provider": {
+    "opencode": {
+      "name": "OpenCode Zen (Free)",
+      "api": "https://opencode.ai/zen/v1",
+      "options": {},
+      "models": {
+        "nemotron-3-ultra-free": {
+          "name": "nemotron-3-ultra-free",
+          "tool_call": true,
+          "reasoning": true,
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          }
+        },
+        "deepseek-v4-flash-free": {
+          "name": "deepseek-v4-flash-free",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 65536
+          }
+        },
+        "laguna-s-2.1-free": {
+          "name": "laguna-s-2.1-free",
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 32768
+          }
+        },
+        "north-mini-code-free": {
+          "name": "north-mini-code-free",
+          "tool_call": true,
+          "limit": {
+            "context": 256000,
+            "output": 64000
+          }
+        },
+        "mimo-v2.5-free": {
+          "name": "mimo-v2.5-free",
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 32768
+          }
+        }
+      }
+    },
+    "antigravity": {
+      "name": "Antigravity (Google Internal)",
+      "options": {
+        "apiKey": "{env:ANTIGRAVITY_API_KEY}"
+      },
+      "models": {
+        "gemini-3-pro-high": {
+          "name": "Gemini 3 Pro High",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": {
+            "context": 2000000,
+            "output": 8192
+          }
+        },
+        "gemini-3-pro-low": {
+          "name": "Gemini 3 Pro Low",
+          "tool_call": true,
+          "limit": {
+            "context": 2000000,
+            "output": 8192
+          }
+        },
+        "gemini-3-flash": {
+          "name": "Gemini 3 Flash",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 8192
+          }
+        },
+        "gemini-3-flash-agent": {
+          "name": "Gemini 3 Flash Agent",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 8192
+          }
+        },
+        "gemini-2.5-flash": {
+          "name": "Gemini 2.5 Flash",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 8192
+          }
+        },
+        "gemini-2.5-flash-lite": {
+          "name": "Gemini 2.5 Flash Lite",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 8192
+          }
+        },
+        "gemini-2.5-pro": {
+          "name": "Gemini 2.5 Pro",
+          "tool_call": true,
+          "limit": {
+            "context": 2000000,
+            "output": 8192
+          }
+        },
+        "claude-opus-4-6-thinking": {
+          "name": "Claude Opus 4.6 Thinking",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "claude-sonnet-4-6": {
+          "name": "Claude Sonnet 4.6",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        }
+      }
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "options": {
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      },
+      "models": {
+        "poolside/laguna-s-2.1:free": {
+          "name": "Poolside: Laguna S 2.1 (free)",
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 32768
+          }
+        },
+        "poolside/laguna-xs-2.1:free": {
+          "name": "Poolside: Laguna XS 2.1 (free)",
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 32768
+          }
+        },
+        "nvidia/nemotron-3-ultra-550b-a55b:free": {
+          "name": "NVIDIA: Nemotron 3 Ultra (free)",
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 32768
+          }
+        },
+        "nvidia/nemotron-3-super-120b-a12b:free": {
+          "name": "NVIDIA: Nemotron 3 Super (free)",
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 32768
+          }
+        },
+        "cohere/north-mini-code:free": {
+          "name": "Cohere: North Mini Code (free)",
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 32768
+          }
+        }
+      }
+    },
+    "cursor": {
+      "name": "Cursor (CLI)",
+      "options": {
+        "apiKey": "{env:CURSOR_API_KEY}"
+      },
+      "models": {
+        "cursor-grok-4.5-high": {
+          "name": "Cursor Grok 4.5",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "composer-2.5": {
+          "name": "Composer 2.5",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "composer-2.5-fast": {
+          "name": "Composer 2.5 Fast",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "gpt-5.6-sol-medium": {
+          "name": "GPT-5.6 Sol",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "gpt-5.6-terra-medium": {
+          "name": "GPT-5.6 Terra",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "gpt-5.6-luna-medium": {
+          "name": "GPT-5.6 Luna",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "claude-fable-5-high": {
+          "name": "Mythos - Fable 5",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "claude-fable-5-thinking-high": {
+          "name": "Mythos - Fable 5 Thinking High",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        }
+      }
+    }
+  }
+}
