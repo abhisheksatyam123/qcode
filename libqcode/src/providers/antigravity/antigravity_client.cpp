@@ -85,10 +85,10 @@ EmbeddingResult AntigravityClient::embeddings(const EmbeddingOptions&) {
 std::string AntigravityClient::provider_name() const { return "antigravity"; }
 
 std::vector<std::string> AntigravityClient::supported_models() const {
-  return {"gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro",
-          "gemini-3-flash", "gemini-3-flash-agent", "gemini-3-pro-low",
-          "gemini-3-pro-high", "claude-sonnet-4-6",
-          "claude-opus-4-6-thinking"};
+  return {"gemini-3-pro-high", "gemini-3-pro-low",
+          "gemini-3-flash", "gemini-3-flash-agent",
+          "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+          "claude-opus-4-6-thinking", "claude-sonnet-4-6"};
 }
 
 bool AntigravityClient::supports_model(const std::string& model_name) const {
