@@ -330,6 +330,12 @@ int main() {
     input |= CatchEvent([&](Event e) {
         // ── Model select popup ──
         if (show_model_select) {
+            if (e == Event::Escape) {
+                show_model_select = false;
+                model_query = "";
+                return true;
+            }
+
             std::vector<qcode::ModelEntry> filtered_model_entries;
             for (const auto& entry : model_entries) {
                 if (matches_query(entry.model_name, model_query) ||
@@ -337,6 +343,12 @@ int main() {
                     matches_query(entry.category, model_query)) {
                     filtered_model_entries.push_back(entry);
                 }
+            }
+
+            if (!filtered_model_entries.empty()) {
+                model_select_idx = std::clamp(model_select_idx, 0, static_cast<int>(filtered_model_entries.size()) - 1);
+            } else {
+                model_select_idx = 0;
             }
 
             if (e == Event::ArrowDown) {
@@ -352,7 +364,7 @@ int main() {
                 return true;
             }
             if (e == Event::Return) {
-                if (!filtered_model_entries.empty()) {
+                if (!filtered_model_entries.empty() && model_select_idx >= 0 && model_select_idx < static_cast<int>(filtered_model_entries.size())) {
                     auto& entry = filtered_model_entries[model_select_idx];
                     selected_provider = entry.provider_idx;
                     selected_model = entry.model_idx;
@@ -380,6 +392,12 @@ int main() {
 
         // ── Session select popup ──
         if (show_session_select) {
+            if (e == Event::Escape) {
+                show_session_select = false;
+                session_query = "";
+                return true;
+            }
+
             std::vector<qcode::session::SessionInfo> filtered_session_entries;
             for (const auto& entry : session_entries) {
                 if (matches_query(entry.title, session_query) ||
@@ -450,6 +468,12 @@ int main() {
 
         // ── Theme select popup ──
         if (show_theme_select) {
+            if (e == Event::Escape) {
+                show_theme_select = false;
+                theme_query = "";
+                return true;
+            }
+
             std::vector<qcode::ThemeEntry> filtered_theme_entries;
             for (const auto& entry : theme_entries) {
                 if (matches_query(entry.name, theme_query) ||

@@ -237,6 +237,65 @@ ftxui::Element render_view(
 
     Element body;
 
+    // ── Dynamic inline slash command / session autocomplete matching opencode ──
+    auto build_suggestions_panel = [&]() -> std::optional<Element> {
+        if (prompt_input.size() >= 9 && prompt_input.substr(0, 9) == "/session ") {
+            std::string filter_str = prompt_input.substr(9);
+            std::vector<std::pair<std::string, std::string>> matches;
+            for (const auto& session : session_entries) {
+                if (session.id.find(filter_str) != std::string::npos ||
+                    session.title.find(filter_str) != std::string::npos) {
+                    matches.emplace_back(session.id, session.title);
+                }
+            }
+            if (!matches.empty()) {
+                Elements rows;
+                rows.push_back(text(" Select Session to Load:") | bold | color(accent2(theme)));
+                rows.push_back(separatorLight() | color(accent(theme)));
+                for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
+                    bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
+                    std::string marker = active ? " ▶ " : "   ";
+                    auto row = hbox({
+                        text(marker + matches[i].first) | color(active ? accent2(theme) : Color::Default) | bold,
+                        text("  (" + matches[i].second + ")") | dim
+                    });
+                    if (active) {
+                        row = row | bgcolor(bg_popup()) | bold;
+                    }
+                    rows.push_back(row);
+                }
+                return vbox(std::move(rows)) | border | color(accent(theme));
+            }
+        } else if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
+            std::string filter_str = prompt_input.substr(1);
+            std::vector<SlashCommand> matches;
+            for (const auto& cmd : slash_commands) {
+                if (cmd.name.find(filter_str) != std::string::npos) {
+                    matches.push_back(cmd);
+                }
+            }
+            if (!matches.empty()) {
+                Elements rows;
+                rows.push_back(text(" Autocomplete Commands:") | bold | color(accent2(theme)));
+                rows.push_back(separatorLight() | color(accent(theme)));
+                for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
+                    bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
+                    std::string marker = active ? " ▶ " : "   ";
+                    auto row = hbox({
+                        text(marker + "/" + matches[i].name) | color(active ? accent2(theme) : Color::Default) | bold,
+                        text("  " + matches[i].description) | dim
+                    });
+                    if (active) {
+                        row = row | bgcolor(bg_popup()) | bold;
+                    }
+                    rows.push_back(row);
+                }
+                return vbox(std::move(rows)) | border | color(accent(theme));
+            }
+        }
+        return std::nullopt;
+    };
+
     // ── Tab 0: Chat ──
     if (state.tab_selected == 0) {
         bool empty = state.messages_history->empty();
@@ -248,12 +307,21 @@ ftxui::Element render_view(
                 input->Render() | yframe | size(HEIGHT, LESS_THAN, 6) | flex,
             }) | border | color(accent(theme));
 
+            Element prompt_box = prompt_bar;
+            auto suggestions = build_suggestions_panel();
+            if (suggestions) {
+                prompt_box = vbox({
+                    *suggestions,
+                    prompt_box
+                });
+            }
+
             body = vbox({
                 filler() | flex,
                 render_logo(),
                 text("") | size(HEIGHT, EQUAL, 1),
                 text("What can I help you build today?") | dim | hcenter,
-                prompt_bar | size(WIDTH, EQUAL, 80) | hcenter,
+                prompt_box | size(WIDTH, EQUAL, 80) | hcenter,
                 filler() | flex,
             }) | flex;
         } else {
@@ -424,68 +492,12 @@ ftxui::Element render_view(
                 });
             }
 
-            // Dynamic inline slash command / session autocomplete matching opencode
-            if (prompt_input.size() >= 9 && prompt_input.substr(0, 9) == "/session ") {
-                std::string filter_str = prompt_input.substr(9);
-                std::vector<std::pair<std::string, std::string>> matches;
-                for (const auto& session : session_entries) {
-                    if (session.id.find(filter_str) != std::string::npos ||
-                        session.title.find(filter_str) != std::string::npos) {
-                        matches.emplace_back(session.id, session.title);
-                    }
-                }
-                if (!matches.empty()) {
-                    Elements rows;
-                    rows.push_back(text(" Select Session to Load:") | bold | color(accent2(theme)));
-                    rows.push_back(separatorLight() | color(accent(theme)));
-                    for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
-                        bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
-                        std::string marker = active ? " ▶ " : "   ";
-                        auto row = hbox({
-                            text(marker + matches[i].first) | color(active ? accent2(theme) : Color::Default) | bold,
-                            text("  (" + matches[i].second + ")") | dim
-                        });
-                        if (active) {
-                            row = row | bgcolor(bg_popup()) | bold;
-                        }
-                        rows.push_back(row);
-                    }
-                    auto suggestions_panel = vbox(std::move(rows)) | border | color(accent(theme));
-                    prompt_box = vbox({
-                        suggestions_panel,
-                        prompt_box
-                    });
-                }
-            } else if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
-                std::string filter_str = prompt_input.substr(1);
-                std::vector<SlashCommand> matches;
-                for (const auto& cmd : slash_commands) {
-                    if (cmd.name.find(filter_str) != std::string::npos) {
-                        matches.push_back(cmd);
-                    }
-                }
-                if (!matches.empty()) {
-                    Elements rows;
-                    rows.push_back(text(" Autocomplete Commands:") | bold | color(accent2(theme)));
-                    rows.push_back(separatorLight() | color(accent(theme)));
-                    for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
-                        bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
-                        std::string marker = active ? " ▶ " : "   ";
-                        auto row = hbox({
-                            text(marker + "/" + matches[i].name) | color(active ? accent2(theme) : Color::Default) | bold,
-                            text("  " + matches[i].description) | dim
-                        });
-                        if (active) {
-                            row = row | bgcolor(bg_popup()) | bold;
-                        }
-                        rows.push_back(row);
-                    }
-                    auto suggestions_panel = vbox(std::move(rows)) | border | color(accent(theme));
-                    prompt_box = vbox({
-                        suggestions_panel,
-                        prompt_box
-                    });
-                }
+            auto suggestions = build_suggestions_panel();
+            if (suggestions) {
+                prompt_box = vbox({
+                    *suggestions,
+                    prompt_box
+                });
             }
 
             // Measure chat content height (in rendered lines) so scrolling uses a

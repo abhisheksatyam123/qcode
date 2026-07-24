@@ -1,4 +1,5 @@
 #include "views_pickers.h"
+#include <algorithm>
 
 namespace qcode {
 namespace tui {
@@ -27,7 +28,21 @@ ftxui::Element build_theme_popup(
     if (entries.empty()) {
         lines.push_back(text("  (no matches)") | dim);
     } else {
-        for (int i = 0; i < static_cast<int>(entries.size()); i++) {
+        const int total = static_cast<int>(entries.size());
+        select_idx = std::clamp(select_idx, 0, total - 1);
+
+        constexpr int MAX_VISIBLE = 12;
+        int window_start = 0;
+        if (select_idx >= MAX_VISIBLE) {
+            window_start = select_idx - MAX_VISIBLE + 1;
+        }
+        int window_end = std::min(total, window_start + MAX_VISIBLE);
+
+        if (window_start > 0) {
+            lines.push_back(text("  ▲ " + std::to_string(window_start) + " more themes above") | dim | color(accent(theme)));
+        }
+
+        for (int i = window_start; i < window_end; i++) {
             const auto& e = entries[i];
             bool active = (e.name == active_theme);
             std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
@@ -39,6 +54,10 @@ ftxui::Element build_theme_popup(
             else if (active)
                 line = line | color(accent2(theme));
             lines.push_back(line);
+        }
+
+        if (window_end < total) {
+            lines.push_back(text("  ▼ " + std::to_string(total - window_end) + " more themes below") | dim | color(accent(theme)));
         }
     }
 
@@ -72,11 +91,25 @@ ftxui::Element build_model_popup(
     if (entries.empty()) {
         lines.push_back(text("  (no matches)") | dim);
     } else {
+        const int total = static_cast<int>(entries.size());
+        select_idx = std::clamp(select_idx, 0, total - 1);
+
+        constexpr int MAX_VISIBLE = 12;
+        int window_start = 0;
+        if (select_idx >= MAX_VISIBLE) {
+            window_start = select_idx - MAX_VISIBLE + 1;
+        }
+        int window_end = std::min(total, window_start + MAX_VISIBLE);
+
+        if (window_start > 0) {
+            lines.push_back(text("  ▲ " + std::to_string(window_start) + " more models above") | dim | color(accent(theme)));
+        }
+
         std::string last_cat;
-        for (int i = 0; i < static_cast<int>(entries.size()); i++) {
-            auto& e = entries[i];
+        for (int i = window_start; i < window_end; i++) {
+            const auto& e = entries[i];
             if (e.category != last_cat) {
-                if (!last_cat.empty()) lines.push_back(text(""));
+                if (!last_cat.empty() || i > window_start) lines.push_back(text(""));
                 lines.push_back(text(" " + e.category) | bold | color(accent2(theme)));
                 last_cat = e.category;
             }
@@ -93,6 +126,10 @@ ftxui::Element build_model_popup(
             else if (active)
                 line = line | color(accent2(theme));
             lines.push_back(line);
+        }
+
+        if (window_end < total) {
+            lines.push_back(text("  ▼ " + std::to_string(total - window_end) + " more models below") | dim | color(accent(theme)));
         }
     }
 
@@ -115,22 +152,51 @@ ftxui::Element build_session_popup(
     lines.push_back(text(" Select Session") | bold | color(accent2(theme)));
     lines.push_back(separatorLight());
 
-    for (int i = 0; i < static_cast<int>(entries.size()); i++) {
-        const auto& e = entries[i];
-        bool active = (e.id == active_session_id);
-        std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
-        std::string line_text = marker + e.title;
-        if (e.id != e.title)
-            line_text += "  (" + e.id.substr(0, 8) + "...)";
-        if (!e.workspace.empty())
-            line_text += "  [" + e.workspace + "]";
+    // Search bar
+    lines.push_back(hbox({
+        text(" Find: ") | bold | color(accent(theme)),
+        text(query) | color(Color::White)
+    }));
+    lines.push_back(separatorLight());
 
-        auto line = text(line_text);
-        if (i == select_idx)
-            line = line | bgcolor(bg_popup()) | bold;
-        else if (active)
-            line = line | color(accent2(theme));
-        lines.push_back(line);
+    if (entries.empty()) {
+        lines.push_back(text("  (no matches)") | dim);
+    } else {
+        const int total = static_cast<int>(entries.size());
+        select_idx = std::clamp(select_idx, 0, total - 1);
+
+        constexpr int MAX_VISIBLE = 12;
+        int window_start = 0;
+        if (select_idx >= MAX_VISIBLE) {
+            window_start = select_idx - MAX_VISIBLE + 1;
+        }
+        int window_end = std::min(total, window_start + MAX_VISIBLE);
+
+        if (window_start > 0) {
+            lines.push_back(text("  ▲ " + std::to_string(window_start) + " more sessions above") | dim | color(accent(theme)));
+        }
+
+        for (int i = window_start; i < window_end; i++) {
+            const auto& e = entries[i];
+            bool active = (e.id == active_session_id);
+            std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
+            std::string line_text = marker + e.title;
+            if (e.id != e.title)
+                line_text += "  (" + e.id.substr(0, 8) + "...)";
+            if (!e.workspace.empty())
+                line_text += "  [" + e.workspace + "]";
+
+            auto line = text(line_text);
+            if (i == select_idx)
+                line = line | bgcolor(bg_popup()) | bold;
+            else if (active)
+                line = line | color(accent2(theme));
+            lines.push_back(line);
+        }
+
+        if (window_end < total) {
+            lines.push_back(text("  ▼ " + std::to_string(total - window_end) + " more sessions below") | dim | color(accent(theme)));
+        }
     }
 
     lines.push_back(separatorLight());
@@ -139,7 +205,6 @@ ftxui::Element build_session_popup(
     return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
            size(WIDTH, EQUAL, 72) | hcenter;
 }
-
 
 }  // namespace tui
 }  // namespace qcode
