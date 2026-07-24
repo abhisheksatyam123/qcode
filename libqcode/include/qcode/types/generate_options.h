@@ -142,6 +142,8 @@ struct GenerateResult {
            finish_reason == kFinishReasonToolCalls;
   }
 
+  explicit operator bool() const { return is_success(); }
+
   std::string error_message() const { return error.value_or(""); }
 
   bool has_tool_calls() const { return !tool_calls.empty(); }
