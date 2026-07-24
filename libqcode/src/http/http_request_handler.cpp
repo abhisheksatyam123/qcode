@@ -64,7 +64,8 @@ HttpConfig HttpRequestHandler::parse_base_url(const std::string& base_url) {
 GenerateResult HttpRequestHandler::post(const std::string& path,
                                         const httplib::Headers& headers,
                                         const std::string& body,
-                                        const std::string& content_type) {
+                                        const std::string& content_type,
+                                        retry::RetryCallback on_retry) {
   // Create a retry policy with the configured settings
   retry::RetryPolicy retry_policy(config_.retry_config);
 
@@ -81,7 +82,7 @@ GenerateResult HttpRequestHandler::post(const std::string& path,
   };
 
   try {
-    return retry_policy.execute_with_retry(execute_request, is_retryable);
+    return retry_policy.execute_with_retry(execute_request, is_retryable, on_retry);
   } catch (const retry::RetryError& e) {
     LOG_ERROR("Request failed after retries: {}", e.what());
     GenerateResult error_result(e.what());
@@ -158,10 +159,9 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
     }
   } catch (const std::exception& e) {
     LOG_ERROR("Exception in make_request: {}", e.what());
-    return GenerateResult(std::string("Request failed: ") + e.what());
-  } catch (...) {
-    LOG_ERROR("Unknown exception in make_request");
-    return GenerateResult("Request failed: Unknown error");
+    GenerateResult error_result("Exception: " + std::string(e.what()));
+    error_result.is_retryable = true;  // Exceptions (like network issues) are retryable
+    return error_result;
   }
 }
 

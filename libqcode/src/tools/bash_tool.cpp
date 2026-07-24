@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <regex>
 #include <sstream>
 #include <thread>
@@ -459,16 +460,32 @@ std::string BashTool::run_shell(const std::string& command,
       "If you truly need more inline text, request the smallest useful output budget (for bash, max_output_chars); large values can bloat context.";
 }
 
+static std::mutex g_bash_exec_mutex;
+
 JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& context) {
+  // Enforce strictly 1 bash tool command execution at a time process-wide.
+  std::unique_lock<std::mutex> lock(g_bash_exec_mutex);
+
+  std::string desc = args.value("description", "");
+
+  // If abort was requested while waiting for the lock, return immediately without launching shell.
+  if (context.abort_flag && context.abort_flag->load()) {
+    JsonValue result;
+    result["title"] = desc.empty() ? "bash" : desc;
+    result["output"] = "Error: Tool execution aborted by user";
+    result["metadata"]["exit"] = -1;
+    result["metadata"]["description"] = desc;
+    result["metadata"]["backgrounded"] = false;
+    return result;
+  }
+
   LOG_DEBUG("BashTool: exec_run timeout={}", args.value("timeout", 30000));
-  (void)context;
   std::string command = args.value("command", "");
   if (command.empty()) {
     JsonValue err;
     err["error"] = "mode=run requires command";
     return err;
   }
-  std::string desc = args.value("description", "");
   if (desc.empty()) {
     JsonValue err;
     err["error"] = "description is required for bash run (5-10 word purpose).";

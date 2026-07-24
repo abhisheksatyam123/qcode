@@ -19,6 +19,7 @@ add_executable(qcode_tests
     unit/bash_tool_test.cpp
     unit/tui_config_test.cpp
     unit/tui_bus_test.cpp
+    unit/retry_policy_test.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp

@@ -34,7 +34,8 @@ class HttpRequestHandler {
   GenerateResult post(const std::string& path,
                       const httplib::Headers& headers,
                       const std::string& body,
-                      const std::string& content_type = "application/json");
+                      const std::string& content_type = "application/json",
+                      retry::RetryCallback on_retry = nullptr);
 
   // Extracts host and SSL settings from a base URL
   static HttpConfig parse_base_url(const std::string& base_url);

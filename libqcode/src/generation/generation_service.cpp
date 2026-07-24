@@ -192,6 +192,20 @@ static void run_tools_generation_bus(
     step_opts.messages = step_messages;
     LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, step_messages.size());
     step_opts.max_steps = 1;
+    step_opts.on_retry = [&bus, &ctx](int attempt, int total_attempts,
+                                      std::chrono::milliseconds delay,
+                                      const std::string& err_msg) {
+      double secs = delay.count() / 1000.0;
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.1fs", secs);
+      std::string toast_msg = "⏳ Retrying attempt " + std::to_string(attempt) + "/" +
+                              std::to_string(total_attempts) + " in " + buf + ": " + err_msg;
+      bus.publish<contract::ErrorOccurred>({
+          .session_id = ctx.session_id,
+          .message = toast_msg,
+          .severity = "info"
+      });
+    };
 
     {
       LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);

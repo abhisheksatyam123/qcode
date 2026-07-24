@@ -448,6 +448,9 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
     if (state.history_window_start) *state.history_window_start = 0;
     if (state.auto_scroll) *state.auto_scroll = true;
     if (state.scroll_line) *state.scroll_line = INT_MAX;
+    if (state.tool_collapse_state) state.tool_collapse_state->clear();
+    if (state.tool_block_order) state.tool_block_order->clear();
+    if (state.tool_arrow_boxes) state.tool_arrow_boxes->clear();
     state.files_detail_open = false;
 }
 

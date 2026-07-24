@@ -91,5 +91,26 @@ TEST(BashToolTest, TruncatesAtValidUtf8Boundary) {
   unsetenv("QCODE_TOOL_OUTPUT_DIR");
 }
 
+TEST(BashToolTest, SerializesConcurrentExecutions) {
+  std::atomic<int> running_count{0};
+  std::atomic<bool> overlap_detected{false};
+
+  auto task = [&]() {
+    const JsonValue args = {
+        {"mode", "run"},
+        {"command", "sleep 0.05"},
+        {"description", "Concurrent test sleep"},
+    };
+    BashTool::execute(args, ToolExecutionContext{});
+  };
+
+  std::thread t1(task);
+  std::thread t2(task);
+  t1.join();
+  t2.join();
+
+  EXPECT_FALSE(overlap_detected.load());
+}
+
 }  // namespace
 }  // namespace qcode

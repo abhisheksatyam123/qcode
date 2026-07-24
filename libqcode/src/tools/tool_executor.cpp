@@ -88,7 +88,17 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
   std::vector<ToolResult> results;
   results.reserve(tool_calls.size());
 
-  if (!parallel) {
+  bool effective_parallel = parallel;
+  if (effective_parallel) {
+    for (const auto& call : tool_calls) {
+      if (call.tool_name == "bash") {
+        effective_parallel = false;
+        break;
+      }
+    }
+  }
+
+  if (!effective_parallel) {
     // Execute sequentially
     for (const auto& tool_call : tool_calls) {
       if (options && options->abort_flag && options->abort_flag->load()) {
