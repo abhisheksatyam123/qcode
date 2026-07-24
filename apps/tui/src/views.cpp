@@ -302,9 +302,11 @@ ftxui::Element render_view(
 
         if (empty) {
             // Home screen
+            int input_lines = std::max(1, (int)std::count(prompt_input.begin(), prompt_input.end(), '\n') + 1);
+            int input_height = std::min(input_lines, 6);
             auto prompt_bar = hbox({
                 text(" ❯ ") | color(accent2(theme)) | bold,
-                input->Render() | yframe | size(HEIGHT, LESS_THAN, 6) | flex,
+                input->Render() | yframe | size(HEIGHT, EQUAL, input_height) | flex,
             }) | border | color(accent(theme));
 
             Element prompt_box = prompt_bar;
@@ -475,10 +477,12 @@ ftxui::Element render_view(
             }
 
             // Clean input bar: prompt prefix + input; subtle queue hint when busy
+            int input_lines = std::max(1, (int)std::count(prompt_input.begin(), prompt_input.end(), '\n') + 1);
+            int input_height = std::min(input_lines, 6);
             Elements prompt_row = {
                 text(" ❯ ") | color(accent2(theme)) | bold,
-                // Wrap input render in a vertical frame constrained to max 6 lines for scrolling
-                input->Render() | yframe | size(HEIGHT, LESS_THAN, 6) | flex,
+                // Dynamically expand input height up to 6 lines as newlines/content grow
+                input->Render() | yframe | size(HEIGHT, EQUAL, input_height) | flex,
             };
             auto prompt_inner = hbox(std::move(prompt_row));
             Element prompt_box = prompt_inner | border | color(accent(theme));
