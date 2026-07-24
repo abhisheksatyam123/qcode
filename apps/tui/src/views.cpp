@@ -429,12 +429,20 @@ ftxui::Element render_view(
                     dim | hcenter);
             }
 
-            // Queued prompts appear at the end of the message list (unified pretty card block)
+            // Queued prompts appear at the end of the message list (Grok/Claude style cards)
             const auto* queue =
                 state.queued_prompt_texts ? state.queued_prompt_texts.get()
                                           : nullptr;
             if (queue && !queue->empty() && last >= history_size) {
-                Elements items;
+                Elements queue_cards;
+                queue_cards.push_back(text(""));
+                queue_cards.push_back(hbox({
+                    text(" ⏳ QUEUED PROMPTS ") | bold | color(queue_amber()),
+                    text(" (" + std::to_string(queue->size()) + " pending turn" + (queue->size() > 1 ? "s" : "") + ")") | bold | color(Color::White),
+                    text(" · Type /clear-queue to cancel") | dim | color(Color::GrayDark),
+                }));
+                queue_cards.push_back(text(""));
+
                 for (size_t qi = 0; qi < queue->size(); ++qi) {
                     std::string text_preview = (*queue)[qi];
                     
@@ -442,30 +450,28 @@ ftxui::Element render_view(
                     std::istringstream iss(text_preview);
                     std::string line;
                     while (std::getline(iss, line)) {
-                        card_lines.push_back(text("  " + line) | dim | color(Color::GrayLight));
+                        card_lines.push_back(text(" " + line) | color(Color::GrayLight));
                     }
-                    
-                    items.push_back(vbox({
+                    if (card_lines.empty()) {
+                        card_lines.push_back(text(" (empty prompt)") | dim);
+                    }
+
+                    auto card = vbox({
                         hbox({
-                            text(" #" + std::to_string(qi + 1) + " You") | bold | color(queue_amber()),
-                            text(" · queued") | dim | color(Color::GrayDark)
+                            text(" #" + std::to_string(qi + 1) + " ") | bold | bgcolor(queue_amber()) | color(Color::Black),
+                            text("  You") | bold | color(accent2(theme)),
+                            text(" · queued") | dim | color(queue_amber()),
+                            filler(),
+                            text("pending ") | dim | color(Color::GrayDark),
                         }),
+                        separatorLight() | color(Color::GrayDark),
                         vbox(std::move(card_lines)),
-                    }));
-                    
-                    if (qi + 1 < queue->size()) {
-                        items.push_back(separatorLight() | color(Color::GrayDark) | dim);
-                    }
+                    }) | borderRounded | color(queue_amber());
+
+                    queue_cards.push_back(std::move(card));
                 }
                 
-                msgs.push_back(vbox({
-                    text(""),
-                    hbox({
-                        text(" ⏳ QUEUE ") | bold | color(queue_amber()),
-                        text("· " + std::to_string(queue->size()) + " waiting · /clear-queue to cancel") | dim | color(Color::GrayDark),
-                    }),
-                    vbox(std::move(items)) | borderLight | color(queue_amber()) | dim,
-                }));
+                msgs.push_back(vbox(std::move(queue_cards)));
             }
 
             // Clean input bar: prompt prefix + input; subtle queue hint when busy
