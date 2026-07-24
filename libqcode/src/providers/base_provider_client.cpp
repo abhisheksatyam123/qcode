@@ -119,6 +119,12 @@ GenerateResult BaseProviderClient::generate_text_single_step(
   }
 }
 
+StreamResult BaseProviderClient::stream_text(const StreamOptions& options) {
+  (void)options;
+  LOG_ERROR("Streaming not implemented directly in BaseProviderClient");
+  return StreamResult();
+}
+
 EmbeddingResult BaseProviderClient::embeddings(
     const EmbeddingOptions& options) {
   LOG_DEBUG(
