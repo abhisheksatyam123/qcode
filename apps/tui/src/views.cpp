@@ -256,7 +256,7 @@ ftxui::Element render_view(
                     bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
                     std::string marker = active ? " ▶ " : "   ";
                     auto row = hbox({
-                        text(marker + matches[i].first) | color(active ? accent2(theme) : Color::Default) | bold,
+                        text(marker + matches[i].first) | color(active ? accent2(theme) : Color::White) | bold,
                         text("  (" + matches[i].second + ")") | dim
                     });
                     if (active) {
@@ -282,7 +282,7 @@ ftxui::Element render_view(
                     bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
                     std::string marker = active ? " ▶ " : "   ";
                     auto row = hbox({
-                        text(marker + "/" + matches[i].name) | color(active ? accent2(theme) : Color::Default) | bold,
+                        text(marker + "/" + matches[i].name) | color(active ? accent2(theme) : Color::White) | bold,
                         text("  " + matches[i].description) | dim
                     });
                     if (active) {
@@ -306,7 +306,7 @@ ftxui::Element render_view(
             int input_height = std::min(input_lines, 6);
             auto prompt_bar = hbox({
                 text(" ❯ ") | color(accent2(theme)) | bold,
-                input->Render() | yframe | size(HEIGHT, EQUAL, input_height) | flex,
+                input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
             }) | border | color(accent(theme));
 
             Element prompt_box = prompt_bar;
@@ -482,7 +482,7 @@ ftxui::Element render_view(
             Elements prompt_row = {
                 text(" ❯ ") | color(accent2(theme)) | bold,
                 // Dynamically expand input height up to 6 lines as newlines/content grow
-                input->Render() | yframe | size(HEIGHT, EQUAL, input_height) | flex,
+                input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
             };
             auto prompt_inner = hbox(std::move(prompt_row));
             Element prompt_box = prompt_inner | border | color(accent(theme));

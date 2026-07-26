@@ -161,9 +161,6 @@ TEST(RetryPolicyTest, WorksWithGenerateResult) {
   EXPECT_EQ(call_count, 2);
 }
 
-}  // namespace test
-}  // namespace qcode
-
 TEST(RetryPolicyTest, RetryCallbackInvokedWithDetails) {
   retry::RetryConfig config;
   config.max_retries = 2;
@@ -207,3 +204,6 @@ TEST(RetryPolicyTest, RetryCallbackInvokedWithDetails) {
   EXPECT_EQ(last_total, 3);
   EXPECT_EQ(last_err, "HTTP 429 error");
 }
+
+}  // namespace test
+}  // namespace qcode

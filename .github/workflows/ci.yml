@@ -41,6 +41,17 @@ jobs:
 
     - name: Check code formatting
       run: uv run scripts/format.py --check
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Verify WebUI build
+      working-directory: apps/webui
+      run: |
+        npm ci
+        npm run build
+
 
     - uses: lukka/get-cmake@latest
 

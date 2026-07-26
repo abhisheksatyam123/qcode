@@ -11,6 +11,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Enable ccache if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+endif()
+
 # Build options
 option(BUILD_TESTS "Build tests" OFF)
 option(BUILD_EXAMPLES "Build example applications" OFF)
@@ -18,6 +25,25 @@ option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(QCODE_BUILD_TUI "Build TUI application" ON)
 option(QCODE_BUILD_SERVER "Build headless server" ON)
 option(QCODE_BUILD_CLI "Build CLI client" ON)
+
+# Developer tooling options
+option(QCODE_ENABLE_WARNINGS "Enable strict compiler warnings" ON)
+option(QCODE_ENABLE_SANITIZERS "Enable Address and Undefined Behavior Sanitizers" OFF)
+
+if(QCODE_ENABLE_WARNINGS)
+    if(MSVC)
+        add_compile_options(/W4)
+    else()
+        add_compile_options(-Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
+if(QCODE_ENABLE_SANITIZERS)
+    if(NOT MSVC)
+        add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address,undefined)
+    endif()
+endif()
 
 set(HTTPLIB_COMPILE_DEFS
     CPPHTTPLIB_OPENSSL_SUPPORT=1
@@ -125,4 +151,6 @@ message(STATUS "  Build TUI: ${QCODE_BUILD_TUI}")
 message(STATUS "  Build Server: ${QCODE_BUILD_SERVER}")
 message(STATUS "  Build CLI: ${QCODE_BUILD_CLI}")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "  Strict warnings: ${QCODE_ENABLE_WARNINGS}")
+message(STATUS "  Sanitizers: ${QCODE_ENABLE_SANITIZERS}")
 message(STATUS "")
