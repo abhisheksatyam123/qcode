@@ -259,6 +259,54 @@ int main(int argc, char* argv[]) {
         res.set_content(j.dump(2), "application/json");
     });
 
+    // Model Performance & Telemetry List
+    svr.Get("/api/models/performance", [](const httplib::Request&, httplib::Response& res) {
+        auto summaries = qcode::session::list_all_model_performance_summaries();
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& s : summaries) {
+            j.push_back({
+                {"model_id", s.model_id},
+                {"provider", s.provider},
+                {"model_name", s.model_name},
+                {"architecture_info", s.architecture_info},
+                {"context_window", s.context_window},
+                {"output_limit", s.output_limit},
+                {"tool_call_supported", s.tool_call_supported},
+                {"multi_turn_reliable", s.multi_turn_reliable},
+                {"verified_benchmark", s.verified_benchmark},
+                {"recommended_for", s.recommended_for},
+                {"total_turns", s.total_turns},
+                {"successful_turns", s.successful_turns},
+                {"failed_turns", s.failed_turns},
+                {"tool_loop_failures", s.tool_loop_failures},
+                {"avg_latency_ms", s.avg_latency_ms},
+                {"positive_feedback_count", s.positive_feedback_count},
+                {"negative_feedback_count", s.negative_feedback_count},
+                {"success_rate", s.success_rate()}
+            });
+        }
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    // Model User Feedback
+    svr.Post("/api/models/feedback", [](const httplib::Request& req, httplib::Response& res) {
+        try {
+            auto body = nlohmann::json::parse(req.body);
+            std::string model_id = body.value("model_id", "");
+            std::string rating = body.value("rating", "up");
+            if (model_id.empty()) {
+                res.status = 400;
+                res.set_content(R"({"error":"model_id is required"})", "application/json");
+                return;
+            }
+            qcode::session::record_user_feedback(model_id, rating == "up");
+            res.set_content(R"({"status":"success"})", "application/json");
+        } catch (const std::exception& e) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid json"})", "application/json");
+        }
+    });
+
     // ── Helper to handle generation ──
     auto handle_generate = [&backend, &providers_list](const std::string& session_id, const std::string& req_body, httplib::Response& res) {
         // Parse request body

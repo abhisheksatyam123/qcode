@@ -2,6 +2,7 @@
 #include <qcode/config/config.h>
 #include <qcode/context/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
+#include <qcode/tools/tool_executor.h>
 #include <qcode/session/session_store.h>
 #include <qcode/contract/event.h>
 
@@ -71,7 +72,8 @@ static void run_tools_generation_bus(
     qcode::GenerateOptions options,
     bus::BusPort& bus,
     GenerationContext& ctx,
-    const std::function<bool(qcode::Client&)>& refresh_client) {
+    const std::function<bool(qcode::Client&)>& refresh_client = nullptr,
+    const std::string& provider_id = "") {
   auto assistant_text    = std::make_shared<std::string>();
   auto assistant_msg_idx = std::make_shared<int>(-1);
   auto tool_starts       = std::make_shared<
@@ -259,8 +261,12 @@ static void run_tools_generation_bus(
         }
         response_messages.push_back(qcode::Message::assistant_with_tools(step_res.text, tool_parts));
 
+        // Execute tool calls to produce tool results
+        std::vector<qcode::ToolResult> executed_results =
+            qcode::ToolExecutor::execute_tools_with_options(step_res.tool_calls, options);
+
         std::vector<qcode::ToolResultContentPart> result_parts;
-        for (const auto& res : step_res.tool_results) {
+        for (const auto& res : executed_results) {
           result_parts.emplace_back(res.tool_call_id, res.result, !res.is_success());
           gen_result.tool_results.push_back(res);
         }
@@ -271,7 +277,7 @@ static void run_tools_generation_bus(
         // that return new data — max_steps remains the runaway cap.
         const auto progress_fp =
             tool_calls_fingerprint(step_res.tool_calls) + "#" +
-            tool_results_fingerprint(step_res.tool_results);
+            tool_results_fingerprint(executed_results);
         if (!progress_fp.empty() && progress_fp == last_progress_fp) {
           ++no_progress_repeat;
         } else {
@@ -387,10 +393,10 @@ static void run_tools_generation_bus(
       // Tool loop hit the step cap without a natural finish (model kept
       // requesting tools). Surface a clear, non-fatal warning instead of
       // presenting the pending placeholder as a successful answer.
-      std::string limit_msg = "Stopped: tool loop reached the maximum step limit ("
+      std::string limit_msg = "Stopped: tool loop reached "
+          + std::to_string(step) + " steps (maximum limit "
           + std::to_string(options.max_steps)
-          + ") without producing a final response. The model may be stuck "
-            "requesting tools.";
+          + ") without producing a final response. The model may be stuck requesting tools.";
       LOG_WARN("run_tools_generation_bus: {}", limit_msg);
       bus.publish<ErrorOccurred>({
           .session_id = ctx.session_id,
@@ -472,8 +478,10 @@ static void run_tools_generation_bus(
 static void run_stream_generation_bus(qcode::Client& client,
                                        qcode::GenerateOptions gen_options,
                                        bus::BusPort& bus,
-                                       GenerationContext& ctx) {
+                                       GenerationContext& ctx,
+                                       const std::string& provider_id = "") {
   qcode::StreamOptions stream_options(std::move(gen_options));
+  auto gen_start_time = std::chrono::high_resolution_clock::now();
   auto stream = client.stream_text(stream_options);
   LOG_DEBUG("run_stream_generation_bus: streaming model={} system={}", stream_options.model, stream_options.system.size());
 
@@ -484,6 +492,8 @@ static void run_stream_generation_bus(qcode::Client& client,
         .message = stream.error_message(),
         .severity = "error"
     });
+    double latency_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - gen_start_time).count();
+    qcode::session::record_generation_turn(stream_options.model, provider_id, false, false, latency_ms);
     return;
   }
 
@@ -757,7 +767,7 @@ void run_generation_with_bus(
         return true;
       };
       run_tools_generation_bus(client, std::move(base_opts), bus, ctx,
-                               refresh_client);
+                               refresh_client, provider_id);
     } else {
       if (cursor_native_agent) {
         LOG_INFO("ChatBus: Cursor native agent stream (session_id={})",
@@ -767,7 +777,7 @@ void run_generation_with_bus(
             .status = "agent",
         });
       }
-      run_stream_generation_bus(client, std::move(base_opts), bus, ctx);
+      run_stream_generation_bus(client, std::move(base_opts), bus, ctx, provider_id);
     }
 
     // Nested helpers usually publish idle themselves; a second idle from the

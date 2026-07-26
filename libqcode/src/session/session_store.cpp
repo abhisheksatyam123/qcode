@@ -142,7 +142,7 @@ void init_database() {
             sqlite3_finalize(vstmt);
         }
     }
-    const int kSchemaVersion = 2;
+    const int kSchemaVersion = 3;
     if (user_version < kSchemaVersion) {
         char* err_msg = nullptr;
         if (sqlite3_exec(db, "BEGIN;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
@@ -197,8 +197,44 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
+    // ── Migration v2 → v3: add model_capabilities and model_runtime_stats tables ──
+    if (user_version < 3) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        const char* schema_cap =
+            "CREATE TABLE IF NOT EXISTS model_capabilities ("
+            "  model_id TEXT PRIMARY KEY,"
+            "  provider TEXT NOT NULL,"
+            "  model_name TEXT NOT NULL,"
+            "  architecture_info TEXT DEFAULT '',"
+            "  context_window INTEGER DEFAULT 0,"
+            "  output_limit INTEGER DEFAULT 0,"
+            "  tool_call_supported INTEGER DEFAULT 1,"
+            "  multi_turn_reliable INTEGER DEFAULT 1,"
+            "  verified_benchmark TEXT DEFAULT '',"
+            "  recommended_for TEXT DEFAULT ''"
+            ");";
+        sqlite3_exec(db, schema_cap, nullptr, nullptr, nullptr);
+
+        const char* schema_rt =
+            "CREATE TABLE IF NOT EXISTS model_runtime_stats ("
+            "  model_id TEXT PRIMARY KEY,"
+            "  total_turns INTEGER DEFAULT 0,"
+            "  successful_turns INTEGER DEFAULT 0,"
+            "  failed_turns INTEGER DEFAULT 0,"
+            "  tool_loop_failures INTEGER DEFAULT 0,"
+            "  avg_latency_ms REAL DEFAULT 0.0,"
+            "  positive_feedback_count INTEGER DEFAULT 0,"
+            "  negative_feedback_count INTEGER DEFAULT 0,"
+            "  last_used INTEGER DEFAULT 0"
+            ");";
+        sqlite3_exec(db, schema_rt, nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 3;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    }
+
     LOG_INFO("SQLite: database opened successfully at {}", path);
     sqlite3_close(db);
+    seed_model_capabilities_if_needed();
 }
 
 std::string create_new_session(const std::string& provider, const std::string& model,
@@ -867,6 +903,251 @@ void delete_session(const std::string& session_id) {
 
     sqlite3_close(db);
 }
+
+
+
+
+void seed_model_capabilities_if_needed() {
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return;
+
+    struct SeedCap {
+        const char* model_id;
+        const char* provider;
+        const char* model_name;
+        const char* arch;
+        int context_window;
+        int output_limit;
+        int tool_call;
+        int multi_turn;
+        const char* bench;
+        const char* rec;
+    };
+
+    static const SeedCap kDefaults[] = {
+        {"nemotron-3-ultra-free", "opencode", "Nemotron 3 Ultra (Free)", "NVIDIA 550B MoE (55B Active)", 1000000, 128000, 1, 1, "Frontier Orchestration / 1M Context", "Massive Repository Context (1M) & Deep Reasoning"},
+        {"deepseek-v4-flash-free", "opencode", "DeepSeek V4 Flash (Free)", "DeepSeek 284B MoE (13B Active)", 1000000, 65536, 1, 1, "High Function-Calling Fidelity", "Iterative Fast Multi-Turn Agent Tool Loops"},
+        {"laguna-s-2.1-free", "opencode", "Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 128000, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Code Diffs & Precise File Modifications"},
+        {"north-mini-code-free", "opencode", "North Mini Code (Free)", "Cohere 30B MoE (3B Active)", 256000, 64000, 1, 1, "Cohere Agentic Coding Debut", "Terminal Commands & Quick Shell Scripts"},
+        {"mimo-v2.5-free", "opencode", "MiMo V2.5 (Free)", "Xiaomi MoE Instruction Model", 128000, 32768, 1, 0, "General Agentic Benchmark", "General Chat & Single-turn Instructions"},
+        {"big-pickle", "opencode", "Big Pickle (Free)", "Community High-Payload Model", 512000, 32768, 1, 0, "Experimental High Context", "Large Text Ingestion & Bulk Payload Inspection"},
+
+        {"claude-opus-4-6-thinking", "antigravity", "Claude Opus 4.6 Thinking", "Anthropic Reasoning Model", 200000, 8192, 1, 1, "SWE-bench Verified ~74.5%", "Complex Multi-File Refactoring & Architect Tasks"},
+        {"claude-sonnet-4-6", "antigravity", "Claude Sonnet 4.6", "Anthropic Frontier Model", 200000, 8192, 1, 1, "SWE-bench Verified ~72.7%", "Production Agentic Workflows & Coding"},
+        {"gemini-3.1-pro-low", "antigravity", "Gemini 3.1 Pro", "Google DeepMind Dense/MoE", 2000000, 65536, 1, 1, "Top Tier (>60% SWE-bench)", "2M Context System Architecture & Large Repo Analysis"},
+        {"gemini-3.6-flash-high", "antigravity", "Gemini 3.6 Flash", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "High-Speed Agent Tools & Web Workflows"},
+
+        {"poolside/laguna-s-2.1:free", "openrouter", "Poolside Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Iterative Code Modifications & Diffs"},
+        {"nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter", "Nemotron 3 Ultra 550B (Free)", "NVIDIA 550B MoE (55B Active)", 1000000, 65536, 1, 1, "Frontier MoE 1M Context", "Deep Reasoning & Large File Inspection"},
+        {"cohere/north-mini-code:free", "openrouter", "Cohere North Mini Code (Free)", "Cohere 30B MoE (3B Active)", 256000, 32768, 1, 1, "Cohere Debut Sparse MoE", "Fast Command Execution & Auto-complete"}
+    };
+
+    const char* sql_insert =
+        "INSERT INTO model_capabilities ("
+        "  model_id, provider, model_name, architecture_info, context_window, output_limit, "
+        "  tool_call_supported, multi_turn_reliable, verified_benchmark, recommended_for"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(model_id) DO UPDATE SET "
+        "  provider=excluded.provider, "
+        "  model_name=excluded.model_name, "
+        "  architecture_info=excluded.architecture_info, "
+        "  context_window=excluded.context_window, "
+        "  output_limit=excluded.output_limit, "
+        "  tool_call_supported=excluded.tool_call_supported, "
+        "  multi_turn_reliable=excluded.multi_turn_reliable, "
+        "  verified_benchmark=excluded.verified_benchmark, "
+        "  recommended_for=excluded.recommended_for;";
+
+    for (const auto& item : kDefaults) {
+        sqlite3_stmt* stmt = nullptr;
+        if (prepare_stmt(db, sql_insert, &stmt)) {
+            sqlite3_bind_text(stmt, 1, item.model_id, -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt, 2, item.provider, -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt, 3, item.model_name, -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt, 4, item.arch, -1, SQLITE_STATIC);
+            sqlite3_bind_int(stmt, 5, item.context_window);
+            sqlite3_bind_int(stmt, 6, item.output_limit);
+            sqlite3_bind_int(stmt, 7, item.tool_call);
+            sqlite3_bind_int(stmt, 8, item.multi_turn);
+            sqlite3_bind_text(stmt, 9, item.bench, -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt, 10, item.rec, -1, SQLITE_STATIC);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
+    }
+
+    sqlite3_close(db);
+}
+
+void record_generation_turn(const std::string& model_id, const std::string& provider,
+                            bool success, bool is_loop_failure, double latency_ms) {
+    if (model_id.empty()) return;
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return;
+
+    // Ensure model_capabilities entry exists
+    const char* sql_ensure_cap =
+        "INSERT INTO model_capabilities (model_id, provider, model_name) VALUES (?, ?, ?) "
+        "ON CONFLICT(model_id) DO NOTHING;";
+    sqlite3_stmt* stmt_cap = nullptr;
+    if (prepare_stmt(db, sql_ensure_cap, &stmt_cap)) {
+        sqlite3_bind_text(stmt_cap, 1, model_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt_cap, 2, provider.empty() ? "opencode" : provider.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt_cap, 3, model_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt_cap);
+        sqlite3_finalize(stmt_cap);
+    }
+
+    long long now = static_cast<long long>(std::time(nullptr));
+    const char* sql_upsert =
+        "INSERT INTO model_runtime_stats ("
+        "  model_id, total_turns, successful_turns, failed_turns, tool_loop_failures, avg_latency_ms, last_used"
+        ") VALUES (?, 1, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(model_id) DO UPDATE SET "
+        "  avg_latency_ms = (avg_latency_ms * total_turns + excluded.avg_latency_ms) / (total_turns + 1), "
+        "  total_turns = total_turns + 1, "
+        "  successful_turns = successful_turns + excluded.successful_turns, "
+        "  failed_turns = failed_turns + excluded.failed_turns, "
+        "  tool_loop_failures = tool_loop_failures + excluded.tool_loop_failures, "
+        "  last_used = excluded.last_used;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql_upsert, &stmt)) {
+        sqlite3_bind_text(stmt, 1, model_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 2, success ? 1 : 0);
+        sqlite3_bind_int(stmt, 3, success ? 0 : 1);
+        sqlite3_bind_int(stmt, 4, is_loop_failure ? 1 : 0);
+        sqlite3_bind_double(stmt, 5, latency_ms);
+        sqlite3_bind_int64(stmt, 6, now);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
+}
+
+void record_user_feedback(const std::string& model_id, bool is_positive) {
+    if (model_id.empty()) return;
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return;
+
+    const char* sql_upsert =
+        "INSERT INTO model_runtime_stats ("
+        "  model_id, positive_feedback_count, negative_feedback_count"
+        ") VALUES (?, ?, ?) "
+        "ON CONFLICT(model_id) DO UPDATE SET "
+        "  positive_feedback_count = positive_feedback_count + excluded.positive_feedback_count, "
+        "  negative_feedback_count = negative_feedback_count + excluded.negative_feedback_count;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql_upsert, &stmt)) {
+        sqlite3_bind_text(stmt, 1, model_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 2, is_positive ? 1 : 0);
+        sqlite3_bind_int(stmt, 3, is_positive ? 0 : 1);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
+}
+
+ModelPerformanceSummary get_model_performance_summary(const std::string& model_id, const std::string& provider) {
+    ModelPerformanceSummary summary;
+    summary.model_id = model_id;
+    summary.provider = provider;
+    if (model_id.empty()) return summary;
+
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return summary;
+
+    const char* sql =
+        "SELECT c.model_id, c.provider, c.model_name, c.architecture_info, c.context_window, c.output_limit, "
+        "       c.tool_call_supported, c.multi_turn_reliable, c.verified_benchmark, c.recommended_for, "
+        "       COALESCE(r.total_turns, 0), COALESCE(r.successful_turns, 0), COALESCE(r.failed_turns, 0), "
+        "       COALESCE(r.tool_loop_failures, 0), COALESCE(r.avg_latency_ms, 0.0), "
+        "       COALESCE(r.positive_feedback_count, 0), COALESCE(r.negative_feedback_count, 0), "
+        "       COALESCE(r.last_used, 0) "
+        "FROM model_capabilities c "
+        "LEFT JOIN model_runtime_stats r ON c.model_id = r.model_id "
+        "WHERE c.model_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, model_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            summary.model_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            summary.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            summary.model_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            summary.architecture_info = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            summary.context_window = sqlite3_column_int(stmt, 4);
+            summary.output_limit = sqlite3_column_int(stmt, 5);
+            summary.tool_call_supported = (sqlite3_column_int(stmt, 6) != 0);
+            summary.multi_turn_reliable = (sqlite3_column_int(stmt, 7) != 0);
+            summary.verified_benchmark = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+            summary.recommended_for = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+            summary.total_turns = sqlite3_column_int(stmt, 10);
+            summary.successful_turns = sqlite3_column_int(stmt, 11);
+            summary.failed_turns = sqlite3_column_int(stmt, 12);
+            summary.tool_loop_failures = sqlite3_column_int(stmt, 13);
+            summary.avg_latency_ms = sqlite3_column_double(stmt, 14);
+            summary.positive_feedback_count = sqlite3_column_int(stmt, 15);
+            summary.negative_feedback_count = sqlite3_column_int(stmt, 16);
+            summary.last_used = sqlite3_column_int64(stmt, 17);
+        }
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
+    return summary;
+}
+
+std::vector<ModelPerformanceSummary> list_all_model_performance_summaries() {
+    std::vector<ModelPerformanceSummary> result;
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return result;
+
+    const char* sql =
+        "SELECT c.model_id, c.provider, c.model_name, c.architecture_info, c.context_window, c.output_limit, "
+        "       c.tool_call_supported, c.multi_turn_reliable, c.verified_benchmark, c.recommended_for, "
+        "       COALESCE(r.total_turns, 0), COALESCE(r.successful_turns, 0), COALESCE(r.failed_turns, 0), "
+        "       COALESCE(r.tool_loop_failures, 0), COALESCE(r.avg_latency_ms, 0.0), "
+        "       COALESCE(r.positive_feedback_count, 0), COALESCE(r.negative_feedback_count, 0), "
+        "       COALESCE(r.last_used, 0) "
+        "FROM model_capabilities c "
+        "LEFT JOIN model_runtime_stats r ON c.model_id = r.model_id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            ModelPerformanceSummary summary;
+            summary.model_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            summary.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            summary.model_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            summary.architecture_info = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            summary.context_window = sqlite3_column_int(stmt, 4);
+            summary.output_limit = sqlite3_column_int(stmt, 5);
+            summary.tool_call_supported = (sqlite3_column_int(stmt, 6) != 0);
+            summary.multi_turn_reliable = (sqlite3_column_int(stmt, 7) != 0);
+            summary.verified_benchmark = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+            summary.recommended_for = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+            summary.total_turns = sqlite3_column_int(stmt, 10);
+            summary.successful_turns = sqlite3_column_int(stmt, 11);
+            summary.failed_turns = sqlite3_column_int(stmt, 12);
+            summary.tool_loop_failures = sqlite3_column_int(stmt, 13);
+            summary.avg_latency_ms = sqlite3_column_double(stmt, 14);
+            summary.positive_feedback_count = sqlite3_column_int(stmt, 15);
+            summary.negative_feedback_count = sqlite3_column_int(stmt, 16);
+            summary.last_used = sqlite3_column_int64(stmt, 17);
+            result.push_back(summary);
+        }
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
+    return result;
+}
+
 
 } // namespace session
 } // namespace qcode

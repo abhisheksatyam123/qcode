@@ -82,9 +82,7 @@ struct SessionStats {
     int total_tokens = 0;
     double total_tool_time_ms = 0.0;
 };
-// Compute aggregate statistics for a session (token/tool totals come from the
-// per-generation live counters; historical totals are accumulated from any
-// stored counters, so the latest generation dominates).
+
 SessionStats get_session_stats(const std::string& session_id,
                                int live_tool_calls = 0,
                                double live_tool_time_ms = 0.0,
@@ -94,6 +92,51 @@ SessionStats get_session_stats(const std::string& session_id,
 
 // Delete a session and its associated messages
 void delete_session(const std::string& session_id);
+
+// ── Model Capabilities & Performance Telemetry ─────────────────────────
+struct ModelPerformanceSummary {
+    std::string model_id;
+    std::string provider;
+    std::string model_name;
+    std::string architecture_info;
+    int context_window = 0;
+    int output_limit = 0;
+    bool tool_call_supported = true;
+    bool multi_turn_reliable = true;
+    std::string verified_benchmark;
+    std::string recommended_for;
+
+    // Dynamic runtime telemetry
+    int total_turns = 0;
+    int successful_turns = 0;
+    int failed_turns = 0;
+    int tool_loop_failures = 0;
+    double avg_latency_ms = 0.0;
+    int positive_feedback_count = 0;
+    int negative_feedback_count = 0;
+    long long last_used = 0;
+
+    double success_rate() const {
+        if (total_turns <= 0) return 100.0;
+        return (static_cast<double>(successful_turns) / total_turns) * 100.0;
+    }
+};
+
+// Record a generation turn result in SQLite telemetry
+void record_generation_turn(const std::string& model_id, const std::string& provider,
+                            bool success, bool is_loop_failure, double latency_ms);
+
+// Record user feedback (thumbs up / down)
+void record_user_feedback(const std::string& model_id, bool is_positive);
+
+// Seed capabilities for known model set
+void seed_model_capabilities_if_needed();
+
+// Get capability + performance summary for a specific model
+ModelPerformanceSummary get_model_performance_summary(const std::string& model_id, const std::string& provider = "");
+
+// List capability + performance summaries for all tracked models
+std::vector<ModelPerformanceSummary> list_all_model_performance_summaries();
 
 } // namespace session
 } // namespace qcode
