@@ -52,6 +52,29 @@ using qcode::server::split_lines;
 using qcode::server::kMaxFsFileBytes;
 using qcode::server::resolve_session_workspace;
 using qcode::server::resolve_workspace_path;
+
+static std::string get_mime_type(const std::string& path) {
+    auto dot = path.rfind('.');
+    if (dot == std::string::npos) return "application/octet-stream";
+    std::string ext = path.substr(dot + 1);
+    for (auto& c : ext) c = std::tolower(static_cast<unsigned char>(c));
+    if (ext == "png") return "image/png";
+    if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
+    if (ext == "gif") return "image/gif";
+    if (ext == "svg") return "image/svg+xml";
+    if (ext == "webp") return "image/webp";
+    if (ext == "ico") return "image/x-icon";
+    if (ext == "bmp") return "image/bmp";
+    if (ext == "html" || ext == "htm") return "text/html; charset=utf-8";
+    if (ext == "css") return "text/css; charset=utf-8";
+    if (ext == "js" || ext == "mjs") return "application/javascript; charset=utf-8";
+    if (ext == "json") return "application/json; charset=utf-8";
+    if (ext == "xml") return "application/xml";
+    if (ext == "pdf") return "application/pdf";
+    if (ext == "txt" || ext == "log" || ext == "md") return "text/plain; charset=utf-8";
+    return "application/octet-stream";
+}
+
 using qcode::server::looks_binary;
 using qcode::server::TerminalSession;
 using qcode::server::create_terminal;
@@ -430,7 +453,7 @@ int main(int argc, char* argv[]) {
         // Generation runs in a background thread. The chunked provider
         // callback polls the event queue and writes events as they arrive,
         // giving true real-time streaming to the client.
-        res.set_chunked_content_provider("application/x-ndjson",
+        res.set_chunked_content_provider("application/x-ndjson; charset=utf-8",
             [session, &backend,
              provider, model, system_prompt, messages = std::move(messages),
              reasoning_mode](size_t offset, httplib::DataSink& sink) mutable -> bool
@@ -1357,9 +1380,10 @@ int main(int argc, char* argv[]) {
         if (looks_binary(content)) {
             res.status = 415;
             res.set_content(nlohmann::json({
-                {"error", "binary file not editable"},
+                {"error", "binary file"},
                 {"path", rel_norm},
-                {"size", static_cast<std::uint64_t>(sz)}
+                {"size", static_cast<std::uint64_t>(sz)},
+                {"is_binary", true}
             }).dump(), "application/json");
             return;
         }
@@ -1371,6 +1395,54 @@ int main(int argc, char* argv[]) {
             {"content", content}
         };
         res.set_content(j.dump(2), "application/json");
+    });
+
+    
+    // ── Workspace filesystem: raw file stream ──
+    // GET /session/:id/fs/raw?path=relative/file
+    svr.Get("/session/([^/]+)/fs/raw", [](const httplib::Request& req, httplib::Response& res) {
+        namespace fs = std::filesystem;
+        std::string sid = url_decode(req.matches[1]);
+        if (!qcode::session::is_valid_session_id(sid)) {
+            res.status = 400;
+            res.set_content("invalid session_id", "text/plain");
+            return;
+        }
+        if (!req.has_param("path") || req.get_param_value("path").empty()) {
+            res.status = 400;
+            res.set_content("path required", "text/plain");
+            return;
+        }
+        std::string rel = req.get_param_value("path");
+        while (rel.rfind("./", 0) == 0) rel = rel.substr(2);
+
+        std::string ws = resolve_session_workspace(sid);
+        std::string abs, rel_norm;
+        std::string err = resolve_workspace_path(ws, rel, abs, rel_norm);
+        if (!err.empty()) {
+            res.status = 400;
+            res.set_content(err, "text/plain");
+            return;
+        }
+
+        std::error_code ec;
+        if (!fs::exists(abs, ec) || !fs::is_regular_file(abs, ec)) {
+            res.status = 404;
+            res.set_content("not a file", "text/plain");
+            return;
+        }
+
+        std::ifstream in(abs, std::ios::binary);
+        if (!in) {
+            res.status = 500;
+            res.set_content("open failed", "text/plain");
+            return;
+        }
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        std::string content = ss.str();
+        std::string mime = get_mime_type(rel_norm);
+        res.set_content(content, mime);
     });
 
     // ── Workspace filesystem: write file ──

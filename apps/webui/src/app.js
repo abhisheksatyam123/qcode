@@ -1,3 +1,20 @@
+// ── SVG Icons ──
+const SVG_ICONS = {
+  chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+  terminal: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+  folder: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+  file: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`,
+  user: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+  assistant: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg>`,
+  tool: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
+  reasoning: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`,
+  rename: `<svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`,
+  delete: `<svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
+  split: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>`,
+  tab: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>`,
+  system: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`
+};
+
 
 function openMobileSidebar() {
   const sidebar = document.getElementById('sidebar');
@@ -39,7 +56,13 @@ const state = {
   fsDir: '',               // relative path of current directory
   fsOpenPath: null,        // relative path of open file
   fsSavedContent: '',      // last loaded/saved content
-  fsDirty: false
+  fsDirty: false,
+  fsViewMode: 'placeholder', // 'placeholder' | 'code' | 'markdown' | 'image' | 'binary' | 'editor'
+  fsMdMode: 'preview',       // 'preview' | 'code'
+  fsLineWrap: false,
+  fsFilterText: '',
+  fsMobileView: 'browser',   // 'browser' | 'viewer'
+  fsRawEntries: []
 };
 
 // ── DOM refs ──
@@ -69,14 +92,41 @@ const filesSubtabExplorer = document.getElementById('files-subtab-explorer');
 const filesSubtabGit = document.getElementById('files-subtab-git');
 const fsBreadcrumb = document.getElementById('fs-breadcrumb');
 const fsListing = document.getElementById('fs-listing');
-const fsEditor = document.getElementById('fs-editor');
+const fsFilterInput = document.getElementById('fs-filter-input');
+const fsEditorPane = document.getElementById('fs-editor-pane');
+const fsBackBtn = document.getElementById('fs-back-btn');
+const fsFileIcon = document.getElementById('fs-file-icon');
 const fsEditorPath = document.getElementById('fs-editor-path');
-const fsEditorStatus = document.getElementById('fs-editor-status');
-const fsHighlight = document.getElementById('fs-highlight');
-const fsHighlightCode = document.getElementById('fs-highlight-code');
+const fsFileBadge = document.getElementById('fs-file-badge');
+const fsCopyPathBtn = document.getElementById('fs-copy-path-btn');
+const fsCopyContentBtn = document.getElementById('fs-copy-content-btn');
+const fsMdToggle = document.getElementById('fs-md-toggle');
+const fsMdPreviewBtn = document.getElementById('fs-md-preview-btn');
+const fsMdCodeBtn = document.getElementById('fs-md-code-btn');
+const fsWrapBtn = document.getElementById('fs-wrap-btn');
+const fsEditBtn = document.getElementById('fs-edit-btn');
+const fsRawBtn = document.getElementById('fs-raw-btn');
 const fsSaveBtn = document.getElementById('fs-save-btn');
 const fsCloseBtn = document.getElementById('fs-close-btn');
 const fsDirtyBadge = document.getElementById('fs-dirty-badge');
+
+const fsViewPlaceholder = document.getElementById('fs-view-placeholder');
+const fsViewCode = document.getElementById('fs-view-code');
+const fsLineNumbers = document.getElementById('fs-line-numbers');
+const fsCodeWrapper = document.getElementById('fs-code-wrapper');
+const fsCodeHljs = document.getElementById('fs-code-hljs');
+const fsViewMarkdown = document.getElementById('fs-view-markdown');
+const fsViewImage = document.getElementById('fs-view-image');
+const fsImagePreview = document.getElementById('fs-image-preview');
+const fsImageInfo = document.getElementById('fs-image-info');
+const fsViewBinary = document.getElementById('fs-view-binary');
+const fsBinaryText = document.getElementById('fs-binary-text');
+const fsBinaryDownloadLink = document.getElementById('fs-binary-download-link');
+const fsViewEditor = document.getElementById('fs-view-editor');
+const fsEditor = document.getElementById('fs-editor');
+const fsHighlight = document.getElementById('fs-highlight');
+const fsHighlightCode = document.getElementById('fs-highlight-code');
+const fsEditorStatus = document.getElementById('fs-editor-status');
 let fsHighlightTimer = null;
 let fsLang = '';
 const statsPanel = document.getElementById('stats-panel');
@@ -98,6 +148,7 @@ let pickerCleanup = null;
 
 // ── Terminal state ──
 let term = null;       // xterm instance
+let termFontSize = window.innerWidth <= 600 ? 12 : 13;
 let fitAddon = null;   // xterm fit addon
 let termId = null;     // server terminal session id
 let termPollTimer = null;
@@ -324,6 +375,37 @@ function setupEventListeners() {
   if (terminalCloseBtn) {
     terminalCloseBtn.addEventListener('click', closeTerminal);
   }
+  const termZoomOutBtn = document.getElementById('term-zoom-out-btn');
+  const termZoomInBtn = document.getElementById('term-zoom-in-btn');
+  if (termZoomOutBtn) {
+    termZoomOutBtn.addEventListener('click', () => changeTerminalFontSize(-1));
+  }
+  if (termZoomInBtn) {
+    termZoomInBtn.addEventListener('click', () => changeTerminalFontSize(1));
+  }
+  const virtualKeysContainer = document.getElementById('terminal-virtual-keys');
+  if (virtualKeysContainer) {
+    const keyMap = {
+      'Esc': '',
+      'Tab': '	',
+      'CtrlC': '',
+      'CtrlD': '',
+      'Up': '[A',
+      'Down': '[B',
+      'Left': '[D',
+      'Right': '[C'
+    };
+    virtualKeysContainer.addEventListener('click', (e) => {
+      const btn = e.target.closest('.term-key-btn');
+      if (!btn) return;
+      const keyName = btn.dataset.key;
+      const seq = keyMap[keyName];
+      if (seq) {
+        sendTerminalInput(seq);
+        if (term) term.focus();
+      }
+    });
+  }
   if (pauseBtn) {
     pauseBtn.addEventListener('click', () => pauseActiveGeneration());
   }
@@ -355,6 +437,62 @@ function setupEventListeners() {
   }
   if (fsCloseBtn) {
     fsCloseBtn.addEventListener('click', () => closeOpenFile());
+  }
+  if (fsFilterInput) {
+    fsFilterInput.addEventListener('input', (e) => {
+      state.fsFilterText = e.target.value;
+      renderFsListingEntries();
+    });
+  }
+  if (fsBackBtn) {
+    fsBackBtn.addEventListener('click', () => setFsMobileView('browser'));
+  }
+  if (fsCopyPathBtn) {
+    fsCopyPathBtn.addEventListener('click', () => {
+      if (!state.fsOpenPath) return;
+      navigator.clipboard.writeText(state.fsOpenPath);
+      showToast('Copied path: ' + state.fsOpenPath);
+    });
+  }
+  if (fsCopyContentBtn) {
+    fsCopyContentBtn.addEventListener('click', () => {
+      const text = state.fsViewMode === 'editor' ? fsEditor.value : state.fsSavedContent;
+      if (!text) return;
+      navigator.clipboard.writeText(text);
+      showToast('Copied file content');
+    });
+  }
+  if (fsMdPreviewBtn) {
+    fsMdPreviewBtn.addEventListener('click', () => {
+      state.fsMdMode = 'preview';
+      if (fsMdPreviewBtn) fsMdPreviewBtn.classList.add('active');
+      if (fsMdCodeBtn) fsMdCodeBtn.classList.remove('active');
+      if (state.fsOpenPath) updateMarkdownViewer(state.fsSavedContent);
+    });
+  }
+  if (fsMdCodeBtn) {
+    fsMdCodeBtn.addEventListener('click', () => {
+      state.fsMdMode = 'code';
+      if (fsMdCodeBtn) fsMdCodeBtn.classList.add('active');
+      if (fsMdPreviewBtn) fsMdPreviewBtn.classList.remove('active');
+      if (state.fsOpenPath) updateMarkdownViewer(state.fsSavedContent);
+    });
+  }
+  if (fsWrapBtn) {
+    fsWrapBtn.addEventListener('click', () => {
+      state.fsLineWrap = !state.fsLineWrap;
+      fsWrapBtn.classList.toggle('active', state.fsLineWrap);
+      if (fsCodeWrapper) fsCodeWrapper.classList.toggle('wrap-lines', state.fsLineWrap);
+      if (fsEditor) fsEditor.wrap = state.fsLineWrap ? 'on' : 'off';
+    });
+  }
+  if (fsEditBtn) {
+    fsEditBtn.addEventListener('click', () => toggleFsEditMode());
+  }
+  if (fsCodeWrapper && fsLineNumbers) {
+    fsCodeWrapper.addEventListener('scroll', () => {
+      fsLineNumbers.scrollTop = fsCodeWrapper.scrollTop;
+    });
   }
   if (fsEditor) {
     fsEditor.addEventListener('input', () => {
@@ -422,7 +560,7 @@ function setupEventListeners() {
 // ── Status Bar ──
 function updateStatusBar() {
   statusSession.textContent = state.sessionTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
-  statusWorkspace.textContent = state.sessionWorkspace ? '📁 ' + state.sessionWorkspace : '';
+  statusWorkspace.textContent = state.sessionWorkspace ? SVG_ICONS.folder + ' ' + state.sessionWorkspace : '';
 }
 
 function updateConnectionStatus() {
@@ -497,6 +635,27 @@ function toggleTerminal() {
   }
 }
 
+function changeTerminalFontSize(delta) {
+  if (!term) return;
+  termFontSize = Math.min(24, Math.max(9, termFontSize + delta));
+  term.options.fontSize = termFontSize;
+  if (fitAddon) {
+    try {
+      fitAddon.fit();
+      sendResize(term.cols, term.rows);
+    } catch (e) {}
+  }
+}
+
+function sendTerminalInput(data) {
+  if (!termId) return;
+  fetch('/terminal/' + termId + '/input', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data })
+  }).catch(() => {});
+}
+
 async function startTerminal(workspace) {
   // Cleanup existing terminal
   if (term) { term.dispose(); term = null; }
@@ -517,10 +676,16 @@ async function startTerminal(workspace) {
     const data = await res.json();
     termId = data.id;
 
-    // Create xterm with Fira Code and fit addon
+    // Create xterm with optimized responsive font size & line height
+    termFontSize = window.innerWidth <= 600 ? 12 : 13;
     term = new Terminal({
-      fontFamily: 'Fira Code, "DejaVu Sans Mono", "Segoe UI Emoji", monospace',
-      fontSize: 14,
+      fontFamily: '"Symbols Nerd Font", "SymbolsNerdFontMono", "FiraCode Nerd Font", "Fira Code", "DejaVu Sans Mono", "Cascadia Code", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace',
+      fontSize: termFontSize,
+      lineHeight: 1.25,
+      cursorBlink: true,
+      allowProposedApi: true,
+      customGlyphs: true,
+      rescaleOverlappingGlyphs: true,
       theme: { background: '#0d1117', foreground: '#c9d1d9', cursor: '#64ffda' }
     });
     fitAddon = new FitAddon.FitAddon();
@@ -551,11 +716,7 @@ async function startTerminal(workspace) {
 
     // Send input to server
     term.onData((data) => {
-      fetch('/terminal/' + termId + '/input', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data })
-      }).catch(() => {});
+      sendTerminalInput(data);
     });
 
     // Poll for output
@@ -632,10 +793,10 @@ function updateLayoutUI() {
     });
     if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
     if (tabChatBtn) tabChatBtn.classList.add('active');
-    if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Tab View';
+    if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">' + SVG_ICONS.tab + '</span> Tab View';
   } else {
     if (mainContentWrapperEl) mainContentWrapperEl.classList.remove('split-view');
-    if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">🔲</span> Split View';
+    if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">' + SVG_ICONS.split + '</span> Split View';
 
     // Exclusive tab mode: hide every pane, then show only the active one.
     if (mainEl) mainEl.classList.add('hidden');
@@ -1567,12 +1728,61 @@ function renderGitChanges(data) {
   });
 }
 
-// ── Workspace filesystem browser + editor ──
+// ── Workspace filesystem browser + viewer/editor (GitHub Mobile Style) ──
+
+function getFsFileIcon(path, isDir) {
+  if (isDir) return '📁';
+  const name = (path || '').split('/').pop() || '';
+  const lower = name.toLowerCase();
+  if (lower === 'cmakelists.txt' || lower.endsWith('.cmake')) return '⚙️';
+  if (lower === 'dockerfile' || lower.startsWith('dockerfile.')) return '🐳';
+  if (lower === 'makefile' || lower === 'gnumakefile') return '🛠️';
+  if (lower.startsWith('.git')) return '🌱';
+
+  const dot = lower.lastIndexOf('.');
+  const ext = dot >= 0 ? lower.slice(dot + 1) : '';
+
+  switch (ext) {
+    case 'js': case 'mjs': case 'cjs': case 'jsx': return '⚡';
+    case 'ts': case 'tsx': case 'mts': case 'cts': return '📘';
+    case 'py': case 'pyw': return '🐍';
+    case 'cpp': case 'cxx': case 'cc': case 'c': case 'h': case 'hpp': case 'hh': case 'hxx': return '⚙️';
+    case 'html': case 'htm': case 'xml': case 'svg': return '🌐';
+    case 'css': case 'scss': case 'less': return '🎨';
+    case 'json': case 'jsonc': case 'yaml': case 'yml': case 'toml': case 'ini': return '📋';
+    case 'md': case 'markdown': return '📝';
+    case 'sh': case 'bash': case 'zsh': case 'fish': return '💻';
+    case 'png': case 'jpg': case 'jpeg': case 'gif': case 'webp': case 'ico': case 'bmp': return '🖼️';
+    case 'rs': case 'go': case 'java': case 'kt': case 'swift': return '📦';
+    case 'pdf': return '📕';
+    default: return '📄';
+  }
+}
+
+function setFsMobileView(view) {
+  state.fsMobileView = view;
+  if (filesExplorer) {
+    filesExplorer.classList.toggle('mobile-show-viewer', view === 'viewer');
+  }
+}
+
+function setFsViewMode(mode) {
+  state.fsViewMode = mode;
+  if (fsViewPlaceholder) fsViewPlaceholder.classList.toggle('hidden', mode !== 'placeholder');
+  if (fsViewCode) fsViewCode.classList.toggle('hidden', mode !== 'code');
+  if (fsViewMarkdown) fsViewMarkdown.classList.toggle('hidden', mode !== 'markdown');
+  if (fsViewImage) fsViewImage.classList.toggle('hidden', mode !== 'image');
+  if (fsViewBinary) fsViewBinary.classList.toggle('hidden', mode !== 'binary');
+  if (fsViewEditor) fsViewEditor.classList.toggle('hidden', mode !== 'editor');
+}
 
 function setFsDirty(dirty) {
   state.fsDirty = !!dirty;
   if (fsDirtyBadge) fsDirtyBadge.classList.toggle('hidden', !state.fsDirty);
-  if (fsSaveBtn) fsSaveBtn.disabled = !state.fsOpenPath || !state.fsDirty;
+  if (fsSaveBtn) {
+    fsSaveBtn.disabled = !state.fsOpenPath || !state.fsDirty;
+    fsSaveBtn.classList.toggle('hidden', state.fsViewMode !== 'editor');
+  }
   if (fsEditorPath && state.fsOpenPath) {
     fsEditorPath.textContent = state.fsOpenPath + (state.fsDirty ? ' •' : '');
   }
@@ -1587,7 +1797,7 @@ function formatBytes(n) {
 function renderFsBreadcrumb(relPath) {
   if (!fsBreadcrumb) return;
   const parts = relPath ? relPath.split('/').filter(Boolean) : [];
-  let html = '<button type="button" class="fs-crumb" data-path="">workspace</button>';
+  let html = '<button type="button" class="fs-crumb" data-path="">root</button>';
   let acc = '';
   for (const part of parts) {
     acc = acc ? acc + '/' + part : part;
@@ -1618,17 +1828,24 @@ async function loadFsListing(relPath) {
     const res = await fetch('/session/' + state.sessionId + '/fs/list' + q);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || res.statusText || 'list failed');
-    renderFsListing(data);
+    state.fsRawEntries = Array.isArray(data.entries) ? data.entries : [];
+    renderFsListingEntries();
   } catch (e) {
     fsListing.innerHTML = '<div class="files-empty">Failed to list directory: ' + esc(e.message) + '</div>';
   }
 }
 
-function renderFsListing(data) {
+function renderFsListingEntries() {
   if (!fsListing) return;
-  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const filter = (state.fsFilterText || '').toLowerCase().trim();
+  let entries = state.fsRawEntries;
+
+  if (filter) {
+    entries = entries.filter(e => (e.name || '').toLowerCase().includes(filter));
+  }
+
   let html = '';
-  if (state.fsDir) {
+  if (state.fsDir && !filter) {
     const parent = state.fsDir.includes('/')
       ? state.fsDir.slice(0, state.fsDir.lastIndexOf('/'))
       : '';
@@ -1637,12 +1854,13 @@ function renderFsListing(data) {
       + '<span class="fs-name">..</span>'
       + '</button>';
   }
+
   if (entries.length === 0) {
-    html += '<div class="files-empty">Empty directory.</div>';
+    html += '<div class="files-empty">' + (filter ? 'No matching files.' : 'Empty directory.') + '</div>';
   } else {
     for (const e of entries) {
       const isDir = e.type === 'dir';
-      const icon = isDir ? '📁' : '📄';
+      const icon = getFsFileIcon(e.path, isDir);
       const size = (!isDir && e.size != null) ? '<span class="fs-size">' + formatBytes(e.size) + '</span>' : '';
       const active = (!isDir && state.fsOpenPath === e.path) ? ' active' : '';
       html += '<button type="button" class="fs-entry' + active + '" data-type="' + (isDir ? 'dir' : 'file')
@@ -1653,6 +1871,7 @@ function renderFsListing(data) {
         + '</button>';
     }
   }
+
   fsListing.innerHTML = html;
   fsListing.querySelectorAll('.fs-entry').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1662,6 +1881,103 @@ function renderFsListing(data) {
       else openFsFile(path);
     });
   });
+}
+
+function updateLineNumbers(codeText) {
+  if (!fsLineNumbers) return;
+  const count = (codeText || '').split('\n').length || 1;
+  let nums = '';
+  for (let i = 1; i <= count; i++) {
+    nums += i + '\n';
+  }
+  fsLineNumbers.textContent = nums;
+}
+
+function updateCodeViewer(content, lang) {
+  setFsViewMode('code');
+  updateLineNumbers(content);
+
+  if (fsCodeHljs) {
+    const engine = getHljs();
+    const knownLang = lang && engine && engine.getLanguage(lang) ? lang : '';
+    if (engine && knownLang) {
+      try {
+        fsCodeHljs.innerHTML = engine.highlight(content, { language: knownLang, ignoreIllegals: true }).value;
+      } catch (e) {
+        fsCodeHljs.textContent = content;
+      }
+    } else if (engine && content.length > 0 && content.length < 200000) {
+      try {
+        fsCodeHljs.innerHTML = engine.highlightAuto(content).value;
+      } catch (e) {
+        fsCodeHljs.textContent = content;
+      }
+    } else {
+      fsCodeHljs.textContent = content;
+    }
+  }
+
+  if (fsCodeWrapper) {
+    fsCodeWrapper.classList.toggle('wrap-lines', !!state.fsLineWrap);
+  }
+}
+
+function updateMarkdownViewer(content) {
+  if (state.fsMdMode === 'preview') {
+    setFsViewMode('markdown');
+    if (fsViewMarkdown) {
+      if (typeof marked !== 'undefined' && marked.parse) {
+        try {
+          fsViewMarkdown.innerHTML = marked.parse(content);
+        } catch (e) {
+          fsViewMarkdown.textContent = content;
+        }
+      } else {
+        fsViewMarkdown.textContent = content;
+      }
+    }
+  } else {
+    updateCodeViewer(content, 'markdown');
+  }
+}
+
+function updateImageViewer(relPath, size) {
+  setFsViewMode('image');
+  const rawUrl = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
+  if (fsImagePreview) {
+    fsImagePreview.src = rawUrl;
+    fsImagePreview.onload = () => {
+      if (fsImageInfo) {
+        fsImageInfo.textContent = fsImagePreview.naturalWidth + ' × ' + fsImagePreview.naturalHeight + ' px · ' + (size ? formatBytes(size) : '');
+      }
+    };
+  }
+}
+
+function updateBinaryViewer(relPath, size) {
+  setFsViewMode('binary');
+  const rawUrl = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
+  if (fsBinaryText) {
+    fsBinaryText.textContent = 'Binary file (' + (size ? formatBytes(size) : '') + ') cannot be displayed inline.';
+  }
+  if (fsBinaryDownloadLink) {
+    fsBinaryDownloadLink.href = rawUrl;
+  }
+}
+
+function toggleFsEditMode() {
+  if (!state.fsOpenPath) return;
+  if (state.fsViewMode === 'editor') {
+    const isMd = state.fsOpenPath.toLowerCase().endsWith('.md');
+    if (isMd) updateMarkdownViewer(state.fsSavedContent);
+    else updateCodeViewer(state.fsSavedContent, fsLang);
+    if (fsEditBtn) fsEditBtn.textContent = 'Edit';
+  } else {
+    setFsViewMode('editor');
+    setFsEditorContent(state.fsSavedContent, state.fsOpenPath);
+    if (fsEditBtn) fsEditBtn.textContent = 'Read';
+  }
+  setFsDirty(state.fsDirty);
 }
 
 async function confirmDiscardIfDirty() {
@@ -1718,17 +2034,13 @@ function scheduleFsHighlight() {
 }
 
 function getHljs() {
-  // CDN builds expose window.hljs; tolerate late load / alternate globals.
   if (typeof window !== 'undefined' && window.hljs) return window.hljs;
   if (typeof hljs !== 'undefined') return hljs;
   return null;
 }
 
 function applyFsPlainOverlay(source) {
-  // Monochrome overlay keeps caret/selection working when hljs can't highlight.
   fsHighlightCode.textContent = source;
-  // Browsers collapse a trailing newline inside <pre>/<code>; add one back so
-  // the last empty line still occupies space (matches textarea layout).
   if (source.endsWith('\n')) fsHighlightCode.appendChild(document.createTextNode('\n'));
   fsHighlightCode.className = 'hljs';
   fsEditor.classList.remove('fs-editor-plain');
@@ -1742,7 +2054,6 @@ function updateFsHighlight() {
   const engine = getHljs();
 
   if (plainMode) {
-    // Empty / closed: show textarea placeholder styling, hide overlay.
     fsEditor.classList.add('fs-editor-plain');
     fsEditor.classList.remove('fs-editor-highlighting');
     fsHighlightCode.textContent = '';
@@ -1750,12 +2061,8 @@ function updateFsHighlight() {
     return;
   }
 
-  // Highlight the exact editor text. Do not invent extra newlines in the
-  // source string — that desyncs overlay height from the textarea.
   const source = text;
-
   if (!engine) {
-    // No highlighter loaded — keep textarea text visible (not transparent).
     fsEditor.classList.add('fs-editor-plain');
     fsEditor.classList.remove('fs-editor-highlighting');
     fsHighlightCode.textContent = '';
@@ -1769,84 +2076,135 @@ function updateFsHighlight() {
     if (knownLang) {
       result = engine.highlight(source, { language: knownLang, ignoreIllegals: true });
     } else if (source.length > 0 && source.length < 200000) {
-      // Extension unknown — best-effort auto detect (skip huge files).
       result = engine.highlightAuto(source);
+    }
+    if (result && result.value) {
+      fsHighlightCode.innerHTML = result.value;
+      if (source.endsWith('\n')) fsHighlightCode.appendChild(document.createTextNode('\n'));
+      fsHighlightCode.className = 'hljs' + (result.language ? (' language-' + result.language) : '');
+      fsEditor.classList.remove('fs-editor-plain');
+      fsEditor.classList.add('fs-editor-highlighting');
     } else {
       applyFsPlainOverlay(source);
-      syncFsHighlightScroll();
-      return;
     }
-    fsHighlightCode.innerHTML = result.value + (source.endsWith('\n') ? '\n' : '');
-    fsHighlightCode.className = 'hljs language-' + (result.language || knownLang || 'plaintext');
-    fsEditor.classList.remove('fs-editor-plain');
-    fsEditor.classList.add('fs-editor-highlighting');
   } catch (e) {
-    console.warn('syntax highlight failed:', e);
     applyFsPlainOverlay(source);
   }
+}
+
+function setFsEditorContent(content, path) {
+  fsLang = detectFsLanguage(path);
+  if (fsEditor) {
+    fsEditor.value = content;
+    fsEditor.disabled = false;
+  }
+  updateFsHighlight();
   syncFsHighlightScroll();
 }
 
-function setFsEditorContent(text, path) {
-  fsLang = detectFsLanguage(path || '');
-  if (fsEditor) {
-    fsEditor.disabled = false;
-    fsEditor.value = text;
-    fsEditor.classList.remove('fs-editor-plain');
-    fsEditor.scrollTop = 0;
-    fsEditor.scrollLeft = 0;
-  }
-  updateFsHighlight();
-}
-
 function clearFsEditor() {
-  fsLang = '';
-  if (fsHighlightTimer) {
-    clearTimeout(fsHighlightTimer);
-    fsHighlightTimer = null;
-  }
   if (fsEditor) {
     fsEditor.value = '';
     fsEditor.disabled = true;
-    fsEditor.classList.add('fs-editor-plain');
-    fsEditor.classList.remove('fs-editor-highlighting');
   }
-  if (fsHighlightCode) {
-    fsHighlightCode.textContent = '';
-    fsHighlightCode.className = 'hljs';
-  }
+  state.fsOpenPath = null;
+  state.fsSavedContent = '';
+  setFsViewMode('placeholder');
+  if (fsFileIcon) fsFileIcon.textContent = '📄';
+  if (fsFileBadge) fsFileBadge.textContent = '';
+  if (fsCopyPathBtn) fsCopyPathBtn.disabled = true;
+  if (fsCopyContentBtn) fsCopyContentBtn.disabled = true;
+  if (fsWrapBtn) fsWrapBtn.disabled = true;
+  if (fsEditBtn) fsEditBtn.disabled = true;
+  if (fsRawBtn) fsRawBtn.classList.add('hidden');
+  if (fsMdToggle) fsMdToggle.classList.add('hidden');
+  updateFsHighlight();
 }
 
 async function openFsFile(relPath) {
   if (!relPath || !state.sessionId) return;
-  if (state.fsOpenPath === relPath && !state.fsDirty) return;
+  if (state.fsOpenPath === relPath && !state.fsDirty) {
+    setFsMobileView('viewer');
+    return;
+  }
   if (!(await confirmDiscardIfDirty())) return;
+
+  const name = relPath.split('/').pop() || '';
+  const lower = name.toLowerCase();
+  const ext = lower.lastIndexOf('.') >= 0 ? lower.slice(lower.lastIndexOf('.') + 1) : '';
+  const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'svg'].includes(ext);
+  const isMd = ext === 'md' || ext === 'markdown';
+
+  state.fsOpenPath = relPath;
+  fsLang = detectFsLanguage(relPath);
+
+  if (fsFileIcon) fsFileIcon.textContent = getFsFileIcon(relPath, false);
+  if (fsEditorPath) fsEditorPath.textContent = relPath;
+  if (fsCopyPathBtn) fsCopyPathBtn.disabled = false;
+  if (fsCopyContentBtn) fsCopyContentBtn.disabled = isImage;
+  if (fsWrapBtn) fsWrapBtn.disabled = false;
+  if (fsEditBtn) {
+    fsEditBtn.disabled = isImage;
+    fsEditBtn.textContent = 'Edit';
+  }
+  if (fsCloseBtn) fsCloseBtn.disabled = false;
+
+  const rawUrl = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
+  if (fsRawBtn) {
+    fsRawBtn.href = rawUrl;
+    fsRawBtn.classList.remove('hidden');
+  }
+
+  if (fsMdToggle) fsMdToggle.classList.toggle('hidden', !isMd);
+
+  if (fsListing) {
+    fsListing.querySelectorAll('.fs-entry').forEach((el) => {
+      el.classList.toggle('active', el.getAttribute('data-path') === state.fsOpenPath);
+    });
+  }
+
+  setFsMobileView('viewer');
+
+  if (isImage) {
+    state.fsSavedContent = '';
+    setFsDirty(false);
+    if (fsFileBadge) fsFileBadge.textContent = ext.toUpperCase();
+    updateImageViewer(relPath, null);
+    if (fsEditorStatus) fsEditorStatus.textContent = 'Image file';
+    return;
+  }
 
   if (fsEditorStatus) fsEditorStatus.textContent = 'Loading…';
   try {
-    const res = await fetch(
-      '/session/' + state.sessionId + '/fs/read?path=' + encodeURIComponent(relPath)
-    );
+    const res = await fetch('/session/' + state.sessionId + '/fs/read?path=' + encodeURIComponent(relPath));
     const data = await res.json().catch(() => ({}));
+
+    if (res.status === 415 || data.is_binary) {
+      state.fsSavedContent = '';
+      setFsDirty(false);
+      if (fsFileBadge) fsFileBadge.textContent = formatBytes(data.size || 0);
+      updateBinaryViewer(relPath, data.size);
+      if (fsEditorStatus) fsEditorStatus.textContent = 'Binary file';
+      return;
+    }
+
     if (!res.ok) throw new Error(data.error || res.statusText || 'read failed');
 
-    state.fsOpenPath = data.path || relPath;
     state.fsSavedContent = data.content || '';
     setFsEditorContent(state.fsSavedContent, state.fsOpenPath);
-    if (fsCloseBtn) fsCloseBtn.disabled = false;
-    if (fsEditorPath) fsEditorPath.textContent = state.fsOpenPath;
     setFsDirty(false);
-    if (fsEditorStatus) {
-      const sz = data.size != null ? formatBytes(data.size) : formatBytes(state.fsSavedContent.length);
-      const langLabel = fsLang || 'text';
-      fsEditorStatus.textContent = sz + ' · ' + langLabel;
+
+    const lineCount = (state.fsSavedContent.split('\n')).length;
+    const szStr = data.size != null ? formatBytes(data.size) : formatBytes(state.fsSavedContent.length);
+    if (fsFileBadge) fsFileBadge.textContent = szStr + ' · ' + lineCount + ' lines · ' + (fsLang || 'text');
+
+    if (isMd) {
+      updateMarkdownViewer(state.fsSavedContent);
+    } else {
+      updateCodeViewer(state.fsSavedContent, fsLang);
     }
-    // Highlight active row if listing includes this file.
-    if (fsListing) {
-      fsListing.querySelectorAll('.fs-entry').forEach((el) => {
-        el.classList.toggle('active', el.getAttribute('data-path') === state.fsOpenPath);
-      });
-    }
+
+    if (fsEditorStatus) fsEditorStatus.textContent = szStr + ' · ' + lineCount + ' lines · ' + (fsLang || 'text');
   } catch (e) {
     if (fsEditorStatus) fsEditorStatus.textContent = 'Error: ' + e.message;
     showToast('Open failed: ' + e.message);
@@ -1868,11 +2226,12 @@ async function saveOpenFile() {
     if (!res.ok) throw new Error(data.error || res.statusText || 'save failed');
     state.fsSavedContent = fsEditor.value;
     setFsDirty(false);
-    if (fsEditorStatus) {
-      const sz = data.size != null ? formatBytes(data.size) : formatBytes(state.fsSavedContent.length);
-      const langLabel = fsLang || 'text';
-      fsEditorStatus.textContent = 'Saved · ' + sz + ' · ' + langLabel;
-    }
+
+    const lineCount = (state.fsSavedContent.split('\n')).length;
+    const szStr = data.size != null ? formatBytes(data.size) : formatBytes(state.fsSavedContent.length);
+    if (fsFileBadge) fsFileBadge.textContent = szStr + ' · ' + lineCount + ' lines · ' + (fsLang || 'text');
+    if (fsEditorStatus) fsEditorStatus.textContent = 'Saved · ' + szStr + ' · ' + (fsLang || 'text');
+
     showToast('Saved ' + state.fsOpenPath);
   } catch (e) {
     if (fsEditorStatus) fsEditorStatus.textContent = 'Save failed: ' + e.message;
@@ -1894,6 +2253,7 @@ async function closeOpenFile() {
   if (fsListing) {
     fsListing.querySelectorAll('.fs-entry.active').forEach((el) => el.classList.remove('active'));
   }
+  setFsMobileView('browser');
 }
 
 async function loadStatsTab() {
@@ -1979,7 +2339,7 @@ function renderMessages() {
 function renderMessage(msg) {
   const div = document.createElement('div'); div.className = 'message ' + msg.role;
   const header = document.createElement('div'); header.className = 'message-header';
-  const icons = { user: '👤', assistant: '🤖', system: 'ℹ️', tool: '🔧' };
+  const icons = { user: SVG_ICONS.user, assistant: SVG_ICONS.assistant, system: SVG_ICONS.system, tool: SVG_ICONS.tool };
   header.innerHTML = '<span class="role-icon">' + (icons[msg.role] || '') + '</span> ' + capitalize(msg.role);
   div.appendChild(header);
   const content = document.createElement('div'); content.className = 'message-content';
@@ -1990,7 +2350,7 @@ function renderMessage(msg) {
   }
   if (msg.reasoning) {
     const rc = document.createElement('div'); rc.className = 'reasoning-block';
-    const rl = document.createElement('div'); rl.className = 'reasoning-label'; rl.innerHTML = '💭 Thinking';
+    const rl = document.createElement('div'); rl.className = 'reasoning-label'; rl.innerHTML = SVG_ICONS.reasoning + ' Thinking';
     const rt = document.createElement('div'); rt.className = 'reasoning-text'; rt.innerHTML = renderMarkdown(msg.reasoning);
     rc.appendChild(rl); rc.appendChild(rt);
     content.appendChild(rc);
@@ -2410,14 +2770,14 @@ function renderSessionTabs() {
       <div class="session-item-wrapper ${activeClass ? 'active' : ''}" data-id="${session.id}">
         <div class="session-item-main" data-id="${session.id}">
           <div class="session-item-title-row">
-            <span class="session-icon">💬</span>
+            <span class="session-icon">${SVG_ICONS.chat}</span>
             <span class="session-title-text" title="${esc(title)}">${genIndicator}${esc(title)}</span>
           </div>
           ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">📁 ${esc(ws)}</div>` : ''}
         </div>
         <div class="session-item-actions">
-          <button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">✏️</button>
-          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently">🗑️</button>
+          <button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">${SVG_ICONS.rename}</button>
+          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently">${SVG_ICONS.delete}</button>
         </div>
       </div>
     `;

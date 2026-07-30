@@ -7,10 +7,12 @@
 <title>QCode Chat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://raw.githubusercontent.com/ryanoasis/nerd-fonts/master/css/nerd-fonts-generated.min.css">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/styles/github-dark.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@3.4.0/css/nerd-fonts-generated.min.css">
 </head>
 <body>
 <div id="app">
@@ -35,16 +37,16 @@
       <div class="sidebar-section-title">Views</div>
       <nav class="sidebar-nav">
         <button class="sidebar-nav-btn active" id="tab-chat-btn" type="button">
-          <span class="nav-icon">💬</span> Chat
+          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Chat
         </button>
         <button class="sidebar-nav-btn" id="tab-terminal-btn" type="button">
-          <span class="nav-icon">⚡</span> Terminal
+          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span> Terminal
         </button>
         <button class="sidebar-nav-btn" id="tab-files-btn" type="button">
-          <span class="nav-icon">📁</span> Files
+          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Files
         </button>
         <button class="sidebar-nav-btn" id="tab-stats-btn" type="button">
-          <span class="nav-icon">📊</span> Session Stats
+          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span> Session Stats
         </button>
       </nav>
     </div>
@@ -95,14 +97,14 @@
   <div id="main-area">
     <!-- Header replacing the old main-tabs -->
     <header id="main-header">
-      <button id="menu-toggle-btn" class="menu-toggle-btn" title="Open menu" aria-label="Open menu">☰</button>
+      <button id="menu-toggle-btn" class="menu-toggle-btn" title="Open menu" aria-label="Open menu"><svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <div class="header-session-info">
         <div class="header-session-title" id="header-session-title">No session</div>
         <div class="header-session-workspace" id="header-session-workspace"></div>
       </div>
       <div class="header-actions">
         <button class="layout-toggle-btn" id="layout-toggle-btn" title="Toggle Split View">
-          <span class="layout-icon">◫</span> Split View
+          <span class="layout-icon"><svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg></span> Split View
         </button>
       </div>
     </header>
@@ -122,53 +124,131 @@
             <div class="input-actions">
               <span class="input-info"><kbd>Esc</kbd> to pause &middot; <kbd>Shift</kbd>+<kbd>Enter</kbd> newline</span>
               <button id="pause-btn" class="pause-btn hidden" type="button" aria-label="Pause generation" title="Pause (Esc)">
-                <span class="pause-icon">⏸</span><span>Pause</span>
+                <span class="pause-icon"><svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span><span>Pause</span>
               </button>
-              <button id="send-btn" aria-label="Send message"><span>Send</span><span class="send-icon">↑</span></button>
+              <button id="send-btn" aria-label="Send message"><span>Send</span><span class="send-icon"><svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></span></button>
             </div>
           </div>
         </div>
       </main>
       <div id="terminal-panel" class="hidden">
         <div class="terminal-header">
-          <span>Terminal</span>
-          <button id="terminal-close-btn" class="terminal-x">&times;</button>
+          <div class="terminal-header-title">
+            <span>Terminal</span>
+          </div>
+          <div class="terminal-header-actions">
+            <button id="term-zoom-out-btn" class="terminal-action-btn" type="button" title="Decrease font size">A-</button>
+            <button id="term-zoom-in-btn" class="terminal-action-btn" type="button" title="Increase font size">A+</button>
+            <button id="terminal-close-btn" class="terminal-x" type="button" title="Close terminal">&times;</button>
+          </div>
+        </div>
+        <div class="terminal-virtual-keys" id="terminal-virtual-keys">
+          <button type="button" class="term-key-btn" data-key="Esc" title="Escape">Esc</button>
+          <button type="button" class="term-key-btn" data-key="Tab" title="Tab">Tab</button>
+          <button type="button" class="term-key-btn" data-key="CtrlC" title="Control + C">Ctrl+C</button>
+          <button type="button" class="term-key-btn" data-key="CtrlD" title="Control + D">Ctrl+D</button>
+          <button type="button" class="term-key-btn" data-key="Up" title="Up Arrow">▲</button>
+          <button type="button" class="term-key-btn" data-key="Down" title="Down Arrow">▼</button>
+          <button type="button" class="term-key-btn" data-key="Left" title="Left Arrow">◀</button>
+          <button type="button" class="term-key-btn" data-key="Right" title="Right Arrow">▶</button>
         </div>
         <div id="terminal-container"></div>
       </div>
       <div id="files-panel" class="side-tab-panel hidden">
         <div class="side-tab-header">
-          <span>📁 Files</span>
+          <span><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Files</span>
           <div class="files-header-actions">
             <div class="files-subtabs" role="tablist">
               <button type="button" class="files-subtab active" id="files-subtab-explorer" data-subtab="explorer">Explorer</button>
               <button type="button" class="files-subtab" id="files-subtab-git" data-subtab="git">Changes</button>
             </div>
-            <button id="files-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+            <button id="files-refresh-btn" class="side-tab-x" title="Refresh"><svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
           </div>
         </div>
         <div id="files-content" class="files-content-root">
-          <!-- Explorer: browser + editor -->
+          <!-- Explorer: browser + viewer/editor -->
           <div id="files-explorer" class="files-explorer">
-            <div class="fs-browser">
-              <div class="fs-breadcrumb" id="fs-breadcrumb"></div>
+            <div class="fs-browser" id="fs-browser-pane">
+              <div class="fs-browser-header">
+                <div class="fs-breadcrumb" id="fs-breadcrumb"></div>
+                <div class="fs-filter-wrap">
+                  <span class="fs-filter-icon"><svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+                  <input type="search" id="fs-filter-input" class="fs-filter-input" placeholder="Filter files…" autocomplete="off" spellcheck="false">
+                </div>
+              </div>
               <div class="fs-listing" id="fs-listing">
                 <div class="files-empty">Select a session to browse files.</div>
               </div>
             </div>
             <div class="fs-editor-pane" id="fs-editor-pane">
               <div class="fs-editor-toolbar">
-                <span class="fs-editor-path" id="fs-editor-path">No file open</span>
+                <button type="button" id="fs-back-btn" class="fs-back-btn" title="Back to files" aria-label="Back to files">
+                  <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                  <span>Files</span>
+                </button>
+                <div class="fs-file-info">
+                  <span class="fs-file-icon" id="fs-file-icon">📄</span>
+                  <span class="fs-editor-path" id="fs-editor-path">No file open</span>
+                  <span class="fs-file-badge" id="fs-file-badge"></span>
+                </div>
                 <div class="fs-editor-actions">
                   <span class="fs-dirty-badge hidden" id="fs-dirty-badge">unsaved</span>
-                  <button type="button" id="fs-save-btn" class="fs-btn primary" disabled title="Save (Ctrl+S)">Save</button>
-                  <button type="button" id="fs-close-btn" class="fs-btn" disabled title="Close editor">Close</button>
+                  <button type="button" id="fs-copy-path-btn" class="fs-btn" disabled title="Copy Path">
+                    <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <button type="button" id="fs-copy-content-btn" class="fs-btn" disabled title="Copy Content">
+                    <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+                  </button>
+                  <div class="fs-mode-toggle hidden" id="fs-md-toggle">
+                    <button type="button" class="fs-tab-btn active" id="fs-md-preview-btn">Preview</button>
+                    <button type="button" class="fs-tab-btn" id="fs-md-code-btn">Code</button>
+                  </div>
+                  <button type="button" id="fs-wrap-btn" class="fs-btn" disabled title="Toggle Line Wrap">Wrap</button>
+                  <button type="button" id="fs-edit-btn" class="fs-btn" disabled title="Toggle Edit Mode">Edit</button>
+                  <a id="fs-raw-btn" class="fs-btn hidden" target="_blank" rel="noopener" title="View Raw File">Raw</a>
+                  <button type="button" id="fs-save-btn" class="fs-btn primary hidden" title="Save (Ctrl+S)">Save</button>
+                  <button type="button" id="fs-close-btn" class="fs-btn" disabled title="Close file">&times;</button>
                 </div>
               </div>
-              <div class="fs-editor-wrap" id="fs-editor-wrap">
-                <pre class="fs-highlight" id="fs-highlight" aria-hidden="true"><code class="hljs" id="fs-highlight-code"></code></pre>
-                <!-- wrap="off" keeps long lines in sync with the <pre> highlight overlay -->
-                <textarea id="fs-editor" class="fs-editor" spellcheck="false" wrap="off" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Open a file from the browser…" disabled></textarea>
+
+              <!-- Main File View / Editor Body -->
+              <div class="fs-view-body" id="fs-view-body">
+                <div id="fs-view-placeholder" class="fs-placeholder">
+                  <div class="fs-placeholder-icon"><svg class="ui-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg></div>
+                  <div class="fs-placeholder-text">Select a file from the explorer to view</div>
+                </div>
+
+                <!-- Formatted Code View with Line Numbers -->
+                <div id="fs-view-code" class="fs-code-container hidden">
+                  <div class="fs-line-numbers" id="fs-line-numbers"></div>
+                  <div class="fs-code-wrapper" id="fs-code-wrapper">
+                    <pre class="fs-code-pre"><code class="hljs" id="fs-code-hljs"></code></pre>
+                  </div>
+                </div>
+
+                <!-- Rendered Markdown View -->
+                <div id="fs-view-markdown" class="fs-markdown-container markdown-body hidden"></div>
+
+                <!-- Image Preview View -->
+                <div id="fs-view-image" class="fs-image-container hidden">
+                  <div class="fs-image-wrapper">
+                    <img id="fs-image-preview" src="" alt="File preview" />
+                  </div>
+                  <div class="fs-image-info" id="fs-image-info"></div>
+                </div>
+
+                <!-- Binary File View -->
+                <div id="fs-view-binary" class="fs-binary-container hidden">
+                  <div class="fs-binary-icon">📦</div>
+                  <div class="fs-binary-text" id="fs-binary-text">Binary file cannot be displayed inline.</div>
+                  <a id="fs-binary-download-link" class="fs-btn primary" target="_blank" rel="noopener">Download / View Raw</a>
+                </div>
+
+                <!-- Edit Textarea View -->
+                <div id="fs-view-editor" class="fs-editor-wrap hidden">
+                  <pre class="fs-highlight" id="fs-highlight" aria-hidden="true"><code class="hljs" id="fs-highlight-code"></code></pre>
+                  <textarea id="fs-editor" class="fs-editor" spellcheck="false" wrap="off" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Edit file content…"></textarea>
+                </div>
               </div>
               <div class="fs-editor-status" id="fs-editor-status"></div>
             </div>
