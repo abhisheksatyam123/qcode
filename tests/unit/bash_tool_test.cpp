@@ -112,5 +112,60 @@ TEST(BashToolTest, SerializesConcurrentExecutions) {
   EXPECT_FALSE(overlap_detected.load());
 }
 
+TEST(BashToolTest, AllowsBitwiseShiftOperatorsWithoutFalseHeredocError) {
+  const JsonValue args = {
+      {"mode", "run"},
+      {"command", "python3 -c \"print(16 << 2)\""},
+      {"description", "Test bitwise left shift operator"},
+  };
+  const auto result = BashTool::execute(args, ToolExecutionContext{});
+  EXPECT_TRUE(result.contains("output"));
+  EXPECT_NE(result["output"].get<std::string>().find("64"), std::string::npos);
+}
+
+TEST(BashToolTest, AllowsHerestringsAndQuotedLiterals) {
+  const JsonValue args = {
+      {"mode", "run"},
+      {"command", "python3 -c \"print('<<< hello >>>')\""},
+      {"description", "Test herestring syntax"},
+  };
+  const auto result = BashTool::execute(args, ToolExecutionContext{});
+  EXPECT_TRUE(result.contains("output"));
+  EXPECT_NE(result["output"].get<std::string>().find("hello"), std::string::npos);
+}
+
+TEST(BashToolTest, RejectsTrulyUnterminatedHeredoc) {
+  const JsonValue args = {
+      {"mode", "run"},
+      {"command", "cat << UNTERMINATED_MARKER\nsome content"},
+      {"description", "Test unterminated heredoc"},
+  };
+  const auto result = BashTool::execute(args, ToolExecutionContext{});
+  EXPECT_TRUE(result.contains("error"));
+  EXPECT_NE(result["error"].get<std::string>().find("UNTERMINATED_MARKER"), std::string::npos);
+}
+
+TEST(BashToolTest, AllowsQuotedNumbersAndShiftInPythonCommands) {
+  const JsonValue args = {
+      {"mode", "run"},
+      {"command", "python3 -c \"print(1 << int('16'))\""},
+      {"description", "Test shift operator with quoted numbers"},
+  };
+  const auto result = BashTool::execute(args, ToolExecutionContext{});
+  EXPECT_TRUE(result.contains("output"));
+  EXPECT_NE(result["output"].get<std::string>().find("65536"), std::string::npos);
+}
+
+TEST(BashToolTest, AllowsEscapedQuotesInPythonInlineCommands) {
+  const JsonValue args = {
+      {"mode", "run"},
+      {"command", "python3 -c \"asm_path = 'firmware.asm'; print(1 << 16)\""},
+      {"description", "Test Python inline script with mixed quotes and shift"},
+  };
+  const auto result = BashTool::execute(args, ToolExecutionContext{});
+  EXPECT_TRUE(result.contains("output"));
+  EXPECT_NE(result["output"].get<std::string>().find("65536"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace qcode

@@ -1,4 +1,5 @@
 #include <qcode/render/markdown.h>
+#include <qcode/render/message_render.h>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/screen.hpp>
 #include <gtest/gtest.h>
@@ -61,5 +62,43 @@ TEST(MarkdownTest, CodeBlockAndTableRendering) {
   EXPECT_NE(output.find("text"), std::string::npos);
 }
 
+TEST(MessageRenderTest, ToolCallAndResultRendering) {
+  qcode::ToolCallContentPart call_part(
+      "call_123", "bash",
+      nlohmann::json{
+          {"command", "python3 -c \"print(1 << int('16'))\""},
+          {"description", "Run bitwise shift in python"}});
+
+  qcode::Message assistant_msg(qcode::kMessageRoleAssistant, {call_part});
+
+  qcode::ToolResultContentPart result_part(
+      "call_123",
+      nlohmann::json{
+          {"output", "65536\n"},
+          {"metadata", {{"exit", 0}}}},
+      false, 15.0);
+
+  qcode::Message result_msg(qcode::kMessageRoleUser, {result_part});
+
+  qcode::ChatState state;
+  std::vector<qcode::ProviderInfo> providers;
+
+  auto element = qcode::render_message(
+      assistant_msg, state, providers, -1, -1, "orange", &result_msg);
+
+  auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(100), ftxui::Dimension::Fit(element));
+  ftxui::Render(screen, element);
+  std::string output = screen.ToString();
+  printf("Rendered Tool Call Output (width 100):\n%s\n", output.c_str());
+
+  // Verify tool call header, command, output, and success status in rendering
+  EXPECT_NE(output.find("Run bitwise shift in python"), std::string::npos);
+  EXPECT_NE(output.find("python3 -c"), std::string::npos);
+  EXPECT_NE(output.find("65536"), std::string::npos);
+  EXPECT_NE(output.find("✓"), std::string::npos);
+}
+
 }
 }
+
+

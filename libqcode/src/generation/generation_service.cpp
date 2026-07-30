@@ -742,7 +742,7 @@ void run_generation_with_bus(
       qcode::ToolSet tools = ToolCatalog::build_definitions(ToolConfig{true, true});
       base_opts.tools = std::move(tools);
       // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
-      constexpr int kMaxToolSteps = 1000;
+      constexpr int kMaxToolSteps = 100000;
       base_opts.max_steps = kMaxToolSteps;
       auto refresh_client = [&](qcode::Client& out_client) -> bool {
         // Re-read Antigravity OAuth (force refresh on 401).

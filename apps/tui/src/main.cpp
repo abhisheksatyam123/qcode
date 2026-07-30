@@ -215,23 +215,14 @@ int main() {
     auto submit = [&] {
         if (prompt_input.empty()) return;
         if (generation.is_active()) {
-            // Each submit becomes its own queue entry so the message list can
-            // show every pending prompt (Grok-style), not a single merged blob.
-            store.enqueue_prompt(prompt_input);
-            store.add_toast(
-                generation.is_busy() && !store.is_generating()
-                    ? "Queued — waiting for previous turn to stop"
-                    : "Queued · #" + std::to_string(store.queue_size()),
-                generation.is_busy() && !store.is_generating()
-                    ? "warning"
-                    : "info",
-                1200);
-            LOG_INFO("Main: prompt queued (queue_size={})", store.queue_size());
-            // Stop the current turn after its current tool output is pushed so
-            // the queued prompt actually runs next (instead of waiting for the
-            // whole agent loop to finish and stalling in the queue forever).
-            // The agent loop checks abort_flag between tool steps.
-            generation.request_abort();
+            if (store.has_queued_prompt()) {
+                store.append_to_last_queued_prompt(prompt_input);
+                store.add_toast("Prompt merged into queued message", "info", 1500);
+            } else {
+                store.enqueue_prompt(prompt_input);
+                store.add_toast("Prompt queued", "info", 1500);
+            }
+            LOG_INFO("Main: prompt merged into queue (queue_size={})", store.queue_size());
             prompt_input = "";
             *state.auto_scroll = true;
             return;

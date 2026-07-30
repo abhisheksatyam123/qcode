@@ -171,64 +171,143 @@ static std::string resolve_cwd(const std::string& workdir, const std::string& fa
 }
 
 static bool is_safe_command(const std::string& command, std::string& warning) {
-  // Heredoc validation
-  size_t pos = 0;
-  while ((pos = command.find("<<", pos)) != std::string::npos) {
-    pos += 2;
-    // Skip whitespace
-    while (pos < command.length() && std::isspace(command[pos])) {
-      pos++;
+  bool in_single_quote = false;
+  bool in_double_quote = false;
+
+  for (size_t i = 0; i < command.length(); ++i) {
+    char c = command[i];
+
+    if (!in_single_quote && c == '\\' && i + 1 < command.length()) {
+      i++;
+      continue;
     }
-    if (pos >= command.length()) break;
-    
-    // Extract label
-    std::string label;
-    char quote = 0;
-    if (command[pos] == '\'' || command[pos] == '"') {
-      quote = command[pos];
-      pos++;
+
+    if (c == '\'' && !in_double_quote) {
+      in_single_quote = !in_single_quote;
+      continue;
     }
-    
-    while (pos < command.length()) {
-      char c = command[pos];
-      if (quote) {
-        if (c == quote) {
+
+    if (c == '"' && !in_single_quote) {
+      in_double_quote = !in_double_quote;
+      continue;
+    }
+
+    if (!in_single_quote && !in_double_quote && c == '<' && i + 1 < command.length() && command[i + 1] == '<') {
+      size_t pos = i + 2;
+
+      if (pos < command.length() && command[pos] == '<') {
+        i = pos;
+        continue;
+      }
+
+      bool strip_tabs = false;
+      if (pos < command.length() && command[pos] == '-') {
+        strip_tabs = true;
+        pos++;
+      }
+
+      while (pos < command.length() && (command[pos] == ' ' || command[pos] == '\t')) {
+        pos++;
+      }
+
+      if (pos >= command.length()) break;
+
+      std::string label;
+      char quote = 0;
+      if (command[pos] == '\'' || command[pos] == '"') {
+        quote = command[pos];
+        pos++;
+        while (pos < command.length()) {
+          char ch = command[pos];
+          if (ch == quote) {
+            pos++;
+            break;
+          }
+          label += ch;
           pos++;
-          break;
         }
-        label += c;
       } else {
-        if (std::isalnum(c) || c == '_' || c == '-') {
-          label += c;
-        } else {
+        while (pos < command.length()) {
+          char ch = command[pos];
+          if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_') {
+            label += ch;
+            pos++;
+          } else {
+            break;
+          }
+        }
+      }
+
+      if (label.empty()) {
+        i = pos;
+        continue;
+      }
+
+      // Valid heredoc markers in Bash must start with an alpha character or underscore [a-zA-Z_]
+      if (!(std::isalpha(static_cast<unsigned char>(label[0])) || label[0] == '_')) {
+        i = pos;
+        continue;
+      }
+
+      bool valid_identifier = true;
+      for (char ch : label) {
+        if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_' && ch != '-') {
+          valid_identifier = false;
           break;
         }
       }
-      pos++;
-    }
-    
-    if (label.empty()) continue;
-    
-    // Check if label appears on its own line in the rest of the command
-    bool found = false;
-    size_t search_pos = pos;
-    while ((search_pos = command.find(label, search_pos)) != std::string::npos) {
-      bool start_ok = (search_pos == 0 || command[search_pos - 1] == '\n' || command[search_pos - 1] == '\r');
-      size_t end_pos = search_pos + label.length();
-      bool end_ok = (end_pos == command.length() || command[end_pos] == '\n' || command[end_pos] == '\r');
-      if (start_ok && end_ok) {
-        found = true;
-        break;
+      if (!valid_identifier) {
+        i = pos;
+        continue;
       }
-      search_pos += label.length();
-    }
-    
-    if (!found) {
-      warning = "Syntax Error: Heredoc marker '" + label + "' is not terminated. "
-                "Make sure you close the heredoc on its own line.";
-      return false;
+
+      size_t line_end = command.find('\n', pos);
+      if (line_end == std::string::npos) {
+        line_end = command.length();
+      } else {
+        line_end++;
+      }
+
+      bool found = false;
+      size_t search_pos = line_end;
+
+      while (search_pos < command.length()) {
+        size_t next_line = command.find('\n', search_pos);
+        std::string_view line;
+        if (next_line == std::string::npos) {
+          line = std::string_view(command).substr(search_pos);
+          search_pos = command.length();
+        } else {
+          line = std::string_view(command).substr(search_pos, next_line - search_pos);
+          search_pos = next_line + 1;
+        }
+
+        if (!line.empty() && line.back() == '\r') {
+          line.remove_suffix(1);
+        }
+
+        if (strip_tabs) {
+          while (!line.empty() && line.front() == '\t') {
+            line.remove_prefix(1);
+          }
+        }
+
+        if (line == label) {
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        warning = "Syntax Error: Heredoc marker '" + label + "' is not terminated. "
+                  "Make sure you close the heredoc on its own line.";
+        return false;
+      }
+
+      i = pos;
     }
   }
+
   return true;
 }
 
