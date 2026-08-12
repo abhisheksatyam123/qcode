@@ -142,8 +142,8 @@ void init_database() {
             sqlite3_finalize(vstmt);
         }
     }
-    const int kSchemaVersion = 3;
-    if (user_version < kSchemaVersion) {
+    const int kSchemaVersion = 4;
+    if (user_version < 3) {
         char* err_msg = nullptr;
         if (sqlite3_exec(db, "BEGIN;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
             LOG_ERROR("SQLite: failed to begin schema transaction: {}", err_msg ? err_msg : "unknown");
@@ -230,6 +230,64 @@ void init_database() {
         sqlite3_exec(db, schema_rt, nullptr, nullptr, nullptr);
         sqlite3_exec(db, "PRAGMA user_version = 3;", nullptr, nullptr, nullptr);
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    }
+
+    // ── Migration v3 → v4: study buddy tables ──
+    if (user_version < 4) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS study_courses ("
+            "  id TEXT PRIMARY KEY,"
+            "  title TEXT NOT NULL,"
+            "  root_path TEXT NOT NULL,"
+            "  created_at INTEGER"
+            ");", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS study_chapters ("
+            "  id TEXT PRIMARY KEY,"
+            "  course_id TEXT NOT NULL,"
+            "  slug TEXT NOT NULL,"
+            "  title TEXT NOT NULL,"
+            "  path TEXT NOT NULL,"
+            "  order_index INTEGER DEFAULT 0,"
+            "  FOREIGN KEY(course_id) REFERENCES study_courses(id) ON DELETE CASCADE"
+            ");", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS study_topics ("
+            "  id TEXT PRIMARY KEY,"
+            "  chapter_id TEXT NOT NULL,"
+            "  name TEXT NOT NULL,"
+            "  mastery REAL DEFAULT 0,"
+            "  last_seen_at INTEGER DEFAULT 0,"
+            "  FOREIGN KEY(chapter_id) REFERENCES study_chapters(id) ON DELETE CASCADE"
+            ");", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS study_questions ("
+            "  id TEXT PRIMARY KEY,"
+            "  chapter_id TEXT NOT NULL,"
+            "  topic_id TEXT,"
+            "  type TEXT NOT NULL,"
+            "  prompt_html TEXT NOT NULL,"
+            "  choices_json TEXT DEFAULT '[]',"
+            "  answer_key TEXT DEFAULT '',"
+            "  difficulty INTEGER DEFAULT 1,"
+            "  FOREIGN KEY(chapter_id) REFERENCES study_chapters(id) ON DELETE CASCADE,"
+            "  FOREIGN KEY(topic_id) REFERENCES study_topics(id) ON DELETE SET NULL"
+            ");", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS study_attempts ("
+            "  id TEXT PRIMARY KEY,"
+            "  question_id TEXT NOT NULL,"
+            "  student_answer TEXT,"
+            "  correct INTEGER DEFAULT 0,"
+            "  score REAL DEFAULT 0,"
+            "  feedback TEXT DEFAULT '',"
+            "  created_at INTEGER,"
+            "  FOREIGN KEY(question_id) REFERENCES study_questions(id) ON DELETE CASCADE"
+            ");", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 4;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+        (void)kSchemaVersion;
     }
 
     LOG_INFO("SQLite: database opened successfully at {}", path);

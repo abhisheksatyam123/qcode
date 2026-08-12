@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "ch01-coordinates",
+  "title": "Orienting Yourself: The Use of Coordinates",
+  "order": 1,
+  "class_id": "class-9",
+  "subject_id": "mathematics",
+  "source": "ganita-manjari / iemh101.pdf",
+  "topics": [
+    "core-idea",
+    "quadrants",
+    "axes",
+    "distance",
+    "formula",
+    "explain"
+  ]
+}

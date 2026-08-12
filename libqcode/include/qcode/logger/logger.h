@@ -7,10 +7,18 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <source_location>
 #include <sstream>
 #include <string_view>
 #include <thread>
+
+// NDK libc++ (r26) does not yet provide std::atomic<std::shared_ptr<T>>.
+#if defined(__cpp_lib_atomic_shared_ptr) && __cpp_lib_atomic_shared_ptr >= 201711L
+#define QCODE_LOGGER_ATOMIC_SHARED_PTR 1
+#else
+#define QCODE_LOGGER_ATOMIC_SHARED_PTR 0
+#endif
 
 namespace qcode::logger {
 
@@ -163,21 +171,56 @@ class ConsoleLogger final : public Logger {
 
 namespace detail {
 
+#if QCODE_LOGGER_ATOMIC_SHARED_PTR
+
 inline std::atomic<std::shared_ptr<Logger>>& logger_instance() {
-  static std::atomic<std::shared_ptr<Logger>> instance{std::make_shared<ConsoleLogger>()};
+  static std::atomic<std::shared_ptr<Logger>> instance{
+      std::make_shared<ConsoleLogger>()};
   return instance;
 }
+
+inline void store_logger(std::shared_ptr<Logger> logger) {
+  logger_instance().store(std::move(logger));
+}
+
+inline std::shared_ptr<Logger> load_logger() { return logger_instance().load(); }
+
+#else
+
+struct LoggerSlot {
+  std::mutex mu;
+  std::shared_ptr<Logger> ptr{std::make_shared<ConsoleLogger>()};
+};
+
+inline LoggerSlot& logger_slot() {
+  static LoggerSlot slot;
+  return slot;
+}
+
+inline void store_logger(std::shared_ptr<Logger> logger) {
+  auto& slot = logger_slot();
+  std::lock_guard<std::mutex> lock(slot.mu);
+  slot.ptr = std::move(logger);
+}
+
+inline std::shared_ptr<Logger> load_logger() {
+  auto& slot = logger_slot();
+  std::lock_guard<std::mutex> lock(slot.mu);
+  return slot.ptr;
+}
+
+#endif
 
 }  // namespace detail
 
 inline void install_logger(std::shared_ptr<Logger> logger) {
   if (logger) {
-    detail::logger_instance().store(std::move(logger));
+    detail::store_logger(std::move(logger));
   }
 }
 
 inline Logger& logger() {
-  auto ptr = detail::logger_instance().load();
+  auto ptr = detail::load_logger();
   return *ptr;
 }
 

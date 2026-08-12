@@ -1,5 +1,6 @@
 #include "http_request_handler.h"
 
+#include <qcode/http/ssl_config.h>
 #include <qcode/logger/logger.h>
 #include <qcode/retry/retry_policy.h>
 #include "utils/response_utils.h"
@@ -99,8 +100,10 @@ GenerateResult HttpRequestHandler::execute_single_request(
   auto handler = [](const httplib::Result& res,
                     const std::string& protocol) -> GenerateResult {
     if (!res) {
-      LOG_ERROR("{} request failed - no response", protocol);
-      GenerateResult result("Network error: Failed to connect to API");
+      LOG_ERROR("{} request failed - no response ({})", protocol,
+                httplib::to_string(res.error()));
+      GenerateResult result("Network error: Failed to connect to API (" +
+                            httplib::to_string(res.error()) + ")");
       result.is_retryable = true;  // Network errors are retryable
       return result;
     }
@@ -145,7 +148,7 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
       httplib::SSLClient cli(config_.host, config_.port != 0 ? config_.port : 443);
       cli.set_connection_timeout(config_.connection_timeout_sec, 0);
       cli.set_read_timeout(config_.read_timeout_sec, 0);
-      cli.enable_server_certificate_verification(config_.verify_ssl_cert);
+      configure_client_tls(cli, config_.verify_ssl_cert);
 
       auto res = cli.Post(full_path, headers, body, content_type);
       return handler(res, "HTTPS");

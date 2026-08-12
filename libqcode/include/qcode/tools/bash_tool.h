@@ -86,7 +86,9 @@ inline JsonValue parameters() {
   };
   p["workdir"] = JsonValue{
     {"type", "string"},
-    {"description", "Working directory."}
+    {"description",
+     "Working directory. Defaults to the session workspace; on Android that is "
+     "the app sandbox ($HOME), not /."}
   };
   p["timeout"] = JsonValue{
     {"type", "integer"},

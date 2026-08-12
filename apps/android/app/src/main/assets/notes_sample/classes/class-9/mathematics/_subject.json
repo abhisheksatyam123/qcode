@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "id": "mathematics",
+  "title": "Mathematics",
+  "class_id": "class-9",
+  "chapters": [
+    {
+      "id": "ch01-coordinates",
+      "title": "Orienting Yourself: The Use of Coordinates",
+      "order": 1,
+      "path": "classes/class-9/mathematics/ch01-coordinates"
+    }
+  ],
+  "overall_quizzes": [
+    {
+      "id": "unit-test-1",
+      "title": "Unit Test 1 (placeholder)",
+      "path": "classes/class-9/mathematics/quizzes/unit-test-1"
+    }
+  ],
+  "rollup": {
+    "chapters_total": 1,
+    "chapters_mastered": 0,
+    "chapters_in_progress": 0,
+    "chapters_not_started": 1,
+    "chapters_remaining": 1,
+    "attempts_total": 0,
+    "weak_chapters": [
+      "ch01-coordinates"
+    ],
+    "updated_at": "2026-08-12T18:55:47+00:00"
+  }
+}

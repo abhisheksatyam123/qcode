@@ -122,11 +122,11 @@ void GenerationController::spawn_unlocked(std::string prompt,
     auto sys_prompt = std::move(request.system_prompt);
     const bool tools_enabled = request.tools_enabled;
 
-    worker_ = std::jthread(
+    worker_ = qcode::compat::jthread(
         [bus_ptr, state_ptr, providers_copy = std::move(providers_copy),
          app_running, busy_ptr, store_ptr, sel_prov, sel_mod,
          sys_prompt = std::move(sys_prompt),
-         tools_enabled](std::stop_token stop_token) {
+         tools_enabled](qcode::compat::stop_token stop_token) {
             // Clear busy + wake UI when the worker exits (including after Esc
             // force-stop left is_generating already false).
             const auto busy_guard = std::shared_ptr<void>(

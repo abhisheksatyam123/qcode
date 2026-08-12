@@ -157,17 +157,107 @@ static std::string shell_quote_literal(const std::string& s) {
 }
 
 static std::string resolve_cwd(const std::string& workdir, const std::string& fallback_workspace = "") {
-  if (workdir.empty()) {
+  auto fallback = [&]() -> std::string {
     if (!fallback_workspace.empty()) return fallback_workspace;
+#ifdef __ANDROID__
+    // App process cwd is often "/", which is not writable. Prefer $HOME
+    // (filesDir) so bash can create/edit files without an explicit workdir.
+    if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+      return home;
+    }
+#endif
     return std::filesystem::current_path().string();
+  };
+
+  if (workdir.empty()) {
+    return fallback();
   }
   std::error_code ec;
   auto p = std::filesystem::absolute(workdir, ec);
   if (ec) {
-    if (!fallback_workspace.empty()) return fallback_workspace;
-    return std::filesystem::current_path().string();
+    return fallback();
   }
   return p.string();
+}
+
+// Prefer /bin/sh, then Android's /system/bin/sh.
+static const char* resolve_shell_path() {
+  if (access("/bin/sh", X_OK) == 0) return "/bin/sh";
+  if (access("/system/bin/sh", X_OK) == 0) return "/system/bin/sh";
+  return "/bin/sh";
+}
+
+  // On Android app sandboxes (targetSdk>=29), ELF binaries cannot be exec'd
+  // from the app files dir. Bundled python lives in nativeLibraryDir as
+  // libqcode_python3.so; expose it via shell functions + PATH.
+  static void prepare_child_shell_env() {
+#ifdef __ANDROID__
+  const char* home = std::getenv("HOME");
+  const char* native_lib = std::getenv("QCODE_NATIVE_LIB_DIR");
+  const char* python_bin = std::getenv("QCODE_PYTHON_BIN");
+
+  auto prepend_env = [](const char* key, const std::string& prefix) {
+    if (prefix.empty()) return;
+    const char* old = std::getenv(key);
+    std::string next = prefix;
+    if (old != nullptr && *old != '\0') {
+      if (std::string(old).find(prefix) == 0) {
+        return;
+      }
+      next.push_back(':');
+      next += old;
+    }
+    setenv(key, next.c_str(), 1);
+  };
+
+  if (native_lib != nullptr && *native_lib != '\0') {
+    prepend_env("PATH", native_lib);
+    prepend_env("LD_LIBRARY_PATH", native_lib);
+  }
+  if (home != nullptr && *home != '\0') {
+    const std::string bin = std::string(home) + "/bin";
+    const std::string lib = std::string(home) + "/lib";
+    const std::string tmp = std::string(home) + "/tmp";
+    prepend_env("PATH", bin);
+    prepend_env("LD_LIBRARY_PATH", lib);
+    setenv("PYTHONHOME", home, 1);
+    // System /tmp is not writable for untrusted apps; keep temps in sandbox.
+    std::error_code ec;
+    std::filesystem::create_directories(tmp, ec);
+    setenv("TMPDIR", tmp.c_str(), 1);
+    setenv("TMP", tmp.c_str(), 1);
+    setenv("TEMP", tmp.c_str(), 1);
+  }
+  setenv("PYTHONNOUSERSITE", "1", 1);
+  if (python_bin != nullptr && *python_bin != '\0') {
+    setenv("QCODE_PYTHON_BIN", python_bin, 1);
+  }
+#else
+  (void)0;
+#endif
+}
+
+// Prefix that defines python/python3 shell functions pointing at the
+// executable native-lib copy (required on Android 10+).
+static std::string android_shell_prelude() {
+#ifdef __ANDROID__
+  std::string prelude;
+  const char* python_bin = std::getenv("QCODE_PYTHON_BIN");
+  if (python_bin != nullptr && *python_bin != '\0') {
+    prelude += "python3(){ \"" + std::string(python_bin) +
+               "\" \"$@\"; }; python(){ python3 \"$@\"; }; ";
+  }
+  // Keep relative paths and mktemp inside the sandbox even if a caller
+  // overrides workdir incorrectly.
+  prelude +=
+      "if [ -n \"$HOME\" ]; then "
+      "mkdir -p \"$HOME/tmp\" 2>/dev/null; "
+      "export TMPDIR=\"$HOME/tmp\" TMP=\"$HOME/tmp\" TEMP=\"$HOME/tmp\"; "
+      "fi; ";
+  return prelude;
+#else
+  return "";
+#endif
 }
 
 static bool is_safe_command(const std::string& command, std::string& warning) {
@@ -369,8 +459,8 @@ std::string BashTool::run_shell(const std::string& command,
   const auto line_limit = max_lines.value_or(0);
 
   exit_code = -1;
-  const auto cmd =
-      "cd -- " + shell_quote_literal(cwd) + " 2>/dev/null; " + command;
+  const auto cmd = android_shell_prelude() + "cd -- " + shell_quote_literal(cwd) +
+                   " 2>/dev/null; " + command;
 
   const auto dir_path = get_tool_output_dir();
   std::error_code ec;
@@ -405,7 +495,9 @@ std::string BashTool::run_shell(const std::string& command,
     // Set process group so we can kill child and its descendants
     setpgid(0, 0);
 
-    execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+    prepare_child_shell_env();
+    const char* shell = resolve_shell_path();
+    execl(shell, "sh", "-c", cmd.c_str(), nullptr);
     exit(127);
   }
 
@@ -631,8 +723,11 @@ JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionCo
   pid_t pid = fork();
   if (pid == 0) {
     // Child process
-    std::string cmd = "cd -- " + shell_quote_literal(cwd) + " 2>/dev/null; " + command;
-    execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+    std::string cmd = android_shell_prelude() + "cd -- " +
+                      shell_quote_literal(cwd) + " 2>/dev/null; " + command;
+    prepare_child_shell_env();
+    const char* shell = resolve_shell_path();
+    execl(shell, "sh", "-c", cmd.c_str(), nullptr);
     _exit(1);
   } else if (pid > 0) {
     // Parent

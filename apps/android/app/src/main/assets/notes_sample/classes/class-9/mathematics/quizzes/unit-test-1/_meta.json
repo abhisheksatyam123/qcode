@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "id": "unit-test-1",
+  "title": "Unit Test 1 (placeholder)",
+  "scope": "subject",
+  "subject_id": "mathematics",
+  "class_id": "class-9",
+  "chapter_ids": ["ch01-coordinates"]
+}

@@ -51,7 +51,9 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
   ss << "The main purpose of this section is to define the purpose of tool calls "
         "and how to use them. You have two sets of tools available:\n\n";
   ss << "1. **Bash tool** - works as a Swiss Army knife; it can execute anything "
-        "in the shell and read the output.\n";
+        "in the shell and read the output. Prefer relative paths under the "
+        "session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` "
+        "or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n";
   ss << "2. **Task tool** - used to delegate tasks to other agents.\n\n";
   ss << "Here is the schema of both:\n\n";
   ss << "```\n";
@@ -69,10 +71,27 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
         "editing or answering. Prefer one comprehensive, bounded, read-only context "
         "script in the first tool call over many small tool turns.\n";
   ss << "2. The exposed execution tool is `bash`; use it to run tools in this "
+#ifdef __ANDROID__
+        "priority: `python3`/`python` first, then plain shell "
+        "(TypeScript runtimes like bun are usually unavailable on Android).\n";
+#else
         "priority: `bun`/`bunx` TypeScript or JavaScript first, then `python`, "
         "then plain shell.\n";
-  ss << "3. All secondary/local helper tools are stored in the notes vault tools "
-        "directory. Prefer those reusable tools when they fit the task.\n";
+#endif
+  ss << "3. All secondary/local helper tools are stored in the notes vault "
+        "`tools/` directory (workspace-relative). Prefer those reusable tools "
+        "when they fit the task. Common helpers:\n"
+        "   - `python3 tools/curriculum_status.py .`  (class/subject/chapter gaps)\n"
+        "   - `python3 tools/scaffold_chapter.py --class 9 --subject mathematics "
+        "--slug ch02-... --title \"...\"`\n"
+        "   - `python3 tools/record_attempt.py --path classes/.../ch01 "
+        "--question-id q1 --correct 1 --topic ... [--refresh]`\n"
+        "   - `python3 tools/websearch.py \"query\" [--num N] [--json]`\n"
+        "   - `python3 tools/webfetch.py <url> [--max-chars N] [--json]`\n"
+        "   - `python3 tools/list_notes.py <vault_root>`\n"
+        "   - `python3 tools/extract_pdf.py <file.pdf> [out.md]`\n"
+        "Curriculum content lives under `classes/<class>/<subject>/<chapter>/` "
+        "with chapter quizzes and optional `quizzes/` for overall subject tests.\n";
   ss << "4. Keep context scripts bounded and readable: print section headers, "
         "summarize counts, use targeted searches/ranges/limits.\n";
   ss << "5. Keep mutating or stateful actions separate unless explicitly asked.\n";

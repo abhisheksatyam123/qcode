@@ -20,6 +20,9 @@ class SystemPrompt {
 
   // Build with default identity
   static std::string build_default(const ToolConfig& tool_cfg = {});
+
+  // Study Buddy / teaching assistant identity
+  static std::string study_identity();
 };
 
 } // namespace qcode

@@ -1,5 +1,6 @@
 #include "openai_stream.h"
 
+#include <qcode/http/ssl_config.h>
 #include <qcode/logger/logger.h>
 #include "http/http_request_handler.h"
 
@@ -127,7 +128,9 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
   try {
     httplib::Client client(
         std::string(use_ssl ? "https://" : "http://") + host);
-    client.enable_server_certificate_verification(true);
+    if (use_ssl) {
+      qcode::http::configure_client_tls(client, true);
+    }
     client.set_connection_timeout(kConnectionTimeout);
     client.set_read_timeout(kReadTimeout);
 

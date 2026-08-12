@@ -1,0 +1,8 @@
+/.gradle/
+/local.properties
+/app/.cxx/
+/app/build/
+*.iml
+.DS_Store
+**/__pycache__/
+*.pyc

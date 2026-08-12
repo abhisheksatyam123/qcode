@@ -57,7 +57,7 @@ bool handle_slash_command(
     bool& enable_tools,
     std::string& system_prompt,
     ChatState& state,
-    std::shared_ptr<std::jthread> compaction_thread,
+    std::shared_ptr<qcode::compat::jthread> compaction_thread,
     bus::BusPort& bus
 ) {
     std::string cmd = raw_cmd.substr(1);
@@ -373,7 +373,7 @@ void run_compaction(
     int selected_provider,
     int selected_model,
     int keep,
-    std::shared_ptr<std::jthread> compaction_thread,
+    std::shared_ptr<qcode::compat::jthread> compaction_thread,
     bus::BusPort& bus
 ) {
     static std::atomic<bool> compaction_busy{false};
@@ -415,9 +415,9 @@ void run_compaction(
         compaction_thread->request_stop();
         compaction_thread->join();
     }
-    *compaction_thread = std::jthread(
+    *compaction_thread = qcode::compat::jthread(
         [providers_copy, sp, sm, snapshot, keep, sid,
-         &bus](std::stop_token stop_token) mutable {
+         &bus](qcode::compat::stop_token stop_token) mutable {
         qcode::contract::CompactionResult::Payload result;
         result.keep = keep;
         result.original_size = snapshot.size();

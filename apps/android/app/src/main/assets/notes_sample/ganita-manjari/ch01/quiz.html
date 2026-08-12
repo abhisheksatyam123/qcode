@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Ch 1 · Coordinates · QnA</title>
+<style>
+:root {
+  --bg: #0a1020; --card: #121a2b; --text: #e8eef7; --muted: #9fb0c7;
+  --line: #243047; --accent: #5ec8ff; --ok: #3ddc97; --bad: #ff7b7b; --btn: #2f6fed;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; color: var(--text);
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  background:
+    radial-gradient(900px 420px at 10% -10%, rgba(94,200,255,.16), transparent 60%),
+    radial-gradient(700px 360px at 100% 0%, rgba(61,220,151,.08), transparent 55%),
+    linear-gradient(180deg, #0a1020, #0d1526 40%, #0a1020);
+  min-height: 100vh;
+}
+header {
+  padding: 28px 20px 16px; max-width: 860px; margin: 0 auto;
+  border-bottom: 1px solid var(--line);
+}
+.kicker { color: var(--accent); letter-spacing: .08em; text-transform: uppercase; font-size: .72rem; font-family: system-ui, sans-serif; }
+h1 { margin: 8px 0 6px; font-size: clamp(1.5rem, 3vw, 2rem); line-height: 1.2; }
+.lead { margin: 0; color: var(--muted); max-width: 46rem; font-size: 1.02rem; }
+main { max-width: 860px; margin: 0 auto; padding: 18px 20px 48px; }
+.card {
+  background: color-mix(in srgb, var(--card) 92%, black);
+  border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin: 16px 0;
+}
+.card h2 { margin: 0 0 10px; font-size: 1.15rem; }
+.card p, .card li { color: #d5deea; }
+.grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.pill {
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #0d1524;
+  font-family: system-ui, sans-serif; font-size: .9rem;
+}
+.pill strong { display: block; color: var(--accent); font-size: .75rem; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 4px; }
+.question { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.question:last-of-type { border-bottom: 0; }
+.meta { font-family: system-ui, sans-serif; font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
+.prompt { margin-bottom: 10px; font-size: 1.05rem; }
+.choice { display: flex; gap: 8px; align-items: flex-start; margin: 7px 0; font-family: system-ui, sans-serif; }
+input[type=text], textarea {
+  width: 100%; background: #0b1322; border: 1px solid #334155; color: var(--text);
+  border-radius: 10px; padding: 10px 12px; font: inherit;
+}
+button {
+  appearance: none; border: 0; border-radius: 11px; background: var(--btn); color: white;
+  padding: 11px 16px; font-weight: 650; font-family: system-ui, sans-serif; cursor: pointer;
+}
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.feedback { margin-top: 8px; font-family: system-ui, sans-serif; font-size: .92rem; }
+.feedback.ok { color: var(--ok); }
+.feedback.bad { color: var(--bad); }
+.score {
+  display: none; margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+  background: #0d1524; border: 1px solid var(--line); font-family: system-ui, sans-serif;
+}
+.formula {
+  font-family: ui-monospace, "Fira Code", monospace; background: #0b1322;
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; overflow-x: auto;
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="kicker">Ganita Manjari · Grade 9 · Part I</div>
+  <h1>Chapter 1 — Orienting Yourself: The Use of Coordinates</h1>
+  <p class="lead">A coordinate system lets us turn places into numbers. This chapter builds the 2-D Cartesian plane, quadrants, ordered pairs <em>(x, y)</em>, and distance via Baudhāyana–Pythagoras.</p>
+</header>
+<main>
+  <section class="card">
+    <h2>Concept map</h2>
+    <div class="grid">
+      <div class="pill"><strong>Why</strong>Locate a point in a plane with two numbers, not vague words.</div>
+      <div class="pill"><strong>Axes</strong>x-axis (horizontal) and y-axis (vertical) meet at the origin O(0, 0).</div>
+      <div class="pill"><strong>Quadrants</strong>I (+,+), II (−,+), III (−,−), IV (+,−).</div>
+      <div class="pill"><strong>Distance</strong>√[(x₂−x₁)² + (y₂−y₁)²]</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Remember</h2>
+    <ul>
+      <li>x-coordinate = perpendicular distance from the <em>y-axis</em> (signed).</li>
+      <li>y-coordinate = perpendicular distance from the <em>x-axis</em> (signed).</li>
+      <li>On the y-axis, x = 0; on the x-axis, y = 0.</li>
+      <li>Example from the text: A(3,4) to D(7,1) → Δx=4, Δy=−3 → distance = √(16+9) = 5.</li>
+    </ul>
+    <p class="formula">d = √( (x₂ − x₁)² + (y₂ − y₁)² )</p>
+  </section>
+
+  <section class="card">
+    <h2>Chapter QnA</h2>
+    <form id="quiz">
+      <div class="question" data-type="mcq" data-answer="two perpendicular axes">
+        <div class="meta">Q1 · MCQ · Core idea</div>
+        <div class="prompt">To fix a point’s position in a plane, we need:</div>
+        <label class="choice"><input type="radio" name="q1" value="one number line only"> <span>one number line only</span></label>
+        <label class="choice"><input type="radio" name="q1" value="two perpendicular axes"> <span>two perpendicular axes (a Cartesian / xy-plane)</span></label>
+        <label class="choice"><input type="radio" name="q1" value="three random lines"> <span>three random lines</span></label>
+        <label class="choice"><input type="radio" name="q1" value="only a compass"> <span>only a compass</span></label>
+        <div class="feedback" hidden></div>
+      </div>
+
+      <div class="question" data-type="mcq" data-answer="II">
+        <div class="meta">Q2 · MCQ · Quadrants</div>
+        <div class="prompt">Point Q(−5, 3) lies in which quadrant?</div>
+        <label class="choice"><input type="radio" name="q2" value="I"> <span>Quadrant I</span></label>
+        <label class="choice"><input type="radio" name="q2" value="II"> <span>Quadrant II</span></label>
+        <label class="choice"><input type="radio" name="q2" value="III"> <span>Quadrant III</span></label>
+        <label class="choice"><input type="radio" name="q2" value="IV"> <span>Quadrant IV</span></label>
+        <div class="feedback" hidden></div>
+      </div>
+
+      <div class="question" data-type="mcq" data-answer="IV">
+        <div class="meta">Q3 · MCQ · Quadrants</div>
+        <div class="prompt">Point S(3, −5) lies in which quadrant?</div>
+        <label class="choice"><input type="radio" name="q3" value="I"> <span>Quadrant I</span></label>
+        <label class="choice"><input type="radio" name="q3" value="II"> <span>Quadrant II</span></label>
+        <label class="choice"><input type="radio" name="q3" value="III"> <span>Quadrant III</span></label>
+        <label class="choice"><input type="radio" name="q3" value="IV"> <span>Quadrant IV</span></label>
+        <div class="feedback" hidden></div>
+      </div>
+
+      <div class="question" data-type="short" data-answer="0">
+        <div class="meta">Q4 · Short · Axes</div>
+        <div class="prompt">What is the x-coordinate of any point on the y-axis?</div>
+        <input type="text" name="q4" placeholder="e.g. 0">
+        <div class="feedback" hidden></div>
+      </div>
+
+      <div class="question" data-type="short" data-answer="5">
+        <div class="meta">Q5 · Short · Distance</div>
+        <div class="prompt">Distance from A(3, 4) to D(7, 1) is ______ units.</div>
+        <input type="text" name="q5" placeholder="number">
+        <div class="feedback" hidden></div>
+      </div>
+
+      <div class="question" data-type="mcq" data-answer="sqrt((x2-x1)^2+(y2-y1)^2)">
+        <div class="meta">Q6 · MCQ · Formula</div>
+        <div class="prompt">Distance between (x₁, y₁) and (x₂, y₂) is:</div>
+        <label class="choice"><input type="radio" name="q6" value="|x2-x1|+|y2-y1|"> <span>|x₂−x₁| + |y₂−y₁| (Manhattan only)</span></label>
+        <label class="choice"><input type="radio" name="q6" value="sqrt((x2-x1)^2+(y2-y1)^2)"> <span>√[(x₂−x₁)² + (y₂−y₁)²]</span></label>
+        <label class="choice"><input type="radio" name="q6" value="(x2+x1)+(y2+y1)"> <span>(x₂+x₁) + (y₂+y₁)</span></label>
+        <label class="choice"><input type="radio" name="q6" value="x2*y2"> <span>x₂ · y₂</span></label>
+        <div class="feedback" hidden></div>
+      </div>
+
+      <div class="question" data-type="long" data-answer="">
+        <div class="meta">Q7 · Long · Explain</div>
+        <div class="prompt">Why do we need <em>two</em> axes (not one) to locate a point on a classroom floor map? Give a short real-life analogy (room, map, or city grid).</div>
+        <textarea name="q7" rows="4" placeholder="Write 3–5 sentences…"></textarea>
+        <div class="feedback" hidden></div>
+      </div>
+
+      <div class="actions">
+        <button type="submit">Check answers</button>
+        <button type="button" id="reveal-btn">Show hints</button>
+      </div>
+      <div class="score" id="score"></div>
+    </form>
+  </section>
+</main>
+<script>
+function norm(s) {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim()
+    .replace(/[−–]/g, '-').replace(/²/g, '^2');
+}
+function closeEnough(got, expected) {
+  const g = norm(got), e = norm(expected);
+  if (!e) return got.trim().length >= 12;
+  if (g === e) return true;
+  if (e === '5' && /^5(\.0+)?$/.test(g)) return true;
+  if (e === '0' && /^0(\.0+)?$/.test(g)) return true;
+  return g.includes(e);
+}
+const hints = {
+  q1: 'Think: horizontal + vertical reference lines.',
+  q2: 'x negative, y positive → left-upper quadrant.',
+  q3: 'x positive, y negative → right-lower quadrant.',
+  q4: 'Every point on the y-axis sits on x = 0.',
+  q5: 'Δx = 4, Δy = 3 → √(16+9).',
+  q6: 'Baudhāyana–Pythagoras on the right triangle of run & rise.',
+  q7: 'One number is a line; a floor needs North–South and East–West.'
+};
+document.getElementById('quiz').addEventListener('submit', (e) => {
+  e.preventDefault();
+  let ok = 0, total = 0;
+  document.querySelectorAll('.question').forEach((block, idx) => {
+    total += 1;
+    const type = block.dataset.type;
+    const expected = block.dataset.answer || '';
+    let got = '';
+    if (type === 'mcq') {
+      const sel = block.querySelector('input[type=radio]:checked');
+      got = sel ? sel.value : '';
+    } else {
+      const input = block.querySelector('textarea, input[type=text]');
+      got = input ? input.value : '';
+    }
+    const fb = block.querySelector('.feedback');
+    fb.hidden = false;
+    const good = closeEnough(got, expected);
+    if (good) ok += 1;
+    fb.className = 'feedback ' + (good ? 'ok' : 'bad');
+    if (type === 'long') {
+      fb.textContent = good
+        ? 'Nice — you explained the need for two directions.'
+        : 'Add a bit more: mention two independent directions (e.g. length & width).';
+    } else {
+      fb.textContent = good ? 'Correct.' : ('Not quite. Hint: ' + (hints['q' + (idx + 1)] || 're-read the Remember box.'));
+    }
+  });
+  const score = document.getElementById('score');
+  score.style.display = 'block';
+  score.textContent = `Score: ${ok} / ${total}. Weak spots → revisit axes, signs in quadrants, and the distance formula.`;
+});
+document.getElementById('reveal-btn').addEventListener('click', () => {
+  document.querySelectorAll('.question').forEach((block, idx) => {
+    const fb = block.querySelector('.feedback');
+    fb.hidden = false;
+    fb.className = 'feedback';
+    fb.textContent = 'Hint: ' + (hints['q' + (idx + 1)] || '');
+  });
+});
+</script>
+</body>
+</html>

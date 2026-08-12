@@ -1,13 +1,13 @@
 #pragma once
 
 #include <qcode/bus/in_process_bus.h>
+#include <qcode/compat/jthread.h>
 #include <qcode/state/state.h>
 #include <qcode/store/app_store.h>
 
 #include <atomic>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace qcode {
@@ -70,7 +70,7 @@ private:
     std::shared_ptr<bus::BusRuntime> bus_;
     std::shared_ptr<std::atomic<bool>> app_running_;
     std::shared_ptr<std::atomic<bool>> busy_;
-    std::jthread worker_;
+    qcode::compat::jthread worker_;
 };
 
 }  // namespace qcode

@@ -1,4 +1,5 @@
 #include <qcode/config/config.h>
+#include <qcode/http/ssl_config.h>
 #include <qcode/providers/cursor.h>
 
 #include <algorithm>
@@ -85,10 +86,13 @@ static ProviderInfo default_opencode_provider() {
     provider.api_url = "https://opencode.ai/zen/v1";
     provider.protocol = "chat_completions";
     provider.models = {
+        make_default_model("HY3 (Free)", "hy3-free", 262144, 64000),
         make_default_model("Nemotron 3 Ultra (Free)", "nemotron-3-ultra-free",
                            1000000, 128000, true, true),
         make_default_model("DeepSeek V4 Flash (Free)", "deepseek-v4-flash-free",
                            1000000, 65536),
+        make_default_model("Laguna S 2.1 (Free)", "laguna-s-2.1-free", 128000,
+                           32768, true, true),
         make_default_model("North Mini Code (Free)", "north-mini-code-free",
                            256000, 64000)};
     return provider;
@@ -176,6 +180,7 @@ std::string get_antigravity_token(bool force_refresh) {
         body += "&client_secret=" + form_encode(client_secret);
     }
     httplib::Client client("https://oauth2.googleapis.com");
+    qcode::http::configure_client_tls(client, true);
     client.set_connection_timeout(5);
     client.set_read_timeout(10);
     const auto response =
@@ -305,6 +310,7 @@ std::string config_path() {
 }
 
 std::string get_notes_root() {
+    if (const char* r = std::getenv("QCODE_NOTES_ROOT")) return r;
     if (const char* r = std::getenv("OPENCODE_NOTES_ROOT")) return r;
     if (const char* h = std::getenv("HOME")) return std::string(h) + "/notes";
     return "notes";

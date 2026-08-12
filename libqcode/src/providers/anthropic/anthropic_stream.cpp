@@ -1,5 +1,6 @@
 #include "anthropic_stream.h"
 
+#include <qcode/http/ssl_config.h>
 #include <qcode/logger/logger.h>
 
 #include <chrono>
@@ -131,7 +132,7 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
   try {
     if (use_ssl) {
       httplib::SSLClient client(host);
-      client.enable_server_certificate_verification(true);
+      qcode::http::configure_client_tls(client, true);
       client.set_connection_timeout(30, 0);
       client.set_read_timeout(120, 0);
 

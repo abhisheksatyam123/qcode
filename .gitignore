@@ -38,3 +38,12 @@ scratchpad/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Android local/build artifacts (SDK paths, NDK compile tree, Gradle cache)
+apps/android/.gradle/
+apps/android/local.properties
+apps/android/app/.cxx/
+**/__pycache__/
+
+# Host-side NDK/Python unpack tree (not shipped in the APK)
+build-android-deps/

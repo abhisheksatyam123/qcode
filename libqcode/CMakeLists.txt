@@ -1,17 +1,24 @@
 # qcode-core — shared library (providers, session, generation, render, tools).
 
 find_package(OpenSSL REQUIRED)
-find_package(nlohmann_json 3.10 REQUIRED)
+# Vendored via third_party/nlohmann_json-cmake; skip find when already a target
+# (Android CMAKE_FIND_ROOT_PATH otherwise misses the build-tree package).
+if(NOT TARGET nlohmann_json::nlohmann_json)
+  find_package(nlohmann_json 3.10 REQUIRED)
+endif()
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
 
 add_library(qcode-core)
 add_library(qcode::core ALIAS qcode-core)
 
+# Repo root: works when qcode is top-level or add_subdirectory'd (e.g. Android).
+get_filename_component(QCODE_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+
 target_include_directories(qcode-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/third_party/md4c>
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/third_party/httplib-header-only>
+    $<BUILD_INTERFACE:${QCODE_REPO_ROOT}/third_party/md4c>
+    $<BUILD_INTERFACE:${QCODE_REPO_ROOT}/third_party/httplib-header-only>
     $<INSTALL_INTERFACE:include>
 )
 
@@ -63,6 +70,7 @@ target_sources(qcode-core PRIVATE
 
     # HTTP
     src/http/http_request_handler.cpp
+    src/http/ssl_config.cpp
 
     # Utils
     src/utils/random.cpp
@@ -88,6 +96,8 @@ target_sources(qcode-core PRIVATE
 
     # Session persistence
     src/session/session_store.cpp
+    src/study/study_store.cpp
+    src/study/study_assistant.cpp
 
     # Bus
     src/bus/in_process_bus.cpp
@@ -99,7 +109,7 @@ target_sources(qcode-core PRIVATE
     src/render/message_render.cpp
     src/render/markdown.cpp
     src/render/tool_renderers.cpp
-    ${CMAKE_SOURCE_DIR}/third_party/md4c/md4c.c
+    ${QCODE_REPO_ROOT}/third_party/md4c/md4c.c
 
     # Store
     src/store/app_store.cpp
@@ -112,7 +122,7 @@ target_sources(qcode-core PRIVATE
 )
 
 set_source_files_properties(
-    ${CMAKE_SOURCE_DIR}/third_party/md4c/md4c.c
+    ${QCODE_REPO_ROOT}/third_party/md4c/md4c.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=c99"
 )
 

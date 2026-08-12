@@ -15,6 +15,7 @@
 #include <climits>
 
 #include <qcode/logger/file_logger.h>
+#include <qcode/compat/jthread.h>
 #include <qcode/generation/generation_service.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/commands/commands.h>
@@ -58,7 +59,7 @@ int main() {
     LOG_INFO("QCode starting (bus architecture)...");
 
     auto app_running = std::make_shared<std::atomic<bool>>(true);
-    auto compaction_thread = std::make_shared<std::jthread>();
+    auto compaction_thread = std::make_shared<qcode::compat::jthread>();
     auto screen = ScreenInteractive::Fullscreen();
 
     // ═══════════════════════════════════════════════════════════

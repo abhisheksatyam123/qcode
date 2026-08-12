@@ -56,8 +56,21 @@ std::string resolve_session_workspace(const std::string& sid) {
     std::string ws = qcode::session::get_session_workspace(sid);
     if (!ws.empty()) ws = expand_tilde(ws);
     if (ws.empty()) {
+#ifdef __ANDROID__
+        if (const char* home = std::getenv("HOME"); home && *home) {
+            return home;
+        }
+#endif
         char cwd[4096] = {0};
         if (getcwd(cwd, sizeof(cwd))) ws = cwd;
+#ifdef __ANDROID__
+        // Avoid treating process "/" as a usable workspace.
+        if (ws == "/") {
+            if (const char* home = std::getenv("HOME"); home && *home) {
+                return home;
+            }
+        }
+#endif
     }
     return ws;
 }

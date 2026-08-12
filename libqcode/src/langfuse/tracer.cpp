@@ -1,3 +1,4 @@
+#include <qcode/http/ssl_config.h>
 #include <qcode/langfuse/tracer.h>
 #include <qcode/logger/logger.h>
 
@@ -147,7 +148,7 @@ struct Tracer::HttpState {
             int read_timeout_sec)
       : client(strip_path_suffix(host_url)),
         base_path(extract_base_path(host_url)) {
-    client.enable_server_certificate_verification(true);
+    qcode::http::configure_client_tls(client, true);
     client.set_connection_timeout(connection_timeout_sec, 0);
     client.set_read_timeout(read_timeout_sec, 0);
     headers = {

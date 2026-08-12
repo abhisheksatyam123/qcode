@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <thread>
 
+#include <qcode/compat/jthread.h>
 #include <qcode/state/state.h>
 #include <qcode/bus/port.h>
 
@@ -59,7 +59,7 @@ bool handle_slash_command(
     bool& enable_tools,
     std::string& system_prompt,
     ChatState& state,
-    std::shared_ptr<std::jthread> compaction_thread,
+    std::shared_ptr<qcode::compat::jthread> compaction_thread,
     bus::BusPort& bus
 );
 
@@ -72,7 +72,7 @@ void run_compaction(
     int selected_provider,
     int selected_model,
     int keep,
-    std::shared_ptr<std::jthread> compaction_thread,
+    std::shared_ptr<qcode::compat::jthread> compaction_thread,
     bus::BusPort& bus
 );
 

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "q1",
+    "type": "mcq",
+    "topic": "core-idea",
+    "prompt": "To fix a point's position in a plane, we need:",
+    "choices": [
+      "one number line only",
+      "two perpendicular axes",
+      "three random lines",
+      "only a compass"
+    ],
+    "answer": "two perpendicular axes",
+    "difficulty": 1
+  },
+  {
+    "id": "q2",
+    "type": "mcq",
+    "topic": "quadrants",
+    "prompt": "Point Q(−5, 3) lies in which quadrant?",
+    "choices": ["I", "II", "III", "IV"],
+    "answer": "II",
+    "difficulty": 1
+  },
+  {
+    "id": "q3",
+    "type": "mcq",
+    "topic": "quadrants",
+    "prompt": "Point S(3, −5) lies in which quadrant?",
+    "choices": ["I", "II", "III", "IV"],
+    "answer": "IV",
+    "difficulty": 1
+  },
+  {
+    "id": "q4",
+    "type": "short",
+    "topic": "axes",
+    "prompt": "What is the x-coordinate of any point on the y-axis?",
+    "answer": "0",
+    "difficulty": 1
+  },
+  {
+    "id": "q5",
+    "type": "short",
+    "topic": "distance",
+    "prompt": "Distance from A(3, 4) to D(7, 1) is ______ units.",
+    "answer": "5",
+    "difficulty": 2
+  },
+  {
+    "id": "q6",
+    "type": "mcq",
+    "topic": "formula",
+    "prompt": "Distance between (x₁, y₁) and (x₂, y₂) is:",
+    "choices": [
+      "|x2-x1|+|y2-y1|",
+      "sqrt((x2-x1)^2+(y2-y1)^2)",
+      "(x2+x1)+(y2+y1)",
+      "x2*y2"
+    ],
+    "answer": "sqrt((x2-x1)^2+(y2-y1)^2)",
+    "difficulty": 2
+  },
+  {
+    "id": "q7",
+    "type": "long",
+    "topic": "explain",
+    "prompt": "Why do we need two axes (not one) to locate a point on a classroom floor map? Give a short real-life analogy.",
+    "answer": "",
+    "difficulty": 2
+  }
+]

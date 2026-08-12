@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "title": "Curriculum",
+  "classes": [
+    {
+      "id": "class-9",
+      "title": "Class 9",
+      "path": "classes/class-9"
+    }
+  ],
+  "rollup": {
+    "classes_total": 1,
+    "subjects_total": 1,
+    "chapters_total": 1,
+    "chapters_mastered": 0,
+    "chapters_in_progress": 0,
+    "chapters_not_started": 1,
+    "attempts_total": 0,
+    "updated_at": "2026-08-12T18:55:47+00:00"
+  }
+}
