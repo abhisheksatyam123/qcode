@@ -588,7 +588,7 @@ ftxui::Element render_view(
                 }
             }
             body = vbox({
-                chat_scroll | vscroll_indicator | focusPosition(0, *state.scroll_line) | yframe | flex,
+                chat_scroll | focusPosition(0, *state.scroll_line) | yframe | flex,
                 // status removed — shown in header strip instead
                 prompt_box,
             }) | flex;
@@ -701,7 +701,7 @@ ftxui::Element render_view(
                 *state.auto_scroll = false;
             }
             body = vbox({
-                file_scroll | vscroll_indicator |
+                file_scroll |
                     focusPosition(0, *state.scroll_line) | yframe | flex,
             }) | flex;
         } else {
@@ -790,7 +790,7 @@ ftxui::Element render_view(
             body = vbox({
                 text(" FILE DIFF ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
-                file_scroll | vscroll_indicator |
+                file_scroll |
                     focusPosition(0, *state.scroll_line) | yframe | flex,
             }) | flex;
         }
