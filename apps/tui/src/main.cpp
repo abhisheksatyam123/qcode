@@ -1060,12 +1060,16 @@ int main() {
         // Everything is in the header strip now — no separate footer
         auto layout = main_view;
         
-        // Overlay toasts if any
+        // Overlay toasts if any — positioned just above the chat input box at bottom
         auto toasts = store.toasts();
         if (!toasts.empty()) {
             return dbox({
                 layout,
-                qcode::tui::render_toast_overlay(toasts, *state.theme) | vcenter,
+                vbox({
+                    filler() | flex,
+                    qcode::tui::render_toast_overlay(toasts, *state.theme),
+                    text("") | size(HEIGHT, EQUAL, 1),
+                }),
             });
         }
         
