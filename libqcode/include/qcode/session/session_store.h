@@ -92,6 +92,15 @@ SessionStats get_session_stats(const std::string& session_id,
                                int live_completion_tokens = 0,
                                int live_total_tokens = 0);
 
+// Persist cumulative token usage for a session. New values are ADDED on top of
+// the previously stored totals (the database is the source of truth across
+// restarts and session switches); pass exact per-turn deltas. No-op if the
+// session id is invalid or the row is missing.
+void persist_session_token_stats(const std::string& session_id,
+                                 int prompt_tokens_delta,
+                                 int completion_tokens_delta,
+                                 int total_tokens_delta);
+
 // Delete a session and its associated messages
 void delete_session(const std::string& session_id);
 

@@ -142,7 +142,7 @@ void init_database() {
             sqlite3_finalize(vstmt);
         }
     }
-    const int kSchemaVersion = 4;
+    const int kSchemaVersion = 5;
     if (user_version < 3) {
         char* err_msg = nullptr;
         if (sqlite3_exec(db, "BEGIN;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
@@ -288,6 +288,16 @@ void init_database() {
         sqlite3_exec(db, "PRAGMA user_version = 4;", nullptr, nullptr, nullptr);
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
         (void)kSchemaVersion;
+    }
+
+    // ── Migration v4 → v5: persist cumulative token counts on sessions ──
+    if (user_version < 5) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN prompt_tokens INTEGER DEFAULT 0;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN completion_tokens INTEGER DEFAULT 0;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN total_tokens INTEGER DEFAULT 0;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 5;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
     LOG_INFO("SQLite: database opened successfully at {}", path);
@@ -539,9 +549,23 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
         std::make_shared<qcode::Messages>(load_session_history_parsed(session_id));
     // Live counters belong to the previous session — clear them so header/Stats
     // don't keep showing stale totals after a switch.
+    // Live counters belong to the previous session — clear first, then
+    // restore the persisted cumulative totals so the Stats tab shows the real
+    // numbers for the freshly opened session instead of 0.
     if (state.total_prompt_tokens) *state.total_prompt_tokens = 0;
     if (state.total_completion_tokens) *state.total_completion_tokens = 0;
     if (state.total_tokens) *state.total_tokens = 0;
+    {
+        SessionStats restored = get_session_stats(session_id);
+        if (state.total_prompt_tokens) *state.total_prompt_tokens = restored.prompt_tokens;
+        if (state.total_completion_tokens) *state.total_completion_tokens = restored.completion_tokens;
+        if (state.total_tokens) *state.total_tokens = restored.total_tokens;
+        // Tool calls + accumulated tool time are reconstructed from persisted
+        // messages; restore them too so the Stats tab is complete after a
+        // session switch (the live counters were zeroed above).
+        if (state.tool_call_count) *state.tool_call_count = restored.tool_calls;
+        if (state.total_tool_time_ms) *state.total_tool_time_ms = restored.total_tool_time_ms;
+    }
     if (state.current_context_tokens) *state.current_context_tokens = 0;
     if (state.tool_call_count) *state.tool_call_count = 0;
     if (state.total_tool_time_ms) *state.total_tool_time_ms = 0;
@@ -847,7 +871,9 @@ SessionStats get_session_stats(const std::string& session_id,
         const char* sql =
             "SELECT COALESCE(title, ''), COALESCE(workspace, ''), "
             "COALESCE(provider, ''), COALESCE(model, ''), "
-            "COALESCE(created_at, 0) FROM sessions WHERE id = ?;";
+            "COALESCE(created_at, 0), "
+            "COALESCE(prompt_tokens, 0), COALESCE(completion_tokens, 0), "
+            "COALESCE(total_tokens, 0) FROM sessions WHERE id = ?;";
         sqlite3_stmt* stmt = nullptr;
         if (prepare_stmt(db, sql, &stmt)) {
             sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
@@ -861,6 +887,13 @@ SessionStats get_session_stats(const std::string& session_id,
                 stats.provider = p ? reinterpret_cast<const char*>(p) : "";
                 stats.model = m ? reinterpret_cast<const char*>(m) : "";
                 stats.created_at = sqlite3_column_int64(stmt, 4);
+                // Persisted cumulative token totals (source of truth across
+                // restarts / session switches). Live in-memory counters only
+                // ever hold the latest turn, so the stored value is what we
+                // surface for historical sessions.
+                stats.prompt_tokens = sqlite3_column_int(stmt, 5);
+                stats.completion_tokens = sqlite3_column_int(stmt, 6);
+                stats.total_tokens = sqlite3_column_int(stmt, 7);
             }
             sqlite3_finalize(stmt);
         }
@@ -906,15 +939,45 @@ SessionStats get_session_stats(const std::string& session_id,
 
     sqlite3_close(db);
 
-    // Live (current generation) counters take precedence / accumulate on top.
+    // Tool calls / tool time are reconstructed from persisted messages rows,
+    // so add any live counters from the in-flight generation on top.
     stats.tool_calls += live_tool_calls;
     stats.total_tool_time_ms += live_tool_time_ms;
-    // Use the larger of stored vs live token totals (latest generation dominates).
-    stats.prompt_tokens = std::max(stats.prompt_tokens, live_prompt_tokens);
-    stats.completion_tokens = std::max(stats.completion_tokens, live_completion_tokens);
-    stats.total_tokens = std::max(stats.total_tokens, live_total_tokens);
+    // Token totals: the stored value is already cumulative across all prior
+    // turns. The live value is the *current* (latest) turn's absolute count, so
+    // add it on top rather than taking the max (which would drop history).
+    stats.prompt_tokens += live_prompt_tokens;
+    stats.completion_tokens += live_completion_tokens;
+    stats.total_tokens += live_total_tokens;
 
     return stats;
+}
+
+void persist_session_token_stats(const std::string& session_id,
+                                 int prompt_tokens_delta,
+                                 int completion_tokens_delta,
+                                 int total_tokens_delta) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return;
+    std::string path;
+    sqlite3* db = open_database(path);
+    if (!db) return;
+
+    const char* sql =
+        "UPDATE sessions SET "
+        "  prompt_tokens = prompt_tokens + ?, "
+        "  completion_tokens = completion_tokens + ?, "
+        "  total_tokens = total_tokens + ? "
+        "WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_int(stmt, 1, prompt_tokens_delta);
+        sqlite3_bind_int(stmt, 2, completion_tokens_delta);
+        sqlite3_bind_int(stmt, 3, total_tokens_delta);
+        sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
 }
 
 void rename_session(const std::string& session_id, const std::string& new_title) {

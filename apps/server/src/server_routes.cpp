@@ -189,6 +189,13 @@ static std::vector<qcode::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<TokenUsageUpdated>(
         [session](const TokenUsageUpdated::Payload& p) {
+            // Persist per-turn deltas into the session row (the DB is the
+            // cumulative source of truth across restarts / session switches).
+            // The in-memory live_* are kept only for any consumer that wants the
+            // latest turn's value; the stats route passes 0 for live tokens so
+            // get_session_stats does not double-count against the stored totals.
+            qcode::session::persist_session_token_stats(
+                session->id, p.prompt_tokens, p.completion_tokens, p.total_tokens);
             session->live_prompt_tokens = p.prompt_tokens;
             session->live_completion_tokens = p.completion_tokens;
             session->live_total_tokens = p.total_tokens;
@@ -1061,22 +1068,22 @@ svr.Get("/session/([^/]+)/stats", [](const httplib::Request& req, httplib::Respo
         return;
     }
     // Pull live counters from an in-memory generation session, if present.
+    // Token totals are persisted per-turn in the DB (the cumulative source of
+    // truth), so pass 0 for the live token args; only the tool-call counters
+    // (reconstructed from stored messages for completed turns + in-flight ctx
+    // for the current turn) need the live values.
     int live_tool_calls = 0;
     double live_tool_time_ms = 0.0;
-    int live_prompt = 0, live_completion = 0, live_total = 0;
     {
         std::lock_guard<std::mutex> lock(g_sessions_mutex);
         auto it = g_sessions.find(sid);
         if (it != g_sessions.end()) {
             live_tool_calls = it->second->ctx.tool_call_count;
             live_tool_time_ms = it->second->ctx.total_tool_time_ms;
-            live_prompt = it->second->live_prompt_tokens.load();
-            live_completion = it->second->live_completion_tokens.load();
-            live_total = it->second->live_total_tokens.load();
         }
     }
     auto st = qcode::session::get_session_stats(sid, live_tool_calls, live_tool_time_ms,
-                                             live_prompt, live_completion, live_total);
+                                             0, 0, 0);
     nlohmann::json j = {
         {"id", st.id}, {"title", st.title}, {"workspace", st.workspace},
         {"provider", st.provider}, {"model", st.model},

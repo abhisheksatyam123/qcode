@@ -81,21 +81,33 @@ TEST(MessageRenderTest, ToolCallAndResultRendering) {
   qcode::Message result_msg(qcode::kMessageRoleUser, {result_part});
 
   qcode::ChatState state;
+  state.tool_collapse_state =
+      std::make_shared<std::unordered_map<std::string, bool>>();
+  (*state.tool_collapse_state)["call_123"] = true;
   std::vector<qcode::ProviderInfo> providers;
 
-  auto element = qcode::render_message(
+  // 1. Verify collapsed single-line view
+  auto element_collapsed = qcode::render_message(
       assistant_msg, state, providers, -1, -1, "orange", &result_msg);
+  auto screen_collapsed = ftxui::Screen::Create(ftxui::Dimension::Fixed(100), ftxui::Dimension::Fit(element_collapsed));
+  ftxui::Render(screen_collapsed, element_collapsed);
+  std::string output_collapsed = screen_collapsed.ToString();
 
-  auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(100), ftxui::Dimension::Fit(element));
-  ftxui::Render(screen, element);
-  std::string output = screen.ToString();
-  printf("Rendered Tool Call Output (width 100):\n%s\n", output.c_str());
+  EXPECT_NE(output_collapsed.find("Run bitwise shift in python"), std::string::npos);
+  EXPECT_NE(output_collapsed.find("✓"), std::string::npos);
 
-  // Verify tool call header, command, output, and success status in rendering
-  EXPECT_NE(output.find("Run bitwise shift in python"), std::string::npos);
-  EXPECT_NE(output.find("python3 -c"), std::string::npos);
-  EXPECT_NE(output.find("65536"), std::string::npos);
-  EXPECT_NE(output.find("✓"), std::string::npos);
+  // 2. Verify expanded view with output
+  (*state.tool_collapse_state)["call_123"] = false;
+  auto element_expanded = qcode::render_message(
+      assistant_msg, state, providers, -1, -1, "orange", &result_msg);
+  auto screen_expanded = ftxui::Screen::Create(ftxui::Dimension::Fixed(100), ftxui::Dimension::Fit(element_expanded));
+  ftxui::Render(screen_expanded, element_expanded);
+  std::string output_expanded = screen_expanded.ToString();
+
+  EXPECT_NE(output_expanded.find("Run bitwise shift in python"), std::string::npos);
+  EXPECT_NE(output_expanded.find("python3 -c"), std::string::npos);
+  EXPECT_NE(output_expanded.find("65536"), std::string::npos);
+  EXPECT_NE(output_expanded.find("✓"), std::string::npos);
 }
 
 }

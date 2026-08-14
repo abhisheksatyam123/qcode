@@ -21,6 +21,7 @@ add_executable(qcode_tests
     unit/tui_bus_test.cpp
     unit/retry_policy_test.cpp
     unit/model_performance_telemetry_test.cpp
+    unit/session_stats_test.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp

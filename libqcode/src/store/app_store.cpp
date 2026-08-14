@@ -459,9 +459,16 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<TokenUsageUpdated>([this](const TokenUsageUpdated::Payload& p) {
-        *state_.total_prompt_tokens = p.prompt_tokens;
-        *state_.total_completion_tokens = p.completion_tokens;
-        *state_.total_tokens = p.total_tokens;
+        // Accumulate: TokenUsageUpdated carries the LATEST turn's absolute
+        // counts, but the Stats tab (TUI) and backend /stats endpoint expect the
+        // session-lifetime cumulative total. The database holds the authoritative
+        // historical total, so persist the per-turn delta and accumulate in
+        // memory as well.
+        *state_.total_prompt_tokens += p.prompt_tokens;
+        *state_.total_completion_tokens += p.completion_tokens;
+        *state_.total_tokens += p.total_tokens;
+        qcode::session::persist_session_token_stats(
+            session_id(), p.prompt_tokens, p.completion_tokens, p.total_tokens);
         // Calibration anchor: remember the actual prompt token count so the
         // next heuristic estimate can be corrected against ground truth.
         *state_.last_actual_prompt_tokens = p.prompt_tokens;
