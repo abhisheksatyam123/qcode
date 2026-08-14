@@ -176,6 +176,10 @@ nlohmann::json wrap_antigravity_envelope_impl(const nlohmann::json& gemini_req,
   }
   if (mapped_model == "gemini-3-flash") {
     mapped_model = "gemini-3-flash-agent";
+  } else if (mapped_model == "gemini-3.7-flash" || mapped_model == "gemini-3.7-flash-high") {
+    mapped_model = "gemini-3.6-flash-high";
+  } else if (mapped_model == "gemini-3.7-flash-low") {
+    mapped_model = "gemini-3.6-flash-low";
   }
   env["model"] = mapped_model;
   env["userAgent"] = "antigravity";
