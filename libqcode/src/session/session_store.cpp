@@ -1026,6 +1026,7 @@ void seed_model_capabilities_if_needed() {
         {"gemini-3.1-pro-low", "antigravity", "Gemini 3.1 Pro", "Google DeepMind Dense/MoE", 2000000, 65536, 1, 1, "Top Tier (>60% SWE-bench)", "2M Context System Architecture & Large Repo Analysis"},
         {"gemini-3.7-flash-high", "antigravity", "Gemini 3.7 Flash (High)", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "High-Speed Agent Tools & Web Workflows"},
         {"gemini-3.7-flash-low", "antigravity", "Gemini 3.7 Flash (Low)", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "Fast In-line Code Edits & Low Latency Tool Calls"},
+        {"gemini-3.7-flash", "antigravity", "Gemini 3.7 Flash", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "Adaptive Reasoning & Tool Execution"},
         {"gemini-3.6-flash-high", "antigravity", "Gemini 3.6 Flash", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "High-Speed Agent Tools & Web Workflows"},
 
         {"poolside/laguna-s-2.1:free", "openrouter", "Poolside Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Iterative Code Modifications & Diffs"},
