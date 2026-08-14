@@ -137,16 +137,24 @@ Element ToolBlock(const std::string& icon,
     }
 
     std::string heading = description;
+    if (heading.empty()) heading = shell_command;
     if (heading.empty()) heading = title;
     if (heading.empty()) heading = "tool";
     if (!icon.empty() && icon != "$") {
         title_row.push_back(text(icon + " ") | dim | color(accent_color));
     }
-    title_row.push_back(text("# " + truncate_utf8(heading, 64)) | dim |
-                        color(muted_fg(theme)));
+    
+    // When collapsed, highlight the command / action clearly in the single-line summary
+    if (collapsed) {
+        title_row.push_back(text("# " + truncate_utf8(heading, 70)) | bold |
+                            color(command_fg()));
+    } else {
+        title_row.push_back(text("# " + truncate_utf8(heading, 70)) | dim |
+                            color(muted_fg(theme)));
+    }
 
     if (!title.empty() && title != heading &&
-        description.find(title) == std::string::npos) {
+        heading.find(title) == std::string::npos) {
         title_row.push_back(text(" · " + title) | dim | color(muted_fg(theme)));
     }
 
@@ -166,37 +174,39 @@ Element ToolBlock(const std::string& icon,
         title_row.push_back(text("✓") | color(success_fg(theme)) | bold);
     }
 
-    // ── Command row: $ command (always visible) ──
-    std::string command = shell_command;
-    if (command.empty()) {
-        command = !description.empty() ? description
-                  : !title.empty()     ? title
-                                       : "tool";
-    }
-    if (command.rfind("$ ", 0) == 0) command = command.substr(2);
-
     Elements body;
     body.push_back(hbox(std::move(title_row)));
 
-    if (!command.empty()) {
-        std::istringstream iss(command);
-        std::string line;
-        bool first_line = true;
-        while (std::getline(iss, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            body.push_back(hbox({
-                text(first_line ? "  $ " : "    ") | bold | color(prompt_green(theme)),
-                text(line) | bold | color(command_fg()),
-            }));
-            first_line = false;
+    // When expanded, render the full multi-line command and full content
+    if (!collapsed) {
+        std::string command = shell_command;
+        if (command.empty()) {
+            command = !description.empty() ? description
+                      : !title.empty()     ? title
+                                           : "tool";
         }
-    }
+        if (command.rfind("$ ", 0) == 0) command = command.substr(2);
 
-    // Output / status body (may be emptyElement → zero height).
-    body.push_back(hbox({
-        text("  "),
-        std::move(content) | flex,
-    }));
+        if (!command.empty()) {
+            std::istringstream iss(command);
+            std::string line;
+            bool first_line = true;
+            while (std::getline(iss, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                body.push_back(hbox({
+                    text(first_line ? "  $ " : "    ") | bold | color(prompt_green(theme)),
+                    text(line) | bold | color(command_fg()),
+                }));
+                first_line = false;
+            }
+        }
+
+        // Output / input content
+        body.push_back(hbox({
+            text("  "),
+            std::move(content) | flex,
+        }));
+    }
 
     auto block = vbox(std::move(body));
     // Soft left rail + panel background (OpenCode BlockTool feel).
@@ -206,7 +216,7 @@ Element ToolBlock(const std::string& icon,
         std::move(block) | flex,
     });
     block = std::move(block) | bgcolor(focused ? focus_bg(theme) : panel_bg(theme));
-    return vbox({std::move(block), text("")});
+    return vbox({std::move(block)});
 }
 
 Element BlockTool(const std::string& title, Element content,
@@ -399,43 +409,39 @@ static Element render_shell_output(const qcode::ToolCallContentPart& call_part,
                                    const qcode::ToolResultContentPart& result_part,
                                    const std::string& theme,
                                    bool collapsed) {
-    Elements body;
-    constexpr int kCollapsedPreviewLines = 3;
+    if (collapsed) return emptyElement();
 
-    if (!collapsed) {
-        if (call_part.arguments.is_object()) {
-            const auto workdir =
-                json_string(call_part.arguments, {"workdir", "cwd", "Cwd"});
-            if (!workdir.empty()) {
-                body.push_back(hbox({
-                    text("in ") | dim | color(muted_fg(theme)),
-                    text(workdir) | dim | color(Color::RGB(0x7A, 0xA2, 0xF7)),
-                }));
-            }
-        }
-        auto input_el = render_tool_input(call_part.tool_name, call_part.arguments, theme);
-        if (input_el != emptyElement()) {
+    Elements body;
+    if (call_part.arguments.is_object()) {
+        const auto workdir =
+            json_string(call_part.arguments, {"workdir", "cwd", "Cwd"});
+        if (!workdir.empty()) {
             body.push_back(hbox({
-                text("Input:") | bold | color(accent(theme)),
+                text("in ") | dim | color(muted_fg(theme)),
+                text(workdir) | dim | color(Color::RGB(0x7A, 0xA2, 0xF7)),
             }));
-            body.push_back(input_el);
         }
+    }
+    auto input_el = render_tool_input(call_part.tool_name, call_part.arguments, theme);
+    if (input_el != emptyElement()) {
+        body.push_back(hbox({
+            text("Input:") | bold | color(accent(theme)),
+        }));
+        body.push_back(input_el);
     }
 
     const auto output = extract_result_output(result_part);
     if (!output.empty()) {
-        if (!collapsed) {
-            body.push_back(text(""));
-            body.push_back(hbox({
-                text("Output:") | bold | color(accent(theme)),
-            }));
-        }
+        body.push_back(text(""));
+        body.push_back(hbox({
+            text("Output:") | bold | color(accent(theme)),
+        }));
         body.push_back(render_truncated_output(
-            output, collapsed ? kCollapsedPreviewLines : 0, theme,
+            output, 0, theme,
             result_part.is_error));
     }
 
-    if (!collapsed && is_bash_tool(call_part.tool_name) &&
+    if (is_bash_tool(call_part.tool_name) &&
         result_part.result.is_object() &&
         result_part.result.contains("metadata") &&
         result_part.result["metadata"].is_object() &&
