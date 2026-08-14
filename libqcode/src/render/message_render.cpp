@@ -201,7 +201,7 @@ Element ToolBlock(const std::string& icon,
     auto block = vbox(std::move(body));
     // Soft left rail + panel background (OpenCode BlockTool feel).
     block = hbox({
-        text("┃") | color(focused ? accent_color : Color::RGB(0x33, 0x33, 0x33)),
+        text("┃") | color(focused ? accent_color : Color::RGB(0x44, 0x44, 0x55)),
         text(" "),
         std::move(block) | flex,
     });
@@ -504,16 +504,29 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
     for (auto& el : md) {
         indented.push_back(hbox({text("  "), std::move(el)}));
     }
+
+    auto thinking_header = hbox({
+        text("🧠 ") | color(accent2(theme)),
+        text("Thinking Process") | bold | color(accent2(theme)),
+        text(" · ") | dim | color(Color::GrayDark),
+        text("Reasoning Trace") | dim | color(muted_fg(theme)),
+    });
+
+    auto inner_box = vbox({
+        std::move(thinking_header),
+        text(""),
+        vbox(std::move(indented)),
+    });
+
+    auto card = hbox({
+        text("┃") | color(accent2(theme)),
+        text(" "),
+        std::move(inner_box) | flex,
+    }) | bgcolor(panel_bg(theme));
+
     return vbox({
-        hbox({
-            text("💭 ") | color(accent(theme)),
-            text("Thinking") | dim | color(accent(theme)),
-        }),
-        hbox({
-            text("│") | color(muted_fg(theme)),
-            text(" "),
-            vbox(std::move(indented)) | flex,
-        }),
+        text(""),
+        std::move(card),
         text(""),
     });
 }
@@ -547,16 +560,19 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
                 text(" · " + model_label) | dim | color(Color::GrayDark));
         }
         parts.push_back(hbox(std::move(header)));
+        parts.push_back(text(""));
     } else if (msg.role == kMessageRoleUser && !has_tool_results) {
         parts.push_back(hbox({
             text("❯ ") | bold | color(user_green()),
             text("You") | bold | color(user_green()),
         }));
+        parts.push_back(text(""));
     } else if (msg.role == kMessageRoleSystem) {
         parts.push_back(hbox({
             text("ℹ ") | dim | color(theme_muted(theme)),
             text("System") | dim | color(theme_muted(theme)),
         }));
+        parts.push_back(text(""));
     }
 
     std::unordered_map<std::string, const qcode::ToolCallContentPart*> tool_calls;
@@ -582,18 +598,10 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
     std::unordered_set<std::string> rendered_tool_results;
 
     for (const auto& part : msg.content) {
-        if (const auto* text_part = std::get_if<qcode::TextContentPart>(&part)) {
-            if (text_part->text.empty()) continue;
-            if (msg.role == kMessageRoleSystem) {
-                parts.push_back(
-                    hbox({text("  "), text(text_part->text) | dim}));
-            } else {
-                Elements md = render_markdown(text_part->text, theme);
-                Elements indented;
-                for (auto& el : md) {
-                    indented.push_back(hbox({text("  "), std::move(el)}));
-                }
-                parts.push_back(vbox(std::move(indented)));
+        if (const auto* reasoning_part =
+                       std::get_if<qcode::ReasoningContentPart>(&part)) {
+            if (*state.show_thinking) {
+                parts.push_back(render_reasoning(*reasoning_part, theme));
             }
         } else if (const auto* tool_part =
                        std::get_if<qcode::ToolCallContentPart>(&part)) {
@@ -630,10 +638,18 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
             }
             parts.push_back(render_tool_result(*result_part, theme, state));
             rendered_tool_results.insert(result_part->tool_call_id);
-        } else if (const auto* reasoning_part =
-                       std::get_if<qcode::ReasoningContentPart>(&part)) {
-            if (*state.show_thinking) {
-                parts.push_back(render_reasoning(*reasoning_part, theme));
+        } else if (const auto* text_part = std::get_if<qcode::TextContentPart>(&part)) {
+            if (text_part->text.empty()) continue;
+            if (msg.role == kMessageRoleSystem) {
+                parts.push_back(
+                    hbox({text("  "), text(text_part->text) | dim}));
+            } else {
+                Elements md = render_markdown(text_part->text, theme);
+                Elements indented;
+                for (auto& el : md) {
+                    indented.push_back(hbox({text("  "), std::move(el)}));
+                }
+                parts.push_back(vbox(std::move(indented)));
             }
         }
     }
