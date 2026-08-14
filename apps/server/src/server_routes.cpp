@@ -443,7 +443,7 @@ auto handle_generate = [providers_list, default_workspace](const std::string& se
     res.set_chunked_content_provider("application/x-ndjson; charset=utf-8",
         [session,
          provider, model, system_prompt, messages = std::move(messages),
-         reasoning_mode](size_t offset, httplib::DataSink& sink) mutable -> bool
+         reasoning_mode](size_t /*offset*/, httplib::DataSink& sink) mutable -> bool
         {
             // Start generation in a background thread (once per session)
             if (!session->generation_started.exchange(true)) {
@@ -917,7 +917,7 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
                 text += tp->text + "\n";
             } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
                 text += "[Tool call: " + tcp->tool_name + "]\n";
-            } else if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
+            } else if (std::holds_alternative<qcode::ToolResultContentPart>(part)) {
                 text += "[Tool result]\n";
             } else if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                 if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";

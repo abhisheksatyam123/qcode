@@ -357,7 +357,16 @@ std::string get_last_active_session() {
     }
 
     std::string uuid = "";
-    const char* sql = "SELECT id FROM sessions ORDER BY created_at DESC LIMIT 1;";
+    const char* sql =
+        "SELECT sessions.id "
+        "FROM sessions "
+        "LEFT JOIN ( "
+        "    SELECT session_id, MAX(created_at) AS last_msg_time "
+        "    FROM messages "
+        "    GROUP BY session_id "
+        ") m ON m.session_id = sessions.id "
+        "ORDER BY COALESCE(m.last_msg_time, sessions.created_at) DESC "
+        "LIMIT 1;";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
         if (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -706,7 +715,15 @@ std::vector<std::pair<std::string, std::string>> list_sessions() {
         return sessions;
     }
 
-    const char* sql = "SELECT id, title FROM sessions ORDER BY created_at DESC;";
+    const char* sql =
+        "SELECT sessions.id, sessions.title "
+        "FROM sessions "
+        "LEFT JOIN ( "
+        "    SELECT session_id, MAX(created_at) AS last_msg_time "
+        "    FROM messages "
+        "    GROUP BY session_id "
+        ") m ON m.session_id = sessions.id "
+        "ORDER BY COALESCE(m.last_msg_time, sessions.created_at) DESC;";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -732,7 +749,18 @@ std::vector<SessionInfo> list_sessions_full() {
         return sessions;
     }
 
-    const char* sql = "SELECT id, title, COALESCE(workspace, ''), COALESCE(provider, ''), COALESCE(model, '') FROM sessions ORDER BY created_at DESC;";
+    const char* sql =
+        "SELECT sessions.id, sessions.title, COALESCE(sessions.workspace, ''), "
+        "       COALESCE(sessions.provider, ''), COALESCE(sessions.model, ''), "
+        "       COALESCE(m.last_msg_time, sessions.created_at) AS last_active, "
+        "       COALESCE(m.msg_count, 0) AS msg_count "
+        "FROM sessions "
+        "LEFT JOIN ( "
+        "    SELECT session_id, MAX(created_at) AS last_msg_time, COUNT(*) AS msg_count "
+        "    FROM messages "
+        "    GROUP BY session_id "
+        ") m ON m.session_id = sessions.id "
+        "ORDER BY last_active DESC;";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -747,6 +775,8 @@ std::vector<SessionInfo> list_sessions_full() {
             info.workspace = ws_txt ? reinterpret_cast<const char*>(ws_txt) : "";
             info.provider = prov_txt ? reinterpret_cast<const char*>(prov_txt) : "";
             info.model = model_txt ? reinterpret_cast<const char*>(model_txt) : "";
+            info.last_active_at = sqlite3_column_int64(stmt, 5);
+            info.message_count = sqlite3_column_int(stmt, 6);
             sessions.push_back(std::move(info));
         }
         sqlite3_finalize(stmt);

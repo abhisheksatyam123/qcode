@@ -325,15 +325,15 @@ ftxui::Element render_view(
             };
 
             auto quick_hints = hbox({
-                shortcut_badge("/model", "Switch Model", theme),
-                text("  "),
-                shortcut_badge("/theme", "Color Theme", theme),
+                shortcut_badge("Ctrl+N", "New Chat", theme),
                 text("  "),
                 shortcut_badge("/session", "History", theme),
                 text("  "),
-                shortcut_badge("/compact", "Compact", theme),
+                shortcut_badge("/model", "Model", theme),
                 text("  "),
-                shortcut_badge("Tab", "Files / Stats", theme),
+                shortcut_badge("/theme", "Theme", theme),
+                text("  "),
+                shortcut_badge("Tab", "Files/Stats", theme),
             }) | hcenter;
 
             body = vbox({

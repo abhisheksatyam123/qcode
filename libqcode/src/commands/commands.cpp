@@ -197,13 +197,11 @@ bool handle_slash_command(
         if (state.session_title) *state.session_title = display_title;
         if (state.retry_available) *state.retry_available = false;
         if (state.last_user_prompt) state.last_user_prompt->clear();
-        if (!ws.empty()) {
-            append_system_message(state, "Started new session: " + display_title +
-                                             " (workspace: " + ws + ")");
-        } else {
-            append_system_message(state,
-                                 "Started new session: " + display_title);
-        }
+        bus.publish<qcode::contract::ToastRequested>({
+            "Started new session: " + display_title + (!ws.empty() ? (" (" + ws + ")") : ""),
+            "success",
+            2500
+        });
         return true;
     }
 

@@ -1,5 +1,7 @@
 #include "views_pickers.h"
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 
 namespace qcode {
 namespace tui {
@@ -211,6 +213,24 @@ ftxui::Element build_model_popup(
     return hbox({ left_box, separatorLight(), right_box }) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) | hcenter;
 }
 
+static std::string format_relative_time(long long ts) {
+    if (ts <= 0) return "";
+    auto now = std::chrono::system_clock::now();
+    long long now_sec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    long long diff = now_sec - ts;
+    if (diff < 0) diff = 0;
+    if (diff < 60) return "just now";
+    if (diff < 3600) return std::to_string(diff / 60) + "m ago";
+    if (diff < 86400) return std::to_string(diff / 3600) + "h ago";
+    if (diff < 86400 * 7) return std::to_string(diff / 86400) + "d ago";
+    std::time_t t = static_cast<std::time_t>(ts);
+    std::tm tm{};
+    localtime_r(&t, &tm);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%b %d", &tm);
+    return buf;
+}
+
 // ── Session selector popup ──
 ftxui::Element build_session_popup(
     const std::vector<session::SessionInfo>& entries,
@@ -251,18 +271,25 @@ ftxui::Element build_session_popup(
             const auto& e = entries[i];
             bool active = (e.id == active_session_id);
             std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
-            std::string line_text = marker + e.title;
-            if (e.id != e.title)
-                line_text += "  (" + e.id.substr(0, 8) + "...)";
-            if (!e.workspace.empty())
-                line_text += "  [" + e.workspace + "]";
+            
+            std::string time_str = format_relative_time(e.last_active_at);
+            std::string count_str = e.message_count > 0 ? (std::to_string(e.message_count) + " msgs") : "new";
 
-            auto line = text(line_text);
+            auto row = hbox({
+                text(marker) | color(i == select_idx ? accent2(theme) : (active ? accent(theme) : Color::Default)),
+                text(e.title) | (i == select_idx ? bold : nothing) | color(i == select_idx ? Color::White : (active ? accent2(theme) : Color::GrayLight)),
+                text(!e.model.empty() ? (" [" + e.model + "]") : "") | dim | color(Color::CyanLight),
+                text(!e.workspace.empty() ? (" " + e.workspace) : "") | dim | color(Color::GrayDark),
+                filler(),
+                text(" " + count_str + " ") | dim | color(Color::GrayLight),
+                text(!time_str.empty() ? ("· " + time_str + " ") : " ") | dim | color(accent2(theme)),
+            });
+
             if (i == select_idx)
-                line = line | bgcolor(bg_popup()) | bold;
+                row = row | bgcolor(bg_popup()) | bold;
             else if (active)
-                line = line | color(accent2(theme));
-            lines.push_back(line);
+                row = row | color(accent2(theme));
+            lines.push_back(row);
         }
 
         if (window_end < total) {
@@ -271,10 +298,10 @@ ftxui::Element build_session_popup(
     }
 
     lines.push_back(separatorLight());
-    lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
+    lines.push_back(text(" ↑↓ navigate  Enter select  Ctrl-D delete  Esc cancel") | dim);
 
     return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) |
-           size(WIDTH, EQUAL, 72) | hcenter;
+           size(WIDTH, EQUAL, 80) | hcenter;
 }
 
 }  // namespace tui

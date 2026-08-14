@@ -55,6 +55,8 @@ struct SessionInfo {
     std::string workspace;
     std::string provider;
     std::string model;
+    long long last_active_at = 0;
+    int message_count = 0;
 };
 std::vector<SessionInfo> list_sessions_full();
 

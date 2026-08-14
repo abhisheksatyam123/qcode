@@ -420,6 +420,23 @@ int main() {
                     state.messages_history->clear();
                     qcode::session::reload_session_history(picked.id, state);
                     if (state.retry_available) *state.retry_available = false;
+
+                    // Restore provider and model from the loaded session
+                    if (!picked.provider.empty() && !picked.model.empty()) {
+                        for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
+                            if (providers_list[i].name == picked.provider || providers_list[i].id == picked.provider) {
+                                for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
+                                    if (providers_list[i].models[j].name == picked.model || providers_list[i].models[j].id == picked.model) {
+                                        selected_provider = i;
+                                        selected_model = j;
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    store.add_toast("Switched to: " + picked.title, "info", 1500);
                 }
                 show_session_select = false;
                 session_query = "";
@@ -662,6 +679,23 @@ int main() {
             } else {
                 store.add_toast("Copy mode OFF", "info", 1500);
             }
+            screen.Post(Event::Custom);
+            return true;
+        }
+        // ── New Session shortcut (Ctrl-N) ──
+        if (e == Event::Special(std::string(1, '\x0e'))) {
+            std::string prov = providers_list[selected_provider].name;
+            std::string mod = providers_list[selected_provider].models[selected_model].name;
+            std::string new_id = qcode::session::create_new_session(prov, mod);
+            store.set_session_id(new_id);
+            state.messages_history->clear();
+            std::string title = "Session - " + mod;
+            sync_session_title(state, title);
+            if (state.retry_available) *state.retry_available = false;
+            if (state.last_user_prompt) state.last_user_prompt->clear();
+            prompt_input.clear();
+            session_entries = qcode::session::list_sessions_full();
+            store.add_toast("Started new session", "success", 2000);
             screen.Post(Event::Custom);
             return true;
         }
