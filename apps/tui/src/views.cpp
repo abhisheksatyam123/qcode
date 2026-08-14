@@ -469,11 +469,19 @@ ftxui::Element render_view(
                     if (cacheable) message_cache[i] = rendered;
                     msgs.push_back(std::move(rendered));
                 }
-                msgs.push_back(
-                separatorLight() | color(
-                    msg.role == kMessageRoleAssistant ? accent(theme) :
-                    msg.role == kMessageRoleUser ? user_green() :
-                    dim_gray()));
+                const size_t next_i = (adjacent_tool_results != nullptr) ? i + 2 : i + 1;
+                const bool curr_is_tool = msg.has_tool_calls() || msg.has_tool_results();
+                const bool next_is_tool = (next_i < history_size) &&
+                    ((*state.messages_history)[next_i].has_tool_calls() ||
+                     (*state.messages_history)[next_i].has_tool_results());
+
+                if (next_i < last && !(curr_is_tool && next_is_tool)) {
+                    msgs.push_back(
+                    separatorLight() | color(
+                        msg.role == kMessageRoleAssistant ? accent(theme) :
+                        msg.role == kMessageRoleUser ? user_green() :
+                        dim_gray()));
+                }
                 // Skip the paired result row when it is also inside this window.
                 if (adjacent_tool_results != nullptr && i + 1 < last) ++i;
             }
