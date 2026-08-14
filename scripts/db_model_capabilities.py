@@ -73,10 +73,11 @@ def seed_data():
 
     # === Active Model Specifications Data ===
     models_data = [
-        # Antigravity (Google / Gemini Internal OAuth)
         ("antigravity", "claude-opus-4-6-thinking", "Claude Opus 4.6 Thinking", "Anthropic Reasoning Model", 200000, 8192, 1, 1, "SWE-bench Verified ~74.5%", "Anthropic Vendor Release", "Internal OAuth (Free)", "Complex Multi-File Refactoring & Architect Reasoning Tasks", int(time.time())),
         ("antigravity", "claude-sonnet-4-6", "Claude Sonnet 4.6", "Anthropic Frontier Model", 200000, 8192, 1, 1, "SWE-bench Verified ~72.7%", "Anthropic Vendor Release", "Internal OAuth (Free)", "Production Agentic Workflows & Autonomous Coding", int(time.time())),
         ("antigravity", "gemini-3.1-pro-low", "Gemini 3.1 Pro", "Google DeepMind Dense/MoE", 2000000, 65536, 1, 1, "Top Tier (>60% SWE-bench)", "Google DeepMind Spec", "Internal OAuth (Free)", "2M Context System Architecture & Large Repo Analysis", int(time.time())),
+        ("antigravity", "gemini-3.7-flash-high", "Gemini 3.7 Flash", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "Google DeepMind Spec", "Internal OAuth (Free)", "High-Speed Agent Tools & Web Search Workflows", int(time.time())),
+        ("antigravity", "gemini-3.7-flash-low", "Gemini 3.7 Flash (Low)", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "Google DeepMind Spec", "Internal OAuth (Free)", "Fast In-line Code Edits & Low Latency Tool Calls", int(time.time())),
         ("antigravity", "gemini-3.6-flash-high", "Gemini 3.6 Flash", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "Google DeepMind Spec", "Internal OAuth (Free)", "High-Speed Agent Tools & Web Search Workflows", int(time.time())),
         ("antigravity", "gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "Google DeepMind Spec", "Internal OAuth (Free)", "Fast In-line Code Edits & Low Latency Tool Calls", int(time.time())),
         ("antigravity", "gemini-3.5-flash-low", "Gemini 3.5 Flash", "Google DeepMind High-Efficiency", 1000000, 65536, 1, 1, "Near-Pro Coding Flash Tier", "Google DeepMind Spec", "Internal OAuth (Free)", "General Fast Agent Execution", int(time.time())),

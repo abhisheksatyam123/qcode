@@ -74,6 +74,11 @@ inline ftxui::Color theme_error(const std::string& theme) {
     return ftxui::Color::RGB(0xF4, 0x87, 0x71);
 }
 inline ftxui::Color theme_muted(const std::string& theme) {
+    if (theme == "green") return ftxui::Color::RGB(0x6B, 0x8E, 0x7B);
+    if (theme == "blue") return ftxui::Color::RGB(0x6A, 0x82, 0xA5);
+    if (theme == "purple") return ftxui::Color::RGB(0x8A, 0x76, 0x9B);
+    if (theme == "dracula") return ftxui::Color::RGB(0x62, 0x72, 0xA4);
+    if (theme == "retro") return ftxui::Color::RGB(0x22, 0x88, 0x22);
     return ftxui::Color::RGB(0x8A, 0x8A, 0x8A);
 }
 inline ftxui::Color theme_panel_bg(const std::string& theme) {

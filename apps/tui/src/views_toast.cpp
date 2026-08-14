@@ -13,31 +13,32 @@ ftxui::Element render_toast_overlay(
     
     Elements toast_elems;
     for (const auto& t : toasts) {
-        Color bg;
-        Color fg = Color::White;
+        Color badge_bg;
+        Color badge_fg = Color::Black;
         std::string icon;
         if (t.variant == "error") {
-            bg = Color::RGB(0xCC, 0x33, 0x33);
-            icon = " ✗ ";
+            badge_bg = theme_error(theme);
+            icon = " ✖ ";
         } else if (t.variant == "success") {
-            bg = Color::RGB(0x22, 0xBB, 0x88);
-            icon = " ✓ ";
+            badge_bg = theme_success(theme);
+            icon = " ✔ ";
         } else if (t.variant == "warning") {
-            bg = Color::RGB(0xEE, 0x99, 0x22);
+            badge_bg = Color::RGB(0xFA, 0xBC, 0x3F);
             icon = " ⚠ ";
         } else {
-            bg = Color::RGB(0x33, 0x66, 0xCC);
+            badge_bg = accent(theme);
+            badge_fg = Color::White;
             icon = " ℹ ";
         }
         Elements toast_row;
-        toast_row.push_back(text(icon) | bold);
-        toast_row.push_back(text(t.message));
+        toast_row.push_back(text(icon) | bold | bgcolor(badge_bg) | color(badge_fg));
+        toast_row.push_back(text(" " + t.message + " ") | color(Color::White) | bold);
         toast_elems.push_back(
-            hbox(std::move(toast_row)) | bgcolor(bg) | color(fg)
+            hbox(std::move(toast_row)) | bgcolor(bg_popup()) | borderRounded | color(badge_bg)
         );
     }
     
-    return vbox(std::move(toast_elems)) | size(WIDTH, LESS_THAN, 72) | hcenter;
+    return vbox(std::move(toast_elems)) | size(WIDTH, LESS_THAN, 76) | hcenter;
 }
 
 

@@ -31,6 +31,8 @@ android {
     buildTypes {
         release {
             minifyEnabled false
+            // Sideload for friends: signed with the debug keystore (not Play Store).
+            signingConfig signingConfigs.debug
         }
         debug {
             debuggable true

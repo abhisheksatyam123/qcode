@@ -65,7 +65,7 @@ static Color queue_amber() { return Color::RGB(0xE8, 0xB8, 0x4A); }
 // position badge so the queue is visible in the message list.
 static Element render_queued_prompt(const std::string& prompt_body,
                                     size_t index, size_t total,
-                                    const std::string& /*theme*/) {
+                                    const std::string& theme) {
     Elements body_lines;
     std::istringstream iss(prompt_body);
     std::string line;
@@ -73,27 +73,26 @@ static Element render_queued_prompt(const std::string& prompt_body,
     while (std::getline(iss, line)) {
         any = true;
         body_lines.push_back(
-            hbox({text("  "), text(line) | dim | color(Color::GrayLight)}));
+            hbox({text("  "), text(line) | color(Color::GrayLight)}));
     }
     if (!any) {
-        body_lines.push_back(hbox({text("  "), text("(empty)") | dim}));
+        body_lines.push_back(hbox({text("  "), text("(empty prompt)") | dim}));
     }
 
     auto header = hbox({
-        text("❯ ") | bold | color(queue_amber()),
-        text("You") | bold | color(queue_amber()),
-        text("  ·  ") | dim,
-        text("queued") | dim | color(queue_amber()),
-        text("  #" + std::to_string(index + 1) + "/" +
-             std::to_string(total)) |
-            dim | color(Color::GrayDark),
+        text(" #" + std::to_string(index + 1) + "/" + std::to_string(total) + " ") |
+            bold | bgcolor(queue_amber()) | color(Color::Black),
+        text("  You") | bold | color(accent2(theme)),
+        text(" · queued") | dim | color(queue_amber()),
+        filler(),
+        text("pending ") | dim | color(Color::GrayDark),
     });
 
     return vbox({
         header,
+        separatorLight() | color(Color::GrayDark),
         vbox(std::move(body_lines)),
-        text(""),
-    });
+    }) | borderRounded | color(queue_amber());
 }
 
 ftxui::Element render_logo() {
@@ -112,10 +111,10 @@ ftxui::Element render_view(
     const std::vector<ProviderInfo>& providers_list,
     int selected_provider,
     int selected_model,
-    bool enable_tools,
+    bool /*enable_tools*/,
     const std::string& prompt_input,
-    bool show_slash,
-    int slash_idx,
+    bool /*show_slash*/,
+    int /*slash_idx*/,
     const std::vector<SlashCommand>& slash_commands,
     bool show_model_select,
     int model_select_idx,
@@ -130,7 +129,7 @@ ftxui::Element render_view(
     const std::vector<ThemeEntry>& theme_entries,
     const std::string& theme_query,
     const ftxui::Component& tab_toggle,
-    const std::shared_ptr<int>& scroll_line,
+    const std::shared_ptr<int>& /*scroll_line*/,
     const ftxui::Component& input
 ) {
     std::string theme = state.theme ? *state.theme : "orange";
@@ -210,7 +209,7 @@ ftxui::Element render_view(
 
     auto header = hbox({
         text(" QCODE ") | bold | bgcolor(accent(theme)) | color(Color::White),
-        text("  "),
+        text(" "),
         tab_toggle->Render(),
         filler(),
         // Right side: session, model, tokens, status
@@ -233,7 +232,7 @@ ftxui::Element render_view(
             separatorLight(),
             text(" " + hdr_status + " ") | color(status_color) | bold,
         })),
-    }) | borderLight | color(accent(theme));
+    }) | borderRounded | color(accent(theme));
 
     Element body;
 
@@ -250,7 +249,7 @@ ftxui::Element render_view(
             }
             if (!matches.empty()) {
                 Elements rows;
-                rows.push_back(text(" Select Session to Load:") | bold | color(accent2(theme)));
+                rows.push_back(text(" ⎔ Select Session to Load:") | bold | color(accent2(theme)));
                 rows.push_back(separatorLight() | color(accent(theme)));
                 for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
                     bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
@@ -264,7 +263,7 @@ ftxui::Element render_view(
                     }
                     rows.push_back(row);
                 }
-                return vbox(std::move(rows)) | border | color(accent(theme));
+                return vbox(std::move(rows)) | borderRounded | color(accent(theme)) | bgcolor(bg_popup());
             }
         } else if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
             std::string filter_str = prompt_input.substr(1);
@@ -276,7 +275,7 @@ ftxui::Element render_view(
             }
             if (!matches.empty()) {
                 Elements rows;
-                rows.push_back(text(" Autocomplete Commands:") | bold | color(accent2(theme)));
+                rows.push_back(text(" ⎔ Autocomplete Commands:") | bold | color(accent2(theme)));
                 rows.push_back(separatorLight() | color(accent(theme)));
                 for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
                     bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
@@ -290,7 +289,7 @@ ftxui::Element render_view(
                     }
                     rows.push_back(row);
                 }
-                return vbox(std::move(rows)) | border | color(accent(theme));
+                return vbox(std::move(rows)) | borderRounded | color(accent(theme)) | bgcolor(bg_popup());
             }
         }
         return std::nullopt;
@@ -307,7 +306,7 @@ ftxui::Element render_view(
             auto prompt_bar = hbox({
                 text(" ❯ ") | color(accent2(theme)) | bold,
                 input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
-            }) | border | color(accent(theme));
+            }) | borderRounded | color(accent(theme));
 
             Element prompt_box = prompt_bar;
             auto suggestions = build_suggestions_panel();
@@ -318,12 +317,34 @@ ftxui::Element render_view(
                 });
             }
 
+            auto shortcut_badge = [](std::string key, std::string label, const std::string& th) {
+                return hbox({
+                    text(" " + key + " ") | bold | bgcolor(theme_focus_bg(th)) | color(accent2(th)),
+                    text(" " + label + " ") | dim | color(Color::GrayLight),
+                });
+            };
+
+            auto quick_hints = hbox({
+                shortcut_badge("/model", "Switch Model", theme),
+                text("  "),
+                shortcut_badge("/theme", "Color Theme", theme),
+                text("  "),
+                shortcut_badge("/session", "History", theme),
+                text("  "),
+                shortcut_badge("/compact", "Compact", theme),
+                text("  "),
+                shortcut_badge("Tab", "Files / Stats", theme),
+            }) | hcenter;
+
             body = vbox({
                 filler() | flex,
                 render_logo(),
                 text("") | size(HEIGHT, EQUAL, 1),
-                text("What can I help you build today?") | dim | hcenter,
-                prompt_box | size(WIDTH, EQUAL, 80) | hcenter,
+                text("What can I help you build today?") | bold | color(accent2(theme)) | hcenter,
+                text("") | size(HEIGHT, EQUAL, 1),
+                prompt_box | size(WIDTH, EQUAL, 84) | hcenter,
+                text(""),
+                quick_hints,
                 filler() | flex,
             }) | flex;
         } else {
@@ -446,31 +467,7 @@ ftxui::Element render_view(
                 queue_cards.push_back(text(""));
 
                 for (size_t qi = 0; qi < queue->size(); ++qi) {
-                    std::string text_preview = (*queue)[qi];
-                    
-                    Elements card_lines;
-                    std::istringstream iss(text_preview);
-                    std::string line;
-                    while (std::getline(iss, line)) {
-                        card_lines.push_back(text(" " + line) | color(Color::GrayLight));
-                    }
-                    if (card_lines.empty()) {
-                        card_lines.push_back(text(" (empty prompt)") | dim);
-                    }
-
-                    auto card = vbox({
-                        hbox({
-                            text(" #" + std::to_string(qi + 1) + " ") | bold | bgcolor(queue_amber()) | color(Color::Black),
-                            text("  You") | bold | color(accent2(theme)),
-                            text(" · queued") | dim | color(queue_amber()),
-                            filler(),
-                            text("pending ") | dim | color(Color::GrayDark),
-                        }),
-                        separatorLight() | color(Color::GrayDark),
-                        vbox(std::move(card_lines)),
-                    }) | borderRounded | color(queue_amber());
-
-                    queue_cards.push_back(std::move(card));
+                    queue_cards.push_back(render_queued_prompt((*queue)[qi], qi, queue->size(), theme));
                 }
                 
                 msgs.push_back(vbox(std::move(queue_cards)));
@@ -485,7 +482,7 @@ ftxui::Element render_view(
                 input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
             };
             auto prompt_inner = hbox(std::move(prompt_row));
-            Element prompt_box = prompt_inner | border | color(accent(theme));
+            Element prompt_box = prompt_inner | borderRounded | color(accent(theme));
             if (queue && !queue->empty()) {
                 prompt_box = vbox({
                     prompt_box,
@@ -786,7 +783,7 @@ ftxui::Element render_view(
                 text("  ")
             }),
             text("")
-        }) | border | color(accent(theme)) | size(WIDTH, LESS_THAN, 80) | hcenter | flex;
+        }) | borderRounded | color(accent(theme)) | size(WIDTH, LESS_THAN, 80) | hcenter | flex;
     }
 
     auto main_layout = vbox({

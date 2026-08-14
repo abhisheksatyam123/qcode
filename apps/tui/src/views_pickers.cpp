@@ -46,14 +46,24 @@ ftxui::Element build_theme_popup(
             const auto& e = entries[i];
             bool active = (e.name == active_theme);
             std::string marker = (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
-            std::string line_text = marker + e.name + " (" + e.description + ")";
 
-            auto line = text(line_text);
+            auto swatch = hbox({
+                text(" ■") | color(accent(e.name)),
+                text("■ ") | color(accent2(e.name)),
+            });
+
+            auto row = hbox({
+                text(marker) | color(i == select_idx ? accent2(theme) : (active ? accent(theme) : Color::Default)),
+                swatch,
+                text(e.name) | (i == select_idx ? bold : nothing) | color(i == select_idx ? Color::White : (active ? accent2(theme) : Color::GrayLight)),
+                text("  (" + e.description + ")") | dim,
+            });
+
             if (i == select_idx)
-                line = line | bgcolor(bg_popup()) | bold;
+                row = row | bgcolor(bg_popup()) | bold;
             else if (active)
-                line = line | color(accent2(theme));
-            lines.push_back(line);
+                row = row | color(accent2(theme));
+            lines.push_back(row);
         }
 
         if (window_end < total) {
@@ -64,7 +74,7 @@ ftxui::Element build_theme_popup(
     lines.push_back(separatorLight());
     lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
 
-    return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
+    return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) |
            size(WIDTH, EQUAL, 72) | hcenter;
 }
 
@@ -198,7 +208,7 @@ ftxui::Element build_model_popup(
     auto left_box = vbox(std::move(left_lines)) | size(WIDTH, EQUAL, 42);
     auto right_box = vbox(std::move(right_lines)) | size(WIDTH, EQUAL, 46);
 
-    return hbox({ left_box, separatorLight(), right_box }) | border | bgcolor(bg_popup()) | hcenter;
+    return hbox({ left_box, separatorLight(), right_box }) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) | hcenter;
 }
 
 // ── Session selector popup ──
@@ -263,7 +273,7 @@ ftxui::Element build_session_popup(
     lines.push_back(separatorLight());
     lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
 
-    return vbox(std::move(lines)) | border | bgcolor(bg_popup()) |
+    return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) |
            size(WIDTH, EQUAL, 72) | hcenter;
 }
 
