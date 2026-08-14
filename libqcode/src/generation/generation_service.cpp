@@ -235,8 +235,9 @@ static void run_tools_generation_bus(
               "or set ANTIGRAVITY_API_KEY, then try again. Original: " +
               err;
         } else {
-          gen_result.error = step_res.error;
+          gen_result.error = !err.empty() ? err : "Provider request failed";
         }
+        gen_result.finish_reason = qcode::kFinishReasonError;
         gen_result.provider_metadata = step_res.provider_metadata;
         break;
       }
@@ -381,7 +382,26 @@ static void run_tools_generation_bus(
   }
 
   bool fatal_error = false;
-  if (gen_result.is_success()) {
+  const bool has_error = gen_result.error.has_value() && !gen_result.error->empty();
+
+  if (has_error) {
+    fatal_error = true;
+    std::string err_str = "Error: " + gen_result.error_message();
+    if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
+      err_str += "\n[Response] " + gen_result.provider_metadata.value().substr(0, 500);
+    }
+    LOG_ERROR("run_tools_generation_bus: error occurred: {}", err_str);
+    bus.publish<ErrorOccurred>({
+        .session_id = ctx.session_id,
+        .message = err_str,
+        .severity = "error"
+    });
+    bus.publish<MessageDelta>({
+        .session_id = ctx.session_id,
+        .text = "",
+        .done = true
+    });
+  } else if (gen_result.is_success()) {
     std::string final_text;
     if (!assistant_text->empty()) final_text = *assistant_text;
     else final_text = gen_result.text;
@@ -389,14 +409,11 @@ static void run_tools_generation_bus(
     LOG_DEBUG("run_tools_generation_bus: final assistant_text empty={} gen_result.text empty={}",
              assistant_text->empty(), gen_result.text.empty());
     bool is_placeholder = (final_text == "  \u23f3 Working...");
-    if (!finished) {
-      // Tool loop hit the step cap without a natural finish (model kept
-      // requesting tools). Surface a clear, non-fatal warning instead of
-      // presenting the pending placeholder as a successful answer.
-      std::string limit_msg = "Stopped: tool loop reached "
-          + std::to_string(step) + " steps (maximum limit "
+    if (!finished && step >= options.max_steps) {
+      // Tool loop hit the actual step cap without a natural finish
+      std::string limit_msg = "Stopped: tool loop reached maximum limit ("
           + std::to_string(options.max_steps)
-          + ") without producing a final response. The model may be stuck requesting tools.";
+          + " steps) without producing a final response. The model may be stuck requesting tools.";
       LOG_WARN("run_tools_generation_bus: {}", limit_msg);
       bus.publish<ErrorOccurred>({
           .session_id = ctx.session_id,
@@ -436,19 +453,10 @@ static void run_tools_generation_bus(
       });
     }
 
-  } else if (!assistant_text->empty() || !gen_result.text.empty()) {
-    LOG_WARN("run_tools_generation_bus: partial result after step failure - finishing gracefully");
-    std::string final_text;
-    if (!assistant_text->empty()) final_text = *assistant_text;
-    else final_text = gen_result.text;
-    bus.publish<MessageDelta>({
-        .session_id = ctx.session_id,
-        .text = assistant_text->empty() ? final_text : std::string{},
-        .done = true
-    });
   } else {
     fatal_error = true;
     std::string err_str = "Error: " + gen_result.error_message();
+    if (err_str == "Error: ") err_str = "Error: Model generation failed (unknown error)";
     if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
       err_str += "\n[Response] " + gen_result.provider_metadata.value().substr(0, 500);
     }
