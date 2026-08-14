@@ -207,6 +207,35 @@ TEST(GeminiTransformTest, NormalizeReturnsNonCandidatePayloadUnchanged) {
   EXPECT_EQ(normalize_gemini_response(already_openai), already_openai);
 }
 
+TEST(GeminiTransformTest, NormalizeExtractsCachedContentTokenCount) {
+  json gemini_payload = parsed(R"({
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [{"text": "Hello world"}]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 87548,
+        "candidatesTokenCount": 6,
+        "totalTokenCount": 87667,
+        "cachedContentTokenCount": 81878
+      }
+    }
+  })");
+
+  json normalized = normalize_gemini_response(gemini_payload);
+  ASSERT_TRUE(normalized.contains("usage"));
+  EXPECT_EQ(normalized["usage"]["prompt_tokens"], 87548);
+  EXPECT_EQ(normalized["usage"]["completion_tokens"], 6);
+  EXPECT_EQ(normalized["usage"]["total_tokens"], 87667);
+  ASSERT_TRUE(normalized["usage"].contains("prompt_tokens_details"));
+  EXPECT_EQ(normalized["usage"]["prompt_tokens_details"]["cached_tokens"], 81878);
+}
+
 }  // namespace
 }  // namespace gemini
 }  // namespace qcode
