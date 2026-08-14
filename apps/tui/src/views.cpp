@@ -263,7 +263,7 @@ ftxui::Element render_view(
             separatorLight(),
             text(" " + hdr_status + " ") | color(status_color) | bold,
         })),
-    }) | borderRounded | color(accent(theme));
+    });
 
     Element body;
 
@@ -337,7 +337,7 @@ ftxui::Element render_view(
             auto prompt_bar = hbox({
                 text(" ❯ ") | color(accent2(theme)) | bold,
                 input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
-            }) | borderRounded | color(accent(theme));
+            });
 
             Element prompt_box = prompt_bar;
             auto suggestions = build_suggestions_panel();
@@ -543,7 +543,7 @@ ftxui::Element render_view(
                 input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
             };
             auto prompt_inner = hbox(std::move(prompt_row));
-            Element prompt_box = prompt_inner | borderRounded | color(accent(theme));
+            Element prompt_box = prompt_inner;
             if (queue && !queue->empty()) {
                 prompt_box = vbox({
                     prompt_box,
@@ -588,7 +588,7 @@ ftxui::Element render_view(
                 }
             }
             body = vbox({
-                chat_scroll | focusPosition(0, *state.scroll_line) | yframe | flex,
+                chat_scroll | vscroll_indicator | focusPosition(0, *state.scroll_line) | yframe | flex,
                 // status removed — shown in header strip instead
                 prompt_box,
             }) | flex;
