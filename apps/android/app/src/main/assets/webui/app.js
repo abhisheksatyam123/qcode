@@ -57,13 +57,8 @@ const state = {
   fsOpenPath: null,        // relative path of open file
   fsSavedContent: '',      // last loaded/saved content
   fsDirty: false,
-  fsViewMode: 'placeholder', // 'placeholder' | 'code' | 'markdown' | 'html' | 'image' | 'pdf' | 'binary' | 'editor'
-  fsPreviewMode: 'preview',  // 'preview' | 'code' for md/html
-  fsPdfDoc: null,
-  fsPdfPage: 1,
-  fsPdfScale: 1.1,
-  fsPdfFitWidth: true,
-  fsPdfRenderToken: 0,
+  fsViewMode: 'placeholder', // 'placeholder' | 'code' | 'markdown' | 'image' | 'binary' | 'editor'
+  fsMdMode: 'preview',       // 'preview' | 'code'
   fsLineWrap: false,
   fsFilterText: '',
   fsMobileView: 'browser',   // 'browser' | 'viewer'
@@ -105,12 +100,9 @@ const fsEditorPath = document.getElementById('fs-editor-path');
 const fsFileBadge = document.getElementById('fs-file-badge');
 const fsCopyPathBtn = document.getElementById('fs-copy-path-btn');
 const fsCopyContentBtn = document.getElementById('fs-copy-content-btn');
-const fsPreviewToggle = document.getElementById('fs-preview-toggle') || document.getElementById('fs-md-toggle');
-const fsPreviewBtn = document.getElementById('fs-preview-btn') || document.getElementById('fs-md-preview-btn');
-const fsCodeModeBtn = document.getElementById('fs-code-btn') || document.getElementById('fs-md-code-btn');
-const fsMdToggle = fsPreviewToggle;
-const fsMdPreviewBtn = fsPreviewBtn;
-const fsMdCodeBtn = fsCodeModeBtn;
+const fsMdToggle = document.getElementById('fs-md-toggle');
+const fsMdPreviewBtn = document.getElementById('fs-md-preview-btn');
+const fsMdCodeBtn = document.getElementById('fs-md-code-btn');
 const fsWrapBtn = document.getElementById('fs-wrap-btn');
 const fsEditBtn = document.getElementById('fs-edit-btn');
 const fsRawBtn = document.getElementById('fs-raw-btn');
@@ -124,22 +116,9 @@ const fsLineNumbers = document.getElementById('fs-line-numbers');
 const fsCodeWrapper = document.getElementById('fs-code-wrapper');
 const fsCodeHljs = document.getElementById('fs-code-hljs');
 const fsViewMarkdown = document.getElementById('fs-view-markdown');
-const fsViewHtml = document.getElementById('fs-view-html');
-const fsHtmlFrame = document.getElementById('fs-html-frame');
 const fsViewImage = document.getElementById('fs-view-image');
 const fsImagePreview = document.getElementById('fs-image-preview');
 const fsImageInfo = document.getElementById('fs-image-info');
-const fsViewPdf = document.getElementById('fs-view-pdf');
-const fsPdfScroll = document.getElementById('fs-pdf-scroll');
-const fsPdfPages = document.getElementById('fs-pdf-pages');
-const fsPdfStatus = document.getElementById('fs-pdf-status');
-const fsPdfPageLabel = document.getElementById('fs-pdf-page-label');
-const fsPdfZoomLabel = document.getElementById('fs-pdf-zoom-label');
-const fsPdfPrevBtn = document.getElementById('fs-pdf-prev');
-const fsPdfNextBtn = document.getElementById('fs-pdf-next');
-const fsPdfZoomInBtn = document.getElementById('fs-pdf-zoom-in');
-const fsPdfZoomOutBtn = document.getElementById('fs-pdf-zoom-out');
-const fsPdfFitBtn = document.getElementById('fs-pdf-fit');
 const fsViewBinary = document.getElementById('fs-view-binary');
 const fsBinaryText = document.getElementById('fs-binary-text');
 const fsBinaryDownloadLink = document.getElementById('fs-binary-download-link');
@@ -178,8 +157,8 @@ let termPollTimer = null;
 const SLASH_COMMANDS = [
   { name: '/help',      desc: 'Show available commands' },
   { name: '/model',     desc: 'List or switch provider/model' },
+  { name: '/variant',   desc: 'Set model variant / effort: off|low|medium|high' },
   { name: '/new',       desc: 'Start a new chat session' },
-  { name: '/reasoning', desc: 'Set reasoning: off|low|medium|high' },
   { name: '/tools',     desc: 'Toggle tool use: on|off' },
   { name: '/rename',    desc: 'Rename current session' },
   { name: '/session',   desc: 'List or load saved sessions' },
@@ -485,62 +464,19 @@ function setupEventListeners() {
   }
   if (fsMdPreviewBtn) {
     fsMdPreviewBtn.addEventListener('click', () => {
-      state.fsPreviewMode = 'preview';
+      state.fsMdMode = 'preview';
       if (fsMdPreviewBtn) fsMdPreviewBtn.classList.add('active');
       if (fsMdCodeBtn) fsMdCodeBtn.classList.remove('active');
-      refreshFsPreview();
+      if (state.fsOpenPath) updateMarkdownViewer(state.fsSavedContent);
     });
   }
   if (fsMdCodeBtn) {
     fsMdCodeBtn.addEventListener('click', () => {
-      state.fsPreviewMode = 'code';
+      state.fsMdMode = 'code';
       if (fsMdCodeBtn) fsMdCodeBtn.classList.add('active');
       if (fsMdPreviewBtn) fsMdPreviewBtn.classList.remove('active');
-      refreshFsPreview();
+      if (state.fsOpenPath) updateMarkdownViewer(state.fsSavedContent);
     });
-  }
-  if (fsPdfPrevBtn) {
-    fsPdfPrevBtn.addEventListener('click', () => {
-      if (!state.fsPdfDoc || state.fsPdfPage <= 1) return;
-      state.fsPdfPage -= 1;
-      updateFsPdfLabels();
-      scrollFsPdfToPage(state.fsPdfPage);
-    });
-  }
-  if (fsPdfNextBtn) {
-    fsPdfNextBtn.addEventListener('click', () => {
-      if (!state.fsPdfDoc || state.fsPdfPage >= state.fsPdfDoc.numPages) return;
-      state.fsPdfPage += 1;
-      updateFsPdfLabels();
-      scrollFsPdfToPage(state.fsPdfPage);
-    });
-  }
-  if (fsPdfZoomInBtn) {
-    fsPdfZoomInBtn.addEventListener('click', () => {
-      if (!state.fsPdfDoc) return;
-      state.fsPdfFitWidth = false;
-      state.fsPdfScale = Math.min(3, state.fsPdfScale * 1.2);
-      renderFsPdfPages();
-    });
-  }
-  if (fsPdfZoomOutBtn) {
-    fsPdfZoomOutBtn.addEventListener('click', () => {
-      if (!state.fsPdfDoc) return;
-      state.fsPdfFitWidth = false;
-      state.fsPdfScale = Math.max(0.4, state.fsPdfScale / 1.2);
-      renderFsPdfPages();
-    });
-  }
-  if (fsPdfFitBtn) {
-    fsPdfFitBtn.addEventListener('click', () => {
-      if (!state.fsPdfDoc) return;
-      state.fsPdfFitWidth = true;
-      renderFsPdfPages();
-    });
-  }
-  if (fsPdfScroll) {
-    fsPdfScroll.addEventListener('scroll', () => syncFsPdfPageFromScroll(), { passive: true });
-    setupFsPdfPinchZoom();
   }
   if (fsWrapBtn) {
     fsWrapBtn.addEventListener('click', () => {
@@ -597,7 +533,6 @@ function setupEventListeners() {
   if (menuToggleBtn) {
     menuToggleBtn.addEventListener('click', openMobileSidebar);
   }
-  wireAndroidSidebarControls();
   const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
   if (sidebarCloseBtn) {
     sidebarCloseBtn.addEventListener('click', closeMobileSidebar);
@@ -616,17 +551,6 @@ function setupEventListeners() {
     }
   });
 
-  if (fsViewMarkdown) {
-    fsViewMarkdown.addEventListener('click', (e) => {
-      handleMarkdownContainerClick(e, fsViewMarkdown, state.fsOpenPath);
-    });
-  }
-  if (messagesEl) {
-    messagesEl.addEventListener('click', (e) => {
-      handleMarkdownContainerClick(e, messagesEl, null);
-    });
-  }
-
   window.addEventListener('hashchange', handleHashChange);
   window.addEventListener('online', updateConnectionStatus);
   window.addEventListener('offline', updateConnectionStatus);
@@ -640,17 +564,11 @@ function updateStatusBar() {
 }
 
 function updateConnectionStatus() {
-  // On Android the hamburger sidebar shows embedded server status instead.
-  if (hasAndroidBridge()) {
-    refreshAndroidServerStatus();
-    return;
-  }
   const status = document.getElementById('connection-status');
   if (!status) return;
   const online = navigator.onLine;
   status.classList.toggle('offline', !online);
-  const label = status.querySelector('.connection-label');
-  if (label) label.textContent = online ? 'Connected' : 'Offline';
+  status.querySelector('.connection-label').textContent = online ? 'Connected' : 'Offline';
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -927,43 +845,6 @@ function closeModal() {
   modalOverlay.classList.remove('active');
   modalOverlay.innerHTML = '';
   if (pickerCleanup) { pickerCleanup(); pickerCleanup = null; }
-}
-
-/** In-app confirm ? works on Android WebView even when window.confirm is broken. */
-function confirmModal(message, options = {}) {
-  const confirmLabel = options.confirmLabel || 'OK';
-  const cancelLabel = options.cancelLabel || 'Cancel';
-  const danger = !!options.danger;
-  return new Promise((resolve) => {
-    if (!modalOverlay) {
-      resolve(window.confirm(message));
-      return;
-    }
-    modalOverlay.innerHTML = `
-      <div class="picker-modal">
-        <div class="picker-header">${esc(options.title || 'Confirm')}</div>
-        <div class="rename-message">${esc(message)}</div>
-        <div class="modal-actions">
-          <button class="modal-btn secondary" id="confirm-cancel-btn">${esc(cancelLabel)}</button>
-          <button class="modal-btn ${danger ? 'danger' : 'primary'}" id="confirm-ok-btn">${esc(confirmLabel)}</button>
-        </div>
-      </div>`;
-    modalOverlay.classList.add('active');
-    const finish = (ok) => {
-      closeModal();
-      resolve(ok);
-    };
-    const okBtn = document.getElementById('confirm-ok-btn');
-    const cancelBtn = document.getElementById('confirm-cancel-btn');
-    if (okBtn) okBtn.addEventListener('click', () => finish(true));
-    if (cancelBtn) cancelBtn.addEventListener('click', () => finish(false));
-    modalOverlay.addEventListener('click', function bd(e) {
-      if (e.target === modalOverlay) {
-        modalOverlay.removeEventListener('click', bd);
-        finish(false);
-      }
-    });
-  });
 }
 
 function showPickerModal(title, items, activeId, onSelect) {
@@ -1257,7 +1138,7 @@ function handleSlashCommand(text) {
     case 'help': case '?': handleHelpCommand(); break;
     case 'model': case 'models': handleModelCommand(args); break;
     case 'new': handleNewCommand(); break;
-    case 'reasoning': handleReasoningCommand(args); break;
+    case 'variant': handleVariantCommand(args); break;
     case 'tools': handleToolsCommand(args); break;
     case 'rename': handleRenameCommand(args); break;
     case 'session': case 'load': handleSessionCommand(args); break;
@@ -1270,8 +1151,8 @@ function handleHelpCommand() {
   addSystemMessage(
     'Available commands:\n' +
     '  /model [list]              - select provider/model\n' +
+    '  /variant [off|low|medium|high] - set model variant / reasoning effort\n' +
     '  /new                       - start a new session\n' +
-    '  /reasoning [off|low|medium|high] - set reasoning effort\n' +
     '  /tools [on|off]            - toggle tool use\n' +
     '  /rename [title]            - rename current session\n' +
     '  /session [list]            - manage saved sessions\n' +
@@ -1441,10 +1322,10 @@ async function loadSessionById(id) {
 }
 
 function handleNewCommand() { showNewSessionModal(); }
-function handleReasoningCommand(args) {
-  const lvl = args || 'off';
-  if (!['off', 'low', 'medium', 'high'].includes(lvl)) { addSystemMessage('Invalid level. Use off|low|medium|high.'); return; }
-  state.reasoning = lvl; reasoningSelect.value = lvl; showToast('Reasoning: ' + lvl);
+function handleVariantCommand(args) {
+  const lvl = args || (state.reasoning === 'off' ? 'low' : state.reasoning === 'low' ? 'medium' : state.reasoning === 'medium' ? 'high' : 'off');
+  if (!['off', 'low', 'medium', 'high'].includes(lvl)) { addSystemMessage('Invalid variant. Use off|low|medium|high.'); return; }
+  state.reasoning = lvl; reasoningSelect.value = lvl; showToast('Variant (effort): ' + lvl);
 }
 function handleToolsCommand(args) {
   const val = args || (state.toolsEnabled ? 'off' : 'on');
@@ -1547,9 +1428,7 @@ async function runGeneration(session, text) {
       provider: resolved.provider,
       model: resolved.model,
       reasoning_mode: state.reasoning,
-      session_id: session.id,
-      // Android Study Buddy: curriculum under classes/ + vault tools.
-      study_mode: true
+      session_id: session.id
     });
     
     const res = await fetch(`/session/${session.id}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
@@ -1887,85 +1766,14 @@ function setFsMobileView(view) {
   }
 }
 
-
-function refreshFsPreview() {
-  if (!state.fsOpenPath) return;
-  const lower = state.fsOpenPath.toLowerCase();
-  if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
-    updateMarkdownViewer(state.fsSavedContent);
-  } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
-    updateHtmlViewer(state.fsSavedContent);
-  }
-}
-
-function hasAndroidBridge() {
-  return typeof QCodeAndroid !== 'undefined' && QCodeAndroid !== null;
-}
-
-function refreshAndroidServerStatus() {
-  const label = document.getElementById('connection-label') ||
-                document.querySelector('#connection-status .connection-label');
-  const dot = document.querySelector('#connection-status .connection-dot');
-  const btn = document.getElementById('server-toggle-btn');
-  let running = true;
-  try {
-    if (hasAndroidBridge() && typeof QCodeAndroid.isServerRunning === 'function') {
-      running = !!QCodeAndroid.isServerRunning();
-    }
-  } catch (e) {}
-  if (label) {
-    label.textContent = running ? 'Server running ? 127.0.0.1:8080' : 'Server stopped';
-  }
-  if (dot) dot.classList.toggle('offline', !running);
-  if (btn) btn.textContent = running ? 'Stop server' : 'Start server';
-}
-
-function wireAndroidSidebarControls() {
-  const toggleBtn = document.getElementById('server-toggle-btn');
-  const settingsBtn = document.getElementById('open-settings-btn');
-  const controls = document.getElementById('android-server-controls');
-  if (!hasAndroidBridge()) {
-    // Desktop / browser: keep a simple connected indicator only.
-    if (toggleBtn) toggleBtn.classList.add('hidden');
-    if (settingsBtn) settingsBtn.classList.add('hidden');
-    refreshAndroidServerStatus();
-    return;
-  }
-  if (controls) controls.classList.add('android');
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', () => {
-      try {
-        QCodeAndroid.toggleServer();
-      } catch (e) {}
-      setTimeout(refreshAndroidServerStatus, 400);
-      setTimeout(refreshAndroidServerStatus, 1200);
-    });
-  }
-  if (settingsBtn) {
-    settingsBtn.addEventListener('click', () => {
-      try { QCodeAndroid.openSettings(); } catch (e) {}
-    });
-  }
-  refreshAndroidServerStatus();
-  setInterval(refreshAndroidServerStatus, 4000);
-}
-
 function setFsViewMode(mode) {
   state.fsViewMode = mode;
   if (fsViewPlaceholder) fsViewPlaceholder.classList.toggle('hidden', mode !== 'placeholder');
   if (fsViewCode) fsViewCode.classList.toggle('hidden', mode !== 'code');
   if (fsViewMarkdown) fsViewMarkdown.classList.toggle('hidden', mode !== 'markdown');
-  if (fsViewHtml) fsViewHtml.classList.toggle('hidden', mode !== 'html');
   if (fsViewImage) fsViewImage.classList.toggle('hidden', mode !== 'image');
-  if (fsViewPdf) fsViewPdf.classList.toggle('hidden', mode !== 'pdf');
   if (fsViewBinary) fsViewBinary.classList.toggle('hidden', mode !== 'binary');
   if (fsViewEditor) fsViewEditor.classList.toggle('hidden', mode !== 'editor');
-  if (mode !== 'html' && fsHtmlFrame) {
-    try { fsHtmlFrame.removeAttribute('srcdoc'); } catch (e) {}
-  }
-  if (mode !== 'pdf') {
-    destroyFsPdf();
-  }
 }
 
 function setFsDirty(dirty) {
@@ -2115,12 +1923,12 @@ function updateCodeViewer(content, lang) {
 }
 
 function updateMarkdownViewer(content) {
-  if (state.fsPreviewMode === 'preview') {
+  if (state.fsMdMode === 'preview') {
     setFsViewMode('markdown');
     if (fsViewMarkdown) {
       if (typeof marked !== 'undefined' && marked.parse) {
         try {
-          fsViewMarkdown.innerHTML = renderMarkdown(content);
+          fsViewMarkdown.innerHTML = marked.parse(content);
         } catch (e) {
           fsViewMarkdown.textContent = content;
         }
@@ -2133,33 +1941,6 @@ function updateMarkdownViewer(content) {
   }
 }
 
-function updateHtmlViewer(content) {
-  if (state.fsPreviewMode === 'preview') {
-    setFsViewMode('html');
-    if (fsHtmlFrame) {
-      // Interactive quizzes / simulations / QnA pages from the vault.
-      fsHtmlFrame.srcdoc = content || '<!DOCTYPE html><html><body></body></html>';
-      // Force full-pane layout after srcdoc paints (WebView sometimes keeps
-      // the default iframe intrinsic size until a reflow).
-      requestAnimationFrame(() => {
-        if (fsViewHtml) {
-          fsViewHtml.style.flex = '1 1 auto';
-          fsViewHtml.style.height = '100%';
-          fsViewHtml.style.minHeight = '0';
-        }
-        if (fsHtmlFrame) {
-          fsHtmlFrame.style.width = '100%';
-          fsHtmlFrame.style.height = '100%';
-          fsHtmlFrame.style.flex = '1 1 auto';
-          fsHtmlFrame.style.border = '0';
-        }
-      });
-    }
-  } else {
-    updateCodeViewer(content, 'xml');
-  }
-}
-
 function updateImageViewer(relPath, size) {
   setFsViewMode('image');
   const rawUrl = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
@@ -2167,245 +1948,9 @@ function updateImageViewer(relPath, size) {
     fsImagePreview.src = rawUrl;
     fsImagePreview.onload = () => {
       if (fsImageInfo) {
-        fsImageInfo.textContent = fsImagePreview.naturalWidth + ' � ' + fsImagePreview.naturalHeight + ' px ? ' + (size ? formatBytes(size) : '');
+        fsImageInfo.textContent = fsImagePreview.naturalWidth + ' × ' + fsImagePreview.naturalHeight + ' px · ' + (size ? formatBytes(size) : '');
       }
     };
-  }
-}
-
-function getPdfJs() {
-  if (typeof window !== 'undefined' && window.pdfjsLib) return window.pdfjsLib;
-  if (typeof pdfjsLib !== 'undefined') return pdfjsLib;
-  return null;
-}
-
-function destroyFsPdf() {
-  state.fsPdfRenderToken += 1;
-  if (state.fsPdfDoc) {
-    try { state.fsPdfDoc.destroy(); } catch (e) {}
-  }
-  state.fsPdfDoc = null;
-  state.fsPdfPage = 1;
-  if (fsPdfPages) fsPdfPages.innerHTML = '';
-}
-
-function updateFsPdfLabels() {
-  const total = state.fsPdfDoc ? state.fsPdfDoc.numPages : 0;
-  if (fsPdfPageLabel) {
-    fsPdfPageLabel.textContent = total
-      ? (state.fsPdfPage + ' / ' + total)
-      : '? / ?';
-  }
-  if (fsPdfZoomLabel) {
-    fsPdfZoomLabel.textContent = Math.round(state.fsPdfScale * 100) + '%';
-  }
-  if (fsPdfPrevBtn) fsPdfPrevBtn.disabled = !state.fsPdfDoc || state.fsPdfPage <= 1;
-  if (fsPdfNextBtn) fsPdfNextBtn.disabled = !state.fsPdfDoc || state.fsPdfPage >= total;
-}
-
-async function renderFsPdfPages() {
-  if (!state.fsPdfDoc || !fsPdfPages) return;
-  const token = ++state.fsPdfRenderToken;
-  const pdf = state.fsPdfDoc;
-  const total = pdf.numPages;
-  fsPdfPages.innerHTML = '';
-  if (fsPdfStatus) {
-    fsPdfStatus.classList.remove('error');
-    fsPdfStatus.textContent = 'Rendering ' + total + ' page' + (total === 1 ? '' : 's') + '?';
-    fsPdfStatus.classList.remove('hidden');
-  }
-
-  const containerWidth = (fsPdfScroll && fsPdfScroll.clientWidth)
-    ? Math.max(240, fsPdfScroll.clientWidth - 28)
-    : 360;
-
-  // Continuous scroll: render every page (NCERT chapters are small).
-  // Cap extreme comics/scans so the WebView stays responsive.
-  const maxPages = Math.min(total, 120);
-  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-    if (token !== state.fsPdfRenderToken) return;
-    const page = await pdf.getPage(pageNum);
-    if (token !== state.fsPdfRenderToken) return;
-
-    let scale = state.fsPdfScale;
-    if (state.fsPdfFitWidth) {
-      const base = page.getViewport({ scale: 1 });
-      scale = containerWidth / base.width;
-      state.fsPdfScale = scale;
-    }
-    const viewport = page.getViewport({ scale });
-    const wrap = document.createElement('div');
-    wrap.className = 'fs-pdf-page';
-    wrap.dataset.page = String(pageNum);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { alpha: false });
-    const outputScale = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.floor(viewport.width * outputScale);
-    canvas.height = Math.floor(viewport.height * outputScale);
-    canvas.style.width = Math.floor(viewport.width) + 'px';
-    canvas.style.height = Math.floor(viewport.height) + 'px';
-    wrap.appendChild(canvas);
-    fsPdfPages.appendChild(wrap);
-
-    const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
-    await page.render({
-      canvasContext: ctx,
-      viewport,
-      transform,
-    }).promise;
-  }
-
-  if (token !== state.fsPdfRenderToken) return;
-  if (total > maxPages && fsPdfStatus) {
-    fsPdfStatus.textContent = 'Showing first ' + maxPages + ' of ' + total + ' pages';
-    fsPdfStatus.classList.remove('hidden');
-  } else if (fsPdfStatus) {
-    fsPdfStatus.textContent = '';
-    fsPdfStatus.classList.add('hidden');
-  }
-  updateFsPdfLabels();
-  scrollFsPdfToPage(state.fsPdfPage);
-}
-
-function scrollFsPdfToPage(pageNum) {
-  if (!fsPdfPages || !fsPdfScroll) return;
-  const el = fsPdfPages.querySelector('.fs-pdf-page[data-page="' + pageNum + '"]');
-  if (!el) return;
-  el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-}
-
-function syncFsPdfPageFromScroll() {
-  if (!fsPdfPages || !fsPdfScroll || !state.fsPdfDoc) return;
-  const pages = fsPdfPages.querySelectorAll('.fs-pdf-page');
-  if (!pages.length) return;
-  const top = fsPdfScroll.scrollTop + 40;
-  let current = 1;
-  pages.forEach((el) => {
-    if (el.offsetTop <= top) current = Number(el.dataset.page) || current;
-  });
-  if (current !== state.fsPdfPage) {
-    state.fsPdfPage = current;
-    updateFsPdfLabels();
-  }
-}
-
-function touchDistance(a, b) {
-  const dx = a.clientX - b.clientX;
-  const dy = a.clientY - b.clientY;
-  return Math.hypot(dx, dy);
-}
-
-let fsPdfPinch = null;
-let fsPdfPinchBound = false;
-
-function setupFsPdfPinchZoom() {
-  if (!fsPdfScroll || fsPdfPinchBound) return;
-  fsPdfPinchBound = true;
-
-  fsPdfScroll.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 2 || !state.fsPdfDoc) return;
-    fsPdfPinch = {
-      startDist: Math.max(1, touchDistance(e.touches[0], e.touches[1])),
-      startScale: state.fsPdfScale,
-      liveScale: state.fsPdfScale,
-    };
-    state.fsPdfFitWidth = false;
-    if (fsPdfPages) {
-      fsPdfPages.classList.add('pinching');
-      fsPdfPages.style.transformOrigin = 'top center';
-    }
-  }, { passive: true });
-
-  fsPdfScroll.addEventListener('touchmove', (e) => {
-    if (!fsPdfPinch || e.touches.length !== 2) return;
-    // Required so the browser does not steal the gesture for page scroll/zoom.
-    e.preventDefault();
-    const factor = touchDistance(e.touches[0], e.touches[1]) / fsPdfPinch.startDist;
-    fsPdfPinch.liveScale = Math.max(0.4, Math.min(3.2, fsPdfPinch.startScale * factor));
-    const visual = fsPdfPinch.liveScale / fsPdfPinch.startScale;
-    if (fsPdfPages) {
-      fsPdfPages.style.transform = 'scale(' + visual + ')';
-    }
-    if (fsPdfZoomLabel) {
-      fsPdfZoomLabel.textContent = Math.round(fsPdfPinch.liveScale * 100) + '%';
-    }
-  }, { passive: false });
-
-  const endPinch = async () => {
-    if (!fsPdfPinch) return;
-    const finalScale = fsPdfPinch.liveScale;
-    const startScale = fsPdfPinch.startScale;
-    fsPdfPinch = null;
-    if (fsPdfPages) {
-      fsPdfPages.style.transform = '';
-      fsPdfPages.classList.remove('pinching');
-    }
-    if (!state.fsPdfDoc) return;
-    if (Math.abs(finalScale - startScale) < 0.03) {
-      updateFsPdfLabels();
-      return;
-    }
-    state.fsPdfScale = finalScale;
-    state.fsPdfFitWidth = false;
-    await renderFsPdfPages();
-  };
-
-  fsPdfScroll.addEventListener('touchend', (e) => {
-    if (fsPdfPinch && e.touches.length < 2) endPinch();
-  });
-  fsPdfScroll.addEventListener('touchcancel', () => {
-    if (fsPdfPinch) endPinch();
-  });
-}
-
-async function updatePdfViewer(relPath, size) {
-  setFsViewMode('pdf');
-  destroyFsPdf();
-  state.fsPdfPage = 1;
-  state.fsPdfFitWidth = true;
-  state.fsPdfScale = 1.1;
-  updateFsPdfLabels();
-  if (fsPdfStatus) {
-    fsPdfStatus.classList.remove('hidden', 'error');
-    fsPdfStatus.textContent = 'Loading PDF?';
-  }
-  if (fsPdfPages) fsPdfPages.innerHTML = '';
-
-  const pdfjs = getPdfJs();
-  if (!pdfjs) {
-    if (fsPdfStatus) {
-      fsPdfStatus.classList.add('error');
-      fsPdfStatus.textContent = 'PDF.js failed to load. Open Raw to download the file.';
-    }
-    return;
-  }
-  try {
-    pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
-  } catch (e) {}
-
-  const rawUrl = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
-  try {
-    const loadingTask = pdfjs.getDocument({
-      url: rawUrl,
-      withCredentials: false,
-      // Keep memory bounded on phones.
-      disableAutoFetch: true,
-      disableStream: false,
-    });
-    const pdf = await loadingTask.promise;
-    state.fsPdfDoc = pdf;
-    updateFsPdfLabels();
-    await renderFsPdfPages();
-    if (fsEditorStatus) {
-      fsEditorStatus.textContent = 'PDF ? ' + pdf.numPages + ' pages'
-        + (size ? ' ? ' + formatBytes(size) : '');
-    }
-  } catch (e) {
-    if (fsPdfStatus) {
-      fsPdfStatus.classList.remove('hidden');
-      fsPdfStatus.classList.add('error');
-      fsPdfStatus.textContent = 'Could not open PDF: ' + (e && e.message ? e.message : String(e));
-    }
   }
 }
 
@@ -2423,11 +1968,8 @@ function updateBinaryViewer(relPath, size) {
 function toggleFsEditMode() {
   if (!state.fsOpenPath) return;
   if (state.fsViewMode === 'editor') {
-    const lower = state.fsOpenPath.toLowerCase();
-    const isMd = lower.endsWith('.md') || lower.endsWith('.markdown');
-    const isHtml = lower.endsWith('.html') || lower.endsWith('.htm');
+    const isMd = state.fsOpenPath.toLowerCase().endsWith('.md');
     if (isMd) updateMarkdownViewer(state.fsSavedContent);
-    else if (isHtml) updateHtmlViewer(state.fsSavedContent);
     else updateCodeViewer(state.fsSavedContent, fsLang);
     if (fsEditBtn) fsEditBtn.textContent = 'Edit';
   } else {
@@ -2580,85 +2122,74 @@ function clearFsEditor() {
 }
 
 async function openFsFile(relPath) {
-  if (!relPath || !state.sessionId) return false;
+  if (!relPath || !state.sessionId) return;
   if (state.fsOpenPath === relPath && !state.fsDirty) {
     setFsMobileView('viewer');
-    return true;
+    return;
   }
-  if (!(await confirmDiscardIfDirty())) return false;
+  if (!(await confirmDiscardIfDirty())) return;
 
   const name = relPath.split('/').pop() || '';
   const lower = name.toLowerCase();
   const ext = lower.lastIndexOf('.') >= 0 ? lower.slice(lower.lastIndexOf('.') + 1) : '';
   const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'svg'].includes(ext);
   const isMd = ext === 'md' || ext === 'markdown';
-  const isHtml = ext === 'html' || ext === 'htm';
-  const isPdf = ext === 'pdf';
-  const rawUrl = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
 
-  function applyFileOpenedUI() {
-    state.fsOpenPath = relPath;
-    fsLang = detectFsLanguage(relPath);
-    if (fsFileIcon) fsFileIcon.textContent = getFsFileIcon(relPath, false);
-    if (fsEditorPath) fsEditorPath.textContent = relPath;
-    if (fsCopyPathBtn) fsCopyPathBtn.disabled = false;
-    if (fsCopyContentBtn) fsCopyContentBtn.disabled = isImage || isPdf;
-    if (fsWrapBtn) fsWrapBtn.disabled = isPdf;
-    if (fsEditBtn) {
-      fsEditBtn.disabled = isImage || isPdf;
-      fsEditBtn.textContent = 'Edit';
-    }
-    if (fsCloseBtn) fsCloseBtn.disabled = false;
-    if (fsRawBtn) {
-      fsRawBtn.href = rawUrl;
-      fsRawBtn.classList.remove('hidden');
-    }
-    if (fsMdToggle) fsMdToggle.classList.toggle('hidden', !(isMd || isHtml));
-    if (fsListing) {
-      fsListing.querySelectorAll('.fs-entry').forEach((el) => {
-        el.classList.toggle('active', el.getAttribute('data-path') === state.fsOpenPath);
-      });
-    }
-    setFsMobileView('viewer');
+  state.fsOpenPath = relPath;
+  fsLang = detectFsLanguage(relPath);
+
+  if (fsFileIcon) fsFileIcon.textContent = getFsFileIcon(relPath, false);
+  if (fsEditorPath) fsEditorPath.textContent = relPath;
+  if (fsCopyPathBtn) fsCopyPathBtn.disabled = false;
+  if (fsCopyContentBtn) fsCopyContentBtn.disabled = isImage;
+  if (fsWrapBtn) fsWrapBtn.disabled = false;
+  if (fsEditBtn) {
+    fsEditBtn.disabled = isImage;
+    fsEditBtn.textContent = 'Edit';
+  }
+  if (fsCloseBtn) fsCloseBtn.disabled = false;
+
+  const rawUrl = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
+  if (fsRawBtn) {
+    fsRawBtn.href = rawUrl;
+    fsRawBtn.classList.remove('hidden');
   }
 
+  if (fsMdToggle) fsMdToggle.classList.toggle('hidden', !isMd);
+
+  if (fsListing) {
+    fsListing.querySelectorAll('.fs-entry').forEach((el) => {
+      el.classList.toggle('active', el.getAttribute('data-path') === state.fsOpenPath);
+    });
+  }
+
+  setFsMobileView('viewer');
+
   if (isImage) {
-    applyFileOpenedUI();
     state.fsSavedContent = '';
     setFsDirty(false);
     if (fsFileBadge) fsFileBadge.textContent = ext.toUpperCase();
     updateImageViewer(relPath, null);
     if (fsEditorStatus) fsEditorStatus.textContent = 'Image file';
-    return true;
+    return;
   }
 
-  if (isPdf) {
-    applyFileOpenedUI();
-    state.fsSavedContent = '';
-    setFsDirty(false);
-    if (fsFileBadge) fsFileBadge.textContent = 'PDF';
-    updatePdfViewer(relPath, null);
-    if (fsEditorStatus) fsEditorStatus.textContent = 'PDF file';
-    return true;
-  }
-
+  if (fsEditorStatus) fsEditorStatus.textContent = 'Loading…';
   try {
     const res = await fetch('/session/' + state.sessionId + '/fs/read?path=' + encodeURIComponent(relPath));
     const data = await res.json().catch(() => ({}));
 
     if (res.status === 415 || data.is_binary) {
-      applyFileOpenedUI();
       state.fsSavedContent = '';
       setFsDirty(false);
       if (fsFileBadge) fsFileBadge.textContent = formatBytes(data.size || 0);
       updateBinaryViewer(relPath, data.size);
       if (fsEditorStatus) fsEditorStatus.textContent = 'Binary file';
-      return true;
+      return;
     }
 
-    if (!res.ok) return false;
+    if (!res.ok) throw new Error(data.error || res.statusText || 'read failed');
 
-    applyFileOpenedUI();
     state.fsSavedContent = data.content || '';
     setFsEditorContent(state.fsSavedContent, state.fsOpenPath);
     setFsDirty(false);
@@ -2669,16 +2200,14 @@ async function openFsFile(relPath) {
 
     if (isMd) {
       updateMarkdownViewer(state.fsSavedContent);
-    } else if (isHtml) {
-      updateHtmlViewer(state.fsSavedContent);
     } else {
       updateCodeViewer(state.fsSavedContent, fsLang);
     }
 
     if (fsEditorStatus) fsEditorStatus.textContent = szStr + ' · ' + lineCount + ' lines · ' + (fsLang || 'text');
-    return true;
   } catch (e) {
-    return false;
+    if (fsEditorStatus) fsEditorStatus.textContent = 'Error: ' + e.message;
+    showToast('Open failed: ' + e.message);
   }
 }
 
@@ -3001,290 +2530,10 @@ function renderToolBlock(tc) {
 
 function addMessage(role, content) { const div = renderMessage({ role, content }); messagesEl.appendChild(div); scrollToBottom(); }
 
-function normalizeWorkspacePath(baseDir, href) {
-  if (!href) return { path: '', hash: '' };
-  
-  const hashIdx = href.indexOf('#');
-  let hash = '';
-  let pathStr = href;
-  if (hashIdx !== -1) {
-    hash = href.slice(hashIdx + 1);
-    pathStr = href.slice(0, hashIdx);
-  }
-
-  pathStr = decodeURIComponent(pathStr).trim();
-  if (!pathStr) {
-    return { path: '', hash };
-  }
-
-  let combined = '';
-  if (pathStr.startsWith('/')) {
-    combined = pathStr.slice(1);
-  } else if (baseDir) {
-    combined = baseDir + '/' + pathStr;
-  } else {
-    combined = pathStr;
-  }
-
-  const parts = combined.split('/');
-  const stack = [];
-  for (const p of parts) {
-    if (p === '' || p === '.') continue;
-    if (p === '..') {
-      if (stack.length > 0) stack.pop();
-    } else {
-      stack.push(p);
-    }
-  }
-
-  return { path: stack.join('/'), hash };
-}
-
-function getCandidatePaths(currentDir, href) {
-  const hashIdx = href.indexOf('#');
-  const pathStr = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
-  const hash = hashIdx !== -1 ? href.slice(hashIdx + 1) : '';
-  const clean = decodeURIComponent(pathStr).trim();
-  if (!clean) return { candidates: [], hash };
-
-  const candidates = [];
-  const add = (p) => {
-    if (p && !candidates.includes(p)) candidates.push(p);
-  };
-
-  const isExplicitRel = clean.startsWith('./') || clean.startsWith('../') || clean.startsWith('/');
-  
-  if (isExplicitRel) {
-    const norm = normalizeWorkspacePath(currentDir, clean).path;
-    add(norm);
-    if (!norm.toLowerCase().endsWith('.md')) add(norm + '.md');
-  } else {
-    // 1. Same directory
-    const relNorm = normalizeWorkspacePath(currentDir, clean).path;
-    add(relNorm);
-    if (!relNorm.toLowerCase().endsWith('.md')) add(relNorm + '.md');
-
-    // 2. Parent directory walk
-    let parts = currentDir ? currentDir.split('/').filter(Boolean) : [];
-    while (parts.length > 0) {
-      parts.pop();
-      const parentDir = parts.join('/');
-      const pNorm = normalizeWorkspacePath(parentDir, clean).path;
-      add(pNorm);
-      if (!pNorm.toLowerCase().endsWith('.md')) add(pNorm + '.md');
-    }
-
-    // 3. Root directory
-    const rootNorm = normalizeWorkspacePath('', clean).path;
-    add(rootNorm);
-    if (!rootNorm.toLowerCase().endsWith('.md')) add(rootNorm + '.md');
-  }
-
-  return { candidates, hash };
-}
-
-function scrollToHashInContainer(container, hash) {
-  if (!container || !hash) return;
-  const decodedHash = decodeURIComponent(hash).trim();
-  const lowerHash = decodedHash.toLowerCase();
-
-  let el = null;
-  try {
-    el = container.querySelector('#' + CSS.escape(decodedHash)) || container.querySelector('#' + CSS.escape(lowerHash));
-  } catch (e) {}
-
-  if (!el) {
-    const headings = container.querySelectorAll('h1, h2, h3, h4, h5, h6, [id], [name]');
-    for (const h of headings) {
-      const idVal = (h.id || h.getAttribute('name') || '').toLowerCase();
-      const textVal = (h.textContent || '').trim().toLowerCase();
-      const slugVal = textVal.replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
-      if (idVal === lowerHash || textVal === lowerHash || slugVal === lowerHash) {
-        el = h;
-        break;
-      }
-    }
-  }
-
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-}
-
-async function findWorkspaceFileByName(targetName) {
-  if (!state.sessionId || !targetName) return null;
-  
-  const cleanName = targetName.split('/').pop() || targetName;
-  const targetLower = cleanName.toLowerCase();
-  const targetWithMd = targetLower.endsWith('.md') ? targetLower : (targetLower + '.md');
-  const queue = [''];
-  const visited = new Set();
-  let maxFolders = 50;
-
-  while (queue.length > 0 && maxFolders > 0) {
-    const dir = queue.shift();
-    if (visited.has(dir)) continue;
-    visited.add(dir);
-    maxFolders--;
-
-    try {
-      const q = dir ? ('?path=' + encodeURIComponent(dir)) : '';
-      const res = await fetch('/session/' + state.sessionId + '/fs/list' + q);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!data.entries) continue;
-
-      for (const entry of data.entries) {
-        if (entry.type === 'file') {
-          const entryNameLower = entry.name.toLowerCase();
-          if (entryNameLower === targetLower || entryNameLower === targetWithMd) {
-            return entry.path;
-          }
-        } else if (entry.type === 'dir') {
-          if (!entry.name.startsWith('.') && entry.name !== 'node_modules' && entry.name !== 'build') {
-            queue.push(entry.path);
-          }
-        }
-      }
-    } catch (e) {}
-  }
-
-  return null;
-}
-
-async function navigateWorkspacePath(href, currentFilePath) {
-  if (!href) return;
-
-  const activePath = currentFilePath || state.fsOpenPath;
-  const currentDir = activePath ? (activePath.includes('/') ? activePath.substring(0, activePath.lastIndexOf('/')) : '') : (state.fsDir || '');
-  const { candidates, hash } = getCandidatePaths(currentDir, href);
-
-  if (candidates.length === 0) {
-    if (hash && fsViewMarkdown) {
-      scrollToHashInContainer(fsViewMarkdown, hash);
-    }
-    return;
-  }
-
-  switchFilesSubtab('explorer');
-
-  let opened = false;
-  for (const cand of candidates) {
-    try {
-      const ok = await openFsFile(cand);
-      if (ok) {
-        opened = true;
-        break;
-      }
-    } catch (err) {}
-  }
-
-  if (!opened) {
-    const hashIdx = href.indexOf('#');
-    const pathStr = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
-    const cleanName = decodeURIComponent(pathStr).trim().split('/').pop() || pathStr;
-
-    const foundPath = await findWorkspaceFileByName(cleanName);
-    if (foundPath) {
-      try {
-        const ok = await openFsFile(foundPath);
-        if (ok) opened = true;
-      } catch (err) {}
-    }
-  }
-
-  if (!opened) {
-    for (const cand of candidates) {
-      try {
-        const q = cand ? ('?path=' + encodeURIComponent(cand)) : '';
-        const res = await fetch('/session/' + state.sessionId + '/fs/list' + q);
-        if (res.ok) {
-          await loadFsListing(cand);
-          setFsMobileView('browser');
-          showToast('Opened folder: ' + cand);
-          return;
-        }
-      } catch (err) {}
-    }
-    showToast('File or folder not found: ' + href);
-    return;
-  }
-
-  if (opened && hash) {
-    setTimeout(() => {
-      if (fsViewMarkdown) {
-        scrollToHashInContainer(fsViewMarkdown, hash);
-      }
-    }, 150);
-  }
-}
-
-function handleMarkdownContainerClick(e, container, currentFilePath) {
-  const link = e.target.closest('a');
-  if (!link) return;
-  const href = link.getAttribute('href');
-  if (!href) return;
-
-  if (/^(https?:\/\/|mailto:|ftp:\/\/|\/\/)/i.test(href)) {
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    return;
-  }
-
-  if (href.startsWith('#')) {
-    e.preventDefault();
-    const hash = href.slice(1);
-    scrollToHashInContainer(container, hash);
-    return;
-  }
-
-  e.preventDefault();
-  switchTab('files');
-  navigateWorkspacePath(href, currentFilePath || state.fsOpenPath);
-}
-
-let wikilinkExtensionAdded = false;
-
-function initMarkedExtensions() {
-  if (wikilinkExtensionAdded || typeof marked === 'undefined' || !marked.use) return;
-  wikilinkExtensionAdded = true;
-
-  marked.use({
-    extensions: [{
-      name: 'wikilink',
-      level: 'inline',
-      start(src) { return src.indexOf('[['); },
-      tokenizer(src) {
-        const rule = /^\[\[([^\]\|#]+)?(?:#([^\]\|]+))?(?:\|([^\]]+))?\]\]/;
-        const match = rule.exec(src);
-        if (match) {
-          const rawTarget = (match[1] || '').trim();
-          const section = (match[2] || '').trim();
-          const display = (match[3] || '').trim();
-          if (!rawTarget && !section) return;
-          const href = rawTarget + (section ? '#' + section : '');
-          const label = display || (rawTarget ? (rawTarget + (section ? ' > ' + section : '')) : ('#' + section));
-          return {
-            type: 'wikilink',
-            raw: match[0],
-            href: href,
-            text: label
-          };
-        }
-      },
-      renderer(token) {
-        return `<a href="${esc(token.href)}" class="md-wikilink">${esc(token.text)}</a>`;
-      }
-    }]
-  });
-}
-
 function renderMarkdown(text) {
   if (typeof marked === 'undefined' || !marked.Renderer) {
     return esc(text).replace(/\n/g, '<br>');
   }
-
-  initMarkedExtensions();
   
   const renderer = new marked.Renderer();
   
@@ -3306,43 +2555,11 @@ function renderMarkdown(text) {
     return `<code class="md-inline-code">${esc(text)}</code>`;
   };
 
-  renderer.heading = function(text, level, raw, slugger) {
-    const rawStr = raw || text || '';
-    const id = slugger ? slugger.slug(rawStr) : rawStr.toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
-    return `<h${level} id="${esc(id)}">${text}</h${level}>`;
-  };
-
-  renderer.link = function(href, title, text) {
-    const titleAttr = title ? ` title="${esc(title)}"` : '';
-    const cleanHref = href || '';
-    const isExternal = /^(https?:\/\/|mailto:|ftp:\/\/|\/\/)/i.test(cleanHref);
-    if (isExternal) {
-      return `<a href="${esc(cleanHref)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
-    }
-    return `<a href="${esc(cleanHref)}"${titleAttr}>${text}</a>`;
-  };
-
-  renderer.image = function(href, title, text) {
-    const titleAttr = title ? ` title="${esc(title)}"` : '';
-    const altAttr = text ? ` alt="${esc(text)}"` : '';
-    let cleanHref = href || '';
-    const isExternal = /^(https?:\/\/|data:|\/\/)/i.test(cleanHref);
-    if (!isExternal && state.sessionId) {
-      const activePath = state.fsOpenPath;
-      const currentDir = activePath ? (activePath.includes('/') ? activePath.substring(0, activePath.lastIndexOf('/')) : '') : (state.fsDir || '');
-      const { path: targetPath } = normalizeWorkspacePath(currentDir, cleanHref);
-      if (targetPath) {
-        cleanHref = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(targetPath);
-      }
-    }
-    return `<img src="${esc(cleanHref)}"${altAttr}${titleAttr}>`;
-  };
-
   marked.setOptions({
     renderer: renderer,
     gfm: true,
     breaks: true,
-    headerIds: true,
+    headerIds: false,
     mangle: false
   });
 
@@ -3522,7 +2739,7 @@ async function deleteSessionPermanently(id) {
     }
     if (state.sessionId === id) {
       if (state.openSessions.length > 0) {
-        const nextIndex = Math.max(0, Math.min(index === -1 ? 0 : index, state.openSessions.length - 1));
+        const nextIndex = Math.min(index, state.openSessions.length - 1);
         switchSession(state.openSessions[nextIndex].id);
       } else {
         state.sessionId = null;
@@ -3581,16 +2798,10 @@ function renderSessionTabs() {
 
   sessionTabsContainer.querySelectorAll('.delete-session-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      e.preventDefault();
       e.stopPropagation();
-      const id = btn.dataset.id;
-      if (!id) return;
-      const confirmed = await confirmModal(
-        'Permanently delete this session and all its messages?',
-        { title: 'Delete session', confirmLabel: 'Delete', danger: true }
-      );
+      const confirmed = confirm("Are you sure you want to permanently delete this session and all its messages?");
       if (confirmed) {
-        await deleteSessionPermanently(id);
+        await deleteSessionPermanently(btn.dataset.id);
       }
     });
   });

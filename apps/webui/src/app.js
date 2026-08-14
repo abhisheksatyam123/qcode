@@ -157,8 +157,8 @@ let termPollTimer = null;
 const SLASH_COMMANDS = [
   { name: '/help',      desc: 'Show available commands' },
   { name: '/model',     desc: 'List or switch provider/model' },
+  { name: '/variant',   desc: 'Set model variant / effort: off|low|medium|high' },
   { name: '/new',       desc: 'Start a new chat session' },
-  { name: '/reasoning', desc: 'Set reasoning: off|low|medium|high' },
   { name: '/tools',     desc: 'Toggle tool use: on|off' },
   { name: '/rename',    desc: 'Rename current session' },
   { name: '/session',   desc: 'List or load saved sessions' },
@@ -1138,7 +1138,7 @@ function handleSlashCommand(text) {
     case 'help': case '?': handleHelpCommand(); break;
     case 'model': case 'models': handleModelCommand(args); break;
     case 'new': handleNewCommand(); break;
-    case 'reasoning': handleReasoningCommand(args); break;
+    case 'variant': handleVariantCommand(args); break;
     case 'tools': handleToolsCommand(args); break;
     case 'rename': handleRenameCommand(args); break;
     case 'session': case 'load': handleSessionCommand(args); break;
@@ -1151,8 +1151,8 @@ function handleHelpCommand() {
   addSystemMessage(
     'Available commands:\n' +
     '  /model [list]              - select provider/model\n' +
+    '  /variant [off|low|medium|high] - set model variant / reasoning effort\n' +
     '  /new                       - start a new session\n' +
-    '  /reasoning [off|low|medium|high] - set reasoning effort\n' +
     '  /tools [on|off]            - toggle tool use\n' +
     '  /rename [title]            - rename current session\n' +
     '  /session [list]            - manage saved sessions\n' +
@@ -1322,10 +1322,10 @@ async function loadSessionById(id) {
 }
 
 function handleNewCommand() { showNewSessionModal(); }
-function handleReasoningCommand(args) {
-  const lvl = args || 'off';
-  if (!['off', 'low', 'medium', 'high'].includes(lvl)) { addSystemMessage('Invalid level. Use off|low|medium|high.'); return; }
-  state.reasoning = lvl; reasoningSelect.value = lvl; showToast('Reasoning: ' + lvl);
+function handleVariantCommand(args) {
+  const lvl = args || (state.reasoning === 'off' ? 'low' : state.reasoning === 'low' ? 'medium' : state.reasoning === 'medium' ? 'high' : 'off');
+  if (!['off', 'low', 'medium', 'high'].includes(lvl)) { addSystemMessage('Invalid variant. Use off|low|medium|high.'); return; }
+  state.reasoning = lvl; reasoningSelect.value = lvl; showToast('Variant (effort): ' + lvl);
 }
 function handleToolsCommand(args) {
   const val = args || (state.toolsEnabled ? 'off' : 'on');

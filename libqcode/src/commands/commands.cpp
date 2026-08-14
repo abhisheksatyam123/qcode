@@ -291,7 +291,7 @@ bool handle_slash_command(
         return true;
     }
 
-    if (cmd == "reasoning" || cmd == "effort") {
+    if (cmd == "variant") {
         std::string lvl = args;
         // Trim whitespace
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.front()))) lvl.erase(lvl.begin());
@@ -306,17 +306,17 @@ bool handle_slash_command(
         }
         if (lvl != "off" && lvl != "low" && lvl != "medium" && lvl != "high") {
             bus.publish<qcode::contract::ToastRequested>({
-                .message = "Invalid effort '" + lvl + "'. Use off|low|medium|high.",
+                .message = "Invalid variant '" + lvl + "'. Use off|low|medium|high.",
                 .variant = "warning"
             });
             return true;
         }
         *state.reasoning_mode = lvl;
         bus.publish<qcode::contract::ToastRequested>({
-            .message = "Reasoning effort: " + lvl,
+            .message = "Model variant (effort): " + lvl,
             .variant = (lvl == "off" ? "info" : "success")
         });
-        LOG_DEBUG("Commands: reasoning effort set to '{}'", lvl);
+        LOG_DEBUG("Commands: variant set to '{}'", lvl);
         return true;
     }
 
@@ -359,11 +359,11 @@ bool handle_slash_command(
         std::ostringstream h;
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
+          << "  /variant [off|low|medium|high] - set model variant / reasoning effort\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
           << "  /new [name] [workspace] - new session (optional title + workspace path)\n"
           << "  /session <id>     - load a persistent session by id\n"
           << "  /rename <name>    - rename the current session title\n"
-          << "  /reasoning [off|low|medium|high] - set reasoning effort\n"
           << "  /compact [keep]   - compress conversation into a handoff summary\n"
           << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
           << "  /help             - show this help\n"

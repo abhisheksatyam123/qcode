@@ -339,7 +339,7 @@ ftxui::Element render_view(
                 text("  "),
                 shortcut_badge("/model", "Model", theme),
                 text("  "),
-                shortcut_badge("/effort", "Reasoning", theme),
+                shortcut_badge("/variant", "Variant", theme),
                 text("  "),
                 shortcut_badge("/theme", "Theme", theme),
                 text("  "),
