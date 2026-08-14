@@ -110,9 +110,11 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
   }
   if (openai_req.contains("top_p")) gen_config["topP"] = openai_req["top_p"];
   if (openai_req.contains("seed")) gen_config["seed"] = openai_req["seed"];
-  if (openai_req.contains("reasoning_effort")) {
-    gen_config["thinkingConfig"] = {
-        {"thinkingLevel", openai_req["reasoning_effort"]}};
+  if (openai_req.contains("reasoning_effort") && openai_req["reasoning_effort"].is_string()) {
+    const auto effort = openai_req["reasoning_effort"].get<std::string>();
+    if (effort == "low" || effort == "medium" || effort == "high") {
+      gen_config["thinkingConfig"] = {{"thinkingLevel", effort}};
+    }
   }
   gemini_req["generationConfig"] = gen_config;
 
@@ -180,6 +182,8 @@ nlohmann::json wrap_antigravity_envelope_impl(const nlohmann::json& gemini_req,
     mapped_model = "gemini-3.6-flash-high";
   } else if (mapped_model == "gemini-3.7-flash-low") {
     mapped_model = "gemini-3.6-flash-low";
+  } else if (mapped_model == "gemini-3-pro-high" || mapped_model == "gemini-3-pro-low" || mapped_model == "gemini-3-pro") {
+    mapped_model = "gemini-3.1-pro-low";
   }
   env["model"] = mapped_model;
   env["userAgent"] = "antigravity";
