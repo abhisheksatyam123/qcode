@@ -74,6 +74,9 @@ struct ChatState {
     // Hit boxes for clickable file rows in the list view (index == file index).
     std::shared_ptr<std::vector<HitBox>> file_row_boxes =
         std::make_shared<std::vector<HitBox>>();
+    // Hit box for the back button (← Esc) in the file diff detail view.
+    std::shared_ptr<HitBox> files_back_box =
+        std::make_shared<HitBox>();
     std::shared_ptr<int> scroll_line = std::make_shared<int>(INT_MAX);
     std::shared_ptr<bool> auto_scroll = std::make_shared<bool>(true);
     // First message in the bounded render window. The complete history remains

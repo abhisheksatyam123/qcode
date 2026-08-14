@@ -1,4 +1,5 @@
 #include <qcode/config/config.h>
+#include <qcode/session/session_store.h>
 #include <qcode/http/ssl_config.h>
 #include <qcode/providers/cursor.h>
 
@@ -22,6 +23,24 @@
 #include <qcode/logger/logger.h>
 
 namespace qcode {
+
+static int resolve_model_context_window(const std::string& model_id) {
+    auto summary = session::get_model_performance_summary(model_id);
+    if (summary.context_window > 0) return summary.context_window;
+    std::string lower = model_id;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower.find("2m") != std::string::npos || lower.find("gemini-3.1") != std::string::npos) {
+        return 2000000;
+    }
+    if (lower.find("gemini") != std::string::npos || lower.find("deepseek") != std::string::npos ||
+        lower.find("nemotron") != std::string::npos || lower.find("1m") != std::string::npos) {
+        return 1000000;
+    }
+    if (lower.find("claude") != std::string::npos) {
+        return 200000;
+    }
+    return 200000;
+}
 
 using ordered_json = nlohmann::ordered_json;
 // OpenCode uses these bundled Antigravity OAuth client credentials to refresh
@@ -487,6 +506,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
                         model.reasoning = model_data.value("reasoning", false);
                         model.tool_call = model_data.value("tool_call", false);
                         model.protocol = model_data.value("protocol", prov.protocol);
+                        if (model.context_window <= 0) {
+                            model.context_window = resolve_model_context_window(model_id);
+                        }
                         prov.models.push_back(model);
                     }
                 }

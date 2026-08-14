@@ -8,6 +8,7 @@
 #include <array>
 #include <cstdio>
 #include <sstream>
+#include <iomanip>
 #include <algorithm>
 #include <climits>
 
@@ -141,24 +142,45 @@ ftxui::Element render_view(
     // (state.current_context_tokens is the per-request snapshot; state.total_tokens
     // is the session lifetime total and is shown in the Stats tab instead.)
     std::string hdr_tokens;
-    int ctx_used = *state.current_context_tokens;
+    int ctx_used = *state.current_context_tokens > 0
+                       ? *state.current_context_tokens
+                       : (*state.last_actual_prompt_tokens > 0
+                              ? *state.last_actual_prompt_tokens
+                              : 0);
+    int window_size = hdr_model_info.context_window;
+    if (window_size <= 0) {
+        auto summary = session::get_model_performance_summary(hdr_model_info.id);
+        if (summary.context_window > 0) {
+            window_size = summary.context_window;
+        } else {
+            std::string lower = hdr_model_info.id;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower.find("2m") != std::string::npos || lower.find("gemini-3.1") != std::string::npos) {
+                window_size = 2000000;
+            } else if (lower.find("gemini") != std::string::npos || lower.find("deepseek") != std::string::npos || lower.find("nemotron") != std::string::npos) {
+                window_size = 1000000;
+            } else {
+                window_size = 200000;
+            }
+        }
+    }
     int ctx_pct = 0;
     Color ctx_color = Color::Default;
-    if (hdr_model_info.context_window > 0) {
+    if (window_size > 0) {
       if (ctx_used > 0) {
-        ctx_pct = static_cast<int>(ctx_used * 100 /
-                                   hdr_model_info.context_window);
+        ctx_pct = static_cast<int>(static_cast<long long>(ctx_used) * 100 / window_size);
+        if (ctx_pct > 100) ctx_pct = 100;
         hdr_tokens = format_tokens(ctx_used) + " / " +
-                     format_tokens(hdr_model_info.context_window) + " (" +
+                     format_tokens(window_size) + " (" +
                      std::to_string(ctx_pct) + "%)";
         ctx_color = ctx_pct >= 85   ? Color::Red
                     : ctx_pct >= 70 ? Color::Yellow
                                     : accent2(theme);
       } else {
-        hdr_tokens = format_tokens(hdr_model_info.context_window) + " tok";
+        hdr_tokens = format_tokens(window_size) + " tok";
       }
     } else {
-      hdr_tokens = format_tokens(ctx_used > 0 ? ctx_used : *state.total_tokens) + " tok";
+      hdr_tokens = format_tokens(ctx_used) + " tok";
     }
     
     // Status (compact, no spinner — spinner is rendered in the header below)
@@ -690,8 +712,13 @@ ftxui::Element render_view(
                 content = get_file_diff(entry.path, *state.files_revision);
             }
 
+            Element back_btn = text(" ← Esc ") | dim;
+            if (state.files_back_box) {
+                back_btn = std::move(back_btn) | reflect_box(*state.files_back_box);
+            }
+
             auto file_header = hbox({
-                text(" ← Esc ") | dim,
+                std::move(back_btn),
                 text(entry.path) | bold | color(accent2(theme)),
                 text(entry.untracked ? "  (untracked)" : "") | dim |
                     color(Color::Yellow),
@@ -741,10 +768,50 @@ ftxui::Element render_view(
     }
     // ── Tab 2: Stats ──
     else {
-        int hard_limit = 200000;  // fallback; overridden below from model config
-        int used = *state.current_context_tokens > 0 ? *state.current_context_tokens : *state.total_tokens;
+        std::string prov_name = "Unknown";
+        std::string mod_name = "Unknown";
+        std::string prov_id = "";
+        int hard_limit = 200000;
+        double in_rate = 3.00;
+        double out_rate = 15.00;
+
+        if (selected_provider >= 0 && selected_provider < static_cast<int>(providers_list.size())) {
+            const auto& prov = providers_list[selected_provider];
+            prov_name = prov.name;
+            prov_id = prov.id;
+            if (selected_model >= 0 && selected_model < static_cast<int>(prov.models.size())) {
+                const auto& m = prov.models[selected_model];
+                mod_name = m.name;
+                if (m.context_window > 0) {
+                    hard_limit = m.context_window;
+                } else {
+                    auto summary = session::get_model_performance_summary(m.id);
+                    if (summary.context_window > 0) {
+                        hard_limit = summary.context_window;
+                    } else {
+                        std::string lower = m.id;
+                        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                        if (lower.find("2m") != std::string::npos || lower.find("gemini-3.1") != std::string::npos) {
+                            hard_limit = 2000000;
+                        } else if (lower.find("gemini") != std::string::npos || lower.find("deepseek") != std::string::npos || lower.find("nemotron") != std::string::npos) {
+                            hard_limit = 1000000;
+                        }
+                    }
+                }
+                in_rate = m.input_cost > 0 ? m.input_cost : (prov_id == "openrouter" ? 2.50 : 3.00);
+                out_rate = m.output_cost > 0 ? m.output_cost : (prov_id == "openrouter" ? 10.00 : 15.00);
+            }
+        }
+        if (hard_limit <= 0) hard_limit = 200000;
+
+        int used = *state.current_context_tokens > 0
+                       ? *state.current_context_tokens
+                       : (*state.last_actual_prompt_tokens > 0
+                              ? *state.last_actual_prompt_tokens
+                              : 0);
         double used_pct = (double)used / hard_limit * 100.0;
         if (used_pct > 100.0) used_pct = 100.0;
+        if (used_pct < 0.0) used_pct = 0.0;
 
         int bar_width = 40;
         int filled = (int)(used_pct / 100.0 * bar_width);
@@ -753,13 +820,10 @@ ftxui::Element render_view(
         std::string empty_bar = "";
         for (int i = 0; i < bar_width - filled; ++i) empty_bar += "░";
 
-        double cost = 0.0;
-        std::string prov_id = providers_list[selected_provider].id;
-        const auto& m = providers_list[selected_provider].models[selected_model];
-        if (m.context_window > 0) hard_limit = m.context_window;
-        double in_rate = m.input_cost > 0 ? m.input_cost : (prov_id == "openrouter" ? 2.50 : 3.00);
-        double out_rate = m.output_cost > 0 ? m.output_cost : (prov_id == "openrouter" ? 10.00 : 15.00);
-        cost = (*state.total_prompt_tokens * in_rate + *state.total_completion_tokens * out_rate) / 1000000.0;
+        double cost = (*state.total_prompt_tokens * in_rate + *state.total_completion_tokens * out_rate) / 1000000.0;
+        std::ostringstream cost_stream;
+        cost_stream << std::fixed << std::setprecision(4) << cost;
+        std::string cost_str = cost_stream.str();
 
         body = vbox({
             text(""),
@@ -769,7 +833,7 @@ ftxui::Element render_view(
                     text("⎔ CONTEXT WINDOW") | bold | color(accent2(theme)),
                     hbox({
                         text("Model/Provider: ") | dim,
-                        text(providers_list[selected_provider].name + " / " + providers_list[selected_provider].models[selected_model].name) | bold
+                        text(prov_name + " / " + mod_name) | bold
                     }),
                     hbox({
                         text("Usage: ") | dim,
@@ -788,7 +852,7 @@ ftxui::Element render_view(
                     hbox({ text("Total Tokens: ") | dim, text(std::to_string(*state.total_tokens)) }),
                     hbox({ text("Tool Calls: ") | dim, text(std::to_string(*state.tool_call_count)) }),
                     hbox({ text("Tool Time: ") | dim, text(std::to_string(static_cast<int>(*state.total_tool_time_ms)) + " ms") }),
-                    hbox({ text("Estimated Cost: ") | dim, text("$" + std::to_string(cost)) | color(Color::Green) | bold }),
+                    hbox({ text("Estimated Cost: ") | dim, text("$" + cost_str) | color(Color::Green) | bold }),
                 }) | flex,
                 text("  ")
             }),

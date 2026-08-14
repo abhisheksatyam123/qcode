@@ -740,7 +740,7 @@ int main() {
         // One-key retry / regenerate the last prompt (prompt must be empty).
         // Works after a normal turn AND after an error/force-stop: the user
         // message is already in history, so we resend without re-appending it.
-        if (prompt_input.empty() && !show_model_select && !show_session_select &&
+        if (state.tab_selected == 0 && prompt_input.empty() && !show_model_select && !show_session_select &&
             !show_theme_select && !state.slash_suggestion_mode &&
             !generation.is_active() && state.last_user_prompt &&
             !state.last_user_prompt->empty() &&
@@ -859,6 +859,30 @@ int main() {
                 return true;
             }
         }
+
+        // ── Stats tab: refresh session stats on r ──
+        if (state.tab_selected == 2 && !show_model_select &&
+            !show_session_select && !show_theme_select) {
+            if (e == Event::Character('r') || e == Event::Character('R')) {
+                if (state.session_id && !state.session_id->empty()) {
+                    qcode::session::SessionStats stats =
+                        qcode::session::get_session_stats(*state.session_id);
+                    if (state.total_prompt_tokens)
+                        *state.total_prompt_tokens = stats.prompt_tokens;
+                    if (state.total_completion_tokens)
+                        *state.total_completion_tokens = stats.completion_tokens;
+                    if (state.total_tokens)
+                        *state.total_tokens = stats.total_tokens;
+                    if (state.tool_call_count)
+                        *state.tool_call_count = stats.tool_calls;
+                    if (state.total_tool_time_ms)
+                        *state.total_tool_time_ms = stats.total_tool_time_ms;
+                }
+                store.add_toast("Refreshed session stats", "info", 1000);
+                screen.Post(Event::Custom);
+                return true;
+            }
+        }
         constexpr int kLinesPerWheel = 3;
         constexpr int kLinesPerPage = 20;
         if (e == Event::PageUp) {
@@ -909,6 +933,17 @@ int main() {
             if (e.mouse().button == Mouse::WheelUp) { *state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
             if (e.mouse().button == Mouse::WheelDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerWheel); return true; }
             if (e.mouse().button == Mouse::Left && e.mouse().motion == Mouse::Pressed) {
+                if (state.tab_selected == 1 && state.files_detail_open &&
+                    state.files_back_box) {
+                    if (state.files_back_box->Contain(e.mouse().x,
+                                                           e.mouse().y)) {
+                        state.files_detail_open = false;
+                        *state.scroll_line = 0;
+                        *state.auto_scroll = true;
+                        screen.Post(Event::Custom);
+                        return true;
+                    }
+                }
                 if (state.tab_selected == 1 && !state.files_detail_open &&
                     state.file_row_boxes) {
                     for (size_t i = 0; i < state.file_row_boxes->size(); ++i) {
