@@ -281,6 +281,13 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         }
         if (!msg.empty()) {
           LOG_ERROR("Stream error from provider: {}", msg);
+          if (msg.find("429") != std::string::npos ||
+              msg.find("rate_limit") != std::string::npos ||
+              msg.find("Rate limit") != std::string::npos ||
+              msg.find("quota") != std::string::npos ||
+              msg.find("RESOURCE_EXHAUSTED") != std::string::npos) {
+            msg += "\n\n💡 Tip: Rate limit hit. Switch to high-throughput models via `/model gemini-3.7-flash` or `/model poolside/laguna-s-2.1:free` or `/model nvidia/nemotron-3.5-lightning:free`.";
+          }
           push_event(create_error_event(msg));
           return;
         }
