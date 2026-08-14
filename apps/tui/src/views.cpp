@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <climits>
+#include <ftxui/screen/string.hpp>
 
 namespace qcode {
 namespace tui {
@@ -514,8 +515,28 @@ ftxui::Element render_view(
             }
 
             // Clean input bar: prompt prefix + input; subtle queue hint when busy
-            int input_lines = std::max(1, (int)std::count(prompt_input.begin(), prompt_input.end(), '\n') + 1);
-            int input_height = std::min(input_lines, 6);
+            // Count both explicit newlines AND soft-wrapped lines so the box
+            // grows vertically when a single line exceeds the horizontal width.
+            int input_lines = 1;
+            {
+                const int term_w = stable_terminal_size().dimx;
+                // " ❯ " prefix (3) + borderRounded (2) + scroll/right margin (2).
+                const int avail = std::max(20, term_w - 7);
+                size_t pos = 0;
+                while (pos <= prompt_input.size()) {
+                    size_t nl = prompt_input.find('\n', pos);
+                    std::string seg = (nl == std::string::npos)
+                        ? prompt_input.substr(pos)
+                        : prompt_input.substr(pos, nl - pos);
+                    const int w = ftxui::string_width(seg);
+                    int segs = (w <= 0) ? 1 : (w + avail - 1) / avail;
+                    input_lines += segs - 1;
+                    if (nl == std::string::npos) break;
+                    pos = nl + 1;
+                }
+                if (input_lines < 1) input_lines = 1;
+            }
+            int input_height = std::min(input_lines, 8);
             Elements prompt_row = {
                 text(" ❯ ") | color(accent2(theme)) | bold,
                 // Dynamically expand input height up to 6 lines as newlines/content grow
