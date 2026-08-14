@@ -147,8 +147,9 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     request["max_completion_tokens"] = 8192;
   }
 
-  if (options.reasoning_effort) {
+  if (options.reasoning_effort && *options.reasoning_effort != "off" && !options.reasoning_effort->empty()) {
     request["reasoning_effort"] = *options.reasoning_effort;
+    request["reasoning"] = {{"effort", *options.reasoning_effort}};
   }
 
   if (options.top_p) {

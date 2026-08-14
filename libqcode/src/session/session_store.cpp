@@ -1028,8 +1028,10 @@ void seed_model_capabilities_if_needed() {
         {"gemini-3-flash", "antigravity", "Gemini 3 Flash", "Google DeepMind High-Efficiency", 1000000, 8192, 1, 1, "Low Latency Agentic", "Fast Command Execution & Lightweight Tool Calls"},
         {"gemini-2.5-flash", "antigravity", "Gemini 2.5 Flash", "Google DeepMind High-Speed", 1000000, 8192, 1, 1, "Efficient Flash Model", "Quick Single-Turn Questions & Standard Chat"},
 
-        {"poolside/laguna-s-2.1:free", "openrouter", "Poolside Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Iterative Code Modifications & Diffs"},
         {"nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter", "Nemotron 3 Ultra 550B (Free)", "NVIDIA 550B MoE (55B Active)", 1000000, 65536, 1, 1, "Frontier MoE 1M Context", "Deep Reasoning & Large File Inspection"},
+        {"nvidia/nemotron-3.5-lightning:free", "openrouter", "Nemotron 3.5 Lightning (Free)", "NVIDIA High-Speed Reasoning", 1000000, 65536, 1, 1, "Ultra-Low Latency Agentic", "Fast Multi-Turn Tools & Real-Time Code Edits"},
+        {"nvidia/nemotron-3-super-120b-a12b:free", "openrouter", "Nemotron 3 Super 120B (Free)", "NVIDIA 120B MoE (12B Active)", 262144, 32768, 1, 1, "High-Speed Code Assistant", "Fast Command Execution & Lightweight Tool Calls"},
+        {"poolside/laguna-s-2.1:free", "openrouter", "Poolside Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Iterative Code Modifications & Diffs"},
         {"cohere/north-mini-code:free", "openrouter", "Cohere North Mini Code (Free)", "Cohere 30B MoE (3B Active)", 256000, 32768, 1, 1, "Cohere Debut Sparse MoE", "Fast Command Execution & Auto-complete"}
     };
 
