@@ -104,7 +104,8 @@ static int avail_width() {
   } catch (...) {
   }
   if (w <= 0) w = 100;
-  return std::max(20, w - 2);  // minus 2-space indent applied by the caller
+  // Account for: 2 chars message indent ("  ") + 2 chars scrollbar + 2 chars right safety margin
+  return std::max(20, w - 6);
 }
 
 // Flush collected inline items into a word-wrapped block. `first_prefix` is
@@ -167,9 +168,27 @@ static Element flush_inline(const std::vector<IItem>& items, int avail,
     int allowance =
         lines.empty() ? std::max(1, avail - prefix_cols) : std::max(1, avail - hang);
     if (!cl.empty() && cwdt + 1 + w > allowance) newline();
-    if (!cl.empty()) cwdt += 1;
-    cl.push_back(tk);
-    cwdt += w;
+
+    // If word exceeds allowance, split chunk across lines to prevent right-edge clipping
+    if (w > allowance && allowance > 0) {
+      int start = 0;
+      while (start < w) {
+        int cur_allowance = lines.empty() ? std::max(1, avail - prefix_cols) : std::max(1, avail - hang);
+        int take = std::min(w - start, cur_allowance);
+        Tok sub_tk = tk;
+        sub_tk.w = tk.w.substr(start, take);
+        cl.push_back(sub_tk);
+        cwdt += take;
+        start += take;
+        if (start < w) {
+          newline();
+        }
+      }
+    } else {
+      if (!cl.empty()) cwdt += 1;
+      cl.push_back(tk);
+      cwdt += w;
+    }
   }
   if (!cl.empty()) lines.push_back(cl);
 
@@ -380,10 +399,25 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
       Elements lines;
       std::istringstream iss(b.code_text);
       std::string ln;
+      int max_code_w = std::max(20, avail - 4);
       while (std::getline(iss, ln)) {
         if (!ln.empty() && ln.back() == '\r') ln.pop_back();
-        lines.push_back(text("  " + ln) | bgcolor(Color::RGB(0x1E, 0x1E, 0x2E)) |
-                        color(Color::RGB(0xBB, 0xBB, 0xBB)));
+        if (static_cast<int>(ln.size()) <= max_code_w) {
+          lines.push_back(text("  " + ln) | bgcolor(Color::RGB(0x1E, 0x1E, 0x2E)) |
+                          color(Color::RGB(0xBB, 0xBB, 0xBB)));
+        } else {
+          int start = 0;
+          bool first_chunk = true;
+          while (start < static_cast<int>(ln.size())) {
+            int take = std::min(static_cast<int>(ln.size()) - start, max_code_w);
+            std::string chunk = ln.substr(start, take);
+            std::string pfx = first_chunk ? "  " : "    ↳ ";
+            lines.push_back(text(pfx + chunk) | bgcolor(Color::RGB(0x1E, 0x1E, 0x2E)) |
+                            color(Color::RGB(0xBB, 0xBB, 0xBB)));
+            first_chunk = false;
+            start += take;
+          }
+        }
       }
       el = vbox(std::move(lines));
       break;
@@ -444,9 +478,9 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
         }
         total_max += max_col_width[col];
       }
-      int avail_content = avail - static_cast<int>(C + 1);
-      if (avail_content < static_cast<int>(C)) {
-        avail_content = static_cast<int>(C);
+      int avail_content = avail - static_cast<int>(C * 2 + C + 1);
+      if (avail_content < static_cast<int>(C * 4)) {
+        avail_content = static_cast<int>(C * 4);
       }
       if (total_max <= avail_content) {
         for (size_t col = 0; col < C; ++col) {
