@@ -136,26 +136,32 @@ Element ToolBlock(const std::string& icon,
         title_row.push_back(text("  "));
     }
 
-    std::string heading = description;
-    if (heading.empty()) heading = shell_command;
-    if (heading.empty()) heading = title;
-    if (heading.empty()) heading = "tool";
-    if (!icon.empty() && icon != "$") {
-        title_row.push_back(text(icon + " ") | dim | color(accent_color));
-    }
-    
-    // When collapsed, highlight the command / action clearly in the single-line summary
-    if (collapsed) {
-        title_row.push_back(text("# " + truncate_utf8(heading, 70)) | bold |
+    std::string command = shell_command;
+    if (command.rfind("$ ", 0) == 0) command = command.substr(2);
+
+    const bool has_distinct_description =
+        !description.empty() && description != shell_command &&
+        description != command && !title.empty();
+
+    if (has_distinct_description) {
+        if (!icon.empty() && icon != "$") {
+            title_row.push_back(text(icon + " ") | dim | color(accent_color));
+        }
+        title_row.push_back(text("# " + truncate_utf8(description, 60)) | bold |
+                            color(command_fg()));
+        if (!title.empty() && description.find(title) == std::string::npos) {
+            title_row.push_back(text(" · " + title) | dim | color(muted_fg(theme)));
+        }
+    } else if (!command.empty()) {
+        title_row.push_back(text("$ ") | bold | color(prompt_green(theme)));
+        title_row.push_back(text(truncate_utf8(command, 70)) | bold |
                             color(command_fg()));
     } else {
-        title_row.push_back(text("# " + truncate_utf8(heading, 70)) | dim |
-                            color(muted_fg(theme)));
-    }
-
-    if (!title.empty() && title != heading &&
-        heading.find(title) == std::string::npos) {
-        title_row.push_back(text(" · " + title) | dim | color(muted_fg(theme)));
+        if (!icon.empty() && icon != "$") {
+            title_row.push_back(text(icon + " ") | dim | color(accent_color));
+        }
+        title_row.push_back(text(!title.empty() ? title : "tool") | bold |
+                            color(command_fg()));
     }
 
     title_row.push_back(filler());
@@ -177,17 +183,9 @@ Element ToolBlock(const std::string& icon,
     Elements body;
     body.push_back(hbox(std::move(title_row)));
 
-    // When expanded, render the full multi-line command and full content
+    // When expanded, only render the explicit command line if there was a separate description
     if (!collapsed) {
-        std::string command = shell_command;
-        if (command.empty()) {
-            command = !description.empty() ? description
-                      : !title.empty()     ? title
-                                           : "tool";
-        }
-        if (command.rfind("$ ", 0) == 0) command = command.substr(2);
-
-        if (!command.empty()) {
+        if (has_distinct_description && !command.empty()) {
             std::istringstream iss(command);
             std::string line;
             bool first_line = true;
@@ -201,11 +199,13 @@ Element ToolBlock(const std::string& icon,
             }
         }
 
-        // Output / input content
-        body.push_back(hbox({
-            text("  "),
-            std::move(content) | flex,
-        }));
+        // Output content
+        if (content != emptyElement()) {
+            body.push_back(hbox({
+                text("  "),
+                std::move(content) | flex,
+            }));
+        }
     }
 
     auto block = vbox(std::move(body));
