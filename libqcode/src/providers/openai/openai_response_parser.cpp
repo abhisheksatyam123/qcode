@@ -211,8 +211,12 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     result.usage.prompt_tokens = usage.value("prompt_tokens", 0);
     result.usage.completion_tokens = usage.value("completion_tokens", 0);
     result.usage.total_tokens = usage.value("total_tokens", 0);
-    LOG_DEBUG("Token usage - prompt: {}, completion: {}, total: {}",
+    if (usage.contains("prompt_tokens_details") && usage["prompt_tokens_details"].is_object()) {
+      result.usage.cached_prompt_tokens = usage["prompt_tokens_details"].value("cached_tokens", 0);
+    }
+    LOG_DEBUG("Token usage - prompt: {}, cached: {}, completion: {}, total: {}",
                           result.usage.prompt_tokens,
+                          result.usage.cached_prompt_tokens,
                           result.usage.completion_tokens,
                           result.usage.total_tokens);
   }

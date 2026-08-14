@@ -288,6 +288,10 @@ nlohmann::json normalize_gemini_response_impl(const nlohmann::json& response) {
       usage["prompt_tokens"] = usage_meta.value("promptTokenCount", 0);
       usage["completion_tokens"] = usage_meta.value("candidatesTokenCount", 0);
       usage["total_tokens"] = usage_meta.value("totalTokenCount", 0);
+      if (usage_meta.contains("cachedContentTokenCount")) {
+        usage["prompt_tokens_details"] = {
+            {"cached_tokens", usage_meta.value("cachedContentTokenCount", 0)}};
+      }
       normalized_response["usage"] = usage;
     }
   }

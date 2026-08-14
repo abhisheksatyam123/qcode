@@ -324,6 +324,7 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
               usage.prompt_tokens = usage_meta.value("promptTokenCount", 0);
               usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
               usage.total_tokens = usage_meta.value("totalTokenCount", 0);
+              usage.cached_prompt_tokens = usage_meta.value("cachedContentTokenCount", 0);
               push_event(StreamEvent(kStreamEventTypeFinish, usage, finish_reason));
             } else {
               push_event(StreamEvent(kStreamEventTypeFinish));
@@ -338,6 +339,7 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         usage.prompt_tokens = usage_meta.value("promptTokenCount", 0);
         usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
         usage.total_tokens = usage_meta.value("totalTokenCount", 0);
+        usage.cached_prompt_tokens = usage_meta.value("cachedContentTokenCount", 0);
         finish_event_pushed_ = true;
         push_event(StreamEvent(kStreamEventTypeFinish, usage, kFinishReasonStop));
         return;
@@ -440,9 +442,14 @@ FinishReason OpenAIStreamImpl::parse_finish_reason(
 
 Usage OpenAIStreamImpl::parse_usage(const nlohmann::json& usage_json) {
   Usage usage;
-  usage.prompt_tokens = usage_json.value("prompt_tokens", 0);
-  usage.completion_tokens = usage_json.value("completion_tokens", 0);
-  usage.total_tokens = usage_json.value("total_tokens", 0);
+  usage.prompt_tokens = usage_json.value("prompt_tokens", usage_json.value("input_tokens", 0));
+  usage.completion_tokens = usage_json.value("completion_tokens", usage_json.value("output_tokens", 0));
+  usage.total_tokens = usage_json.value("total_tokens", usage.prompt_tokens + usage.completion_tokens);
+  if (usage_json.contains("prompt_tokens_details") && usage_json["prompt_tokens_details"].is_object()) {
+    usage.cached_prompt_tokens = usage_json["prompt_tokens_details"].value("cached_tokens", 0);
+  } else if (usage_json.contains("cache_read_input_tokens")) {
+    usage.cached_prompt_tokens = usage_json.value("cache_read_input_tokens", 0);
+  }
   return usage;
 }
 
