@@ -177,10 +177,20 @@ Element ToolBlock(const std::string& icon,
 
     Elements body;
     body.push_back(hbox(std::move(title_row)));
-    body.push_back(hbox({
-        text("  $ ") | bold | color(prompt_green(theme)),
-        text(truncate_utf8(std::move(command), 100)) | bold | color(command_fg()),
-    }));
+
+    if (!command.empty()) {
+        std::istringstream iss(command);
+        std::string line;
+        bool first_line = true;
+        while (std::getline(iss, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            body.push_back(hbox({
+                text(first_line ? "  $ " : "    ") | bold | color(prompt_green(theme)),
+                text(line) | bold | color(command_fg()),
+            }));
+            first_line = false;
+        }
+    }
 
     // Output / status body (may be emptyElement → zero height).
     body.push_back(hbox({
@@ -257,7 +267,7 @@ Element render_truncated_output(const std::string& output,
 static std::string extract_tool_description(const qcode::ToolCallContentPart& part) {
     const auto& args = part.arguments;
     if (!args.is_object()) return "";
-    return truncate_utf8(json_string(args, {"description", "desc", "prompt"}), 72);
+    return json_string(args, {"description", "desc", "prompt", "toolSummary", "Instruction", "instruction"});
 }
 
 static std::string extract_shell_command(const qcode::ToolCallContentPart& part) {
@@ -265,32 +275,44 @@ static std::string extract_shell_command(const qcode::ToolCallContentPart& part)
     if (!args.is_object()) return part.tool_name;
 
     if (is_bash_tool(part.tool_name)) {
-        auto command = json_string(args, {"command", "cmd", "script"});
+        auto command = json_string(args, {"CommandLine", "command", "cmd", "script"});
         if (!command.empty()) return command;
     }
 
     if (part.tool_name == "read_file" || part.tool_name == "view_file" ||
-        part.tool_name == "write_file" || part.tool_name == "edit_file") {
-        auto path = json_string(args, {"path", "file", "file_path", "filename"});
+        part.tool_name == "write_file" || part.tool_name == "edit_file" ||
+        part.tool_name == "replace_file_content") {
+        auto path = json_string(args, {"AbsolutePath", "TargetFile", "path", "file", "file_path", "filename"});
         if (!path.empty()) return part.tool_name + " " + path;
     }
 
     if (part.tool_name == "search" || part.tool_name == "grep" ||
-        part.tool_name == "ripgrep") {
-        auto query = json_string(args, {"query", "pattern"});
-        if (!query.empty()) return part.tool_name + " \"" + query + "\"";
+        part.tool_name == "ripgrep" || part.tool_name == "grep_search") {
+        auto query = json_string(args, {"Query", "query", "pattern"});
+        auto path = json_string(args, {"SearchPath", "path", "directory", "dir"});
+        if (!query.empty()) {
+            return "grep " + (path.empty() ? "" : path + " ") + "\"" + query + "\"";
+        }
     }
 
-    if (part.tool_name == "task" || part.tool_name == "dispatch_agent") {
-        auto desc = json_string(args, {"description", "prompt"});
-        if (!desc.empty()) return "task " + truncate_utf8(std::move(desc), 72);
+    if (part.tool_name == "list_dir" || part.tool_name == "list_files" || part.tool_name == "ls") {
+        auto dir = json_string(args, {"DirectoryPath", "path", "dir"});
+        if (!dir.empty()) return "ls " + dir;
+    }
+
+    if (part.tool_name == "task" || part.tool_name == "dispatch_agent" || part.tool_name == "manage_task") {
+        auto action = json_string(args, {"Action", "action"});
+        auto desc = json_string(args, {"description", "prompt", "TaskId", "taskId"});
+        if (!action.empty() || !desc.empty()) {
+            return "task " + (action.empty() ? "" : action + " ") + desc;
+        }
     }
 
     for (auto it = args.begin(); it != args.end(); ++it) {
-        if (it.key() == "description" || it.key() == "desc") continue;
+        if (it.key() == "description" || it.key() == "desc" ||
+            it.key() == "toolAction" || it.key() == "toolSummary") continue;
         if (it.value().is_string()) {
-            return part.tool_name + " " +
-                   truncate_utf8(it.value().get<std::string>(), 80);
+            return part.tool_name + " " + it.value().get<std::string>();
         }
     }
     return part.tool_name;
@@ -312,28 +334,29 @@ static std::string extract_result_output(const qcode::ToolResultContentPart& par
 static Element render_tool_input(const std::string& tool_name,
                                  const nlohmann::json& args,
                                  const std::string& theme) {
-    if (is_bash_tool(tool_name)) {
-        return emptyElement();
-    }
     if (!args.is_object() || args.empty()) {
         return emptyElement();
     }
 
     Elements rows;
-    std::string large_text;
-    std::string large_key;
+    std::vector<std::pair<std::string, std::string>> large_fields;
 
     for (auto it = args.begin(); it != args.end(); ++it) {
         const std::string& key = it.key();
-        if (key == "description" || key == "desc" || key == "command" || key == "cmd") {
+        if (key == "description" || key == "desc" ||
+            key == "toolAction" || key == "toolSummary") {
             continue;
         }
-        if (key == "content" || key == "code" || key == "text" || key == "patch" || key == "prompt") {
-            if (it.value().is_string()) {
-                large_text = it.value().get<std::string>();
-                large_key = key;
+
+        if (it.value().is_string()) {
+            const auto str_val = it.value().get<std::string>();
+            if (str_val.find('\n') != std::string::npos || str_val.size() > 80 ||
+                key == "content" || key == "code" || key == "text" || key == "patch" ||
+                key == "prompt" || key == "CodeContent" || key == "TargetContent" ||
+                key == "ReplacementContent" || key == "Instruction" || key == "CommandLine") {
+                large_fields.emplace_back(key, str_val);
+                continue;
             }
-            continue;
         }
 
         std::string val_str;
@@ -353,12 +376,13 @@ static Element render_tool_input(const std::string& tool_name,
         result.push_back(vbox(std::move(rows)));
     }
 
-    if (!large_text.empty()) {
-        result.push_back(text("  " + large_key + ":") | dim | color(muted_fg(theme)));
+    for (const auto& [field_key, field_text] : large_fields) {
+        result.push_back(text("  " + field_key + ":") | bold | color(accent(theme)));
         Elements lines;
-        std::istringstream iss(large_text);
+        std::istringstream iss(field_text);
         std::string line;
         while (std::getline(iss, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
             lines.push_back(hbox({
                 text("    "),
                 text(line) | color(Color::RGB(0xE0, 0xE0, 0xE0)),
@@ -379,23 +403,22 @@ static Element render_shell_output(const qcode::ToolCallContentPart& call_part,
     constexpr int kCollapsedPreviewLines = 3;
 
     if (!collapsed) {
-        if (is_bash_tool(call_part.tool_name) && call_part.arguments.is_object()) {
+        if (call_part.arguments.is_object()) {
             const auto workdir =
-                json_string(call_part.arguments, {"workdir", "cwd"});
+                json_string(call_part.arguments, {"workdir", "cwd", "Cwd"});
             if (!workdir.empty()) {
                 body.push_back(hbox({
                     text("in ") | dim | color(muted_fg(theme)),
                     text(workdir) | dim | color(Color::RGB(0x7A, 0xA2, 0xF7)),
                 }));
             }
-        } else {
-            auto input_el = render_tool_input(call_part.tool_name, call_part.arguments, theme);
-            if (input_el != emptyElement()) {
-                body.push_back(hbox({
-                    text("Input:") | bold | color(accent(theme)),
-                }));
-                body.push_back(input_el);
-            }
+        }
+        auto input_el = render_tool_input(call_part.tool_name, call_part.arguments, theme);
+        if (input_el != emptyElement()) {
+            body.push_back(hbox({
+                text("Input:") | bold | color(accent(theme)),
+            }));
+            body.push_back(input_el);
         }
     }
 
