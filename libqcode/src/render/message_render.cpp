@@ -341,69 +341,7 @@ static std::string extract_result_output(const qcode::ToolResultContentPart& par
     return part.result.dump(2);
 }
 
-static Element render_tool_input(const std::string& tool_name,
-                                 const nlohmann::json& args,
-                                 const std::string& theme) {
-    if (!args.is_object() || args.empty()) {
-        return emptyElement();
-    }
 
-    Elements rows;
-    std::vector<std::pair<std::string, std::string>> large_fields;
-
-    for (auto it = args.begin(); it != args.end(); ++it) {
-        const std::string& key = it.key();
-        if (key == "description" || key == "desc" ||
-            key == "toolAction" || key == "toolSummary") {
-            continue;
-        }
-
-        if (it.value().is_string()) {
-            const auto str_val = it.value().get<std::string>();
-            if (str_val.find('\n') != std::string::npos || str_val.size() > 80 ||
-                key == "content" || key == "code" || key == "text" || key == "patch" ||
-                key == "prompt" || key == "CodeContent" || key == "TargetContent" ||
-                key == "ReplacementContent" || key == "Instruction" || key == "CommandLine") {
-                large_fields.emplace_back(key, str_val);
-                continue;
-            }
-        }
-
-        std::string val_str;
-        if (it.value().is_string()) {
-            val_str = it.value().get<std::string>();
-        } else {
-            val_str = it.value().dump();
-        }
-        rows.push_back(hbox({
-            text("  " + key + ": ") | dim | color(muted_fg(theme)),
-            text(val_str) | color(prompt_green(theme)),
-        }));
-    }
-
-    Elements result;
-    if (!rows.empty()) {
-        result.push_back(vbox(std::move(rows)));
-    }
-
-    for (const auto& [field_key, field_text] : large_fields) {
-        result.push_back(text("  " + field_key + ":") | bold | color(accent(theme)));
-        Elements lines;
-        std::istringstream iss(field_text);
-        std::string line;
-        while (std::getline(iss, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            lines.push_back(hbox({
-                text("    "),
-                text(line) | color(Color::RGB(0xE0, 0xE0, 0xE0)),
-            }));
-        }
-        result.push_back(vbox(std::move(lines)));
-    }
-
-    if (result.empty()) return emptyElement();
-    return vbox(std::move(result));
-}
 
 static Element render_shell_output(const qcode::ToolCallContentPart& call_part,
                                    const qcode::ToolResultContentPart& result_part,
@@ -422,20 +360,9 @@ static Element render_shell_output(const qcode::ToolCallContentPart& call_part,
             }));
         }
     }
-    auto input_el = render_tool_input(call_part.tool_name, call_part.arguments, theme);
-    if (input_el != emptyElement()) {
-        body.push_back(hbox({
-            text("Input:") | bold | color(accent(theme)),
-        }));
-        body.push_back(input_el);
-    }
 
     const auto output = extract_result_output(result_part);
     if (!output.empty()) {
-        body.push_back(text(""));
-        body.push_back(hbox({
-            text("Output:") | bold | color(accent(theme)),
-        }));
         body.push_back(render_truncated_output(
             output, 0, theme,
             result_part.is_error));
@@ -466,15 +393,6 @@ static Element render_tool_call(const qcode::ToolCallContentPart& part,
     
     Elements body;
     body.push_back(text("running…") | dim | color(Color::Yellow));
-    
-    auto input_el = render_tool_input(part.tool_name, part.arguments, theme);
-    if (input_el != emptyElement()) {
-        body.push_back(text(""));
-        body.push_back(hbox({
-            text("Input:") | bold | color(accent(theme)),
-        }));
-        body.push_back(input_el);
-    }
 
     return ToolBlock(tool_icon(part.tool_name),
                       tool_display_name(part.tool_name), desc,
