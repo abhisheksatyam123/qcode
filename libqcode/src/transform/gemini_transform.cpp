@@ -179,10 +179,16 @@ nlohmann::json wrap_antigravity_envelope_impl(const nlohmann::json& gemini_req,
   if (mapped_model == "gemini-3-flash") {
     mapped_model = "gemini-3-flash-agent";
   } else if (mapped_model == "gemini-3.7-flash" || mapped_model == "gemini-3.7-flash-high") {
-    mapped_model = "gemini-3.6-flash-high";
+    if (gemini_req.contains("generationConfig") &&
+        gemini_req["generationConfig"].contains("thinkingConfig") &&
+        gemini_req["generationConfig"]["thinkingConfig"].value("thinkingLevel", "") == "low") {
+      mapped_model = "gemini-3.6-flash-low";
+    } else {
+      mapped_model = "gemini-3.6-flash-high";
+    }
   } else if (mapped_model == "gemini-3.7-flash-low") {
     mapped_model = "gemini-3.6-flash-low";
-  } else if (mapped_model == "gemini-3-pro-high" || mapped_model == "gemini-3-pro-low" || mapped_model == "gemini-3-pro") {
+  } else if (mapped_model == "gemini-3.1-pro" || mapped_model == "gemini-3.1-pro-low" || mapped_model == "gemini-3-pro-high" || mapped_model == "gemini-3-pro-low" || mapped_model == "gemini-3-pro") {
     mapped_model = "gemini-3.1-pro-low";
   }
   env["model"] = mapped_model;

@@ -207,16 +207,24 @@ ftxui::Element render_view(
         hdr_session = state.session_id->substr(0, 8);
     }
 
+    std::string effort_str;
+    if (state.reasoning_mode && *state.reasoning_mode != "off" && !state.reasoning_mode->empty()) {
+        effort_str = "⚡ " + *state.reasoning_mode;
+    }
+
     auto header = hbox({
         text(" QCODE ") | bold | bgcolor(accent(theme)) | color(Color::White),
         text(" "),
         tab_toggle->Render(),
         filler(),
-        // Right side: session, model, tokens, status
+        // Right side: session, model, effort, tokens, status
         (hdr_session.empty()
              ? emptyElement()
              : hbox({text(" " + hdr_session + " ") | dim, separatorLight()})),
         text(" " + hdr_model + " ") | color(accent2(theme)) | bold,
+        (effort_str.empty()
+             ? emptyElement()
+             : hbox({separatorLight(), text(" " + effort_str + " ") | color(accent(theme)) | bold})),
         separatorLight(),
         text(" " + hdr_tokens + " ") |
             (ctx_pct > 0 ? color(ctx_color) : dim),
@@ -330,6 +338,8 @@ ftxui::Element render_view(
                 shortcut_badge("/session", "History", theme),
                 text("  "),
                 shortcut_badge("/model", "Model", theme),
+                text("  "),
+                shortcut_badge("/effort", "Reasoning", theme),
                 text("  "),
                 shortcut_badge("/theme", "Theme", theme),
                 text("  "),

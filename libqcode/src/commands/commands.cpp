@@ -291,21 +291,32 @@ bool handle_slash_command(
         return true;
     }
 
-    if (cmd == "reasoning") {
+    if (cmd == "reasoning" || cmd == "effort") {
         std::string lvl = args;
         // Trim whitespace
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.front()))) lvl.erase(lvl.begin());
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.back()))) lvl.pop_back();
-        if (lvl.empty()) lvl = "off";
+        if (lvl.empty()) {
+            // Cycle: off -> low -> medium -> high -> off
+            std::string cur = state.reasoning_mode ? *state.reasoning_mode : "off";
+            if (cur == "off") lvl = "low";
+            else if (cur == "low") lvl = "medium";
+            else if (cur == "medium") lvl = "high";
+            else lvl = "off";
+        }
         if (lvl != "off" && lvl != "low" && lvl != "medium" && lvl != "high") {
-            append_system_message(
-                state, "Reasoning: invalid level '" + lvl +
-                           "'. Use off|low|medium|high.");
+            bus.publish<qcode::contract::ToastRequested>({
+                .message = "Invalid effort '" + lvl + "'. Use off|low|medium|high.",
+                .variant = "warning"
+            });
             return true;
         }
         *state.reasoning_mode = lvl;
-        append_system_message(state, "Reasoning mode: " + lvl);
-        LOG_DEBUG("Commands: reasoning mode set to '{}'", lvl);
+        bus.publish<qcode::contract::ToastRequested>({
+            .message = "Reasoning effort: " + lvl,
+            .variant = (lvl == "off" ? "info" : "success")
+        });
+        LOG_DEBUG("Commands: reasoning effort set to '{}'", lvl);
         return true;
     }
 

@@ -39,7 +39,8 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"rename",   "Rename session", "/rename <new name>",               "Session"},
         {"session",  "Select session", "Manage and load saved sessions",   "Session"},
         {"compact",  "Compact",       "Summarize conversation to save context", "Session"},
-        {"reasoning", "Reasoning", "/reasoning off|low|medium|high",       "Session"},
+        {"effort",   "Reasoning effort", "/effort off|low|medium|high",    "Model"},
+        {"reasoning", "Reasoning effort", "/reasoning off|low|medium|high", "Model"},
         {"clear-queue", "Clear queue", "Clear all queued prompts",          "Session"},
     };
 }
