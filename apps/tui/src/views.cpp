@@ -337,7 +337,7 @@ ftxui::Element render_view(
             auto prompt_bar = hbox({
                 text(" ❯ ") | color(accent2(theme)) | bold,
                 input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
-            });
+            }) | borderRounded | color(accent(theme));
 
             Element prompt_box = prompt_bar;
             auto suggestions = build_suggestions_panel();
@@ -543,7 +543,7 @@ ftxui::Element render_view(
                 input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
             };
             auto prompt_inner = hbox(std::move(prompt_row));
-            Element prompt_box = prompt_inner;
+            Element prompt_box = prompt_inner | borderRounded | color(accent(theme));
             if (queue && !queue->empty()) {
                 prompt_box = vbox({
                     prompt_box,
@@ -701,7 +701,7 @@ ftxui::Element render_view(
                 *state.auto_scroll = false;
             }
             body = vbox({
-                file_scroll |
+                file_scroll | vscroll_indicator |
                     focusPosition(0, *state.scroll_line) | yframe | flex,
             }) | flex;
         } else {
@@ -790,7 +790,7 @@ ftxui::Element render_view(
             body = vbox({
                 text(" FILE DIFF ") | bold | color(accent2(theme)) | hcenter,
                 text(""),
-                file_scroll |
+                file_scroll | vscroll_indicator |
                     focusPosition(0, *state.scroll_line) | yframe | flex,
             }) | flex;
         }
