@@ -114,13 +114,43 @@ def build_webui(project_root: Path, build_dir: Path):
             console.print(f"[red]npm build failed:[/red] {result.stderr}")
             return False
         progress.update(task, completed=True)
-    
-    # Copy to build directory
+
+    # Vendor marked + js-yaml into standalone IIFE bundles served as
+    # /vendor-marked.min.js and /vendor-jsyaml.min.js (offline-safe).
+    vendor_cmd = [
+        "npx", "esbuild",
+        "--bundle", "--minify",
+        "--format=iife", "--global-name=marked",
+        "--outfile=" + str(webui_src / "src" / "vendor-marked.min.js"),
+        str(webui_src / "node_modules" / "marked" / "lib" / "marked.esm.js"),
+    ]
+    subprocess.run(vendor_cmd, cwd=webui_src, check=True, capture_output=True, text=True)
+    vendor_cmd = [
+        "npx", "esbuild",
+        "--bundle", "--minify",
+        "--format=iife", "--global-name=jsyaml",
+        "--outfile=" + str(webui_src / "src" / "vendor-jsyaml.min.js"),
+        str(webui_src / "node_modules" / "js-yaml" / "dist" / "js-yaml.mjs"),
+    ]
+    subprocess.run(vendor_cmd, cwd=webui_src, check=True, capture_output=True, text=True)
+
+    # Copy to build directory + sync raw src (incl. vendor bundles) next to the server.
     if (webui_src / "dist").exists():
         webui_dist.parent.mkdir(parents=True, exist_ok=True)
         if webui_dist.exists():
             shutil.rmtree(webui_dist)
         shutil.copytree(webui_src / "dist", webui_dist)
+        # Vendored bundles live outside the vite pipeline; copy into dist too.
+        for v in ("vendor-marked.min.js", "vendor-jsyaml.min.js"):
+            vp = webui_src / "src" / v
+            if vp.exists():
+                shutil.copy2(vp, webui_dist / v)
+        server_webui = build_dir / "apps" / "server" / "webui"
+        if (webui_src / "src").exists():
+            server_webui.mkdir(parents=True, exist_ok=True)
+            for item in (webui_src / "src").glob("*"):
+                if item.is_file():
+                    shutil.copy2(item, server_webui / item.name)
         console.print(f"[green]✓[/green] WebUI built to {webui_dist}")
         return True
     return False

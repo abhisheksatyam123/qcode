@@ -62,7 +62,9 @@ const state = {
   fsLineWrap: false,
   fsFilterText: '',
   fsMobileView: 'browser',   // 'browser' | 'viewer'
-  fsRawEntries: []
+  fsRawEntries: [],
+  fsReady: false,
+  fsCache: {}
 };
 
 // ── DOM refs ──
@@ -314,6 +316,7 @@ function applyProviderModel(providerId, modelId) {
 }
 
 function setupEventListeners() {
+
   sendBtn.addEventListener('click', sendMessage);
   promptInput.addEventListener('keydown', handleInputKeydown);
   clearBtn.addEventListener('click', async () => {
@@ -359,6 +362,7 @@ function setupEventListeners() {
       closeSlashMenu();
     }
   });
+  document.addEventListener('click', onMarkdownLinkClick);
   if (newSessionBtn) {
     newSessionBtn.addEventListener('click', showNewSessionModal);
   }
@@ -456,7 +460,7 @@ function setupEventListeners() {
   }
   if (fsCopyContentBtn) {
     fsCopyContentBtn.addEventListener('click', () => {
-      const text = state.fsViewMode === 'editor' ? fsEditor.value : state.fsSavedContent;
+      const text = (fsEditor && (state.fsViewMode === 'editor' || state.fsDirty)) ? fsEditor.value : state.fsSavedContent;
       if (!text) return;
       navigator.clipboard.writeText(text);
       showToast('Copied file content');
@@ -467,7 +471,10 @@ function setupEventListeners() {
       state.fsMdMode = 'preview';
       if (fsMdPreviewBtn) fsMdPreviewBtn.classList.add('active');
       if (fsMdCodeBtn) fsMdCodeBtn.classList.remove('active');
-      if (state.fsOpenPath) updateMarkdownViewer(state.fsSavedContent);
+      if (state.fsOpenPath) {
+        const content = (fsEditor && state.fsViewMode === 'editor') ? fsEditor.value : state.fsSavedContent;
+        updateMarkdownViewer(content);
+      }
     });
   }
   if (fsMdCodeBtn) {
@@ -475,14 +482,19 @@ function setupEventListeners() {
       state.fsMdMode = 'code';
       if (fsMdCodeBtn) fsMdCodeBtn.classList.add('active');
       if (fsMdPreviewBtn) fsMdPreviewBtn.classList.remove('active');
-      if (state.fsOpenPath) updateMarkdownViewer(state.fsSavedContent);
+      if (state.fsOpenPath) {
+        const content = (fsEditor && state.fsViewMode === 'editor') ? fsEditor.value : state.fsSavedContent;
+        updateMarkdownViewer(content);
+      }
     });
   }
   if (fsWrapBtn) {
     fsWrapBtn.addEventListener('click', () => {
       state.fsLineWrap = !state.fsLineWrap;
       fsWrapBtn.classList.toggle('active', state.fsLineWrap);
+      if (fsViewCode) fsViewCode.classList.toggle('wrap-lines', state.fsLineWrap);
       if (fsCodeWrapper) fsCodeWrapper.classList.toggle('wrap-lines', state.fsLineWrap);
+      if (fsViewEditor) fsViewEditor.classList.toggle('wrap-lines', state.fsLineWrap);
       if (fsEditor) fsEditor.wrap = state.fsLineWrap ? 'on' : 'off';
     });
   }
@@ -499,7 +511,13 @@ function setupEventListeners() {
       if (!state.fsOpenPath) return;
       const dirty = fsEditor.value !== state.fsSavedContent;
       setFsDirty(dirty);
-      scheduleFsHighlight();
+      updateFsHighlight();
+      syncFsHighlightScroll();
+      if (fsEditorStatus) {
+        const lineCount = (fsEditor.value.split('\n')).length;
+        const szStr = formatBytes(fsEditor.value.length);
+        fsEditorStatus.textContent = (dirty ? 'Editing • ' : '') + szStr + ' · ' + lineCount + ' lines · ' + (fsLang || 'text');
+      }
     });
     fsEditor.addEventListener('scroll', syncFsHighlightScroll);
     fsEditor.addEventListener('keydown', (e) => {
@@ -1759,6 +1777,11 @@ function getFsFileIcon(path, isDir) {
   }
 }
 
+function isMarkdownFile(path) {
+  if (!path || typeof path !== 'string') return false;
+  const lower = path.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.markdown');
+}
 function setFsMobileView(view) {
   state.fsMobileView = view;
   if (filesExplorer) {
@@ -1774,6 +1797,12 @@ function setFsViewMode(mode) {
   if (fsViewImage) fsViewImage.classList.toggle('hidden', mode !== 'image');
   if (fsViewBinary) fsViewBinary.classList.toggle('hidden', mode !== 'binary');
   if (fsViewEditor) fsViewEditor.classList.toggle('hidden', mode !== 'editor');
+  if (fsEditBtn) {
+    fsEditBtn.textContent = mode === 'editor' ? 'Read' : 'Edit';
+  }
+  if (fsSaveBtn) {
+    fsSaveBtn.classList.toggle('hidden', mode !== 'editor');
+  }
 }
 
 function setFsDirty(dirty) {
@@ -1820,18 +1849,33 @@ async function loadFsListing(relPath) {
     if (fsBreadcrumb) fsBreadcrumb.innerHTML = '';
     return;
   }
+
+  if (relPath === state.fsDir && state.fsListingRunIndex === (state.fsListingRunIndex || 0)) {
+    // no-op dedupe: path already loaded
+    const dedupePath = state.fsDir;
+    if (dedupePath === relPath && state.fsRawEntries.length > 0) {
+      renderFsListingEntries();
+      return;
+    }
+  }
+
   state.fsDir = relPath || '';
   renderFsBreadcrumb(state.fsDir);
   fsListing.innerHTML = '<div class="files-empty">Loading…</div>';
+  const runIndex = (state.fsListingRunIndex || 0) + 1;
+  state.fsListingRunIndex = runIndex;
   try {
     const q = state.fsDir ? ('?path=' + encodeURIComponent(state.fsDir)) : '';
     const res = await fetch('/session/' + state.sessionId + '/fs/list' + q);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || res.statusText || 'list failed');
+    if (runIndex !== state.fsListingRunIndex) return; // stale response
     state.fsRawEntries = Array.isArray(data.entries) ? data.entries : [];
     renderFsListingEntries();
   } catch (e) {
-    fsListing.innerHTML = '<div class="files-empty">Failed to list directory: ' + esc(e.message) + '</div>';
+    if (runIndex === state.fsListingRunIndex) {
+      fsListing.innerHTML = '<div class="files-empty">Failed to list directory: ' + esc(e.message) + '</div>';
+    }
   }
 }
 
@@ -1863,7 +1907,8 @@ function renderFsListingEntries() {
       const icon = getFsFileIcon(e.path, isDir);
       const size = (!isDir && e.size != null) ? '<span class="fs-size">' + formatBytes(e.size) + '</span>' : '';
       const active = (!isDir && state.fsOpenPath === e.path) ? ' active' : '';
-      html += '<button type="button" class="fs-entry' + active + '" data-type="' + (isDir ? 'dir' : 'file')
+      const linkCls = (!isDir && state.sessionId) ? ' md-internal-link' : '';
+      html += '<button type="button" class="fs-entry' + active + linkCls + '" data-type="' + (isDir ? 'dir' : 'file')
         + '" data-path="' + esc(e.path || '') + '">'
         + '<span class="fs-icon">' + icon + '</span>'
         + '<span class="fs-name">' + esc(e.name || '') + '</span>'
@@ -1878,9 +1923,15 @@ function renderFsListingEntries() {
       const type = btn.getAttribute('data-type');
       const path = btn.getAttribute('data-path') || '';
       if (type === 'dir') loadFsListing(path);
-      else openFsFile(path);
+      else { openFsFile(path); document.querySelectorAll('.fs-entry.active').forEach(el => el.classList.remove('active')); btn.classList.add('active'); }
     });
   });
+
+  // Fill the cross-file resolution cache with full paths for every listing.
+  if (state.sessionId && entries.length > 0 && state.fsReady !== false) {
+    const runCache = state.fsCache[state.sessionId] || (state.fsCache[state.sessionId] = {});
+    entries.forEach((e) => { if (e.path && !runCache[e.path]) runCache[e.path] = { full_path: e.path }; });
+  }
 }
 
 function updateLineNumbers(codeText) {
@@ -1917,29 +1968,37 @@ function updateCodeViewer(content, lang) {
     }
   }
 
+  if (fsViewCode) {
+    fsViewCode.classList.toggle('wrap-lines', !!state.fsLineWrap);
+  }
   if (fsCodeWrapper) {
     fsCodeWrapper.classList.toggle('wrap-lines', !!state.fsLineWrap);
   }
 }
 
 function updateMarkdownViewer(content) {
-  if (state.fsMdMode === 'preview') {
-    setFsViewMode('markdown');
-    if (fsViewMarkdown) {
-      if (typeof marked !== 'undefined' && marked.parse) {
-        try {
-          fsViewMarkdown.innerHTML = marked.parse(content);
-        } catch (e) {
-          fsViewMarkdown.textContent = content;
-        }
-      } else {
-        fsViewMarkdown.textContent = content;
-      }
-    }
-  } else {
+  if (state.fsMdMode !== 'preview') {
     updateCodeViewer(content, 'markdown');
+    return;
+  }
+  setFsViewMode('markdown');
+  if (!fsViewMarkdown) return;
+  if (typeof marked === 'undefined' || !marked.parse) {
+    fsViewMarkdown.textContent = content;
+    return;
+  }
+  try {
+    const { frontmatter, md } = prepareMarkdownBody(content, { wikilinks: true });
+    const renderer = getMarkedRenderer();
+    let html = marked.parse(md, { renderer: renderer, gfm: true, breaks: true, headerIds: false, mangle: false });
+    if (frontmatter) html = renderFrontmatterBox(frontmatter) + html;
+    fsViewMarkdown.innerHTML = html;
+    bindFrontmatterToggles(fsViewMarkdown);
+  } catch (err) {
+    fsViewMarkdown.textContent = content;
   }
 }
+
 
 function updateImageViewer(relPath, size) {
   setFsViewMode('image');
@@ -1968,14 +2027,20 @@ function updateBinaryViewer(relPath, size) {
 function toggleFsEditMode() {
   if (!state.fsOpenPath) return;
   if (state.fsViewMode === 'editor') {
-    const isMd = state.fsOpenPath.toLowerCase().endsWith('.md');
-    if (isMd) updateMarkdownViewer(state.fsSavedContent);
-    else updateCodeViewer(state.fsSavedContent, fsLang);
-    if (fsEditBtn) fsEditBtn.textContent = 'Edit';
+    const isMd = isMarkdownFile(state.fsOpenPath);
+    const content = (fsEditor && fsEditor.value != null) ? fsEditor.value : state.fsSavedContent;
+    if (isMd) {
+      state.fsMdMode = 'preview';
+      if (fsMdPreviewBtn) fsMdPreviewBtn.classList.add('active');
+      if (fsMdCodeBtn) fsMdCodeBtn.classList.remove('active');
+      updateMarkdownViewer(content);
+    } else {
+      updateCodeViewer(content, fsLang);
+    }
   } else {
+    const content = (fsEditor && state.fsDirty) ? fsEditor.value : state.fsSavedContent;
     setFsViewMode('editor');
-    setFsEditorContent(state.fsSavedContent, state.fsOpenPath);
-    if (fsEditBtn) fsEditBtn.textContent = 'Read';
+    setFsEditorContent(content, state.fsOpenPath);
   }
   setFsDirty(state.fsDirty);
 }
@@ -2030,16 +2095,11 @@ function scheduleFsHighlight() {
   fsHighlightTimer = setTimeout(() => {
     fsHighlightTimer = null;
     updateFsHighlight();
-  }, 40);
-}
-
-function getHljs() {
-  if (typeof window !== 'undefined' && window.hljs) return window.hljs;
-  if (typeof hljs !== 'undefined') return hljs;
-  return null;
+  }, 20);
 }
 
 function applyFsPlainOverlay(source) {
+  if (!fsHighlightCode || !fsEditor) return;
   fsHighlightCode.textContent = source;
   if (source.endsWith('\n')) fsHighlightCode.appendChild(document.createTextNode('\n'));
   fsHighlightCode.className = 'hljs';
@@ -2063,10 +2123,7 @@ function updateFsHighlight() {
 
   const source = text;
   if (!engine) {
-    fsEditor.classList.add('fs-editor-plain');
-    fsEditor.classList.remove('fs-editor-highlighting');
-    fsHighlightCode.textContent = '';
-    fsHighlightCode.className = 'hljs';
+    applyFsPlainOverlay(source);
     return;
   }
 
@@ -2090,6 +2147,12 @@ function updateFsHighlight() {
   } catch (e) {
     applyFsPlainOverlay(source);
   }
+}
+
+function getHljs() {
+  if (typeof window !== 'undefined' && window.hljs) return window.hljs;
+  if (typeof hljs !== 'undefined') return hljs;
+  return null;
 }
 
 function setFsEditorContent(content, path) {
@@ -2121,10 +2184,11 @@ function clearFsEditor() {
   updateFsHighlight();
 }
 
-async function openFsFile(relPath) {
+async function openFsFile(relPath, fragment = null) {
   if (!relPath || !state.sessionId) return;
   if (state.fsOpenPath === relPath && !state.fsDirty) {
     setFsMobileView('viewer');
+    if (fragment) scrollToMarkdownHeading(fragment);
     return;
   }
   if (!(await confirmDiscardIfDirty())) return;
@@ -2133,7 +2197,7 @@ async function openFsFile(relPath) {
   const lower = name.toLowerCase();
   const ext = lower.lastIndexOf('.') >= 0 ? lower.slice(lower.lastIndexOf('.') + 1) : '';
   const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'svg'].includes(ext);
-  const isMd = ext === 'md' || ext === 'markdown';
+  const isMd = isMarkdownFile(relPath);
 
   state.fsOpenPath = relPath;
   fsLang = detectFsLanguage(relPath);
@@ -2155,7 +2219,14 @@ async function openFsFile(relPath) {
     fsRawBtn.classList.remove('hidden');
   }
 
-  if (fsMdToggle) fsMdToggle.classList.toggle('hidden', !isMd);
+  if (fsMdToggle) {
+    fsMdToggle.classList.toggle('hidden', !isMd);
+    if (isMd) {
+      state.fsMdMode = 'preview';
+      if (fsMdPreviewBtn) fsMdPreviewBtn.classList.add('active');
+      if (fsMdCodeBtn) fsMdCodeBtn.classList.remove('active');
+    }
+  }
 
   if (fsListing) {
     fsListing.querySelectorAll('.fs-entry').forEach((el) => {
@@ -2176,6 +2247,10 @@ async function openFsFile(relPath) {
 
   if (fsEditorStatus) fsEditorStatus.textContent = 'Loading…';
   try {
+    const readyState = await fetch('/session/' + state.sessionId + '/fs',
+      { method: 'HEAD', cache: 'no-store' }).then(r => r.ok).catch(() => false);
+    if (readyState) state.fsReady = true;
+    else state.fsReady = false;
     const res = await fetch('/session/' + state.sessionId + '/fs/read?path=' + encodeURIComponent(relPath));
     const data = await res.json().catch(() => ({}));
 
@@ -2200,6 +2275,7 @@ async function openFsFile(relPath) {
 
     if (isMd) {
       updateMarkdownViewer(state.fsSavedContent);
+      if (fragment) setTimeout(() => scrollToMarkdownHeading(fragment), 60);
     } else {
       updateCodeViewer(state.fsSavedContent, fsLang);
     }
@@ -2232,6 +2308,13 @@ async function saveOpenFile() {
     if (fsFileBadge) fsFileBadge.textContent = szStr + ' · ' + lineCount + ' lines · ' + (fsLang || 'text');
     if (fsEditorStatus) fsEditorStatus.textContent = 'Saved · ' + szStr + ' · ' + (fsLang || 'text');
 
+    const isMd = isMarkdownFile(state.fsOpenPath);
+    if (isMd && state.fsViewMode !== 'editor') {
+      updateMarkdownViewer(state.fsSavedContent);
+    } else if (!isMd && state.fsViewMode !== 'editor') {
+      updateCodeViewer(state.fsSavedContent, fsLang);
+    }
+
     showToast('Saved ' + state.fsOpenPath);
   } catch (e) {
     if (fsEditorStatus) fsEditorStatus.textContent = 'Save failed: ' + e.message;
@@ -2245,6 +2328,9 @@ async function closeOpenFile() {
   state.fsOpenPath = null;
   state.fsSavedContent = '';
   setFsDirty(false);
+  state.fsReady = false;
+  state.fsListingRunIndex = 0;
+  if (state.fsCache && state.fsCache[state.sessionId]) delete state.fsCache[state.sessionId];
   clearFsEditor();
   if (fsEditorPath) fsEditorPath.textContent = 'No file open';
   if (fsCloseBtn) fsCloseBtn.disabled = true;
@@ -2351,7 +2437,7 @@ function renderMessage(msg) {
   if (msg.reasoning) {
     const rc = document.createElement('div'); rc.className = 'reasoning-block';
     const rl = document.createElement('div'); rl.className = 'reasoning-label'; rl.innerHTML = SVG_ICONS.reasoning + ' Thinking';
-    const rt = document.createElement('div'); rt.className = 'reasoning-text'; rt.innerHTML = renderMarkdown(msg.reasoning);
+    const rt = document.createElement('div'); rt.className = 'reasoning-text'; rt.innerHTML = renderMarkdown(msg.reasoning); tagMarkdownLinks(rt);
     rc.appendChild(rl); rc.appendChild(rt);
     content.appendChild(rc);
   }
@@ -2363,6 +2449,7 @@ function renderMessage(msg) {
   if (msg.content) {
     const textEl = document.createElement('div'); textEl.className = 'md-content';
     textEl.innerHTML = renderMarkdown(msg.content);
+    tagMarkdownLinks(textEl);
     
     const activeSession = state.openSessions.find(s => s.id === state.sessionId);
     const isGenerating = activeSession && activeSession.generating;
@@ -2530,14 +2617,391 @@ function renderToolBlock(tc) {
 
 function addMessage(role, content) { const div = renderMessage({ role, content }); messagesEl.appendChild(div); scrollToBottom(); }
 
-function renderMarkdown(text) {
-  if (typeof marked === 'undefined' || !marked.Renderer) {
-    return esc(text).replace(/\n/g, '<br>');
+
+// ── Markdown helpers: frontmatter + link navigation (inspired by Markdown-Oxide) ──────────────
+
+function extractFrontmatter(src) {
+  if (typeof src !== 'string') return { frontmatter: null, body: src || '' };
+  const trimmed = src.replace(/^[\uFEFF\r\n\s]+/, '');
+  if (!trimmed.startsWith('---')) {
+    return { frontmatter: null, body: src };
   }
-  
-  const renderer = new marked.Renderer();
-  
-  renderer.code = function(code, lang) {
+
+  // Opening fence: require the `---` line to end OR be followed by a
+  // YAML-ish `key:`/`key :` line — avoids treating a horizontal rule or an
+  // arbitrary separator as frontmatter.
+  const fenceEnd = trimmed.indexOf('\n');
+  const openLine = fenceEnd >= 0 ? trimmed.slice(0, fenceEnd) : trimmed;
+  if (!/^---[ \t]*$/.test(openLine)) {
+    return { frontmatter: null, body: src };
+  }
+  const tail = fenceEnd >= 0 ? trimmed.slice(fenceEnd + 1) : '';
+  const keyLine = /^([ \t]*[A-Za-z0-9_][\w.-]*[ \t]*:[ \t]*(?:[^\n]*|$))/.exec(tail);
+  const closeOnly = /^([ \t]*---[ \t]*|\r?\n[ \t]*\.\.\.[ \t]*)/.exec(tail);
+  // Plain closing fence with no keys is still valid YAML (empty map).
+  if (!keyLine && !closeOnly) {
+    return { frontmatter: null, body: src };
+  }
+
+  const contentStart = fenceEnd + 1;
+  const closeRegex = /\r?\n(---|...)[ \t]*(?=\r?\n|$)/g;
+  closeRegex.lastIndex = contentStart;
+  const matchClose = closeRegex.exec(trimmed);
+  if (!matchClose) return { frontmatter: null, body: src };
+
+  const frontmatter = trimmed.slice(contentStart, matchClose.index);
+  const bodyStart = matchClose.index + matchClose[0].length;
+  let body = trimmed.slice(bodyStart);
+  if (body.startsWith('\n')) body = body.slice(1);
+  else if (body.startsWith('\r\n')) body = body.slice(2);
+
+  return { frontmatter, body };
+}
+
+function stripFrontmatter(text) {
+  return extractFrontmatter(text);
+}
+
+function parseFrontmatter(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  if (typeof window !== 'undefined' && window.jsyaml && typeof window.jsyaml.load === 'function') {
+    try {
+      const result = window.jsyaml.load(raw);
+      if (result && typeof result === 'object') return result;
+    } catch (e) {
+      // Fallback if jsyaml fails
+    }
+  }
+  const data = {};
+  const lines = raw.split(/\r?\n/);
+  let currentKey = null;
+  for (let line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('- ') && currentKey) {
+      const val = trimmed.slice(2).trim().replace(/^["']|["']$/g, '');
+      if (!Array.isArray(data[currentKey])) {
+        data[currentKey] = data[currentKey] ? [data[currentKey]] : [];
+      }
+      data[currentKey].push(val);
+      continue;
+    }
+    const colonIdx = line.indexOf(':');
+    if (colonIdx > 0) {
+      const key = line.slice(0, colonIdx).trim();
+      let valStr = line.slice(colonIdx + 1).trim();
+      currentKey = key;
+      if (!valStr) {
+        data[key] = [];
+        continue;
+      }
+      if (valStr.startsWith('[') && valStr.endsWith(']')) {
+        const items = valStr.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+        data[key] = items;
+      } else if (valStr === 'true') {
+        data[key] = true;
+      } else if (valStr === 'false') {
+        data[key] = false;
+      } else {
+        data[key] = valStr.replace(/^["']|["']$/g, '');
+      }
+    }
+  }
+  return Object.keys(data).length > 0 ? data : null;
+}
+
+function renderFrontmatterBox(raw) {
+  if (!raw) return '';
+  const data = typeof raw === 'object' ? raw : parseFrontmatter(raw);
+  if (!data || typeof data !== 'object') {
+    return `<div class="md-frontmatter-card">
+      <div class="md-fm-header md-fm-toggle">
+        <span class="md-fm-title">
+          <svg class="md-fm-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Properties
+        </span>
+        <span class="md-fm-chevron">&#9660;</span>
+      </div>
+      <div class="md-fm-body"><pre class="md-fm-raw">${esc(String(raw))}</pre></div>
+    </div>`;
+  }
+
+  const entries = Object.entries(data);
+  if (entries.length === 0) return '';
+
+  let html = `<div class="md-frontmatter-card">
+    <div class="md-fm-header md-fm-toggle">
+      <span class="md-fm-title">
+        <svg class="md-fm-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Properties (${entries.length})
+      </span>
+      <span class="md-fm-chevron">&#9660;</span>
+    </div>
+    <div class="md-fm-body">`;
+
+  for (const [key, val] of entries) {
+    const keyLower = key.toLowerCase();
+    html += `<div class="md-fm-row-key">${esc(key)}</div><div class="md-fm-row-val">`;
+
+    if (keyLower === 'tags' || keyLower === 'tag') {
+      const tagList = Array.isArray(val) ? val : String(val).split(/[\s,]+/);
+      html += `<div class="md-fm-tag-list">`;
+      for (const t of tagList) {
+        const cleanTag = String(t).trim().replace(/^#/, '');
+        if (cleanTag) {
+          html += `<span class="md-fm-tag">#${esc(cleanTag)}</span>`;
+        }
+      }
+      html += `</div>`;
+    } else if (keyLower === 'aliases' || keyLower === 'alias') {
+      const aliasList = Array.isArray(val) ? val : [val];
+      html += `<div class="md-fm-tag-list">`;
+      for (const a of aliasList) {
+        const cleanAlias = String(a).trim();
+        if (cleanAlias) {
+          html += `<span class="md-fm-alias">📌 ${esc(cleanAlias)}</span>`;
+        }
+      }
+      html += `</div>`;
+    } else if (Array.isArray(val)) {
+      html += `<div class="md-fm-tag-list">`;
+      for (const item of val) {
+        html += `<span class="md-fm-tag" style="background: rgba(255,255,255,0.06); color: var(--text); border-color: var(--border);">${esc(String(item))}</span>`;
+      }
+      html += `</div>`;
+    } else if (typeof val === 'boolean') {
+      html += `<span class="md-fm-bool ${val}">${val}</span>`;
+    } else if (typeof val === 'string' && /^https?:\/\//i.test(val.trim())) {
+      html += `<a href="${esc(val.trim())}" target="_blank" rel="noopener noreferrer">${esc(val.trim())}</a>`;
+    } else if (typeof val === 'object' && val !== null) {
+      html += `<pre class="md-fm-raw" style="margin:0;">${esc(JSON.stringify(val, null, 2))}</pre>`;
+    } else {
+      html += `${esc(String(val != null ? val : ''))}`;
+    }
+
+    html += `</div>`;
+  }
+
+  html += `</div></div>`;
+  return html;
+}
+
+function transformWikilinks(src) {
+  if (typeof src !== 'string') return src;
+  const lines = src.split('\n');
+  let inFence = false;
+  const out = [];
+
+  const pattern = /(!?)\[\[\s*([^\]|#]*?)\s*(?:#([^\]|]+))?\s*(?:\|([^\]]+))?\s*\]\]/g;
+
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) { inFence = !inFence; out.push(line); continue; }
+    if (inFence) { out.push(line); continue; }
+
+    const parts = line.split(/(`[^`]+`)/);
+    for (let i = 0; i < parts.length; i++) {
+      if (!parts[i].startsWith('`')) {
+        parts[i] = parts[i].replace(pattern, (_, isEmbedStr, targetRaw, headingRaw, aliasRaw) => {
+          const isEmbed = Boolean(isEmbedStr);
+          const target = (targetRaw || '').trim();
+          const heading = (headingRaw || '').trim();
+          const alias = (aliasRaw || '').trim();
+          const hasExt = /\.[a-zA-Z0-9]+$/.test(target);
+
+          let headingSlug = '';
+          if (heading) {
+            headingSlug = '#' + heading.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
+          }
+
+          if (isEmbed) {
+            if (hasExt && /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(target)) {
+              const alt = alias || target;
+              return '![' + alt + '](<' + target + '>)';
+            } else {
+              const display = alias || (target + (heading ? ' > ' + heading : ''));
+              const noteTarget = target ? (target + (target && !hasExt ? '.md' : '') + headingSlug) : headingSlug;
+              return '<div class="md-transclusion-card" data-href="' + esc(noteTarget) + '">📄 <strong>' + esc(display) + '</strong></div>';
+            }
+          }
+
+          if (!target && heading) {
+            const disp = alias || ('#' + heading);
+            return '[' + disp + '](<' + headingSlug + '>)';
+          }
+
+          const noteTarget = target + (target && !hasExt ? '.md' : '') + headingSlug;
+          const disp = alias || (target + (heading ? ' > ' + heading : ''));
+          return '[' + disp + '](<' + noteTarget + '>)';
+        });
+      }
+    }
+    out.push(parts.join(''));
+  }
+  return out.join('\n');
+}
+
+function normalizeRelPath(baseDir, rel) {
+  if (!rel) return '';
+  const segs = baseDir ? baseDir.split('/') : [];
+  for (const part of rel.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') { if (segs.length) segs.pop(); }
+    else segs.push(part);
+  }
+  return segs.join('/');
+}
+
+function resolveMdLink(href) {
+  if (!href) return null;
+  const isAnchor = href.startsWith('#');
+  const isFullPath = href.startsWith('/');
+  if (/^(https?:|mailto:|tel:|data:|\/\/)/i.test(href)) return null;
+  const hashIdx = href.indexOf('#');
+  const pathPart = (hashIdx >= 0 ? href.slice(0, hashIdx) : href).split('?')[0];
+  const fragment = hashIdx >= 0 ? href.slice(hashIdx + 1) : '';
+  let baseDir = '';
+  if (state.fsOpenPath) {
+    const idx = state.fsOpenPath.lastIndexOf('/');
+    baseDir = idx >= 0 ? state.fsOpenPath.slice(0, idx) : '';
+  } else if (state.fsDir) {
+    baseDir = state.fsDir;
+  }
+  // A path-less `#heading` refers to the currently open document.
+  const rel = isAnchor && !pathPart ? (state.fsOpenPath || '') : normalizeRelPath(baseDir, pathPart);
+  return { rel, fragment, isAnchor, isFullPath };
+}
+
+function scrollToMarkdownHeading(fragment) {
+  if (!fragment || !fsViewMarkdown) return;
+  const cleanId = fragment.replace(/^#/, '').trim();
+  if (!cleanId) return;
+
+  let targetEl = null;
+  try {
+    targetEl = fsViewMarkdown.querySelector('#' + CSS.escape(cleanId));
+  } catch (e) {}
+
+  if (!targetEl) {
+    const slug = cleanId.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
+    try {
+      targetEl = fsViewMarkdown.querySelector('#' + CSS.escape(slug));
+    } catch (e) {}
+  }
+  if (!targetEl) {
+    const headings = fsViewMarkdown.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    for (const h of headings) {
+      if (h.textContent.trim().toLowerCase() === cleanId.toLowerCase() ||
+          (h.id && h.id.toLowerCase() === cleanId.toLowerCase())) {
+        targetEl = h;
+        break;
+      }
+    }
+  }
+
+  if (targetEl) {
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    targetEl.classList.remove('md-target-highlight');
+    void targetEl.offsetWidth;
+    targetEl.classList.add('md-target-highlight');
+    setTimeout(() => targetEl.classList.remove('md-target-highlight'), 2000);
+  }
+}
+
+async function navigateMarkdownLink(href) {
+  if (!href) return false;
+  if (href.startsWith('/')) {
+    const absPath = decodeURIComponent(href.split('?')[0]);
+    await switchFilesSubtab('explorer');
+    await openFsFile(absPath);
+    return true;
+  }
+  const hashIdx = href.indexOf('#');
+  const pathPart = (hashIdx >= 0 ? href.slice(0, hashIdx) : href).split('?')[0];
+  const fragment = hashIdx >= 0 ? href.slice(hashIdx + 1) : '';
+
+  if (!pathPart) {
+    if (fragment) {
+      scrollToMarkdownHeading(fragment);
+      return true;
+    }
+    return false;
+  }
+
+  let baseDir = '';
+  if (state.fsOpenPath) {
+    const idx = state.fsOpenPath.lastIndexOf('/');
+    baseDir = idx >= 0 ? state.fsOpenPath.slice(0, idx) : '';
+  } else if (state.fsDir) {
+    baseDir = state.fsDir;
+  }
+
+  let resolved = normalizeRelPath(baseDir, pathPart);
+  // `[[note]]` with no extension from the file viewer only resolves against
+  // the current directory; try against the workspace root as a future-run.
+  const wantMd = !(/\.[a-zA-Z0-9]+$/.test(resolved));
+
+  const cache = state.fsReady && state.fsCache ? state.fsCache[state.sessionId] : null;
+  if (cache) {
+    const rel = resolved.replace(/^\/+/, '');
+    const cand = cache[rel];
+    if (cand) resolved = cand.full_path || resolved;
+  } else if (state.fsReady) {
+    const full = await getFsPath(resolved);
+    if (full) resolved = full;
+  }
+
+  await switchFilesSubtab('explorer');
+
+  if (state.fsOpenPath === resolved) {
+    setFsMobileView('viewer');
+    if (fragment) {
+      scrollToMarkdownHeading(fragment);
+    }
+    return true;
+  }
+
+  const lower = resolved.toLowerCase();
+  if (lower.endsWith('.md') || lower.endsWith('.markdown') || wantMd) {
+    await openFsFile(resolved, fragment);
+    return true;
+  }
+
+  const hasExt = lower.includes('.') && !lower.endsWith('/');
+  if (!hasExt) {
+    await loadFsListing(resolved);
+    return true;
+  }
+
+  await openFsFile(resolved);
+  return true;
+}
+
+function tagMarkdownLinks(container) {
+  if (!container) return;
+  container.querySelectorAll('a[href]').forEach((a) => {
+    const href = a.getAttribute('href') || '';
+    if (/^(https?:|mailto:|tel:|data:|\/\/)/i.test(href) || href.startsWith('/')) {
+      if (/^https?:/i.test(href)) {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+      }
+      return;
+    }
+    a.classList.add('md-internal-link');
+  });
+}
+
+let _qcodeMarkedRenderer = null;
+function getMarkedRenderer() {
+  if (_qcodeMarkedRenderer) return _qcodeMarkedRenderer;
+  if (typeof marked === 'undefined' || !marked.Renderer) return null;
+  const r = new marked.Renderer();
+  r.heading = function (text, level, raw) {
+    const cleanRaw = raw || text.replace(/<[^>]+>/g, '');
+    const slug = cleanRaw.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
+    return `<h${level} id="${slug}">${text}</h${level}>`;
+  };
+  r.code = function (code, lang) {
     const displayLang = lang || 'code';
     const codeStr = typeof code === 'object' ? code.text : code;
     const cleanCode = codeStr.replace(/\n$/, '');
@@ -2549,21 +3013,155 @@ function renderMarkdown(text) {
       <pre class="md-code"><code>${esc(cleanCode)}</code></pre>
     </div>`;
   };
-
-  renderer.codespan = function(code) {
+  r.codespan = function (code) {
     const text = typeof code === 'object' ? code.text : code;
     return `<code class="md-inline-code">${esc(text)}</code>`;
   };
+  r.link = function (href, title, text) {
+    const h = href || '';
+    const external = /^(https?:|mailto:|data:|\/\/)/i.test(h);
+    const attrs = external ? ' target="_blank" rel="noopener noreferrer"' : ' data-md-link="internal"';
+    const t = title ? ` title="${esc(title)}"` : '';
+    // The transform stage emits `<target>` angle-urls so hrefs never contain
+    // unescaped parens — replace the angle wraps with percent-encoded URLs.
+    let url = h;
+    if (/^<[^>]+>$/.test(url)) {
+      url = url.slice(1, -1);
+      if (!external) url = url.replace(/\(/g, '%28').replace(/\)/g, '%29');
+    }
+    return `<a href="${esc(url)}"${t}${attrs}>${text}</a>`;
+  };
 
-  marked.setOptions({
-    renderer: renderer,
-    gfm: true,
-    breaks: true,
-    headerIds: false,
-    mangle: false
+  r.image = function (href, title, text) {
+    const h = href || '';
+    const external = /^(https?:|data:|\/\/)/i.test(h);
+    let src = h;
+    if (!external && state.sessionId) {
+      let baseDir = '';
+      if (state.fsOpenPath) {
+        const idx = state.fsOpenPath.lastIndexOf('/');
+        baseDir = idx >= 0 ? state.fsOpenPath.slice(0, idx) : '';
+      }
+      const relPath = normalizeRelPath(baseDir, h) || h;
+      src = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
+    }
+    const t = title ? ` title="${esc(title)}"` : '';
+    const alt = text ? ` alt="${esc(text)}"` : '';
+    return `<img src="${esc(src)}"${alt}${t} class="md-image" />`;
+  };
+  _qcodeMarkedRenderer = r;
+  return r;
+}
+
+function prepareMarkdownBody(src, opts) {
+  opts = opts || {};
+  const fm = extractFrontmatter(src);
+  let md = fm.body;
+  if (opts.wikilinks !== false) md = transformWikilinks(md);
+  return { frontmatter: fm.frontmatter, md: md };
+}
+
+async function onMarkdownLinkClick(e) {
+  const el = e.target ? e.target.closest('a[href], .md-transclusion-card, .md-frontmatter-card .md-fm-toggle') : null;
+  if (!el) return;
+  if (el.classList.contains('md-fm-toggle')) return; // toggle handled by bindFrontmatterToggles
+  // Frontmatter card links are plain hrefs (external), handled by browser; skip.
+  if (el.closest('.md-frontmatter-card')) return;
+
+  let href = '';
+  if (el.tagName === 'A') {
+    href = el.getAttribute('href') || '';
+  } else if (el.classList.contains('md-transclusion-card')) {
+    href = el.getAttribute('data-href') || '';
+  }
+  if (!href) return;
+
+  if (href.startsWith('http')) {
+    if (el.tagName === 'A') {
+      el.setAttribute('target', '_blank');
+      el.setAttribute('rel', 'noopener noreferrer');
+    }
+    return;
+  }
+  if (href.startsWith('#')) {
+    e.preventDefault();
+    scrollToMarkdownHeading(href.slice(1));
+    return;
+  }
+  if (href.startsWith('/')) {
+    e.preventDefault();
+    await navigateMarkdownLink(href);
+    return;
+  }
+  if (/^(mailto:|tel:|data:|\/\/)/i.test(href)) {
+    return;
+  }
+
+  e.preventDefault();
+  const ok = await navigateMarkdownLink(href);
+  if (!ok && el.tagName === 'A') {
+    window.open(href, '_blank');
+  }
+}
+
+function renderMarkdown(text) {
+  if (typeof marked === 'undefined' || !marked.parse) {
+    return esc(text).replace(/\n/g, '<br>');
+  }
+  const { frontmatter, md } = prepareMarkdownBody(text, { wikilinks: true });
+  const renderer = getMarkedRenderer();
+  const parseOptions = { renderer: renderer, gfm: true, breaks: true, headerIds: false, mangle: false };
+  let html = marked.parse(md, parseOptions);
+  if (frontmatter) {
+    html = renderFrontmatterBox(frontmatter) + html;
+  }
+  return html;
+}
+
+
+function bindFrontmatterToggles(container) {
+  if (!container) return;
+  container.querySelectorAll('.md-frontmatter-card').forEach((card) => {
+    const header = card.querySelector('.md-fm-toggle') || card;
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;
+      card.classList.toggle('collapsed');
+    });
   });
+}
 
-  return marked.parse(text);
+async function getFsPath(rel) {
+  try {
+    const res = await fetch('/session/' + state.sessionId + '/fs/exists?path=' + encodeURIComponent(rel));
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data && data.exists) return data.path;
+    }
+  } catch (e) {}
+  return null;
+}
+
+const MD_IMG_EXTS = /^(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i;
+function tagFsLinks(container, mdOnly) {
+  if (!container || !state.sessionId) return;
+  container.querySelectorAll('a[href]').forEach((a) => {
+    const href = a.getAttribute('href') || '';
+    if (/^(https?:|mailto:|tel:|data:|\/\/)/i.test(href) || href.startsWith('/')) return;
+    if (MD_IMG_EXTS.test(href.split('?')[0].split('#')[0].split('.').pop() || '')) return;
+    a.classList.add('md-internal-link');
+  });
+  container.querySelectorAll('img[src]').forEach((img) => {
+    const src = img.getAttribute('src') || '';
+    if (src && !/^(https?:|data:|\/\/|\/)/i.test(src)) {
+      let baseDir = '';
+      if (state.fsOpenPath) {
+        const idx = state.fsOpenPath.lastIndexOf('/');
+        baseDir = idx >= 0 ? state.fsOpenPath.slice(0, idx) : '';
+      }
+      const relPath = normalizeRelPath(baseDir, src) || src;
+      img.src = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
+    }
+  });
 }
 
 function setGenerating(on) {
@@ -2576,7 +3174,11 @@ function setGenerating(on) {
 }
 function scrollToBottom() { document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight; }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function esc(s) {
+  const str = String(s == null ? '' : s);
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 4000); }
 
 
@@ -2691,6 +3293,9 @@ async function switchSession(id) {
   state.fsOpenPath = null;
   state.fsSavedContent = '';
   state.fsDirty = false;
+  state.fsReady = false;
+  state.fsListingRunIndex = 0;
+  if (state.fsCache && state.fsCache[id]) delete state.fsCache[id];
   clearFsEditor();
   if (fsEditorPath) fsEditorPath.textContent = 'No file open';
   if (fsCloseBtn) fsCloseBtn.disabled = true;

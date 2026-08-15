@@ -1539,6 +1539,52 @@ svr.Put("/session/([^/]+)/fs/write", [](const httplib::Request& req, httplib::Re
     res.set_content(j.dump(2), "application/json");
 });
 
+// ── Workspace filesystem: lookup path → absolute+relative ──
+// GET /session/:id/fs/exists?path=relative
+svr.Get("/session/([^/]+)/fs/exists", [](const httplib::Request& req, httplib::Response& res) {
+    std::string sid = url_decode(req.matches[1]);
+    if (!qcode::session::is_valid_session_id(sid)) {
+        res.status = 400;
+        res.set_content(R"({"error":"invalid session_id"})", "application/json");
+        return;
+    }
+    if (!req.has_param("path") || req.get_param_value("path").empty()) {
+        res.status = 400;
+        res.set_content(R"({"error":"path required"})", "application/json");
+        return;
+    }
+    std::string rel = req.get_param_value("path");
+    while (rel.rfind("./", 0) == 0) rel = rel.substr(2);
+    if (rel == ".") rel.clear();
+
+    std::string ws = resolve_session_workspace(sid);
+    std::string abs, rel_norm;
+    std::string err = resolve_workspace_path(ws, rel, abs, rel_norm);
+    if (!err.empty()) {
+        res.status = 400;
+        res.set_content(nlohmann::json({{"error", err}}).dump(), "application/json");
+        return;
+    }
+
+    std::error_code ec;
+    bool exists = fs::exists(abs, ec);
+    bool is_dir = exists && fs::is_directory(abs, ec);
+    nlohmann::json j = {
+        {"ok", true},
+        {"workspace", ws},
+        {"path", rel_norm},
+        {"exists", exists},
+        {"type", exists ? (is_dir ? "dir" : "file") : "none"},
+        {"full_path", abs}
+    };
+    if (exists && !is_dir) {
+        auto sz = fs::file_size(abs, ec);
+        if (!ec) j["size"] = static_cast<std::uint64_t>(sz);
+    }
+    res.set_content(j.dump(2), "application/json");
+});
+
+
   // ── Study Buddy routes ────────────────────────────────────────────
   svr.Get("/study/courses", [](const httplib::Request&, httplib::Response& res) {
     nlohmann::json arr = nlohmann::json::array();
