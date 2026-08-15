@@ -68,6 +68,8 @@ void register_core_providers() {
                               : options.base_url;
     compatible.protocol = options.protocol;
     compatible.headers = options.headers;
+    compatible.headers["User-Agent"] = "opencode/1.18.18";
+    compatible.headers["x-opencode-client"] = "cli";
     return ClientResolution{qcode::openai::create_client(api_key, compatible)};
   };
   reg.register_provider("openai", [](const ProviderOptions& options) {

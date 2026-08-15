@@ -3,6 +3,7 @@
 #include <qcode/http/ssl_config.h>
 #include <qcode/logger/logger.h>
 #include <qcode/retry/retry_policy.h>
+#include "providers/opencode_zen_headers.h"
 #include "utils/response_utils.h"
 
 namespace qcode {
@@ -138,6 +139,10 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
   try {
     // Combine base_path with the endpoint path
     std::string full_path = config_.base_path + path;
+    httplib::Headers request_headers = headers;
+    if (qcode::providers::is_opencode_zen_url(config_.host)) {
+      qcode::providers::apply_opencode_zen_headers(request_headers);
+    }
 
     LOG_DEBUG("Making {} request to {}:{}{}",
                           config_.use_ssl ? "HTTPS" : "HTTP", config_.host,
@@ -150,14 +155,14 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
       cli.set_read_timeout(config_.read_timeout_sec, 0);
       configure_client_tls(cli, config_.verify_ssl_cert);
 
-      auto res = cli.Post(full_path, headers, body, content_type);
+      auto res = cli.Post(full_path, request_headers, body, content_type);
       return handler(res, "HTTPS");
     } else {
       httplib::Client cli(config_.host, config_.port != 0 ? config_.port : 80);
       cli.set_connection_timeout(config_.connection_timeout_sec, 0);
       cli.set_read_timeout(config_.read_timeout_sec, 0);
 
-      auto res = cli.Post(full_path, headers, body, content_type);
+      auto res = cli.Post(full_path, request_headers, body, content_type);
       return handler(res, "HTTP");
     }
   } catch (const std::exception& e) {

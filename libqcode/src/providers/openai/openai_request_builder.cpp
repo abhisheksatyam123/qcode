@@ -6,6 +6,7 @@
 
 #include <qcode/logger/logger.h>
 #include <qcode/utils/random.h>
+#include "providers/opencode_zen_headers.h"
 #include "utils/message_utils.h"
 
 namespace qcode {
@@ -345,6 +346,12 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
   // Add any extra headers
   for (const auto& [key, value] : config.extra_headers) {
     headers.emplace(key, value);
+  }
+
+  // Apply last so a config/extra User-Agent cannot override the Zen client
+  // identity. Without this, -free models return 429 FreeUsageLimitError.
+  if (providers::is_opencode_zen_url(config.base_url)) {
+    providers::apply_opencode_zen_headers(headers);
   }
 
   return headers;

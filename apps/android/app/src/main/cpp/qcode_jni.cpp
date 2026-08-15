@@ -131,18 +131,24 @@ std::string build_provider_config(const std::string& openrouter_key,
       "name": "OpenCode Zen",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://opencode.ai/zen/v1")cfg";
+        "baseURL": "https://opencode.ai/zen/v1",
+        "headers": {
+          "User-Agent": "opencode/1.18.18",
+          "x-opencode-client": "cli"
+        })cfg";
   if (!opencode_key.empty()) {
     json += ",\n        \"apiKey\": \"" + json_escape(opencode_key) + "\"";
   }
   json += R"cfg(
       },
       "models": {
-        "hy3-free": { "name": "HY3 (Free)", "tool_call": true, "limit": { "context": 262144, "output": 64000 } },
+        "deepseek-v4-flash-free": { "name": "DeepSeek V4 Flash (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1000000, "output": 65536 } },
+        "big-pickle": { "name": "Big Pickle (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 200000, "output": 32000 } },
+        "mimo-v2.5-free": { "name": "MiMo V2.5 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 200000, "output": 32000 } },
+        "hy3-free": { "name": "HY3 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 64000 } },
+        "laguna-s-2.1-free": { "name": "Laguna S 2.1 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 32768 } },
         "nemotron-3-ultra-free": { "name": "Nemotron 3 Ultra (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1000000, "output": 128000 } },
-        "deepseek-v4-flash-free": { "name": "DeepSeek V4 Flash (Free)", "tool_call": true, "limit": { "context": 1000000, "output": 65536 } },
-        "laguna-s-2.1-free": { "name": "Laguna S 2.1 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 128000, "output": 32768 } },
-        "north-mini-code-free": { "name": "North Mini Code (Free)", "tool_call": true, "limit": { "context": 256000, "output": 64000 } }
+        "nemotron-3.5-lightning-free": { "name": "Nemotron 3.5 Lightning (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 65536 } }
       }
     },
     "openrouter": {

@@ -7,6 +7,7 @@
 
 // Include the real OpenAI client implementation for testing
 #include "providers/openai/openai_client.h"
+#include "providers/openai/openai_request_builder.h"
 
 // Test utilities
 #include "../utils/test_fixtures.h"
@@ -85,6 +86,32 @@ TEST_F(OpenAIClientTest, ResponsesProtocolUsesResponsesEndpoint) {
   qcode::openai::OpenAIClient client(
       "sk-test", "https://opencode.ai/zen/v1", true, {});
   EXPECT_EQ(client.get_completions_path(), "/responses");
+}
+
+TEST(OpenAIRequestBuilderTest, ZenFreeModelsSendOpenCodeClientHeaders) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  qcode::providers::ProviderConfig config;
+  config.base_url = "https://opencode.ai/zen/v1";
+  config.api_key = "__EMPTY__";
+  const auto headers = builder.build_headers(config);
+  const auto user_agent = headers.find("User-Agent");
+  ASSERT_NE(user_agent, headers.end());
+  EXPECT_EQ(user_agent->second, "opencode/1.18.18");
+  const auto client = headers.find("x-opencode-client");
+  ASSERT_NE(client, headers.end());
+  EXPECT_EQ(client->second, "cli");
+  EXPECT_NE(headers.find("x-opencode-session"), headers.end());
+  EXPECT_NE(headers.find("x-opencode-request"), headers.end());
+}
+
+TEST(OpenAIRequestBuilderTest, NonZenUrlsDoNotGetOpenCodeClientHeaders) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  qcode::providers::ProviderConfig config;
+  config.base_url = "https://api.openai.com/v1";
+  config.api_key = "sk-test";
+  const auto headers = builder.build_headers(config);
+  EXPECT_EQ(headers.find("User-Agent"), headers.end());
+  EXPECT_EQ(headers.find("x-opencode-client"), headers.end());
 }
 
 // Model Support Tests

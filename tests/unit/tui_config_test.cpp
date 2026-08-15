@@ -102,6 +102,56 @@ TEST(TuiConfigTest, EnvApiKeySkipsAntigravityRefreshCheck) {
   EXPECT_FALSE(antigravity_token_needs_refresh());
 }
 
+TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    "qcode-opencode-free-models-test.json";
+  {
+    std::ofstream output(path);
+    output << R"cfg({
+      "provider": {
+        "opencode": {
+          "name": "OpenCode Zen",
+          "models": {
+            "hy3-free": {"name": "HY3 (Free)", "tool_call": true},
+            "north-mini-code-free": {"name": "North Mini Code (Free)"}
+          }
+        }
+      }
+    })cfg";
+  }
+  ScopedEnv config("OPENCODE_CONFIG", path.string());
+  const auto providers = load_providers_from_config();
+  ASSERT_EQ(providers.size(), 1u);
+  EXPECT_EQ(providers.front().id, "opencode");
+  EXPECT_EQ(providers.front().api_url, "https://opencode.ai/zen/v1");
+  EXPECT_EQ(providers.front().headers.at("User-Agent"), "opencode/1.18.18");
+  EXPECT_EQ(providers.front().headers.at("x-opencode-client"), "cli");
+  const auto& models = providers.front().models;
+  const auto has_model = [&models](const std::string& id) {
+    return std::any_of(models.begin(), models.end(),
+                       [&id](const ModelInfo& model) {
+                         return model.id == id;
+                       });
+  };
+  EXPECT_TRUE(has_model("deepseek-v4-flash-free"));
+  EXPECT_TRUE(has_model("big-pickle"));
+  EXPECT_TRUE(has_model("mimo-v2.5-free"));
+  EXPECT_TRUE(has_model("hy3-free"));
+  EXPECT_TRUE(has_model("laguna-s-2.1-free"));
+  EXPECT_TRUE(has_model("nemotron-3-ultra-free"));
+  EXPECT_TRUE(has_model("nemotron-3.5-lightning-free"));
+  EXPECT_FALSE(has_model("north-mini-code-free"));
+  const auto deepseek = std::find_if(
+      models.begin(), models.end(), [](const ModelInfo& model) {
+        return model.id == "deepseek-v4-flash-free";
+      });
+  ASSERT_NE(deepseek, models.end());
+  EXPECT_EQ(deepseek->context_window, 1000000);
+  EXPECT_TRUE(deepseek->tool_call);
+  EXPECT_TRUE(deepseek->reasoning);
+  std::filesystem::remove(path);
+}
+
 TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
   const auto path = std::filesystem::temp_directory_path() /
                     "qcode-cursor-config-test.json";

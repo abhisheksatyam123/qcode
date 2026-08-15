@@ -1078,8 +1078,12 @@ void seed_model_capabilities_if_needed() {
 
     static const SeedCap kDefaults[] = {
         {"deepseek-v4-flash-free", "opencode", "DeepSeek V4 Flash (Free)", "DeepSeek 284B MoE (13B Active)", 1000000, 65536, 1, 1, "High Function-Calling Fidelity", "Iterative Fast Multi-Turn Agent Tool Loops"},
-        {"laguna-s-2.1-free", "opencode", "Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Code Diffs & Precise File Modifications"},
+        {"big-pickle", "opencode", "Big Pickle (Free)", "Community Stealth Model", 200000, 32000, 1, 1, "Experimental High Context", "Large Text Ingestion & Bulk Payload Inspection"},
+        {"mimo-v2.5-free", "opencode", "MiMo V2.5 (Free)", "Xiaomi MoE Instruction Model", 200000, 32000, 1, 1, "General Agentic Benchmark", "General Chat & Single-turn Instructions"},
         {"hy3-free", "opencode", "HY3 (Free)", "OpenCode High-Throughput MoE", 262144, 64000, 1, 1, "Fast General Instructions", "Quick Questions & Instruction Following"},
+        {"laguna-s-2.1-free", "opencode", "Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Code Diffs & Precise File Modifications"},
+        {"nemotron-3-ultra-free", "opencode", "Nemotron 3 Ultra (Free)", "NVIDIA 550B MoE (55B Active, Mamba-Transformer)", 1000000, 128000, 1, 1, "Frontier Orchestration / 1M Context", "Massive Repository Context (1M) & Deep Reasoning"},
+        {"nemotron-3.5-lightning-free", "opencode", "Nemotron 3.5 Lightning (Free)", "NVIDIA High-Speed Reasoning", 262144, 65536, 1, 1, "Ultra-Low Latency Agentic", "Fast Multi-Turn Tools & Real-Time Code Edits"},
 
         {"claude-opus-4-6-thinking", "antigravity", "Claude Opus 4.6 Thinking", "Anthropic Reasoning Model", 200000, 8192, 1, 1, "SWE-bench Verified ~74.5%", "Complex Multi-File Refactoring & Architect Tasks"},
         {"claude-sonnet-4-6", "antigravity", "Claude Sonnet 4.6", "Anthropic Frontier Model", 200000, 8192, 1, 1, "SWE-bench Verified ~72.7%", "Production Agentic Workflows & Coding"},

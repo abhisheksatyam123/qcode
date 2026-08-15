@@ -3,6 +3,7 @@
 #include <qcode/http/ssl_config.h>
 #include <qcode/logger/logger.h>
 #include "http/http_request_handler.h"
+#include "providers/opencode_zen_headers.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -147,6 +148,9 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
     req.headers = headers;
     req.body = request_body.dump();
     req.set_header("Content-Type", "application/json");
+    if (qcode::providers::is_opencode_zen_url(host)) {
+      qcode::providers::apply_opencode_zen_headers(req.headers);
+    }
 
     LOG_DEBUG(
         "Stream request prepared - path: {}, body size: {} bytes", path,
@@ -286,7 +290,7 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
               msg.find("Rate limit") != std::string::npos ||
               msg.find("quota") != std::string::npos ||
               msg.find("RESOURCE_EXHAUSTED") != std::string::npos) {
-            msg += "\n\n💡 Tip: Rate limit hit. Switch to high-throughput models via `/model gemini-3.7-flash` or `/model poolside/laguna-s-2.1:free` or `/model nvidia/nemotron-3.5-lightning:free`.";
+            msg += "\n\n💡 Tip: Rate limit hit. Switch model via `/model hy3-free`, `/model laguna-s-2.1-free`, or `/model nemotron-3.5-lightning-free`.";
           }
           push_event(create_error_event(msg));
           return;

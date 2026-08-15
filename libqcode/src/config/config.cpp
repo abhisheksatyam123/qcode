@@ -98,22 +98,37 @@ static ModelInfo make_default_model(std::string name,
     return model;
 }
 
+// Official OpenCode Zen free catalog (https://opencode.ai/docs/zen/).
+// IDs match GET https://opencode.ai/zen/v1/models. north-mini-code-free is
+// not a Zen model (401 ModelError) — it lives on OpenRouter instead.
+static std::vector<ModelInfo> official_opencode_free_models() {
+    return {
+        make_default_model("DeepSeek V4 Flash (Free)", "deepseek-v4-flash-free",
+                           1000000, 65536, true, true),
+        make_default_model("Big Pickle (Free)", "big-pickle", 200000, 32000,
+                           true, true),
+        make_default_model("MiMo V2.5 (Free)", "mimo-v2.5-free", 200000, 32000,
+                           true, true),
+        make_default_model("HY3 (Free)", "hy3-free", 262144, 64000, true, true),
+        make_default_model("Laguna S 2.1 (Free)", "laguna-s-2.1-free", 262144,
+                           32768, true, true),
+        make_default_model("Nemotron 3 Ultra (Free)", "nemotron-3-ultra-free",
+                           1000000, 128000, true, true),
+        make_default_model("Nemotron 3.5 Lightning (Free)",
+                           "nemotron-3.5-lightning-free", 262144, 65536, true,
+                           true),
+    };
+}
+
 static ProviderInfo default_opencode_provider() {
     ProviderInfo provider;
     provider.name = "OpenCode Zen";
     provider.id = "opencode";
     provider.api_url = "https://opencode.ai/zen/v1";
     provider.protocol = "chat_completions";
-    provider.models = {
-        make_default_model("HY3 (Free)", "hy3-free", 262144, 64000),
-        make_default_model("Nemotron 3 Ultra (Free)", "nemotron-3-ultra-free",
-                           1000000, 128000, true, true),
-        make_default_model("DeepSeek V4 Flash (Free)", "deepseek-v4-flash-free",
-                           1000000, 65536),
-        make_default_model("Laguna S 2.1 (Free)", "laguna-s-2.1-free", 128000,
-                           32768, true, true),
-        make_default_model("North Mini Code (Free)", "north-mini-code-free",
-                           256000, 64000)};
+    provider.headers["User-Agent"] = "opencode/1.18.18";
+    provider.headers["x-opencode-client"] = "cli";
+    provider.models = official_opencode_free_models();
     return provider;
 }
 
@@ -400,6 +415,33 @@ void add_cursor_model_if_missing(std::vector<ModelInfo>& models,
     }
 }
 
+void add_opencode_model_if_missing(std::vector<ModelInfo>& models,
+                                   ModelInfo model) {
+    const auto found = std::find_if(
+        models.begin(), models.end(),
+        [&model](const ModelInfo& existing) { return existing.id == model.id; });
+    if (found == models.end()) {
+        models.emplace_back(std::move(model));
+    }
+}
+
+void hydrate_opencode_models(ProviderInfo& provider) {
+    if (provider.api_url.empty()) {
+        provider.api_url = "https://opencode.ai/zen/v1";
+    }
+    if (provider.protocol.empty()) {
+        provider.protocol = "chat_completions";
+    }
+    provider.headers["User-Agent"] = "opencode/1.18.18";
+    provider.headers["x-opencode-client"] = "cli";
+    std::erase_if(provider.models, [](const ModelInfo& model) {
+        return model.id == "north-mini-code-free";
+    });
+    for (auto& model : official_opencode_free_models()) {
+        add_opencode_model_if_missing(provider.models, std::move(model));
+    }
+}
+
 void hydrate_cursor_models(ProviderInfo& provider) {
     const auto token =
         provider.api_key.empty() ? get_cursor_access_token() : provider.api_key;
@@ -521,6 +563,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
         for (auto& provider : loaded) {
             if (provider.id == "cursor") {
                 hydrate_cursor_models(provider);
+            }
+            if (provider.id == "opencode") {
+                hydrate_opencode_models(provider);
             }
         }
     } catch (const std::exception& e) {
