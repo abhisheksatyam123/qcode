@@ -480,6 +480,8 @@ void AppStore::wire() {
         *state_.total_prompt_tokens += p.prompt_tokens;
         *state_.total_completion_tokens += p.completion_tokens;
         *state_.total_tokens += p.total_tokens;
+        // Cache-hit mirror for the header/footer (latest turn, not cumulative).
+        *state_.last_cached_prompt_tokens = p.cached_prompt_tokens;
         qcode::session::persist_session_token_stats(
             session_id(), p.prompt_tokens, p.completion_tokens, p.total_tokens);
         // Calibration anchor: remember the actual prompt token count so the

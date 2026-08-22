@@ -14,6 +14,7 @@ add_executable(qcode_tests
     unit/openai_embeddings_test.cpp
     unit/registry_test.cpp
     unit/gemini_transform_test.cpp
+    unit/provider_transform_test.cpp
     unit/antigravity_client_test.cpp
     unit/cursor_provider_test.cpp
     unit/bash_tool_test.cpp

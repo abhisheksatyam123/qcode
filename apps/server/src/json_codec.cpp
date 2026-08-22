@@ -62,7 +62,8 @@ nlohmann::json token_usage_to_json(const TokenUsageUpdated::Payload& p) {
         {"type", TokenUsageUpdated::type},
         {"prompt_tokens", p.prompt_tokens},
         {"completion_tokens", p.completion_tokens},
-        {"total_tokens", p.total_tokens}
+        {"total_tokens", p.total_tokens},
+        {"cached_prompt_tokens", p.cached_prompt_tokens}
     };
 }
 

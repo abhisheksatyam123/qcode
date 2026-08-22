@@ -205,6 +205,26 @@ static ModelInfo model_from_catalog(const std::string& id,
     }
     model.reasoning = data.value("reasoning", false);
     model.tool_call = data.value("tool_call", false);
+    // Reasoning variants (mirrors upstream reasoningVariants): catalog
+    // reasoning_options of type "effort" list the supported effort levels,
+    // and interleaved.field names the assistant back-channel used to replay
+    // reasoning on openai-compatible transports (e.g. "reasoning_content").
+    if (data.contains("reasoning_options") && data["reasoning_options"].is_array()) {
+        for (const auto& option : data["reasoning_options"]) {
+            if (!option.is_object() || option.value("type", "") != "effort") continue;
+            if (option.contains("values") && option["values"].is_array()) {
+                for (const auto& value : option["values"]) {
+                    if (value.is_string()) {
+                        model.reasoning_efforts.push_back(value.get<std::string>());
+                    }
+                }
+            }
+        }
+    }
+    if (data.contains("interleaved") && data["interleaved"].is_object()) {
+        const auto field = data["interleaved"].value("field", "");
+        if (!field.empty()) model.reasoning_field = field;
+    }
     if (model.context_window <= 0) {
         model.context_window = resolve_model_context_window(id);
     }
@@ -225,7 +245,7 @@ bool id_in_list(const std::array<const char*, N>& list, const std::string& id) {
 // lists 350+). qcode only shows models that were probed to complete a chat
 // round-trip through the full pipeline, so catalog merges are intersected
 // with these curated allowlists instead of keeping every paid entry.
-static constexpr std::array<const char*, 10> kCuratedZenCatalog = {
+static constexpr std::array<const char*, 11> kCuratedZenCatalog = {
     "big-pickle",
     "hy3-free",
     "laguna-s-2.1-free",
@@ -236,6 +256,10 @@ static constexpr std::array<const char*, 10> kCuratedZenCatalog = {
     "deepseek-v4-flash-free",
     "kimi-k2.5-free",
     "gpt-5.3-codex",
+    // Ox Alpha free pool id on Zen — the catalog exposes it as
+    // x-preview-f-free ("Ox Alpha Free (Unlimited)"); the bare "ox-alpha" id
+    // only exists on OpenRouter and 401s (ModelError) against Zen.
+    "x-preview-f-free",
 };
 
 static constexpr std::array<const char*, 14> kCuratedOpenRouterCatalog = {
@@ -313,22 +337,42 @@ static ProviderInfo openrouter_provider_from_catalog(
 // IDs match GET https://opencode.ai/zen/v1/models. north-mini-code-free is
 // not a Zen model (401 ModelError) — it lives on OpenRouter instead.
 static std::vector<ModelInfo> official_opencode_free_models() {
-    return {
-        make_default_model("X-Preview Frontier (Free)", "x-preview-f-free",
-                           1000000, 65536, true, true),
-        make_default_model("Big Pickle (Free)", "big-pickle", 200000, 32000,
-                           true, true),
-        make_default_model("MiMo V2.5 (Free)", "mimo-v2.5-free", 200000, 32000,
-                           true, true),
-        make_default_model("HY3 (Free)", "hy3-free", 262144, 64000, true, true),
-        make_default_model("Laguna S 2.1 (Free)", "laguna-s-2.1-free", 262144,
-                           32768, true, true),
-        make_default_model("Nemotron 3 Ultra (Free)", "nemotron-3-ultra-free",
-                           1000000, 128000, true, true),
-        make_default_model("Nemotron 3.5 Lightning (Free)",
-                           "nemotron-3.5-lightning-free", 262144, 65536, true,
-                           true),
-    };
+    std::vector<ModelInfo> models;
+    models.reserve(9);
+
+    // Ox Alpha free pool: the wire id is x-preview-f-free; "ox-alpha" is
+    // rejected by Zen (401 ModelError). Efforts per models.dev:
+    // low/high/max, reasoning replayed via "reasoning_content".
+    {
+        ModelInfo ox_alpha = make_default_model(
+            "Ox Alpha Free (Unlimited)", "x-preview-f-free", 1000000, 131072,
+            true, true);
+        ox_alpha.reasoning_efforts = {"low", "high", "max"};
+        ox_alpha.reasoning_field = "reasoning_content";
+        models.push_back(std::move(ox_alpha));
+    }
+    {
+        ModelInfo deepseek = make_default_model(
+            "DeepSeek V4 Flash (Free)", "deepseek-v4-flash-free", 262144,
+            65536, true, true);
+        deepseek.reasoning_efforts = {"low", "high", "max"};
+        deepseek.reasoning_field = "reasoning_content";
+        models.push_back(std::move(deepseek));
+    }
+    models.push_back(make_default_model("Big Pickle (Free)", "big-pickle",
+                                        200000, 32000, true, true));
+    models.push_back(
+        make_default_model("MiMo V2.5 (Free)", "mimo-v2.5-free", 200000, 32000, true, true));
+    models.push_back(make_default_model("HY3 (Free)", "hy3-free", 262144, 64000, true, true));
+    models.push_back(make_default_model("Laguna S 2.1 (Free)", "laguna-s-2.1-free",
+                                        262144, 32768, true, true));
+    models.push_back(make_default_model("Nemotron 3 Ultra (Free)",
+                                        "nemotron-3-ultra-free", 1000000, 128000, true,
+                                        true));
+    models.push_back(make_default_model("Nemotron 3.5 Lightning (Free)",
+                                        "nemotron-3.5-lightning-free", 262144, 65536, true,
+                                        true));
+    return models;
 }
 
 static bool opencode_has_api_key() {
@@ -362,6 +406,9 @@ static std::vector<ProviderInfo> default_providers() {
     if (!has_zen_key) zen.api_key = "__EMPTY__";  // registry sends "public"
     if (have_catalog) {
         zen.models = zen_models_from_catalog(catalog, has_zen_key);
+        for (auto& model : official_opencode_free_models()) {
+            if (std::none_of(zen.models.begin(), zen.models.end(), [&model](const ModelInfo& m){ return m.id == model.id; })) zen.models.push_back(std::move(model));
+        }
     }
     if (zen.models.empty()) {
         zen.models = official_opencode_free_models();  // offline fallback
@@ -710,6 +757,9 @@ void hydrate_opencode_models(ProviderInfo& provider) {
     if (load_models_dev_catalog(catalog)) {
         for (auto& model :
              zen_models_from_catalog(catalog, has_key || opencode_has_api_key())) {
+            add_opencode_model_if_missing(provider.models, std::move(model));
+        }
+        for (auto& model : official_opencode_free_models()) {
             add_opencode_model_if_missing(provider.models, std::move(model));
         }
         return;

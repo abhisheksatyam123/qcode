@@ -2,6 +2,7 @@
 
 #include <qcode/core/message.h>
 #include <qcode/core/model.h>
+#include <qcode/core/state.h>
 #include <qcode/core/tool.h>
 
 #include <functional>
@@ -94,6 +95,42 @@ bool is_opus_family(const std::string& model_id);
 
 /// Extract SDK key from provider name
 std::string sdk_key(const std::string& provider_name);
+
+// ── Reasoning variants (mirrors transform.ts reasoningVariants) ──
+
+/// Effort levels a model supports. Catalog-declared reasoning_options win;
+/// falls back to upstream's widely-supported set for known families.
+std::vector<std::string> reasoning_variants(const ModelInfo& model);
+
+/// Default effort with thinking enabled (upstream turns reasoning on by
+/// default per family: medium for gpt-5.x, high elsewhere). "off" when the
+/// model cannot reason.
+std::string default_variant(const ModelInfo& model);
+
+// ── Chat transport flavors (mirrors providerID / api.npm dispatch) ──
+
+enum class ChatTransport {
+  kOpenAI,        // api.openai.com — Responses-style chat quirks
+  kOpenRouter,    // openrouter.ai — reasoning:{effort}, usage:{include:true}
+  kOpenCodeZen,   // opencode.ai/zen — plain openai-compatible
+  kCompatible,    // every other OpenAI-compatible endpoint
+};
+
+ChatTransport chat_transport_for(const std::string& base_url);
+
+/// Place reasoning-effort options the way each transport expects:
+/// - OpenRouter: {"reasoning": {"effort": e}}
+/// - others:     {"reasoning_effort": e}
+void apply_reasoning_options(nlohmann::json& body,
+                             ChatTransport transport,
+                             const std::optional<std::string>& effort);
+
+/// Streaming/usage body options: stream_options.include_usage always with
+/// streaming; OpenRouter additionally gets usage.include so cached-token
+/// accounting is returned.
+void apply_stream_options(nlohmann::json& body,
+                          ChatTransport transport,
+                          bool stream);
 
 }  // namespace ProviderTransform
 }  // namespace qcode

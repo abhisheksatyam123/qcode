@@ -6,6 +6,7 @@
 #include <qcode/session/session_store.h>
 #include <qcode/core/event.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -18,6 +19,7 @@
 #include <qcode/core/client.h>
 #include <qcode/core/logger.h>
 #include <qcode/providers/openai.h>
+#include <qcode/providers/provider_transform.h>
 #include <qcode/providers/registry.h>
 #include <qcode/providers/authenticated_providers.h>
 
@@ -230,10 +232,19 @@ static void run_tools_generation_bus(
           continue;
         }
         if (looks_like_auth_error(err)) {
-          gen_result.error =
-              "Authentication failed (401). Re-login with the Antigravity CLI "
-              "or set ANTIGRAVITY_API_KEY, then try again. Original: " +
-              err;
+          // Only blame Antigravity credentials when we are actually talking to
+          // Antigravity — a Zen/OpenRouter ModelError(401) must not ask the
+          // user to re-login with a unrelated CLI.
+          if (provider_id.find("antigravity") != std::string::npos) {
+            gen_result.error =
+                "Authentication failed (401). Re-login with the Antigravity CLI "
+                "or set ANTIGRAVITY_API_KEY, then try again. Original: " +
+                err;
+          } else {
+            gen_result.error = "Authentication failed (401) for provider '" +
+                               provider_id +
+                               "'. Check its API key. Original: " + err;
+          }
         } else {
           gen_result.error = !err.empty() ? err : "Provider request failed";
         }
@@ -246,6 +257,11 @@ static void run_tools_generation_bus(
       gen_result.usage.prompt_tokens += step_res.usage.prompt_tokens;
       gen_result.usage.completion_tokens += step_res.usage.completion_tokens;
       gen_result.usage.total_tokens += step_res.usage.total_tokens;
+      // Prompt-cache accounting: keep the max seen (each step reports the
+      // cached prefix of that request, not a delta).
+      gen_result.usage.cached_prompt_tokens =
+          std::max(gen_result.usage.cached_prompt_tokens,
+                   step_res.usage.cached_prompt_tokens);
       gen_result.finish_reason = step_res.finish_reason;
       gen_result.id = step_res.id;
       gen_result.model = step_res.model;
@@ -470,7 +486,8 @@ static void run_tools_generation_bus(
   bus.publish<TokenUsageUpdated>({
       .prompt_tokens = gen_result.usage.prompt_tokens,
       .completion_tokens = gen_result.usage.completion_tokens,
-      .total_tokens = gen_result.usage.total_tokens
+      .total_tokens = gen_result.usage.total_tokens,
+      .cached_prompt_tokens = gen_result.usage.cached_prompt_tokens
   });
   if (!fatal_error) {
     bus.publish<SessionStatusChanged>({
@@ -588,7 +605,8 @@ static void run_stream_generation_bus(qcode::Client& client,
       bus.publish<TokenUsageUpdated>({
           .prompt_tokens = event.usage->prompt_tokens,
           .completion_tokens = event.usage->completion_tokens,
-          .total_tokens = event.usage->total_tokens
+          .total_tokens = event.usage->total_tokens,
+          .cached_prompt_tokens = event.usage->cached_prompt_tokens
       });
     }
   }
@@ -662,6 +680,7 @@ void run_generation_with_bus(
     qcode::Client client;
     std::string provider_id;
     std::string resolved_model_id = model_id;
+    const qcode::ModelInfo* resolved_model = nullptr;
     qcode::providers::ProviderOptions provider_options;
 
     for (const auto& p : providers) {
@@ -675,6 +694,7 @@ void run_generation_with_bus(
         for (const auto& m : p.models) {
           if (m.id == model_id || m.name == model_id) {
             resolved_model_id = m.id;
+            resolved_model = &m;
             break;
           }
         }
@@ -729,8 +749,20 @@ void run_generation_with_bus(
     // Antigravity/Gemini, Cursor, OpenCode Zen) uses reasoning_effort — even
     // when the model id contains "claude" (those paths go through OpenAI/Gemini
     // transforms that read reasoning_effort, not Anthropic thinking).
+    // Thinking is ON by default for reasoning models on OpenCode Zen and
+    // OpenRouter (mirrors upstream, which defaults effort per family), with
+    // the full low/medium/high/max range selectable via /variant.
     const std::string& rm = ctx.reasoning_mode;
-    if (rm == "low" || rm == "medium" || rm == "high") {
+    const bool zen_or_openrouter =
+        provider_options.base_url.find("opencode.ai") != std::string::npos ||
+        provider_options.base_url.find("openrouter.ai") != std::string::npos;
+    if ((rm.empty() || rm == "off") && zen_or_openrouter && resolved_model &&
+        resolved_model->reasoning) {
+      base_opts.reasoning_effort =
+          ProviderTransform::default_variant(*resolved_model);
+      LOG_INFO("generation_service: default thinking variant '{}' for {}",
+               *base_opts.reasoning_effort, resolved_model_id);
+    } else if (rm == "low" || rm == "medium" || rm == "high" || rm == "max") {
       const bool is_native_anthropic =
           provider_id.find("anthropic") != std::string::npos;
       if (is_native_anthropic) {

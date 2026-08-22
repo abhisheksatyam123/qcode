@@ -33,6 +33,9 @@ struct ProviderConfig {
 class RequestBuilder {
  public:
   virtual ~RequestBuilder() = default;
+  // Optional hook: lets the client share its endpoint so the builder can pick
+  // transport-specific wire formats. Default is a no-op.
+  virtual void set_base_url(const std::string&) {}
   virtual nlohmann::json build_request_json(const GenerateOptions& options) = 0;
   virtual nlohmann::json build_request_json(
       const EmbeddingOptions& options) = 0;

@@ -124,6 +124,10 @@ struct TokenUsageUpdated {
         int prompt_tokens = 0;
         int completion_tokens = 0;
         int total_tokens = 0;
+        // Tokens served from the provider's prompt cache this turn (when the
+        // provider reports them, e.g. cached_tokens on OpenCode Zen /
+        // OpenRouter). 0 when unknown.
+        int cached_prompt_tokens = 0;
     };
 };
 

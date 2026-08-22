@@ -34,6 +34,12 @@ struct ModelInfo {
     bool tool_call = false;
     int output_limit = 0;
     std::string protocol;
+    // Catalog-declared effort variants (models.dev reasoning_options of type
+    // "effort"), e.g. {"low","high","max"} for ox-alpha / deepseek-v4-flash.
+    std::vector<std::string> reasoning_efforts;
+    // Interleaved-reasoning back-channel field name the model expects on
+    // assistant messages when reasoning is replayed ("reasoning_content").
+    std::string reasoning_field;
 };
 
 struct ProviderInfo {
@@ -65,6 +71,8 @@ struct ChatState {
     std::shared_ptr<int> total_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
+    // Latest turn's prompt-cache hit (tokens served from the provider cache).
+    std::shared_ptr<int> last_cached_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> current_context_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<FileChangeEntry>> file_changes =
         std::make_shared<std::vector<FileChangeEntry>>();

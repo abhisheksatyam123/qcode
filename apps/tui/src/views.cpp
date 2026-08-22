@@ -183,7 +183,14 @@ ftxui::Element render_view(
     } else {
       hdr_tokens = format_tokens(ctx_used) + " tok";
     }
-    
+
+    // Prompt-cache hit badge: tokens served from the provider cache on the
+    // latest turn (OpenCode Zen / OpenRouter report cached_tokens).
+    std::string hdr_cache;
+    if (state.last_cached_prompt_tokens && *state.last_cached_prompt_tokens > 0) {
+        hdr_cache = "⚡cache " + format_tokens(*state.last_cached_prompt_tokens);
+    }
+
     // Status (compact, no spinner — spinner is rendered in the header below)
     Color status_color = accent2(theme);
     std::string hdr_status;
@@ -251,6 +258,10 @@ ftxui::Element render_view(
         separatorLight(),
         text(" " + hdr_tokens + " ") |
             (ctx_pct > 0 ? color(ctx_color) : dim),
+        (hdr_cache.empty()
+             ? emptyElement()
+             : hbox({separatorLight(),
+                     text(" " + hdr_cache + " ") | color(accent(theme)) | dim})),
         (ctx_pct >= 70
              ? hbox({separatorLight(),
                      text(" /compact? ") | color(Color::Yellow) | dim})

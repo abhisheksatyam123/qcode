@@ -21,6 +21,72 @@ static bool contains(const std::string& s, const std::string& sub) {
   return to_lower(s).find(to_lower(sub)) != std::string::npos;
 }
 
+// ── Reasoning variants ──
+// Ported from opencode's transform.ts reasoningVariants/effortVariants and the
+// @ai-sdk/openai-compatible fallback (WIDELY_SUPPORTED_EFFORTS + max for
+// deepseek-v4).
+
+std::vector<std::string> reasoning_variants(const ModelInfo& model) {
+  if (!model.reasoning_efforts.empty()) return model.reasoning_efforts;
+  if (!model.reasoning) return {};
+  const std::string id = to_lower(model.id);
+  std::vector<std::string> efforts = {"low", "medium", "high"};
+  if (contains(id, "deepseek-v4")) efforts.push_back("max");
+  return efforts;
+}
+
+std::string default_variant(const ModelInfo& model) {
+  if (!model.reasoning) return "off";
+  const auto efforts = reasoning_variants(model);
+  const std::string id = to_lower(model.id);
+  // Upstream options(): gpt-5.x defaults to medium effort.
+  const bool gpt5 = contains(id, "gpt-5");
+  const std::string preferred = gpt5 ? "medium" : "high";
+  if (!efforts.empty()) {
+    if (std::find(efforts.begin(), efforts.end(), preferred) != efforts.end()) {
+      return preferred;
+    }
+    return efforts.front();
+  }
+  return gpt5 ? "medium" : "high";
+}
+
+// ── Chat transport flavors ──
+
+ChatTransport chat_transport_for(const std::string& base_url) {
+  const std::string url = to_lower(base_url);
+  if (url.find("openrouter.ai") != std::string::npos) return ChatTransport::kOpenRouter;
+  if (url.find("opencode.ai") != std::string::npos ||
+      url.find("opencode.ai/zen") != std::string::npos) {
+    return ChatTransport::kOpenCodeZen;
+  }
+  if (url.find("api.openai.com") != std::string::npos) return ChatTransport::kOpenAI;
+  return ChatTransport::kCompatible;
+}
+
+void apply_reasoning_options(nlohmann::json& body,
+                             ChatTransport transport,
+                             const std::optional<std::string>& effort) {
+  if (!effort.has_value() || effort->empty() || *effort == "off") return;
+  if (transport == ChatTransport::kOpenRouter) {
+    // @openrouter/ai-sdk-provider maps variants to reasoning:{effort}.
+    body["reasoning"] = {{"effort", *effort}};
+  } else {
+    // @ai-sdk/openai-compatible lowers variants to reasoning_effort.
+    body["reasoning_effort"] = *effort;
+  }
+}
+
+void apply_stream_options(nlohmann::json& body,
+                          ChatTransport transport,
+                          bool stream) {
+  if (!stream) return;
+  // Upstream openai-chat always sends stream_options.include_usage so cached
+  // / reasoning token accounting survives streaming.
+  body["stream_options"] = {{"include_usage", true}};
+  (void)transport;
+}
+
 // ── Model-family-specific defaults ──
 // Ported from opencode's ProviderTransform.temperature/topP/topK
 

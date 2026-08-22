@@ -405,8 +405,17 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
           push_event(StreamEvent(content));
         }
 
-        // o-series reasoning tokens (reasoning or structured reasoning_details)
-        if (delta.contains("reasoning") && !delta["reasoning"].is_null()) {
+        // Reasoning deltas, in upstream priority order: DeepSeek-style
+        // "reasoning_content" (OpenCode Zen ox-alpha / deepseek-v4-flash),
+        // o-series "reasoning", then OpenRouter structured reasoning_details.
+        if (delta.contains("reasoning_content") &&
+            delta["reasoning_content"].is_string() &&
+            !delta["reasoning_content"].get<std::string>().empty()) {
+          const std::string& reasoning =
+              delta["reasoning_content"].get<std::string>();
+          LOG_DEBUG("Received reasoning chunk - length: {}", reasoning.length());
+          push_event(StreamEvent::reasoning(reasoning));
+        } else if (delta.contains("reasoning") && !delta["reasoning"].is_null()) {
           std::string reasoning = delta["reasoning"].get<std::string>();
           LOG_DEBUG("Received reasoning chunk - length: {}", reasoning.length());
           push_event(StreamEvent::reasoning(reasoning));

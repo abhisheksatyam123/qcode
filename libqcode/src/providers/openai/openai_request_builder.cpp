@@ -86,14 +86,22 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
         message["content"] = text_content;
       }
       if (!reasoning_content.empty()) {
-        message["reasoning"] = reasoning_content;
-        for (const auto& part : msg.content) {
-          if (const auto* reasoning =
-                  std::get_if<ReasoningContentPart>(&part);
-              reasoning != nullptr && !reasoning->signature.empty()) {
-            message["reasoning_signature"] = reasoning->signature;
-            break;
+        if (use_responses_) {
+          // Responses API keeps the dedicated reasoning fields.
+          message["reasoning"] = reasoning_content;
+          for (const auto& part : msg.content) {
+            if (const auto* reasoning =
+                    std::get_if<ReasoningContentPart>(&part);
+                reasoning != nullptr && !reasoning->signature.empty()) {
+              message["reasoning_signature"] = reasoning->signature;
+              break;
+            }
           }
+        } else {
+          // Chat Completions transports replay interleaved reasoning through
+          // the assistant "reasoning_content" back-channel, mirroring
+          // upstream's lowerAssistantMessage (packages/llm openai-chat).
+          message["reasoning_content"] = reasoning_content;
         }
       }
 
@@ -142,15 +150,33 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
   }
 
   if (options.max_tokens) {
-    request["max_completion_tokens"] = *options.max_tokens;
+    if (use_responses_) {
+      request["max_completion_tokens"] = *options.max_tokens;
+    } else if (transport_ == ProviderTransform::ChatTransport::kOpenAI) {
+      // Native OpenAI chat completions expects the completion-token budget.
+      request["max_completion_tokens"] = *options.max_tokens;
+    } else {
+      // OpenAI-compatible endpoints (OpenCode Zen, OpenRouter, ...) follow the
+      // upstream openai-chat lowering which uses max_tokens.
+      request["max_tokens"] = *options.max_tokens;
+    }
   } else if (options.reasoning_effort) {
     // o-series require a completion-token budget; provide a safe default.
-    request["max_completion_tokens"] = 8192;
+    request[use_responses_ || transport_ == ProviderTransform::ChatTransport::kOpenAI
+                ? "max_completion_tokens"
+                : "max_tokens"] = 8192;
   }
 
   if (options.reasoning_effort && *options.reasoning_effort != "off" && !options.reasoning_effort->empty()) {
-    request["reasoning_effort"] = *options.reasoning_effort;
-    request["reasoning"] = {{"effort", *options.reasoning_effort}};
+    if (use_responses_) {
+      request["reasoning_effort"] = *options.reasoning_effort;
+      request["reasoning"] = {{"effort", *options.reasoning_effort}};
+    } else {
+      // Transport-specific placement: OpenRouter wants reasoning:{effort},
+      // plain compatible endpoints want reasoning_effort (upstream lowering).
+      ProviderTransform::apply_reasoning_options(request, transport_,
+                                                 options.reasoning_effort);
+    }
   }
 
   if (options.top_p) {
@@ -230,6 +256,12 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     if (looks_claude) {
       request["cache_control"] = {{"type", "ephemeral"}};
     }
+  }
+
+  // OpenRouter only reports usage accounting (cached-token details) when
+  // explicitly asked — mirrors upstream options(): usage.include = true.
+  if (transport_ == ProviderTransform::ChatTransport::kOpenRouter && !use_responses_) {
+    request["usage"] = {{"include", true}};
   }
 
   if (!use_responses_) return request;
@@ -316,6 +348,12 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
   // Add auth header if api key is provided and not empty
   if (!config.api_key.empty() && config.api_key != "__EMPTY__") {
     headers.emplace(config.auth_header_name, config.auth_header_prefix + config.api_key);
+  } else if (
+      ProviderTransform::chat_transport_for(config.base_url) ==
+      ProviderTransform::ChatTransport::kOpenCodeZen) {
+    // Upstream injects apiKey="public" for the keyless Zen free pool
+    // (packages/opencode/src/provider/provider.ts).
+    headers.emplace(config.auth_header_name, config.auth_header_prefix + "public");
   }
 
   // OpenRouter specific headers

@@ -2,6 +2,7 @@
 
 #include <qcode/core/logger.h>
 #include <qcode/providers/openai.h>
+#include <qcode/providers/provider_transform.h>
 #include "openai_request_builder.h"
 #include "openai_response_parser.h"
 #include "openai_stream.h"
@@ -53,6 +54,7 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
               .extra_headers = {}},
           std::make_unique<OpenAIRequestBuilder>(),
           std::make_unique<OpenAIResponseParser>()) {
+  request_builder_->set_base_url(base_url);
   LOG_DEBUG("OpenAI client initialized with base_url: {}",
                         base_url);
 }
@@ -72,6 +74,7 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
               .retry_config = retry_config},
           std::make_unique<OpenAIRequestBuilder>(),
           std::make_unique<OpenAIResponseParser>()) {
+  request_builder_->set_base_url(base_url);
   LOG_DEBUG(
       "OpenAI client initialized with base_url: {} and custom retry config",
       base_url);
@@ -91,7 +94,9 @@ OpenAIClient::OpenAIClient(
               .auth_header_prefix = "Bearer ",
               .extra_headers = make_headers(headers)},
           std::make_unique<OpenAIRequestBuilder>(use_responses),
-          std::make_unique<OpenAIResponseParser>()) {}
+          std::make_unique<OpenAIResponseParser>()) {
+  request_builder_->set_base_url(base_url);
+}
 
 StreamResult OpenAIClient::stream_text(const StreamOptions& options) {
   LOG_DEBUG(
@@ -101,6 +106,12 @@ StreamResult OpenAIClient::stream_text(const StreamOptions& options) {
   // Build request with stream: true
   auto request_json = request_builder_->build_request_json(options);
   request_json["stream"] = true;
+  // Upstream openai-chat always asks for usage accounting while streaming
+  // (cached/reasoning token details ride along in the final chunk).
+  ProviderTransform::apply_stream_options(
+      request_json,
+      ProviderTransform::chat_transport_for(config_.base_url),
+      /*stream=*/true);
   LOG_DEBUG("Stream request JSON built with stream=true");
 
   // Create headers

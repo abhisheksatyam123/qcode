@@ -297,16 +297,17 @@ bool handle_slash_command(
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.front()))) lvl.erase(lvl.begin());
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.back()))) lvl.pop_back();
         if (lvl.empty()) {
-            // Cycle: off -> low -> medium -> high -> off
+            // Cycle: off -> low -> medium -> high -> max -> off
             std::string cur = state.reasoning_mode ? *state.reasoning_mode : "off";
             if (cur == "off") lvl = "low";
             else if (cur == "low") lvl = "medium";
             else if (cur == "medium") lvl = "high";
+            else if (cur == "high") lvl = "max";
             else lvl = "off";
         }
-        if (lvl != "off" && lvl != "low" && lvl != "medium" && lvl != "high") {
+        if (lvl != "off" && lvl != "low" && lvl != "medium" && lvl != "high" && lvl != "max") {
             bus.publish<qcode::contract::ToastRequested>({
-                .message = "Invalid variant '" + lvl + "'. Use off|low|medium|high.",
+                .message = "Invalid variant '" + lvl + "'. Use off|low|medium|high|max.",
                 .variant = "warning"
             });
             return true;
@@ -389,7 +390,7 @@ bool handle_slash_command(
         std::ostringstream h;
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
-          << "  /variant [off|low|medium|high] - set model variant / reasoning effort\n"
+          << "  /variant [off|low|medium|high|max] - set model variant / reasoning effort\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
           << "  /new [name] [workspace] - new session (optional title + workspace path)\n"
           << "  /session <id>     - load a persistent session by id\n"

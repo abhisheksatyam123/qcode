@@ -1124,7 +1124,7 @@ void seed_model_capabilities_if_needed() {
     };
 
     static const SeedCap kDefaults[] = {
-        {"x-preview-f-free", "opencode", "X-Preview Frontier (Free)", "High-Fidelity Agentic Model", 1000000, 65536, 1, 1, "Frontier Reasoning & High Fidelity", "Agentic Code Edits, Reasoning & Tool Calls"},
+        {"x-preview-f-free", "opencode", "Ox Alpha Free (Unlimited)", "Stealth Reasoning Model (ox-alpha)", 1000000, 131072, 1, 1, "Frontier Reasoning & High Fidelity", "Agentic Code Edits, Reasoning & Tool Calls"},
         {"big-pickle", "opencode", "Big Pickle (Free)", "Community Stealth Model", 200000, 32000, 1, 1, "Experimental High Context", "Large Text Ingestion & Bulk Payload Inspection"},
         {"mimo-v2.5-free", "opencode", "MiMo V2.5 (Free)", "Xiaomi MoE Instruction Model", 200000, 32000, 1, 1, "General Agentic Benchmark", "General Chat & Single-turn Instructions"},
         {"hy3-free", "opencode", "HY3 (Free)", "OpenCode High-Throughput MoE", 262144, 64000, 1, 1, "Fast General Instructions", "Quick Questions & Instruction Following"},
