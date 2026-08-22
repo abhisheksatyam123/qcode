@@ -6,6 +6,10 @@
 #include "providers/opencode_zen_headers.h"
 #include "utils/response_utils.h"
 
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+
 namespace qcode {
 namespace http {
 
@@ -128,17 +132,48 @@ GenerateResult HttpRequestHandler::execute_single_request(
         is_status_code_retryable(res->status) ||
         is_error_message_retryable(res->body);
 
-    // Parse Retry-After / retry-after-ms response headers if present
+    // Honor Retry-After / retry-after-ms response headers when present — the
+    // retry policy uses this hint verbatim (upstream SessionRetry.delay()).
+    // httplib header lookup is case-insensitive.
     if (res->has_header("retry-after-ms")) {
       try {
-        long ms = std::stol(res->get_header_value("retry-after-ms"));
-        if (ms > 0) LOG_INFO("Provider requested retry delay of {} ms", ms);
+        long long ms = std::stoll(res->get_header_value("retry-after-ms"));
+        if (ms > 0) {
+          LOG_INFO("Provider requested retry delay of {} ms", ms);
+          error_result.retry_after_ms = ms;
+        }
       } catch (...) {}
-    } else if (res->has_header("Retry-After")) {
+    } else if (res->has_header("retry-after")) {
+      const auto value = res->get_header_value("retry-after");
       try {
-        long sec = std::stol(res->get_header_value("Retry-After"));
-        if (sec > 0) LOG_INFO("Provider requested Retry-After delay of {} s", sec);
-      } catch (...) {}
+        long long sec = std::stoll(value);
+        if (sec > 0) {
+          const long long ms = sec * 1000;
+          LOG_INFO("Provider requested Retry-After delay of {} s", sec);
+          error_result.retry_after_ms = ms;
+        }
+      } catch (...) {
+        // Not a plain integer — try HTTP-date format.
+        std::tm tm{};
+        std::istringstream ss(value);
+        std::time_t parsed = -1;
+        if (ss >> std::get_time(&tm, "%a, %d %b %Y %H:%M:%S GMT"); !ss.fail()) {
+#ifdef _WIN32
+          parsed = _mkgmtime(&tm);
+#else
+          parsed = timegm(&tm);
+#endif
+        }
+        if (parsed > 0) {
+          const auto now = std::time(nullptr);
+          const long long secs_until = static_cast<long long>(parsed - now);
+          if (secs_until > 0) {
+            LOG_INFO("Provider requested Retry-After until HTTP date ({} s)",
+                     secs_until);
+            error_result.retry_after_ms = secs_until * 1000;
+          }
+        }
+      }
     }
 
     return error_result;

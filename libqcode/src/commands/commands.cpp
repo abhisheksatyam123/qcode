@@ -397,6 +397,7 @@ bool handle_slash_command(
           << "  /rename <name>    - rename the current session title\n"
           << "  /compact [keep]   - compress conversation into a handoff summary\n"
           << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
+          << "  /queue [rm <n>]   - list queued prompts / remove one (/cq clears all)\n"
           << "  /help             - show this help\n"
           << "Keys: Esc stop · r retry last failed turn · F3 copy mode\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";

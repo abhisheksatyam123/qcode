@@ -78,6 +78,10 @@ void GenerationController::maybe_start_queued(GenerationRequest request) {
     store_.add_toast(
         "Running queued prompt (" + std::to_string(remaining) + " left)",
         "info", 1500);
+    // Queued prompts were already appended to the history/DB when they were
+    // enqueued (mirrors upstream adding the user message immediately) — skip
+    // the second append here.
+    request.append_user_message = false;
     spawn_unlocked(std::move(next), std::move(request));
 }
 

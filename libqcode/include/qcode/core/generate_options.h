@@ -112,6 +112,10 @@ struct GenerateResult {
   std::optional<std::string> error;
   std::vector<std::string> warnings;
   std::optional<bool> is_retryable;
+  /// Provider-provided Retry-After hint in milliseconds (from retry-after-ms
+  /// or Retry-After headers). Honored verbatim by the retry policy, mirroring
+  /// upstream opencode's SessionRetry.delay().
+  std::optional<long long> retry_after_ms;
 
   /// Provider-specific metadata
   std::optional<std::string> provider_metadata;

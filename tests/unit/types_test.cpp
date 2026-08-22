@@ -396,5 +396,42 @@ TEST_F(TypeIntegrationTest, MessageConversationFlow) {
   EXPECT_EQ(conversation.back().get_text(), "How are you?");
 }
 
+// ── Upstream opencode RETRYABLE_MESSAGE_PATTERNS parity ──
+
+TEST(ErrorClassificationTest, RateLimitPatternsAreRetryable) {
+  EXPECT_TRUE(is_error_message_retryable("Rate limit exceeded"));
+  EXPECT_TRUE(is_error_message_retryable(
+      "{\"error\":{\"type\":\"rate_limit_error\"}}"));
+  EXPECT_TRUE(is_error_message_retryable("Too many requests, slow down"));
+  EXPECT_TRUE(is_error_message_retryable("Provider is overloaded"));
+}
+
+TEST(ErrorClassificationTest, NetworkPatternsAreRetryable) {
+  EXPECT_TRUE(is_error_message_retryable("fetch failed"));
+  EXPECT_TRUE(is_error_message_retryable("Connection refused (os error 111)"));
+  EXPECT_TRUE(is_error_message_retryable("socket hang up"));
+  EXPECT_TRUE(is_error_message_retryable("stream closed unexpectedly: ECONNRESET"));
+  EXPECT_TRUE(is_error_message_retryable("upstream connect error or disconnect/reset before headers"));
+  EXPECT_TRUE(is_error_message_retryable("getaddrinfo ENOTFOUND api.example.com"));
+  EXPECT_TRUE(is_error_message_retryable("request timeout after 30s"));
+  EXPECT_TRUE(is_error_message_retryable("connection timed out"));
+}
+
+TEST(ErrorClassificationTest, CapacityAndRetryInvitations) {
+  EXPECT_TRUE(is_error_message_retryable("Model is currently at capacity"));
+  EXPECT_TRUE(is_error_message_retryable("Please try again in 25s"));
+  EXPECT_TRUE(is_error_message_retryable("resource exhausted"));
+  EXPECT_TRUE(is_error_message_retryable("{\"type\":\"FreeUsageLimitError\"}"));
+}
+
+TEST(ErrorClassificationTest, PermanentErrorsAreNotRetryable) {
+  EXPECT_FALSE(is_error_message_retryable(""));
+  EXPECT_FALSE(is_error_message_retryable(
+      "401 Unauthorized: invalid api key"));
+  EXPECT_FALSE(is_error_message_retryable(
+      "Model ox-alpha is not supported"));
+  EXPECT_FALSE(is_error_message_retryable("Invalid request: bad schema"));
+}
+
 }  // namespace test
 }  // namespace qcode

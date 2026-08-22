@@ -205,5 +205,77 @@ TEST(RetryPolicyTest, RetryCallbackInvokedWithDetails) {
   EXPECT_EQ(last_err, "HTTP 429 error");
 }
 
+// ── Upstream opencode SessionRetry parity ──
+
+// Upstream: RETRY_MAX_RETRIES = 5 by default.
+TEST(RetryPolicyTest, DefaultMaxRetriesMatchesUpstream) {
+  retry::RetryConfig config;
+  EXPECT_EQ(config.max_retries, 5);
+  EXPECT_EQ(config.initial_delay, std::chrono::milliseconds(2000));
+  EXPECT_DOUBLE_EQ(config.backoff_factor, 2.0);
+  EXPECT_DOUBLE_EQ(config.jitter, 0.25);
+  EXPECT_EQ(config.max_delay, std::chrono::milliseconds(30000));
+}
+
+TEST(RetryPolicyTest, ExhaustsFiveRetriesThenSurfacesFailure) {
+  retry::RetryConfig config;
+  config.max_retries = 5;
+  config.initial_delay = std::chrono::milliseconds(1);
+  config.jitter = 0.0;
+  retry::RetryPolicy policy(config);
+
+  int call_count = 0;
+  auto result =
+      policy.execute_with_retry<std::function<MockTestResult()>, MockTestResult>(
+          [&call_count]() -> MockTestResult {
+            call_count++;
+            return MockTestResult{.success = false, .retryable = true,
+                                  .message = "overloaded"};
+          },
+          [](const MockTestResult& res) { return res.retryable; });
+
+  // 1 initial attempt + 5 retries.
+  EXPECT_FALSE(result.is_success());
+  EXPECT_EQ(call_count, 6);
+}
+
+// A provider Retry-After hint is honored verbatim (upstream delay(): header
+// values bypass the exponential schedule and the no-header cap). Uses a small
+// hint above a tiny max_delay so the test stays fast.
+TEST(RetryPolicyTest, HonorsRetryAfterHint) {
+  retry::RetryConfig config;
+  config.max_retries = 2;
+  config.jitter = 0.0;
+  config.max_delay = std::chrono::milliseconds(50);
+  retry::RetryPolicy policy(config);
+
+  int call_count = 0;
+  std::chrono::milliseconds seen_delay{0};
+  retry::RetryCallback cb = [&](int, int, std::chrono::milliseconds delay,
+                                const std::string&) { seen_delay = delay; };
+
+  auto result =
+      policy.execute_with_retry<std::function<GenerateResult()>, GenerateResult>(
+          [&call_count]() -> GenerateResult {
+            call_count++;
+            if (call_count == 1) {
+              GenerateResult r("HTTP 429");
+              r.is_retryable = true;
+              r.retry_after_ms = 200;  // > max_delay; must still win verbatim.
+              return r;
+            }
+            GenerateResult ok;
+            ok.finish_reason = kFinishReasonStop;
+            return ok;
+          },
+          [](const GenerateResult& res) {
+            return res.is_retryable.value_or(false);
+          },
+          cb);
+
+  EXPECT_TRUE(result.is_success());
+  EXPECT_EQ(seen_delay, std::chrono::milliseconds(200));
+}
+
 }  // namespace test
 }  // namespace qcode

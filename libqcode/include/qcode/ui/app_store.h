@@ -43,6 +43,8 @@ public:
     void append_to_last_queued_prompt(const std::string& text);
     size_t queue_size() const;
     void clear_prompt_queue();
+    // Remove the 1-based queued prompt; false when out of range.
+    bool remove_queued_prompt(size_t index_1based);
     // Snapshot of queued prompt bodies for the message list (thread-safe copy).
     std::vector<std::string> queued_prompts_snapshot() const;
 

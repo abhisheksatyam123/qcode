@@ -6,8 +6,11 @@
 #include "providers/opencode_zen_headers.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <mutex>
+#include <optional>
+#include <random>
 
 namespace {
 std::chrono::seconds default_event_timeout() {
@@ -193,12 +196,31 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
 
     LOG_INFO("Sending stream request to OpenAI API");
 
-    // Retry initial connection up to 3 attempts for transient status codes (429, 5xx)
-    // or network drops before any stream payload is received.
-    constexpr int kMaxStreamConnectAttempts = 3;
+    // Retry the initial connection with the upstream SessionRetry policy:
+    // up to 5 retries for transient status codes (429, 5xx), retryable error
+    // bodies, or network drops before any stream payload is received.
+    // Backoff is exponential (2s base, x2) with one-sided jitter, honoring
+    // Retry-After hints when the provider sends them.
+    constexpr int kMaxStreamRetries = 5;
     bool send_success = false;
 
-    for (int attempt = 1; attempt <= kMaxStreamConnectAttempts; ++attempt) {
+    auto stream_retry_after_ms = [&res, &send_success]() -> std::optional<long long> {
+      if (send_success && res.has_header("retry-after-ms")) {
+        try {
+          long long ms = std::stoll(res.get_header_value("retry-after-ms"));
+          if (ms > 0) return ms;
+        } catch (...) {}
+      }
+      if (send_success && res.has_header("retry-after")) {
+        try {
+          long long sec = std::stoll(res.get_header_value("retry-after"));
+          if (sec > 0) return sec * 1000;
+        } catch (...) {}
+      }
+      return std::nullopt;
+    };
+
+    for (int attempt = 1; attempt <= kMaxStreamRetries + 1; ++attempt) {
       if (should_stop_) break;
 
       accumulated_data.clear();
@@ -217,15 +239,28 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
            qcode::is_error_message_retryable(res.body));
 
       if ((is_network_error || is_retryable_status) &&
-          attempt < kMaxStreamConnectAttempts && !should_stop_) {
-        const int delay_ms = attempt * 1500;
+          attempt <= kMaxStreamRetries && !should_stop_) {
+        // Upstream delay(): Retry-After hint wins verbatim; otherwise
+        // exponential backoff with one-sided jitter capped at 30s.
+        std::chrono::milliseconds delay_ms(2000);
+        if (const auto hint = stream_retry_after_ms()) {
+          delay_ms = std::chrono::milliseconds(std::min(*hint, 2147483647LL));
+        } else {
+          const double base =
+              2000.0 * std::pow(2.0, attempt - 1);
+          static thread_local std::mt19937 rng(std::random_device{}());
+          std::uniform_real_distribution<double> dist(0.0, 1.0);
+          delay_ms = std::chrono::milliseconds(static_cast<long long>(
+              std::ceil(base * (1.0 + 0.25 * dist(rng)))));
+          delay_ms = std::min(delay_ms, std::chrono::milliseconds(30000));
+        }
         std::string err_desc = is_network_error
                                   ? httplib::to_string(error)
                                   : ("HTTP " + std::to_string(res.status));
         LOG_WARN(
             "Stream initial connection failed ({}), retrying attempt {}/{} in {} ms...",
-            err_desc, attempt + 1, kMaxStreamConnectAttempts, delay_ms);
-        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+            err_desc, attempt + 1, kMaxStreamRetries + 1, delay_ms.count());
+        std::this_thread::sleep_for(delay_ms);
         continue;
       }
 

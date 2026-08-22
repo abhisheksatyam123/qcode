@@ -260,6 +260,22 @@ void AppStore::clear_prompt_queue() {
     notify();
 }
 
+bool AppStore::remove_queued_prompt(size_t index_1based) {
+    bool removed = false;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (index_1based >= 1 && index_1based <= prompt_queue_.size()) {
+            auto it = prompt_queue_.begin();
+            std::advance(it, static_cast<long>(index_1based - 1));
+            prompt_queue_.erase(it);
+            sync_queue_mirror_unlocked();
+            removed = true;
+        }
+    }
+    if (removed) notify();
+    return removed;
+}
+
 void AppStore::append_to_last_queued_prompt(const std::string& text) {
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);

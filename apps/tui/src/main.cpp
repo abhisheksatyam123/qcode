@@ -296,6 +296,47 @@ int main() {
                 return;
             }
 
+            if (cmd.rfind("queue", 0) == 0) {
+                prompt_input = "";
+                // /queue          — list queued prompts
+                // /queue rm <n>   — remove the nth queued prompt
+                const std::string qargs_str =
+                    cmd.size() > 5 ? cmd.substr(5) : "";
+                std::istringstream qargs(qargs_str);
+                std::string sub;
+                qargs >> sub;
+                if (sub == "rm" || sub == "remove" || sub == "del") {
+                    size_t n = 0;
+                    if (qargs >> n && store.remove_queued_prompt(n)) {
+                        store.add_toast("Removed queued prompt #" + std::to_string(n),
+                                        "info", 1500);
+                    } else {
+                        store.add_toast("Usage: /queue rm <n>  (1..queue size)",
+                                        "warning", 2000);
+                    }
+                } else if (!sub.empty()) {
+                    store.add_toast("Usage: /queue [rm <n>]", "warning", 2000);
+                } else if (!store.has_queued_prompt()) {
+                    store.add_toast("Prompt queue is empty", "info", 1500);
+                } else {
+                    const auto snapshot = store.queued_prompts_snapshot();
+                    for (size_t qi = 0; qi < snapshot.size(); ++qi) {
+                        auto body = snapshot[qi];
+                        const auto nl = body.find('\n');
+                        if (nl != std::string::npos) body = body.substr(0, nl) + " …";
+                        if (body.size() > 60) body = body.substr(0, 60) + "…";
+                        store.append_chat_message(
+                            "System", "#" + std::to_string(qi + 1) + "/" +
+                                          std::to_string(snapshot.size()) + ": " + body);
+                    }
+                    store.add_toast(
+                        std::to_string(snapshot.size()) + " queued prompt(s) · /queue rm <n> to remove",
+                        "info", 2500);
+                }
+                screen.Post(Event::Custom);
+                return;
+            }
+
             if (cmd == "session" || cmd == "list") {
                 prompt_input = "";
                 session_entries = qcode::session::list_sessions_full();
