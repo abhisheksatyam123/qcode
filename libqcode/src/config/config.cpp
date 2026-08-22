@@ -211,39 +211,8 @@ static ModelInfo model_from_catalog(const std::string& id,
     return model;
 }
 
-// Live-probed 2026-08-22 through the full qcode pipeline (keyless): these are
-// the only catalog "free" ids that actually complete a chat round-trip. The
-// Zen Console free pool is invite-gated server-side, so most cost==0 catalog
-// entries still 401 without OPENCODE_API_KEY; OpenRouter :free ids fail when
-// their upstream provider is down or the model lacks tool support (qcode
-// always advertises tools).
-static constexpr std::array<const char*, 8> kVerifiedZenFree = {
-    "big-pickle",
-    "hy3-free",
-    "laguna-s-2.1-free",
-    "mimo-v2.5-free",
-    "muse-spark-1.2-contributor-free",
-    "nemotron-3-ultra-free",
-    "nemotron-3.5-lightning-free",
-    "x-preview-f-free",
-};
-
-static constexpr std::array<const char*, 13> kVerifiedOpenRouterFree = {
-    "cohere/north-mini-code:free",
-    "dots-studio/dots-3-note-preview:free",
-    "liquid/lfm-2.5-2.6b:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "nvidia/nemotron-3.5-lightning:free",
-    "nvidia/nemotron-nano-12b-v2-vl:free",
-    "nvidia/nemotron-nano-9b-v2:free",
-    "openrouter/free",
-    "poolside/laguna-s-2.1:free",
-    "poolside/laguna-xs-2.1:free",
-    "stealth/ox-alpha",  // $0 promo pricing; verified working
-};
-
+// Curated picker allowlists (see below) intersect every models.dev catalog
+// merge; config-declared models always pass through unfiltered.
 template <std::size_t N>
 bool id_in_list(const std::array<const char*, N>& list, const std::string& id) {
     return std::find_if(list.begin(), list.end(),
@@ -251,31 +220,57 @@ bool id_in_list(const std::array<const char*, N>& list, const std::string& id) {
            list.end();
 }
 
-// Keep paid models (usable with keys) but drop free-tier entries that were
-// probed broken keylessly — they only add picker noise.
-static std::vector<ModelInfo> filter_verified(
+// Picker curation: the models.dev catalog exposes hundreds of ids per
+// provider which bury the working entries in the picker (OpenRouter alone
+// lists 350+). qcode only shows models that were probed to complete a chat
+// round-trip through the full pipeline, so catalog merges are intersected
+// with these curated allowlists instead of keeping every paid entry.
+static constexpr std::array<const char*, 10> kCuratedZenCatalog = {
+    "big-pickle",
+    "hy3-free",
+    "laguna-s-2.1-free",
+    "mimo-v2.5-free",
+    "nemotron-3.5-lightning-free",
+    "gemini-3-pro",
+    "muse-spark-1.2-contributor-free",
+    "deepseek-v4-flash-free",
+    "kimi-k2.5-free",
+    "gpt-5.3-codex",
+};
+
+static constexpr std::array<const char*, 14> kCuratedOpenRouterCatalog = {
+    "stealth/ox-alpha",
+    "deepseek/deepseek-v4-flash-0731",
+    "openai/gpt-5.3-codex",
+    "moonshotai/kimi-k3",
+    "meta/muse-spark-1.2",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "poolside/laguna-s-2.1:free",
+    "cohere/north-mini-code:free",
+    "z-ai/glm-5.2:free",
+    "dots-studio/dots-3-note-preview:free",
+    "openrouter/free",
+};
+
+template <std::size_t N>
+static std::vector<ModelInfo> filter_catalog_allowlist(
     std::vector<ModelInfo> models,
-    const std::array<const char*, 8>& zen_allow,
-    const std::array<const char*, 13>& orr_allow,
-    bool is_openrouter) {
-    std::erase_if(models, [&](const ModelInfo& model) {
-        const bool free_entry = model.input_cost == 0.0 && model.output_cost == 0.0;
-        if (!free_entry) return false;  // paid: keep
-        const bool allowed = is_openrouter ? id_in_list(orr_allow, model.id)
-                                           : id_in_list(zen_allow, model.id);
-        if (allowed) return false;  // verified free: keep
-        LOG_DEBUG("Dropping non-working free model from picker: {}", model.id);
+    const std::array<const char*, N>& allow) {
+    std::erase_if(models, [&allow](const ModelInfo& model) {
+        if (id_in_list(allow, model.id)) return false;
+        LOG_DEBUG("Dropping non-curated catalog model from picker: {}",
+                  model.id);
         return true;
     });
     return models;
 }
 
-// All Zen catalog models. Upstream hides cost>0 models when no OPENCODE_API_KEY
-// is set (its keyless pool uses apiKey="public" and paid ids would 401); qcode
-// keeps them visible because the model picker is explicit user intent — free
-// models carry the catalog's "(Free)" naming and $0 costs, paid ones show real
-// per-1M rates in the footer. has_api_key only affects default ordering needs,
-// not availability.
+// Zen catalog models intersected with kCuratedZenCatalog so the picker only
+// lists ids that were probed to work end-to-end. has_api_key is unused here;
+// availability curation happens via the allowlist, not the key state.
 static std::vector<ModelInfo> zen_models_from_catalog(
     const ordered_json& catalog, bool /*has_api_key*/) {
     std::vector<ModelInfo> models;
@@ -286,9 +281,7 @@ static std::vector<ModelInfo> zen_models_from_catalog(
     for (auto it = entries.begin(); it != entries.end(); ++it) {
         models.push_back(model_from_catalog(it.key(), it.value()));
     }
-    static constexpr std::array<const char*, 13> kNoOrrAllow = {};
-    return filter_verified(std::move(models), kVerifiedZenFree,
-                           kNoOrrAllow, false);
+    return filter_catalog_allowlist(std::move(models), kCuratedZenCatalog);
 }
 
 // OpenRouter provider from the catalog. Only built when OPENROUTER_API_KEY is
@@ -311,10 +304,8 @@ static ProviderInfo openrouter_provider_from_catalog(
     for (auto it = entries.begin(); it != entries.end(); ++it) {
         provider.models.push_back(model_from_catalog(it.key(), it.value()));
     }
-    static constexpr std::array<const char*, 8> kNoZenAllow = {nullptr};
-    provider.models =
-        filter_verified(std::move(provider.models), kNoZenAllow,
-                        kVerifiedOpenRouterFree, true);
+    provider.models = filter_catalog_allowlist(
+        std::move(provider.models), kCuratedOpenRouterCatalog);
     return provider;
 }
 
@@ -787,6 +778,16 @@ static void maybe_hydrate_openrouter(std::vector<ProviderInfo>& providers) {
     if (existing->api_url.empty()) {
         existing->api_url = "https://openrouter.ai/api/v1";
     }
+    std::erase_if(existing->models, [](const ModelInfo& model) {
+        const bool is_allowed = (model.input_cost == 0.0 && model.output_cost == 0.0) ||
+                                model.id == "stealth/ox-alpha" ||
+                                model.id.find(":free") != std::string::npos ||
+                                model.id == "deepseek/deepseek-v4-flash-0731" ||
+                                model.id == "openai/gpt-5.3-codex" ||
+                                model.id == "moonshotai/kimi-k3" ||
+                                model.id == "meta/muse-spark-1.2";
+        return !is_allowed;
+    });
     if (have_catalog) {
         for (auto& model :
              openrouter_provider_from_catalog(catalog).models) {
@@ -817,18 +818,48 @@ void hydrate_cursor_models(ProviderInfo& provider) {
             LOG_INFO("Loaded {} live Cursor models", provider.models.size());
             return;
         }
-        LOG_WARN("Cursor model discovery failed; using configured fallbacks");
+        LOG_WARN("Cursor model discovery unavailable or failed");
     }
 
-    // Keep configured entries and seed current IDs when the catalog endpoint is
-    // temporarily unavailable. Cursor will still enforce account entitlement.
+    // If discovery failed or returned empty, clean non-matching models
     std::erase_if(provider.models, [](const ModelInfo& model) {
         return !is_selected_cursor_family(model.id);
     });
-    add_cursor_model_if_missing(provider.models, "cursor-grok-4.6",
-                                "Cursor Grok 4.6");
-    add_cursor_model_if_missing(provider.models, "claude-opus-5-high",
-                                "Claude Opus 5");
+}
+
+// Inject a Cursor provider when Cursor auth is available but the config does
+// not declare one, so the model picker lists Cursor alongside the configured
+// providers. Config-declared Cursor providers are left untouched.
+static void maybe_inject_cursor_provider(std::vector<ProviderInfo>& providers) {
+    if (std::getenv("OPENCODE_CONFIG") != nullptr) return;
+    for (const auto& provider : providers) {
+        if (provider.id == "cursor") return;
+    }
+    const auto token = get_cursor_access_token();
+    if (token.empty()) return;
+
+    // Check if live models can be discovered
+    qcode::cursor::Options options;
+    options.agent_base_url = "https://agentn.global.api5.cursor.sh";
+    const auto available = qcode::cursor::list_models(token, options);
+    if (available.empty()) return;
+
+    ProviderInfo cursor;
+    cursor.name = "Cursor";
+    cursor.id = "cursor";
+    cursor.api_url = options.agent_base_url;
+    cursor.protocol = "chat_completions";
+    for (const auto& model : available) {
+        if (!is_selected_cursor_family(model.id)) continue;
+        add_cursor_model_if_missing(
+            cursor.models, model.id,
+            cursor_display_name(model.id, model.name));
+    }
+    if (!cursor.models.empty()) {
+        LOG_INFO("Injected Cursor provider with {} live models",
+                 cursor.models.size());
+        providers.push_back(std::move(cursor));
+    }
 }
 
 }  // namespace
@@ -911,6 +942,7 @@ std::vector<ProviderInfo> load_providers_from_config() {
             }
         }
         maybe_hydrate_openrouter(loaded);
+        maybe_inject_cursor_provider(loaded);
     } catch (const std::exception& e) {
         LOG_ERROR("Config parse error: {}", e.what());
     }

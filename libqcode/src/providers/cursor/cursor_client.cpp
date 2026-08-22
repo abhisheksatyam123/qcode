@@ -44,7 +44,11 @@ providers::ProviderConfig make_config(const std::string& api_key,
 std::unique_ptr<http::HttpRequestHandler> make_handler(const std::string& url,
                                                       int read_timeout_sec) {
   auto cfg = http::HttpRequestHandler::parse_base_url(url);
+  cfg.connection_timeout_sec = 3;
   cfg.read_timeout_sec = read_timeout_sec;
+  retry::RetryConfig rcfg;
+  rcfg.max_retries = 0;
+  cfg.retry_config = rcfg;
   return std::make_unique<http::HttpRequestHandler>(cfg);
 }
 

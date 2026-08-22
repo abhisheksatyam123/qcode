@@ -1,6 +1,6 @@
 #pragma once
 
-#include "envelope.h"
+#include "bus_envelope.h"
 #include <memory>
 #include <typeindex>
 #include <typeinfo>

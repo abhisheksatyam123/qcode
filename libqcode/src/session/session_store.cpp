@@ -81,12 +81,22 @@ public:
 
     DbLock acquire() {
         std::unique_lock<std::mutex> lock(mutex_);
+        const std::string expected_path = get_db_path();
+        if (db_ && current_path_ != expected_path) {
+            sqlite3_close(db_);
+            db_ = nullptr;
+        }
         if (!db_) {
-            std::string path;
-            db_ = open_database(path);
+            std::string actual_path;
+            db_ = open_database(actual_path);
+            current_path_ = expected_path;
         }
         return DbLock{std::move(lock), db_};
     }
+
+    // Access the handle without locking — only for callers that already hold
+    // the mutex via acquire() (e.g. init_database seeding nested tables).
+    sqlite3* peek() const { return db_; }
 
 private:
     SharedDbHandle() = default;
@@ -97,6 +107,7 @@ private:
         }
     }
     sqlite3* db_ = nullptr;
+    std::string current_path_;
     std::mutex mutex_;
 };
 
@@ -150,6 +161,7 @@ public:
 
 private:
     sqlite3* db_ = nullptr;
+    std::string current_path_;
     sqlite3_stmt* insert_ = nullptr;
     std::mutex mutex_;
 };
@@ -334,7 +346,7 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
-    LOG_INFO("SQLite: database opened successfully at {}", path);
+    LOG_INFO("SQLite: database opened successfully at {}", get_db_path());
     // shared db handle
     seed_model_capabilities_if_needed();
 }
@@ -1093,8 +1105,9 @@ void delete_session(const std::string& session_id) {
 
 
 void seed_model_capabilities_if_needed() {
-    auto db_lock = SharedDbHandle::instance().acquire();
-    sqlite3* db = db_lock.db;
+    // Caller (init_database) already holds the SharedDbHandle lock; acquiring
+    // again here would deadlock on the non-recursive mutex.
+    sqlite3* db = SharedDbHandle::instance().peek();
     if (!db) return;
 
     struct SeedCap {
@@ -1271,16 +1284,20 @@ ModelPerformanceSummary get_model_performance_summary(const std::string& model_i
     if (prepare_stmt(db, sql, &stmt)) {
         sqlite3_bind_text(stmt, 1, model_id.c_str(), -1, SQLITE_STATIC);
         if (sqlite3_step(stmt) == SQLITE_ROW) {
-            summary.model_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            summary.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            summary.model_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-            summary.architecture_info = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            auto safe_text = [](sqlite3_stmt* s, int col) -> std::string {
+                const unsigned char* t = sqlite3_column_text(s, col);
+                return t ? reinterpret_cast<const char*>(t) : "";
+            };
+            summary.model_id = safe_text(stmt, 0);
+            summary.provider = safe_text(stmt, 1);
+            summary.model_name = safe_text(stmt, 2);
+            summary.architecture_info = safe_text(stmt, 3);
             summary.context_window = sqlite3_column_int(stmt, 4);
             summary.output_limit = sqlite3_column_int(stmt, 5);
             summary.tool_call_supported = (sqlite3_column_int(stmt, 6) != 0);
             summary.multi_turn_reliable = (sqlite3_column_int(stmt, 7) != 0);
-            summary.verified_benchmark = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
-            summary.recommended_for = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+            summary.verified_benchmark = safe_text(stmt, 8);
+            summary.recommended_for = safe_text(stmt, 9);
             summary.total_turns = sqlite3_column_int(stmt, 10);
             summary.successful_turns = sqlite3_column_int(stmt, 11);
             summary.failed_turns = sqlite3_column_int(stmt, 12);
@@ -1316,16 +1333,20 @@ std::vector<ModelPerformanceSummary> list_all_model_performance_summaries() {
     if (prepare_stmt(db, sql, &stmt)) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             ModelPerformanceSummary summary;
-            summary.model_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            summary.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            summary.model_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-            summary.architecture_info = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            auto safe_text = [](sqlite3_stmt* s, int col) -> std::string {
+                const unsigned char* t = sqlite3_column_text(s, col);
+                return t ? reinterpret_cast<const char*>(t) : "";
+            };
+            summary.model_id = safe_text(stmt, 0);
+            summary.provider = safe_text(stmt, 1);
+            summary.model_name = safe_text(stmt, 2);
+            summary.architecture_info = safe_text(stmt, 3);
             summary.context_window = sqlite3_column_int(stmt, 4);
             summary.output_limit = sqlite3_column_int(stmt, 5);
             summary.tool_call_supported = (sqlite3_column_int(stmt, 6) != 0);
             summary.multi_turn_reliable = (sqlite3_column_int(stmt, 7) != 0);
-            summary.verified_benchmark = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
-            summary.recommended_for = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+            summary.verified_benchmark = safe_text(stmt, 8);
+            summary.recommended_for = safe_text(stmt, 9);
             summary.total_turns = sqlite3_column_int(stmt, 10);
             summary.successful_turns = sqlite3_column_int(stmt, 11);
             summary.failed_turns = sqlite3_column_int(stmt, 12);

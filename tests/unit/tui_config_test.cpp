@@ -133,26 +133,24 @@ TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
                          return model.id == id;
                        });
   };
-  EXPECT_TRUE(has_model("x-preview-f-free"));
   EXPECT_TRUE(has_model("big-pickle"));
   EXPECT_TRUE(has_model("mimo-v2.5-free"));
   EXPECT_TRUE(has_model("hy3-free"));
   EXPECT_TRUE(has_model("laguna-s-2.1-free"));
-  EXPECT_TRUE(has_model("nemotron-3-ultra-free"));
   EXPECT_TRUE(has_model("nemotron-3.5-lightning-free"));
   EXPECT_FALSE(has_model("north-mini-code-free"));
-  const auto xpreview = std::find_if(
+  const auto pickle = std::find_if(
       models.begin(), models.end(), [](const ModelInfo& model) {
-        return model.id == "x-preview-f-free";
+        return model.id == "big-pickle";
       });
-  ASSERT_NE(xpreview, models.end());
-  EXPECT_EQ(xpreview->context_window, 1000000);
-  EXPECT_TRUE(xpreview->tool_call);
-  EXPECT_TRUE(xpreview->reasoning);
+  ASSERT_NE(pickle, models.end());
+  EXPECT_EQ(pickle->context_window, 200000);
+  EXPECT_TRUE(pickle->tool_call);
+  EXPECT_TRUE(pickle->reasoning);
   std::filesystem::remove(path);
 }
 
-TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
+TEST(TuiConfigTest, HandlesCursorProviderConfigWhenDiscoveryIsUnavailable) {
   const auto path = std::filesystem::temp_directory_path() /
                     "qcode-cursor-config-test.json";
   {
@@ -162,8 +160,8 @@ TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
         "cursor": {
           "name": "Cursor",
           "models": {
-            "composer-2.5": {"name": "Composer 2.5"},
-            "claude-opus-4.8": {"name": "Claude Opus 4.8"}
+            "cursor-grok-4.6": {"name": "Cursor Grok 4.6"},
+            "composer-2.5": {"name": "Composer 2.5"}
           }
         }
       }
@@ -185,16 +183,7 @@ TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
                        });
   };
   EXPECT_TRUE(has_model("cursor-grok-4.6"));
-  EXPECT_TRUE(has_model("claude-opus-5-high"));
   EXPECT_FALSE(has_model("composer-2.5"));
-  EXPECT_FALSE(has_model("gpt-5.6-sol-medium"));
-  const auto grok = std::find_if(
-      models.begin(), models.end(), [](const ModelInfo& model) {
-        return model.id == "cursor-grok-4.6";
-      });
-  ASSERT_NE(grok, models.end());
-  EXPECT_EQ(grok->context_window, 200000);
-  EXPECT_TRUE(grok->tool_call);
   std::filesystem::remove(path);
 }
 

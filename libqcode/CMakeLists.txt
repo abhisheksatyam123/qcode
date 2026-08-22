@@ -86,12 +86,29 @@ target_sources(qcode-engine PRIVATE
     src/http/ssl_config.cpp
 )
 
+# Keep third-party deps as BUILD_INTERFACE so install(EXPORT) does not require
+# them to be in an export set.
 target_link_libraries(qcode-engine PUBLIC
     nlohmann_json::nlohmann_json
     OpenSSL::SSL
     OpenSSL::Crypto
     Threads::Threads
     CURL::libcurl
+    $<BUILD_INTERFACE:httplib::httplib>
+    $<BUILD_INTERFACE:sqlite3>
+    $<BUILD_INTERFACE:stduuid::stduuid>
+    $<BUILD_INTERFACE:concurrentqueue::concurrentqueue>
+)
+
+# Feature gates mirrored by the header #error guards (qcode/providers/*.h).
+target_compile_definitions(qcode-engine PUBLIC
+    ${HTTPLIB_COMPILE_DEFS}
+    QCODE_HAS_OPENAI=1
+    QCODE_HAS_ANTHROPIC=1
+    QCODE_HAS_ANTIGRAVITY=1
+    QCODE_HAS_CURSOR=1
+    QCODE_HAS_LANGFUSE=1
+    QCODE_HAS_REGISTRY=1
 )
 
 set_target_properties(qcode-engine PROPERTIES
