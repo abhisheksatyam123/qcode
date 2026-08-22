@@ -124,7 +124,23 @@ GenerateResult HttpRequestHandler::execute_single_request(
     error_result.error = res->body;
     error_result.finish_reason = kFinishReasonError;
     error_result.provider_metadata = std::to_string(res->status);
-    error_result.is_retryable = is_status_code_retryable(res->status);
+    error_result.is_retryable =
+        is_status_code_retryable(res->status) ||
+        is_error_message_retryable(res->body);
+
+    // Parse Retry-After / retry-after-ms response headers if present
+    if (res->has_header("retry-after-ms")) {
+      try {
+        long ms = std::stol(res->get_header_value("retry-after-ms"));
+        if (ms > 0) LOG_INFO("Provider requested retry delay of {} ms", ms);
+      } catch (...) {}
+    } else if (res->has_header("Retry-After")) {
+      try {
+        long sec = std::stol(res->get_header_value("Retry-After"));
+        if (sec > 0) LOG_INFO("Provider requested Retry-After delay of {} s", sec);
+      } catch (...) {}
+    }
+
     return error_result;
   };
 

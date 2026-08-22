@@ -66,10 +66,6 @@ class RetryPolicy {
               config_.backoff_factor;
           current_delay =
               std::chrono::duration_cast<std::chrono::milliseconds>(delay_ms);
-          // Cap the wait so legitimately slow generations are not starved.
-          if (current_delay > config_.max_delay) {
-            current_delay = config_.max_delay;
-          }
           // Jitter the wait to avoid synchronized retries (thundering herd).
           if (config_.jitter > 0.0) {
             static thread_local std::mt19937 rng(std::random_device{}());
@@ -78,6 +74,10 @@ class RetryPolicy {
             const double factor = dist(rng);
             current_delay = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::duration<double, std::milli>(current_delay) * factor);
+          }
+          // Cap the wait AFTER jitter so delay never exceeds max_delay.
+          if (current_delay > config_.max_delay) {
+            current_delay = config_.max_delay;
           }
           continue;
         }

@@ -9,8 +9,26 @@ namespace qcode {
 inline bool is_status_code_retryable(int status_code) {
   return status_code == 408 ||  // Request Timeout
          status_code == 409 ||  // Conflict
+         status_code == 425 ||  // Too Early
          status_code == 429 ||  // Too Many Requests
          status_code >= 500;    // Server errors (5xx)
+}
+
+/// Check if an error message body contains transient/rate-limit error indicators
+/// (handles providers returning transient capacity issues under 400 or 403).
+inline bool is_error_message_retryable(std::string_view msg) {
+  if (msg.empty()) return false;
+  std::string lower;
+  lower.reserve(msg.size());
+  for (char c : msg) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+  return lower.find("rate limit") != std::string::npos ||
+         lower.find("rate_limit") != std::string::npos ||
+         lower.find("too many requests") != std::string::npos ||
+         lower.find("resource_exhausted") != std::string::npos ||
+         lower.find("overloaded") != std::string::npos ||
+         lower.find("capacity") != std::string::npos ||
+         lower.find("temporarily unavailable") != std::string::npos ||
+         lower.find("try again later") != std::string::npos;
 }
 
 /// Base class for all qcode errors

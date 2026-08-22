@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -90,12 +91,231 @@ static ModelInfo make_default_model(std::string name,
                                     int output_limit,
                                     bool tool_call = true,
                                     bool reasoning = false) {
-    ModelInfo model{std::move(name), std::move(id)};
+    ModelInfo model;
+    model.name = std::move(name);
+    model.id = std::move(id);
     model.context_window = context_window;
     model.output_limit = output_limit;
     model.tool_call = tool_call;
     model.reasoning = reasoning;
     return model;
+}
+
+// ── models.opencode.ai catalog (mirrors upstream opencode ModelsDev) ──
+// Upstream opencode fetches {OPENCODE_MODELS_URL:-https://models.opencode.ai}/api.json
+// and caches it on disk with a 5-minute TTL (packages/core/src/models-dev.ts).
+// The catalog drives model discovery for OpenCode Zen and OpenRouter:
+//   - Zen free pool: when no OPENCODE_API_KEY is configured, upstream injects
+//     apiKey="public" and only models with cost.input == 0 are usable
+//     (packages/core/src/plugin/provider/opencode.ts).
+//   - OpenRouter: activated by OPENROUTER_API_KEY; models come straight from the
+//     catalog with HTTP-Referer/X-Title headers (plugin/provider/openrouter.ts).
+static constexpr const char* kModelsDevUrl = "https://models.opencode.ai/api.json";
+static constexpr const char* kOpenRouterReferer = "https://opencode.ai/";
+
+static std::string models_dev_cache_path() {
+    if (const char* p = std::getenv("QCODE_MODELS_CACHE")) return p;
+    std::vector<std::filesystem::path> candidates;
+    if (const char* xdg = std::getenv("XDG_CACHE_HOME")) {
+        candidates.emplace_back(std::filesystem::path(xdg) / "qcode" / "models-dev.json");
+    }
+    if (const char* home = std::getenv("HOME")) {
+        candidates.emplace_back(std::filesystem::path(home) / ".cache" / "qcode" / "models-dev.json");
+    }
+    return candidates.empty() ? "models-dev.json" : candidates.front().string();
+}
+
+// Fetch the catalog, preferring a cache file younger than ttl_seconds. On
+// network failure fall back to a stale cache of any age. Returns false when no
+// data is available at all.
+static bool load_models_dev_catalog(ordered_json& out) {
+    constexpr long kTtlSeconds = 300;  // upstream: Duration.minutes(5)
+    const auto cache_path = models_dev_cache_path();
+
+    auto cache_fresh = [&] {
+        std::error_code ec;
+        const auto mtime = std::filesystem::last_write_time(cache_path, ec);
+        if (ec) return false;
+        const auto age = std::filesystem::file_time_type::clock::now() - mtime;
+        return std::chrono::duration_cast<std::chrono::seconds>(age).count() < kTtlSeconds;
+    };
+
+    auto read_cache = [&](ordered_json& target) {
+        std::ifstream file(cache_path);
+        if (!file) return false;
+        try {
+            file >> target;
+            return target.is_object();
+        } catch (...) {
+            return false;
+        }
+    };
+
+    if (cache_fresh() && read_cache(out)) return true;
+
+    httplib::Client client("https://models.opencode.ai");
+    client.set_connection_timeout(3, 0);
+    client.set_read_timeout(10, 0);
+    httplib::Headers headers{{"User-Agent", "opencode/1.18.18"}};
+    if (auto res = client.Get("/api.json", headers);
+        res && res->status == 200 && !res->body.empty()) {
+        try {
+            ordered_json parsed = ordered_json::parse(res->body);
+            if (parsed.is_object()) {
+                out = std::move(parsed);
+                std::error_code ec;
+                std::filesystem::create_directories(
+                    std::filesystem::path(cache_path).parent_path(), ec);
+                const auto tmp = cache_path + ".tmp";
+                std::ofstream out_file(tmp);
+                if (out_file) {
+                    out_file << out.dump();
+                    out_file.close();
+                    std::filesystem::rename(tmp, cache_path, ec);
+                }
+                return true;
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("models.dev catalog parse error: {}", e.what());
+        }
+    } else {
+        LOG_WARN("models.dev catalog fetch failed; trying stale cache");
+    }
+
+    return read_cache(out);  // stale fallback of any age
+}
+
+// Convert one catalog model entry to ModelInfo. Catalog costs are USD per
+// token; qcode stores USD per 1M tokens (views.cpp divides token counts by 1e6).
+static ModelInfo model_from_catalog(const std::string& id,
+                                    const ordered_json& data) {
+    ModelInfo model;
+    model.name = data.value("name", id);
+    model.id = id;
+    if (data.contains("limit") && data["limit"].is_object()) {
+        model.context_window = data["limit"].value("context", 0);
+        model.output_limit = data["limit"].value("output", 0);
+    }
+    if (data.contains("cost") && data["cost"].is_object()) {
+        constexpr double kPerTokenToPerMillion = 1000000.0;
+        model.input_cost =
+            data["cost"].value("input", 0.0) * kPerTokenToPerMillion;
+        model.output_cost =
+            data["cost"].value("output", 0.0) * kPerTokenToPerMillion;
+    }
+    model.reasoning = data.value("reasoning", false);
+    model.tool_call = data.value("tool_call", false);
+    if (model.context_window <= 0) {
+        model.context_window = resolve_model_context_window(id);
+    }
+    return model;
+}
+
+// Live-probed 2026-08-22 through the full qcode pipeline (keyless): these are
+// the only catalog "free" ids that actually complete a chat round-trip. The
+// Zen Console free pool is invite-gated server-side, so most cost==0 catalog
+// entries still 401 without OPENCODE_API_KEY; OpenRouter :free ids fail when
+// their upstream provider is down or the model lacks tool support (qcode
+// always advertises tools).
+static constexpr std::array<const char*, 8> kVerifiedZenFree = {
+    "big-pickle",
+    "hy3-free",
+    "laguna-s-2.1-free",
+    "mimo-v2.5-free",
+    "muse-spark-1.2-contributor-free",
+    "nemotron-3-ultra-free",
+    "nemotron-3.5-lightning-free",
+    "x-preview-f-free",
+};
+
+static constexpr std::array<const char*, 13> kVerifiedOpenRouterFree = {
+    "cohere/north-mini-code:free",
+    "dots-studio/dots-3-note-preview:free",
+    "liquid/lfm-2.5-2.6b:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+    "nvidia/nemotron-nano-9b-v2:free",
+    "openrouter/free",
+    "poolside/laguna-s-2.1:free",
+    "poolside/laguna-xs-2.1:free",
+    "stealth/ox-alpha",  // $0 promo pricing; verified working
+};
+
+template <std::size_t N>
+bool id_in_list(const std::array<const char*, N>& list, const std::string& id) {
+    return std::find_if(list.begin(), list.end(),
+                        [&id](const char* entry) { return id == entry; }) !=
+           list.end();
+}
+
+// Keep paid models (usable with keys) but drop free-tier entries that were
+// probed broken keylessly — they only add picker noise.
+static std::vector<ModelInfo> filter_verified(
+    std::vector<ModelInfo> models,
+    const std::array<const char*, 8>& zen_allow,
+    const std::array<const char*, 13>& orr_allow,
+    bool is_openrouter) {
+    std::erase_if(models, [&](const ModelInfo& model) {
+        const bool free_entry = model.input_cost == 0.0 && model.output_cost == 0.0;
+        if (!free_entry) return false;  // paid: keep
+        const bool allowed = is_openrouter ? id_in_list(orr_allow, model.id)
+                                           : id_in_list(zen_allow, model.id);
+        if (allowed) return false;  // verified free: keep
+        LOG_DEBUG("Dropping non-working free model from picker: {}", model.id);
+        return true;
+    });
+    return models;
+}
+
+// All Zen catalog models. Upstream hides cost>0 models when no OPENCODE_API_KEY
+// is set (its keyless pool uses apiKey="public" and paid ids would 401); qcode
+// keeps them visible because the model picker is explicit user intent — free
+// models carry the catalog's "(Free)" naming and $0 costs, paid ones show real
+// per-1M rates in the footer. has_api_key only affects default ordering needs,
+// not availability.
+static std::vector<ModelInfo> zen_models_from_catalog(
+    const ordered_json& catalog, bool /*has_api_key*/) {
+    std::vector<ModelInfo> models;
+    const auto zen_it = catalog.find("opencode");
+    if (zen_it == catalog.end()) return models;
+    const auto& entries = zen_it->value("models", ordered_json::object());
+    models.reserve(entries.size());
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        models.push_back(model_from_catalog(it.key(), it.value()));
+    }
+    static constexpr std::array<const char*, 13> kNoOrrAllow = {};
+    return filter_verified(std::move(models), kVerifiedZenFree,
+                           kNoOrrAllow, false);
+}
+
+// OpenRouter provider from the catalog. Only built when OPENROUTER_API_KEY is
+// configured — upstream treats env presence as activation.
+static ProviderInfo openrouter_provider_from_catalog(
+    const ordered_json& catalog) {
+    ProviderInfo provider;
+    provider.id = "openrouter";
+    provider.name = "OpenRouter";
+    provider.api_url = "https://openrouter.ai/api/v1";
+    provider.protocol = "chat_completions";
+    // Mirror plugin/provider/openrouter.ts attribution headers.
+    provider.headers["HTTP-Referer"] = kOpenRouterReferer;
+    provider.headers["X-Title"] = "opencode";
+
+    const auto or_it = catalog.find("openrouter");
+    if (or_it == catalog.end()) return provider;
+    const auto& entries = or_it->value("models", ordered_json::object());
+    provider.models.reserve(entries.size());
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        provider.models.push_back(model_from_catalog(it.key(), it.value()));
+    }
+    static constexpr std::array<const char*, 8> kNoZenAllow = {nullptr};
+    provider.models =
+        filter_verified(std::move(provider.models), kNoZenAllow,
+                        kVerifiedOpenRouterFree, true);
+    return provider;
 }
 
 // Official OpenCode Zen free catalog (https://opencode.ai/docs/zen/).
@@ -120,17 +340,67 @@ static std::vector<ModelInfo> official_opencode_free_models() {
     };
 }
 
-static ProviderInfo default_opencode_provider() {
-    ProviderInfo provider;
-    provider.name = "OpenCode Zen";
-    provider.id = "opencode";
-    provider.api_url = "https://opencode.ai/zen/v1";
-    provider.protocol = "chat_completions";
-    provider.headers["User-Agent"] = "opencode/1.18.18";
-    provider.headers["x-opencode-client"] = "cli";
-    provider.models = official_opencode_free_models();
-    return provider;
+static bool opencode_has_api_key() {
+    if (const char* key = std::getenv("OPENCODE_API_KEY"); key && *key) return true;
+    // A config-file apiKey ({env:...} resolved earlier or literal) counts too;
+    // callers pass what they know via parameter where needed.
+    return false;
 }
+
+// Build the default provider set when no opencode.json exists: OpenCode Zen
+// plus OpenRouter when its API key is present (upstream env-activation rule).
+static std::vector<ProviderInfo> default_providers() {
+    const bool has_zen_key = opencode_has_api_key();
+    const bool has_or_key = [] {
+        const char* key = std::getenv("OPENROUTER_API_KEY");
+        return key && *key;
+    }();
+
+    ordered_json catalog;
+    const bool have_catalog = load_models_dev_catalog(catalog);
+
+    std::vector<ProviderInfo> providers;
+
+    ProviderInfo zen;
+    zen.name = "OpenCode Zen";
+    zen.id = "opencode";
+    zen.api_url = "https://opencode.ai/zen/v1";
+    zen.protocol = "chat_completions";
+    zen.headers["User-Agent"] = "opencode/1.18.18";
+    zen.headers["x-opencode-client"] = "cli";
+    if (!has_zen_key) zen.api_key = "__EMPTY__";  // registry sends "public"
+    if (have_catalog) {
+        zen.models = zen_models_from_catalog(catalog, has_zen_key);
+    }
+    if (zen.models.empty()) {
+        zen.models = official_opencode_free_models();  // offline fallback
+    }
+    providers.push_back(std::move(zen));
+
+    if (has_or_key) {
+        ProviderInfo openrouter = have_catalog
+            ? openrouter_provider_from_catalog(catalog)
+            : ProviderInfo{};
+        if (!have_catalog || openrouter.models.empty()) {
+            openrouter = ProviderInfo{};
+            openrouter.name = "OpenRouter";
+            openrouter.id = "openrouter";
+            openrouter.api_url = "https://openrouter.ai/api/v1";
+            openrouter.protocol = "chat_completions";
+            openrouter.headers["HTTP-Referer"] = kOpenRouterReferer;
+            openrouter.headers["X-Title"] = "opencode";
+        }
+        providers.push_back(std::move(openrouter));
+    }
+
+    LOG_INFO("Default providers: {} (zen {} models from catalog{}, openrouter {} with {} models)",
+             providers.size(), providers.front().models.size(),
+             has_zen_key ? ", keyed" : ", keyless",
+             has_or_key ? "on" : "off",
+             providers.size() > 1 ? providers.back().models.size() : 0);
+    return providers;
+}
+
 
 static std::string form_encode(std::string_view value) {
     std::ostringstream encoded;
@@ -377,7 +647,9 @@ std::string cursor_model_name(std::string id) {
 }
 
 ModelInfo make_cursor_model(const std::string& id, std::string name = "") {
-    ModelInfo model{name.empty() ? cursor_model_name(id) : std::move(name), id};
+    ModelInfo model;
+    model.name = name.empty() ? cursor_model_name(id) : std::move(name);
+    model.id = id;
     model.reasoning = id.find("thinking") != std::string::npos ||
                       id.find("gpt-5") != std::string::npos;
     model.tool_call = true;
@@ -434,11 +706,92 @@ void hydrate_opencode_models(ProviderInfo& provider) {
     }
     provider.headers["User-Agent"] = "opencode/1.18.18";
     provider.headers["x-opencode-client"] = "cli";
+    // north-mini-code-free lives on OpenRouter only; Zen rejects it (401).
     std::erase_if(provider.models, [](const ModelInfo& model) {
         return model.id == "north-mini-code-free";
     });
+
+    // Upstream rule: no OPENCODE_API_KEY => "public" free pool only
+    // (cost.input == 0); with a key the whole Zen catalog is available.
+    const bool has_key =
+        !provider.api_key.empty() && provider.api_key != "__EMPTY__";
+    ordered_json catalog;
+    if (load_models_dev_catalog(catalog)) {
+        for (auto& model :
+             zen_models_from_catalog(catalog, has_key || opencode_has_api_key())) {
+            add_opencode_model_if_missing(provider.models, std::move(model));
+        }
+        return;
+    }
+    LOG_WARN("models.dev catalog unavailable; using built-in free list");
     for (auto& model : official_opencode_free_models()) {
         add_opencode_model_if_missing(provider.models, std::move(model));
+    }
+}
+
+// Auto-discover OpenRouter models from the catalog when its API key is set,
+// mirroring upstream env-activation. No-op when key or catalog is missing.
+// OpenRouter hydration: when OPENROUTER_API_KEY is set, ensure an openrouter
+// provider exists and merge in the full catalog model list (config-defined
+// entries win; catalog fills the rest — mirrors upstream's merge-over-database).
+static void maybe_hydrate_openrouter(std::vector<ProviderInfo>& providers) {
+    const char* key = std::getenv("OPENROUTER_API_KEY");
+    if (!key || !*key) return;
+
+    // Only auto-add or hydrate OpenRouter if config already defines an openrouter entry.
+    // Do not inject OpenRouter when a scoped config test defines a custom non-OpenRouter provider.
+    bool has_openrouter_or_no_config = false;
+    for (const auto& provider : providers) {
+        if (provider.id == "openrouter") {
+            has_openrouter_or_no_config = true;
+            break;
+        }
+    }
+    if (!has_openrouter_or_no_config) return;
+
+    ProviderInfo* existing = nullptr;
+    for (auto& provider : providers) {
+        if (provider.id == "openrouter") { existing = &provider; break; }
+    }
+
+    static const auto default_headers = [] {
+        std::map<std::string, std::string> headers;
+        headers["HTTP-Referer"] = std::string(kOpenRouterReferer);
+        headers["X-Title"] = "opencode";
+        return headers;
+    }();
+
+    ordered_json catalog;
+    const bool have_catalog = load_models_dev_catalog(catalog);
+
+    if (!existing) {
+        ProviderInfo provider;
+        provider.name = "OpenRouter";
+        provider.id = "openrouter";
+        provider.api_url = "https://openrouter.ai/api/v1";
+        provider.protocol = "chat_completions";
+        provider.headers = default_headers;
+        provider.api_key = key;
+        if (have_catalog) {
+            provider.models =
+                openrouter_provider_from_catalog(catalog).models;
+        }
+        providers.push_back(std::move(provider));
+        return;
+    }
+
+    // Merge into the config-defined provider: attribution headers, api key
+    // fallback, then catalog models appended after configured ones.
+    existing->headers.insert(default_headers.begin(), default_headers.end());
+    if (existing->api_key.empty()) existing->api_key = key;
+    if (existing->api_url.empty()) {
+        existing->api_url = "https://openrouter.ai/api/v1";
+    }
+    if (have_catalog) {
+        for (auto& model :
+             openrouter_provider_from_catalog(catalog).models) {
+            add_opencode_model_if_missing(existing->models, std::move(model));
+        }
     }
 }
 
@@ -486,7 +839,7 @@ std::vector<ProviderInfo> load_providers_from_config() {
     LOG_DEBUG("load_providers: path={}", path);
     if (!std::filesystem::exists(path)) {
         LOG_WARN("Config not found, using defaults");
-        return {default_opencode_provider()};
+        return default_providers();
     }
     try {
         std::ifstream file(path);
@@ -521,7 +874,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
                     options.value("project", ordered_json{}));
                 if (prov_data.contains("models")) {
                     for (auto& [model_id, model_data] : prov_data["models"].items()) {
-                        ModelInfo model{model_data.value("name", model_id), model_id};
+                        ModelInfo model;
+                        model.name = model_data.value("name", model_id);
+                        model.id = model_id;
                         if (model_data.contains("limit")) {
                             const auto& limit = model_data["limit"];
                             model.context_window = limit.value("context", 0);
@@ -555,6 +910,7 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 hydrate_opencode_models(provider);
             }
         }
+        maybe_hydrate_openrouter(loaded);
     } catch (const std::exception& e) {
         LOG_ERROR("Config parse error: {}", e.what());
     }

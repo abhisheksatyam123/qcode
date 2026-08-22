@@ -127,6 +127,13 @@ std::string AppStore::latest_assistant_text() const {
 
 void AppStore::set_generating(bool v) {
     *state_.is_generating = v;
+    if (v) {
+        status_ = "generating";
+        if (state_.status) *state_.status = "generating";
+    } else if (status_ == "generating" || status_ == "agent") {
+        status_ = "idle";
+        if (state_.status) *state_.status = "idle";
+    }
     notify();
 }
 
@@ -174,6 +181,12 @@ void AppStore::clear_error() {
     if (status_ == "error") {
         status_ = "idle";
         if (state_.status) *state_.status = "idle";
+    }
+    {
+        std::lock_guard<std::mutex> lock(toast_mutex_);
+        std::erase_if(toasts_, [](const Toast& t) {
+            return t.variant == "error" || t.variant == "warning";
+        });
     }
     notify();
 }

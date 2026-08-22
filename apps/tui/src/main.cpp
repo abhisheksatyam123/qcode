@@ -683,6 +683,18 @@ int main() {
             return true;
         }
 
+        // One-key retry (r/R): triggers when retry is available and prompt input is empty.
+        // Intercepted BEFORE the Input component processes characters so 'r'/'R' is not typed into input.
+        if (state.tab_selected == 0 && prompt_input.empty() && !show_model_select &&
+            !show_session_select && !show_theme_select && !state.slash_suggestion_mode &&
+            !generation.is_active() &&
+            (state.retry_available && *state.retry_available) &&
+            (e == Event::Character('r') || e == Event::Character('R'))) {
+            if (trigger_retry()) {
+                return true;
+            }
+        }
+
         // Normal submit
         if (e == Event::Return && !prompt_input.empty()) {
             submit();
@@ -778,17 +790,7 @@ int main() {
                 return true;
             }
         }
-        // One-key retry / regenerate the last prompt (prompt must be empty).
-        // Works after a normal turn AND after an error/force-stop: the user
-        // message is already in history, so we resend without re-appending it.
-        if (state.tab_selected == 0 && prompt_input.empty() && !show_model_select && !show_session_select &&
-            !show_theme_select && !state.slash_suggestion_mode &&
-            !generation.is_active() &&
-            (e == Event::Character('r') || e == Event::Character('R'))) {
-            if (trigger_retry()) {
-                return true;
-            }
-        }
+
 
         // ── Tool block keyboard navigation (only when prompt is empty) ──
         // j/k focus tools, h/← collapse (3 lines), l/→ expand (full), Enter toggles.
