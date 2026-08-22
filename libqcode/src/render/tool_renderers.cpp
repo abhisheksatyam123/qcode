@@ -1,6 +1,6 @@
-#include <qcode/render/tool_renderers.h>
-#include <qcode/render/themes.h>
-#include <qcode/render/message_render.h>
+#include <qcode/ui/tool_renderers.h>
+#include <qcode/ui/themes.h>
+#include <qcode/ui/message_render.h>
 #include <ftxui/dom/elements.hpp>
 #include <sstream>
 #include <algorithm>

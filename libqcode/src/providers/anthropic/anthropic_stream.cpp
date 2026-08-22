@@ -1,7 +1,7 @@
 #include "anthropic_stream.h"
 
-#include <qcode/http/ssl_config.h>
-#include <qcode/logger/logger.h>
+#include <qcode/core/ssl_config.h>
+#include <qcode/core/logger.h>
 
 #include <chrono>
 #include <cstdlib>

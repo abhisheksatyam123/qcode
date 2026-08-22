@@ -1,6 +1,6 @@
-#include <qcode/http/ssl_config.h>
-#include <qcode/langfuse/tracer.h>
-#include <qcode/logger/logger.h>
+#include <qcode/core/ssl_config.h>
+#include <qcode/providers/langfuse_tracer.h>
+#include <qcode/core/logger.h>
 
 #include <cstdio>
 #include <ctime>

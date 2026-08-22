@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 #include <chrono>
 #include <ctime>

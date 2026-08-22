@@ -1,5 +1,5 @@
-#include <qcode/bus/in_process_bus.h>
-#include <qcode/contract/event.h>
+#include <qcode/core/in_process_bus.h>
+#include <qcode/core/event.h>
 
 #include <gtest/gtest.h>
 
@@ -106,7 +106,7 @@ TEST(TuiBusTest, RewakesWhenDrainBatchLimitLeavesEvents) {
 }  // namespace
 }  // namespace qcode::bus
 
-#include <qcode/store/app_store.h>
+#include <qcode/ui/app_store.h>
 #include <qcode/session/session_store.h>
 #include <cstdlib>
 #include <cstdio>

@@ -16,7 +16,7 @@
 #include <iostream>
 #include <string>
 
-#include <qcode/qcode.h>
+#include <qcode/core/qcode.h>
 
 int main() {
   std::cout << "qcode - Streaming Chat Example\n";

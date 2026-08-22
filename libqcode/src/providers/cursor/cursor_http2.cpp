@@ -1,6 +1,6 @@
 #include "cursor_http2.h"
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 #include <curl/curl.h>
 

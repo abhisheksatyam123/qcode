@@ -1,6 +1,6 @@
-#include <qcode/config/config.h>
+#include <qcode/core/config.h>
 #include <qcode/session/session_store.h>
-#include <qcode/http/ssl_config.h>
+#include <qcode/core/ssl_config.h>
 #include <qcode/providers/cursor.h>
 
 #include <algorithm>
@@ -21,7 +21,7 @@
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 namespace qcode {
 

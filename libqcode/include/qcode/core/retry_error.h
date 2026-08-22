@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/errors/errors.h>
+#include <qcode/core/errors.h>
 
 #include <string>
 #include <vector>

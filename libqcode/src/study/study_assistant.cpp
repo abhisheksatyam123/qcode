@@ -1,4 +1,4 @@
-#include <qcode/study/study_assistant.h>
+#include <qcode/session/study_assistant.h>
 
 #include <algorithm>
 #include <cctype>
@@ -7,12 +7,12 @@
 #include <fstream>
 #include <sstream>
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/providers/registry.h>
-#include <qcode/types/client.h>
-#include <qcode/types/generate_options.h>
-#include <qcode/types/message.h>
+#include <qcode/core/client.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/message.h>
 
 namespace qcode {
 namespace study {

@@ -1,11 +1,11 @@
 #pragma once
 
-#include <qcode/commands/commands.h>
+#include <qcode/ui/commands.h>
 #include <qcode/session/session_store.h>
-#include <qcode/render/markdown.h>  // render_markdown
-#include <qcode/render/themes.h>
-#include <qcode/state/state.h>
-#include <qcode/store/app_store.h>
+#include <qcode/ui/markdown.h>  // render_markdown
+#include <qcode/ui/themes.h>
+#include <qcode/core/state.h>
+#include <qcode/ui/app_store.h>
 #include <ftxui/component/component.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/color.hpp>

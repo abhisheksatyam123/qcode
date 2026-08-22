@@ -1,5 +1,5 @@
-#include <qcode/bus/in_process_bus.h>
-#include <qcode/contract/event.h>
+#include <qcode/core/in_process_bus.h>
+#include <qcode/core/event.h>
 
 #include <algorithm>
 #include <utility>

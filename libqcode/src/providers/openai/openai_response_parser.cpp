@@ -1,7 +1,7 @@
 #include "openai_response_parser.h"
 
 #include "../../utils/response_utils.h"
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 namespace qcode {
 namespace openai {

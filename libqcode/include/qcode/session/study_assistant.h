@@ -6,8 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
-#include <qcode/state/state.h>
-#include <qcode/study/study_store.h>
+#include <qcode/core/state.h>
+#include <qcode/session/study_store.h>
 
 namespace qcode {
 namespace study {

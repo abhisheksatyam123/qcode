@@ -2,8 +2,8 @@
 #include <gtest/gtest.h>
 
 // Include the Anthropic client headers
-#include <qcode/types/generate_options.h>
-#include <qcode/types/stream_options.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/stream_options.h>
 
 // Include the real Anthropic client implementation for testing
 #include "providers/anthropic/anthropic_client.h"

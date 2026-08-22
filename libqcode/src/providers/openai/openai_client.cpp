@@ -1,6 +1,6 @@
 #include "openai_client.h"
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 #include <qcode/providers/openai.h>
 #include "openai_request_builder.h"
 #include "openai_response_parser.h"

@@ -18,7 +18,7 @@
 #include <string>
 
 #include <qcode/providers/openai.h>
-#include <qcode/retry/retry_policy.h>
+#include <qcode/core/retry_policy.h>
 
 int main() {
   std::cout << "qcode - Retry Configuration Example\n";

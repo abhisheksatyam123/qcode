@@ -4,8 +4,8 @@
 #include <functional>
 #include <unordered_set>
 
-#include <qcode/logger/logger.h>
-#include <qcode/utils/random.h>
+#include <qcode/core/logger.h>
+#include <qcode/core/random.h>
 #include "providers/opencode_zen_headers.h"
 #include "utils/message_utils.h"
 

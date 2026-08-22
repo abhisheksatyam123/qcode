@@ -1,10 +1,10 @@
 #include <qcode/tools/tool_executor.h>
-#include <qcode/types/tool.h>
+#include <qcode/core/tool.h>
 #include <gtest/gtest.h>
 #include <chrono>
 #include <thread>
 #include <atomic>
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 namespace qcode {
 namespace test {

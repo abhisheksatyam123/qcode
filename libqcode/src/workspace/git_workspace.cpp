@@ -1,4 +1,4 @@
-#include <qcode/workspace/git_workspace.h>
+#include <qcode/session/git_workspace.h>
 
 #include <algorithm>
 #include <array>

@@ -1,8 +1,8 @@
-#include <qcode/system_prompt/system_prompt.h>
+#include <qcode/session/system_prompt.h>
 
 #include <sstream>
-#include <qcode/logger/logger.h>
-#include <qcode/study/study_assistant.h>
+#include <qcode/core/logger.h>
+#include <qcode/session/study_assistant.h>
 
 namespace qcode {
 

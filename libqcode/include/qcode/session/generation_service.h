@@ -2,9 +2,9 @@
 #include <atomic>
 #include <memory>
 
-#include <qcode/bus/port.h>
-#include <qcode/state/state.h>
-#include <qcode/types/client.h>
+#include <qcode/core/bus_port.h>
+#include <qcode/core/state.h>
+#include <qcode/core/client.h>
 #include <string>
 #include <vector>
 

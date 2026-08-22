@@ -1,8 +1,8 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
-#include <qcode/bus/port.h>
-#include <qcode/contract/event.h>
+#include <qcode/core/bus_port.h>
+#include <qcode/core/event.h>
 #include <string>
 #include <optional>
 

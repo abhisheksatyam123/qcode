@@ -1,8 +1,8 @@
 #pragma once
 
-#include <qcode/types/message.h>
-#include <qcode/types/model.h>
-#include <qcode/types/tool.h>
+#include <qcode/core/message.h>
+#include <qcode/core/model.h>
+#include <qcode/core/tool.h>
 
 #include <functional>
 #include <map>

@@ -1,10 +1,10 @@
 #pragma once
 
-#include <qcode/retry/retry_policy.h>
-#include <qcode/types/client.h>
-#include <qcode/types/embedding_options.h>
-#include <qcode/types/generate_options.h>
-#include <qcode/types/stream_options.h>
+#include <qcode/core/retry_policy.h>
+#include <qcode/core/client.h>
+#include <qcode/core/embedding_options.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/stream_options.h>
 #include "http/http_request_handler.h"
 
 #include <memory>

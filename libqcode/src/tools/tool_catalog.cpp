@@ -1,7 +1,7 @@
 #include <qcode/tools/tool_catalog.h>
 
 #include <sstream>
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 #include <nlohmann/json.hpp>
 
 #include <iomanip>

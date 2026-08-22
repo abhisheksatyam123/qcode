@@ -1,8 +1,8 @@
 #pragma once
 
-#include <qcode/types/generate_options.h>
-#include <qcode/types/message.h>
-#include <qcode/types/tool.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/message.h>
+#include <qcode/core/tool.h>
 
 #include <functional>
 #include <vector>

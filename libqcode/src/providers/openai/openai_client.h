@@ -1,7 +1,7 @@
 #pragma once
 
-#include <qcode/retry/retry_policy.h>
-#include <qcode/types/stream_options.h>
+#include <qcode/core/retry_policy.h>
+#include <qcode/core/stream_options.h>
 #include "providers/base_provider_client.h"
 
 #include <string>

@@ -1,21 +1,21 @@
 #include "server_routes.h"
 
-#include <qcode/logger/file_logger.h>
+#include <qcode/core/file_logger.h>
 #include <qcode/providers/registry.h>
 #include <filesystem>
 #include <fstream>
-#include <qcode/generation/generation_service.h>
+#include <qcode/session/generation_service.h>
 #include <qcode/providers/authenticated_providers.h>
-#include <qcode/config/config.h>
+#include <qcode/core/config.h>
 #include <qcode/session/session_store.h>
-#include <qcode/study/study_assistant.h>
-#include <qcode/study/study_store.h>
-#include <qcode/state/state.h>
-#include <qcode/system_prompt/system_prompt.h>
-#include <qcode/bus/in_process_bus.h>
-#include <qcode/contract/event.h>
-#include <qcode/server/bus_json_codec.h>
-#include <qcode/utils/uuid.h>
+#include <qcode/session/study_assistant.h>
+#include <qcode/session/study_store.h>
+#include <qcode/core/state.h>
+#include <qcode/session/system_prompt.h>
+#include <qcode/core/in_process_bus.h>
+#include <qcode/core/event.h>
+#include <qcode/ui/bus_json_codec.h>
+#include <qcode/core/uuid.h>
 
 #include "http_utils.h"
 #include "terminal_pty.h"

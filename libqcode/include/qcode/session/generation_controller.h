@@ -1,9 +1,9 @@
 #pragma once
 
-#include <qcode/bus/in_process_bus.h>
-#include <qcode/compat/jthread.h>
-#include <qcode/state/state.h>
-#include <qcode/store/app_store.h>
+#include <qcode/core/in_process_bus.h>
+#include <qcode/core/jthread.h>
+#include <qcode/core/state.h>
+#include <qcode/ui/app_store.h>
 
 #include <atomic>
 #include <memory>

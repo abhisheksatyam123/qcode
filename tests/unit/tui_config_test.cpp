@@ -1,4 +1,4 @@
-#include <qcode/config/config.h>
+#include <qcode/core/config.h>
 
 #include <algorithm>
 #include <cstdlib>

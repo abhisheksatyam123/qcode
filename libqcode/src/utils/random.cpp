@@ -1,4 +1,4 @@
-#include <qcode/utils/random.h>
+#include <qcode/core/random.h>
 
 #include <mutex>
 #include <random>

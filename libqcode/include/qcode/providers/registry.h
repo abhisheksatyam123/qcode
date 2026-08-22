@@ -5,7 +5,7 @@
     "Provider registry not available. Link with qcode::registry or qcode::sdk to use provider dispatch."
 #endif
 
-#include <qcode/types/client.h>
+#include <qcode/core/client.h>
 
 #include <functional>
 #include <map>

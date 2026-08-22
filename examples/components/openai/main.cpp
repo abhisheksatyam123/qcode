@@ -1,6 +1,6 @@
 #include <iostream>
 
-#include <qcode/qcode.h>
+#include <qcode/core/qcode.h>
 
 int main() {
   std::cout << "qcode - OpenAI Component Demo\n";

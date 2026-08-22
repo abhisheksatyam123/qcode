@@ -1,4 +1,4 @@
-#include <qcode/workspace/clipboard.h>
+#include <qcode/session/clipboard.h>
 
 #include <cstdio>
 #include <string>

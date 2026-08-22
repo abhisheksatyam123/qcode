@@ -1,8 +1,8 @@
 #pragma once
 
-#include <qcode/errors/errors.h>
-#include <qcode/logger/logger.h>
-#include <qcode/types/generate_options.h>
+#include <qcode/core/errors.h>
+#include <qcode/core/logger.h>
+#include <qcode/core/generate_options.h>
 
 #include <string>
 

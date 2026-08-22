@@ -1,11 +1,11 @@
-#include <qcode/store/app_store.h>
-#include <qcode/bus/in_process_bus.h>
-#include <qcode/context/token_budget.h>
+#include <qcode/ui/app_store.h>
+#include <qcode/core/in_process_bus.h>
+#include <qcode/session/token_budget.h>
 #include <qcode/session/session_store.h>
 #include <algorithm>
 #include <climits>
-#include <qcode/types/message.h>
-#include <qcode/logger/logger.h>
+#include <qcode/core/message.h>
+#include <qcode/core/logger.h>
 #include <nlohmann/json.hpp>
 
 namespace qcode {

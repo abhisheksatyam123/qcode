@@ -2,7 +2,7 @@
 #include <gtest/gtest.h>
 
 // Include the OpenAI client headers
-#include <qcode/types/embedding_options.h>
+#include <qcode/core/embedding_options.h>
 
 // Include the real OpenAI client implementation for testing
 #include "providers/openai/openai_client.h"

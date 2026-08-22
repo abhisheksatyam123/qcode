@@ -1,7 +1,7 @@
 #pragma once
 #include <ftxui/dom/elements.hpp>
-#include <qcode/types/message.h>
-#include <qcode/state/state.h>
+#include <qcode/core/message.h>
+#include <qcode/core/state.h>
 
 namespace qcode {
 

@@ -1,6 +1,6 @@
 #include "test_fixtures.h"
 
-#include <qcode/types/enums.h>
+#include <qcode/core/enums.h>
 
 #include <gmock/gmock.h>
 

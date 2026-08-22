@@ -14,8 +14,8 @@
 #include <mutex>
 #include <cctype>
 
-#include <qcode/logger/logger.h>
-#include <qcode/types/message.h>
+#include <qcode/core/logger.h>
+#include <qcode/core/message.h>
 #include <nlohmann/json.hpp>
 
 namespace qcode {

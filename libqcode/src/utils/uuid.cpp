@@ -1,4 +1,4 @@
-#include <qcode/utils/uuid.h>
+#include <qcode/core/uuid.h>
 #include <uuid.h>
 
 namespace qcode {

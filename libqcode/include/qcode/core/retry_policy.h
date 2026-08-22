@@ -1,7 +1,7 @@
 #pragma once
 
-#include <qcode/logger/logger.h>
-#include <qcode/retry/retry_error.h>
+#include <qcode/core/logger.h>
+#include <qcode/core/retry_error.h>
 
 #include <chrono>
 #include <functional>

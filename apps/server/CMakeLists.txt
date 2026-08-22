@@ -20,7 +20,8 @@ target_compile_definitions(qcode-server PRIVATE
     QCODE_SERVER_WEBUI_DIR="${QCODE_WEBUI_SRC}"
 )
 
-target_link_libraries(qcode-server PRIVATE qcode-core)
+# Headless server links qcode::engine (no FTXUI dependency)
+target_link_libraries(qcode-server PRIVATE qcode::engine)
 
 add_custom_command(TARGET qcode-server POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

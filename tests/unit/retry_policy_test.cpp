@@ -1,8 +1,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <qcode/retry/retry_policy.h>
-#include <qcode/types/generate_options.h>
+#include <qcode/core/retry_policy.h>
+#include <qcode/core/generate_options.h>
 #include <chrono>
 
 namespace qcode {

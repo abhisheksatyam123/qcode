@@ -2,8 +2,8 @@
 #include <qcode/providers/openai.h>
 #include <qcode/tools/tool_executor.h>
 #include <qcode/tools/tool_factory.h>
-#include <qcode/types/generate_options.h>
-#include <qcode/types/tool.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/tool.h>
 
 #include <memory>
 #include <random>

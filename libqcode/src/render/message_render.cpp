@@ -2,12 +2,12 @@
 #include <unordered_set>
 #include <algorithm>
 #include <cstdio>
-#include <qcode/render/tool_renderers.h>
-#include <qcode/render/message_render.h>
-#include <qcode/render/markdown.h>
-#include <qcode/render/themes.h>
+#include <qcode/ui/tool_renderers.h>
+#include <qcode/ui/message_render.h>
+#include <qcode/ui/markdown.h>
+#include <qcode/ui/themes.h>
 #include <nlohmann/json.hpp>
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 namespace qcode {
 

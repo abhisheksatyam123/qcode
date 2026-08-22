@@ -1,8 +1,8 @@
-#include <qcode/errors/errors.h>
-#include <qcode/types/enums.h>
-#include <qcode/types/generate_options.h>
-#include <qcode/types/message.h>
-#include <qcode/types/usage.h>
+#include <qcode/core/errors.h>
+#include <qcode/core/enums.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/message.h>
+#include <qcode/core/usage.h>
 #include "test_fixtures.h"
 
 #include <gmock/gmock.h>

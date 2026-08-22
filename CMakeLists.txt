@@ -91,7 +91,7 @@ endif()
 # === Installation ===
 include(GNUInstallDirs)
 
-set(QCODE_INSTALL_TARGETS qcode-core)
+set(QCODE_INSTALL_TARGETS qcode-engine qcode-ui)
 if(QCODE_BUILD_TUI)
     list(APPEND QCODE_INSTALL_TARGETS qcode-tui)
 endif()

@@ -1,8 +1,8 @@
 #include "http_request_handler.h"
 
-#include <qcode/http/ssl_config.h>
-#include <qcode/logger/logger.h>
-#include <qcode/retry/retry_policy.h>
+#include <qcode/core/ssl_config.h>
+#include <qcode/core/logger.h>
+#include <qcode/core/retry_policy.h>
 #include "providers/opencode_zen_headers.h"
 #include "utils/response_utils.h"
 

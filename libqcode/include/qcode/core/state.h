@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include <qcode/types/message.h>
+#include <qcode/core/message.h>
 
 namespace qcode {
 

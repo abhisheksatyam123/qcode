@@ -6,7 +6,7 @@
 #include <vector>
 
 #include <qcode/session/session_store.h>
-#include <qcode/state/state.h>
+#include <qcode/core/state.h>
 
 namespace qcode {
 namespace tui {

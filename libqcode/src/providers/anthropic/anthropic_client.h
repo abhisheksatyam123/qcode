@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/types/stream_options.h>
+#include <qcode/core/stream_options.h>
 #include "providers/base_provider_client.h"
 
 #include <string>

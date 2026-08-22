@@ -1,9 +1,9 @@
-#include <qcode/render/message_render.h>
+#include <qcode/ui/message_render.h>
 #include <views.h>
 #include "file_diff_preview.h"
 #include "views_pickers.h"
 #include <qcode/session/session_store.h>
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 #include <array>
 #include <cstdio>

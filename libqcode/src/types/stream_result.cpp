@@ -1,4 +1,4 @@
-#include <qcode/types/stream_result.h>
+#include <qcode/core/stream_result.h>
 
 namespace qcode {
 

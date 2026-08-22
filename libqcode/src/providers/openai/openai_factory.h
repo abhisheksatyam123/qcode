@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/types/client.h>
+#include <qcode/core/client.h>
 
 #include <string>
 

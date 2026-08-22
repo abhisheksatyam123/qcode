@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include <qcode/types/tool.h>
+#include <qcode/core/tool.h>
 
 namespace qcode {
 

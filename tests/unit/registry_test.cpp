@@ -6,8 +6,8 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <qcode/types/generate_options.h>
-#include <qcode/config/config.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/config.h>
 
 namespace qcode {
 namespace providers {

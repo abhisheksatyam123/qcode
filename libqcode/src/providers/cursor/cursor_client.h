@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/types/stream_options.h>
+#include <qcode/core/stream_options.h>
 #include "http/http_request_handler.h"
 #include "providers/base_provider_client.h"
 #include "providers/cursor/cursor_request_builder.h"

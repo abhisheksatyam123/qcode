@@ -1,4 +1,4 @@
-#include <qcode/types/stream_options.h>
+#include <qcode/core/stream_options.h>
 
 namespace qcode {
 

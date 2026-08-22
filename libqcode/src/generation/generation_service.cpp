@@ -1,10 +1,10 @@
-#include <qcode/generation/generation_service.h>
-#include <qcode/config/config.h>
-#include <qcode/context/token_budget.h>
+#include <qcode/session/generation_service.h>
+#include <qcode/core/config.h>
+#include <qcode/session/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
 #include <qcode/tools/tool_executor.h>
 #include <qcode/session/session_store.h>
-#include <qcode/contract/event.h>
+#include <qcode/core/event.h>
 
 #include <atomic>
 #include <chrono>
@@ -15,8 +15,8 @@
 #include <string>
 #include <utility>
 
-#include <qcode/types/client.h>
-#include <qcode/logger/logger.h>
+#include <qcode/core/client.h>
+#include <qcode/core/logger.h>
 #include <qcode/providers/openai.h>
 #include <qcode/providers/registry.h>
 #include <qcode/providers/authenticated_providers.h>

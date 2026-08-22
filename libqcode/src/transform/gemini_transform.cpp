@@ -1,6 +1,6 @@
-#include <qcode/transform/gemini_transform.h>
-#include <qcode/logger/logger.h>
-#include <qcode/utils/random.h>
+#include <qcode/providers/gemini_transform.h>
+#include <qcode/core/logger.h>
+#include <qcode/core/random.h>
 
 #include <chrono>
 #include <unordered_map>

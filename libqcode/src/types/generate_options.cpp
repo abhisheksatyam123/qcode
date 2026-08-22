@@ -1,5 +1,5 @@
 // generate_options.cpp - placeholder implementation
-#include <qcode/types/generate_options.h>
+#include <qcode/core/generate_options.h>
 
 namespace qcode {
 namespace types {

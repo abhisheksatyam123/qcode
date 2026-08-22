@@ -1,6 +1,6 @@
 #include "anthropic_request_builder.h"
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 #include "utils/message_utils.h"
 
 #include <unordered_set>

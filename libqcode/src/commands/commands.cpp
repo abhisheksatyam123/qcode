@@ -1,10 +1,10 @@
-#include <qcode/commands/commands.h>
+#include <qcode/ui/commands.h>
 #include <qcode/session/session_store.h>
-#include <qcode/config/config.h>
-#include <qcode/contract/event.h>
-#include <qcode/render/themes.h>
-#include <qcode/logger/logger.h>
-#include <qcode/types/client.h>
+#include <qcode/core/config.h>
+#include <qcode/core/event.h>
+#include <qcode/ui/themes.h>
+#include <qcode/core/logger.h>
+#include <qcode/core/client.h>
 #include <qcode/providers/registry.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <memory>

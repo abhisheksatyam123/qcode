@@ -38,7 +38,7 @@ add_executable(qcode_tests
 
 target_link_libraries(qcode_tests
     PRIVATE
-        qcode-core
+        qcode::ui
         httplib::httplib
         concurrentqueue
         GTest::gtest

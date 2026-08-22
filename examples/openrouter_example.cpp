@@ -2,8 +2,8 @@
 #include <iostream>
 #include <string>
 
-#include <qcode/qcode.h>
-#include <qcode/logger/logger.h>
+#include <qcode/core/qcode.h>
+#include <qcode/core/logger.h>
 
 int main() {
   try {

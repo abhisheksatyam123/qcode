@@ -1,10 +1,10 @@
 #include <map>
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 #include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/tools/tool_executor.h>
-#include <qcode/types/enums.h>
-#include <qcode/types/tool.h>
+#include <qcode/core/enums.h>
+#include <qcode/core/tool.h>
 
 namespace qcode {
 

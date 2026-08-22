@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/utils/random.h>
+#include <qcode/core/random.h>
 
 #include <httplib.h>
 

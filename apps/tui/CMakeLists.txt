@@ -1,5 +1,5 @@
 # qcode-tui — terminal UI front-end.
-# Core logic lives in qcode-core; this target owns the FTXUI entrypoint/views.
+# Links qcode::ui (which pulls in qcode::engine and FTXUI).
 
 add_executable(qcode-tui
     src/main.cpp
@@ -10,10 +10,7 @@ add_executable(qcode-tui
 )
 
 target_link_libraries(qcode-tui PRIVATE
-    qcode-core
-    ftxui::screen
-    ftxui::dom
-    ftxui::component
+    qcode::ui
 )
 
 target_include_directories(qcode-tui PRIVATE

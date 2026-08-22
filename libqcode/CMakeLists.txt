@@ -1,38 +1,40 @@
-# qcode-core — shared library (providers, session, generation, render, tools).
+# libqcode CMake configuration: split into headless qcode::engine and UI qcode::ui targets.
 
 find_package(OpenSSL REQUIRED)
-# Vendored via third_party/nlohmann_json-cmake; skip find when already a target
-# (Android CMAKE_FIND_ROOT_PATH otherwise misses the build-tree package).
 if(NOT TARGET nlohmann_json::nlohmann_json)
   find_package(nlohmann_json 3.10 REQUIRED)
 endif()
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
 
-add_library(qcode-core)
-add_library(qcode::core ALIAS qcode-core)
+# ── 1. Headless Engine Library (qcode-engine / qcode::engine) ──
+add_library(qcode-engine)
+add_library(qcode::engine ALIAS qcode-engine)
 
-# Repo root: works when qcode is top-level or add_subdirectory'd (e.g. Android).
 get_filename_component(QCODE_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
-target_include_directories(qcode-core PUBLIC
+target_include_directories(qcode-engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${QCODE_REPO_ROOT}/third_party/md4c>
     $<BUILD_INTERFACE:${QCODE_REPO_ROOT}/third_party/httplib-header-only>
     $<INSTALL_INTERFACE:include>
 )
 
-target_include_directories(qcode-core PRIVATE
+target_include_directories(qcode-engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_sources(qcode-core PRIVATE
-    # Types
+target_sources(qcode-engine PRIVATE
+    # Core & Types
     src/types/message.cpp
     src/types/stream_options.cpp
     src/types/stream_result.cpp
     src/types/embedding_options.cpp
     src/types/generate_options.cpp
+    src/utils/random.cpp
+    src/utils/uuid.cpp
+    src/bus/in_process_bus.cpp
+    src/config/config.cpp
+    src/context/token_budget.cpp
 
     # Providers
     src/providers/base_provider_client.cpp
@@ -60,65 +62,72 @@ target_sources(qcode-core PRIVATE
     src/providers/cursor/cursor_factory.cpp
     src/providers/cursor/cursor_http2.cpp
     src/providers/cursor/cursor_proto.cpp
+    src/transform/transform.cpp
+    src/transform/gemini_transform.cpp
+    src/langfuse/tracer.cpp
 
-    # Tools
+    # Session, Workspace & Tools
+    src/session/session_store.cpp
+    src/study/study_store.cpp
+    src/study/study_assistant.cpp
+    src/generation/generation_controller.cpp
+    src/generation/generation_service.cpp
     src/tools/tool_executor.cpp
     src/tools/bash_tool.cpp
     src/tools/task_tool.cpp
     src/tools/multi_step_coordinator.cpp
     src/tools/tool_catalog.cpp
+    src/workspace/git_workspace.cpp
+    src/workspace/clipboard.cpp
+    src/system_prompt/system_prompt.cpp
 
     # HTTP
     src/http/http_request_handler.cpp
     src/http/ssl_config.cpp
+)
 
-    # Utils
-    src/utils/random.cpp
-    src/utils/uuid.cpp
+target_link_libraries(qcode-engine PUBLIC
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    Threads::Threads
+    CURL::libcurl
+)
 
-    # Transform
-    src/transform/transform.cpp
-    src/transform/gemini_transform.cpp
+set_target_properties(qcode-engine PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
 
-    # Generation
-    src/generation/generation_controller.cpp
-    src/generation/generation_service.cpp
+if(MSVC)
+    target_compile_options(qcode-engine PRIVATE /W3)
+else()
+    target_compile_options(qcode-engine PRIVATE -Wall -Wextra)
+endif()
 
-    # Context
-    src/context/token_budget.cpp
 
-    # Config
-    src/config/config.cpp
 
-    # Workspace
-    src/workspace/git_workspace.cpp
-    src/workspace/clipboard.cpp
+# ── 2. UI & Rendering Library (qcode-ui / qcode::ui) ──
+add_library(qcode-ui)
+add_library(qcode::ui ALIAS qcode-ui)
 
-    # Session persistence
-    src/session/session_store.cpp
-    src/study/study_store.cpp
-    src/study/study_assistant.cpp
+target_include_directories(qcode-ui PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${QCODE_REPO_ROOT}/third_party/md4c>
+    $<INSTALL_INTERFACE:include>
+)
 
-    # Bus
-    src/bus/in_process_bus.cpp
+target_include_directories(qcode-ui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
-    # System prompt
-    src/system_prompt/system_prompt.cpp
-
-    # Render
+target_sources(qcode-ui PRIVATE
     src/render/message_render.cpp
     src/render/markdown.cpp
     src/render/tool_renderers.cpp
-    ${QCODE_REPO_ROOT}/third_party/md4c/md4c.c
-
-    # Store
     src/store/app_store.cpp
-
-    # Commands
     src/commands/commands.cpp
-
-    # Langfuse
-    src/langfuse/tracer.cpp
+    ${QCODE_REPO_ROOT}/third_party/md4c/md4c.c
 )
 
 set_source_files_properties(
@@ -126,34 +135,24 @@ set_source_files_properties(
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=c99"
 )
 
-# Keep third-party deps as BUILD_INTERFACE so install(EXPORT) does not require
-# them to be in an export set.
-target_link_libraries(qcode-core PUBLIC
-    nlohmann_json::nlohmann_json
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    Threads::Threads
-    CURL::libcurl
+target_link_libraries(qcode-ui PUBLIC
+    qcode-engine
     ftxui::screen
     ftxui::dom
     ftxui::component
-    $<BUILD_INTERFACE:httplib::httplib>
-    $<BUILD_INTERFACE:sqlite3>
-    $<BUILD_INTERFACE:stduuid::stduuid>
-    $<BUILD_INTERFACE:concurrentqueue::concurrentqueue>
 )
 
-target_compile_options(qcode-core PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter
+set_target_properties(qcode-ui PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
 )
 
-target_compile_definitions(qcode-core PUBLIC
-    ${HTTPLIB_COMPILE_DEFS}
-    QCODE_HAS_OPENAI=1
-    QCODE_HAS_ANTHROPIC=1
-    QCODE_HAS_ANTIGRAVITY=1
-    QCODE_HAS_CURSOR=1
-    QCODE_HAS_LANGFUSE=1
-    QCODE_HAS_REGISTRY=1
-)
+# Backward-compatibility alias targets
+add_library(qcode-core ALIAS qcode-ui)
+add_library(qcode::core ALIAS qcode-ui)
+
+if(MSVC)
+    target_compile_options(qcode-ui PRIVATE /W3)
+else()
+    target_compile_options(qcode-ui PRIVATE -Wall -Wextra)
+endif()

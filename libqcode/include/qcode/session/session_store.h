@@ -4,7 +4,7 @@
 #include <vector>
 #include <utility>
 
-#include <qcode/state/state.h>
+#include <qcode/core/state.h>
 
 namespace qcode {
 namespace session {

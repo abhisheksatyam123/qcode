@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/types/message.h>
+#include <qcode/core/message.h>
 
 #include <string>
 

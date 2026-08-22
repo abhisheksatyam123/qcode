@@ -4,9 +4,9 @@
 #include <vector>
 #include <memory>
 
-#include <qcode/compat/jthread.h>
-#include <qcode/state/state.h>
-#include <qcode/bus/port.h>
+#include <qcode/core/jthread.h>
+#include <qcode/core/state.h>
+#include <qcode/core/bus_port.h>
 
 namespace qcode {
 

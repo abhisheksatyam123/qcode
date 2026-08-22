@@ -1,4 +1,4 @@
-#include <qcode/types/embedding_options.h>
+#include <qcode/core/embedding_options.h>
 
 namespace qcode {
 

@@ -4,7 +4,7 @@
 #include <vector>
 #include <optional>
 #include <nlohmann/json.hpp>
-#include <qcode/bus/port.h>
+#include <qcode/core/bus_port.h>
 
 namespace qcode {
 namespace contract {

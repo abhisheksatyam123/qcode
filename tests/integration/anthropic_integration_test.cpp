@@ -1,7 +1,7 @@
 #include "../utils/test_fixtures.h"
 #include <qcode/providers/anthropic.h>
-#include <qcode/types/generate_options.h>
-#include <qcode/types/stream_options.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/stream_options.h>
 
 #include <future>
 #include <optional>

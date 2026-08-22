@@ -13,16 +13,16 @@
 #endif
 
 // Type definitions
-#include <qcode/types/client.h>
-#include <qcode/types/enums.h>
-#include <qcode/types/generate_options.h>
-#include <qcode/types/message.h>
-#include <qcode/types/model.h>
-#include <qcode/types/stream_event.h>
-#include <qcode/types/stream_options.h>
-#include <qcode/types/stream_result.h>
-#include <qcode/types/tool.h>
-#include <qcode/types/usage.h>
+#include <qcode/core/client.h>
+#include <qcode/core/enums.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/message.h>
+#include <qcode/core/model.h>
+#include <qcode/core/stream_event.h>
+#include <qcode/core/stream_options.h>
+#include <qcode/core/stream_result.h>
+#include <qcode/core/tool.h>
+#include <qcode/core/usage.h>
 
 // Tool functionality
 #include <qcode/tools/tool_executor.h>
@@ -30,7 +30,7 @@
 #include <qcode/tools/multi_step_coordinator.h>
 
 // Error handling
-#include <qcode/errors/errors.h>
+#include <qcode/core/errors.h>
 
 /// qcode - C++ toolkit for AI-powered coding agents
 ///
@@ -38,7 +38,7 @@
 ///
 /// OpenAI Integration:
 /// ```cpp
-/// #include <qcode/qcode.h>
+/// #include <qcode/core/qcode.h>
 /// #include <iostream>
 ///
 /// // Ensure OPENAI_API_KEY environment variable is set

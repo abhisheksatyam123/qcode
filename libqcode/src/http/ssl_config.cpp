@@ -1,4 +1,4 @@
-#include <qcode/http/ssl_config.h>
+#include <qcode/core/ssl_config.h>
 
 #include <cstdlib>
 

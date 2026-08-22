@@ -1,5 +1,5 @@
 #include <qcode/providers/registry.h>
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 #include <qcode/providers/openai.h>
 

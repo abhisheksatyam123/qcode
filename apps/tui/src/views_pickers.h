@@ -1,9 +1,9 @@
 #pragma once
 
-#include <qcode/commands/commands.h>
+#include <qcode/ui/commands.h>
 #include <qcode/session/session_store.h>
-#include <qcode/render/themes.h>
-#include <qcode/state/state.h>
+#include <qcode/ui/themes.h>
+#include <qcode/core/state.h>
 #include <ftxui/dom/elements.hpp>
 #include <string>
 #include <vector>

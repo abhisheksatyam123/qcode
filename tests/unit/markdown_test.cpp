@@ -1,5 +1,5 @@
-#include <qcode/render/markdown.h>
-#include <qcode/render/message_render.h>
+#include <qcode/ui/markdown.h>
+#include <qcode/ui/message_render.h>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/screen.hpp>
 #include <gtest/gtest.h>

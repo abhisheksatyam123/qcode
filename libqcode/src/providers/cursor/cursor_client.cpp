@@ -1,6 +1,6 @@
 #include "cursor_client.h"
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 #include "providers/cursor/cursor_http2.h"
 #include "providers/cursor/cursor_proto.h"
 #include "providers/cursor/cursor_stream.h"

@@ -1,8 +1,8 @@
 #pragma once
 
-#include <qcode/types/generate_options.h>
-#include <qcode/types/stream_options.h>
-#include <qcode/types/stream_result.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/stream_options.h>
+#include <qcode/core/stream_result.h>
 
 #include <functional>
 #include <map>

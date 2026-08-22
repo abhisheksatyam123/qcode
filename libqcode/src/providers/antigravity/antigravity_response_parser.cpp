@@ -1,6 +1,6 @@
 #include "antigravity_response_parser.h"
 
-#include <qcode/transform/gemini_transform.h>
+#include <qcode/providers/gemini_transform.h>
 #include "providers/openai/openai_response_parser.h"
 #include "utils/response_utils.h"
 

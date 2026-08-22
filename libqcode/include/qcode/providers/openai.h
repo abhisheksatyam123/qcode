@@ -5,8 +5,8 @@
     "OpenAI component not available. Link with qcode::openai or qcode::sdk to use OpenAI functionality."
 #endif
 
-#include <qcode/retry/retry_policy.h>
-#include <qcode/types/client.h>
+#include <qcode/core/retry_policy.h>
+#include <qcode/core/client.h>
 
 #include <optional>
 #include <map>

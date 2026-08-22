@@ -1,8 +1,8 @@
 // GitHub-flavored Markdown rendering for qcode-tui, backed by md4c.
-#include <qcode/render/markdown.h>
-#include <qcode/render/themes.h>
+#include <qcode/ui/markdown.h>
+#include <qcode/ui/themes.h>
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/dom/table.hpp>

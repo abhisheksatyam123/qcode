@@ -1,4 +1,4 @@
-#include <qcode/study/study_store.h>
+#include <qcode/session/study_store.h>
 
 #include <algorithm>
 #include <cctype>
@@ -14,7 +14,7 @@
 #include <sqlite3.h>
 #include <uuid.h>
 
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 
 namespace qcode {
 namespace study {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/types/tool.h>
+#include <qcode/core/tool.h>
 
 #include <atomic>
 #include <chrono>

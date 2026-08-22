@@ -1,8 +1,8 @@
 #include "../utils/mock_anthropic_client.h"
 #include "../utils/test_fixtures.h"
-#include <qcode/types/stream_event.h>
-#include <qcode/types/stream_options.h>
-#include <qcode/types/stream_result.h>
+#include <qcode/core/stream_event.h>
+#include <qcode/core/stream_options.h>
+#include <qcode/core/stream_result.h>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>

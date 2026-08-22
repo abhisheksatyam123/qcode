@@ -1,5 +1,5 @@
 #include <algorithm>
-#include <qcode/logger/logger.h>
+#include <qcode/core/logger.h>
 #include <chrono>
 #include <future>
 #include <random>
@@ -7,8 +7,8 @@
 
 #include <qcode/tools/tool_executor.h>
 #include <qcode/tools/tool_factory.h>
-#include <qcode/types/tool.h>
-#include <qcode/utils/utf8.h>
+#include <qcode/core/tool.h>
+#include <qcode/core/utf8.h>
 
 namespace qcode {
 

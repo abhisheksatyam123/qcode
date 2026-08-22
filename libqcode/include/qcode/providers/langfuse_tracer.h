@@ -7,8 +7,8 @@
 ///
 /// Usage:
 /// ```cpp
-/// #include <qcode/qcode.h>
-/// #include <qcode/langfuse/tracer.h>
+/// #include <qcode/core/qcode.h>
+/// #include <qcode/providers/langfuse_tracer.h>
 ///
 /// qcode::langfuse::Tracer tracer({
 ///     .host = "https://cloud.langfuse.com",
@@ -27,9 +27,9 @@
 /// trace->end();  // synchronous flush
 /// ```
 
-#include <qcode/types/client.h>
-#include <qcode/types/generate_options.h>
-#include <qcode/types/tool.h>
+#include <qcode/core/client.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/tool.h>
 
 #include <atomic>
 #include <chrono>

@@ -5,7 +5,7 @@
 #include "model.h"
 #include "tool.h"
 #include "usage.h"
-#include <qcode/retry/retry_policy.h>
+#include <qcode/core/retry_policy.h>
 
 #include <atomic>
 #include <functional>
