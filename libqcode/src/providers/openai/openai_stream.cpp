@@ -193,17 +193,54 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
 
     LOG_INFO("Sending stream request to OpenAI API");
 
-    if (!client.send(req, res, error)) {
-      std::string error_msg = "Network error: " + httplib::to_string(error);
-      LOG_ERROR("Failed to send stream request: {}", error_msg);
-      push_event(create_error_event(error_msg));
-    } else if (res.status != 200) {
-      LOG_ERROR("OpenAI stream API returned status {} - body: {}",
-                            res.status, res.body);
-      push_event(create_error_event("HTTP " + std::to_string(res.status) +
-                                    " error: " + res.body));
-    } else {
-      LOG_INFO("Stream completed successfully");
+    // Retry initial connection up to 3 attempts for transient status codes (429, 5xx)
+    // or network drops before any stream payload is received.
+    constexpr int kMaxStreamConnectAttempts = 3;
+    bool send_success = false;
+
+    for (int attempt = 1; attempt <= kMaxStreamConnectAttempts; ++attempt) {
+      if (should_stop_) break;
+
+      accumulated_data.clear();
+      error = httplib::Error::Success;
+
+      send_success = client.send(req, res, error);
+
+      if (send_success && res.status == 200) {
+        LOG_INFO("Stream completed successfully");
+        break;
+      }
+
+      const bool is_network_error = !send_success;
+      const bool is_retryable_status = send_success &&
+          (qcode::is_status_code_retryable(res.status) ||
+           qcode::is_error_message_retryable(res.body));
+
+      if ((is_network_error || is_retryable_status) &&
+          attempt < kMaxStreamConnectAttempts && !should_stop_) {
+        const int delay_ms = attempt * 1500;
+        std::string err_desc = is_network_error
+                                  ? httplib::to_string(error)
+                                  : ("HTTP " + std::to_string(res.status));
+        LOG_WARN(
+            "Stream initial connection failed ({}), retrying attempt {}/{} in {} ms...",
+            err_desc, attempt + 1, kMaxStreamConnectAttempts, delay_ms);
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+        continue;
+      }
+
+      // Permanent failure or exhausted retries
+      if (is_network_error) {
+        std::string error_msg = "Network error: " + httplib::to_string(error);
+        LOG_ERROR("Failed to send stream request: {}", error_msg);
+        push_event(create_error_event(error_msg));
+      } else {
+        LOG_ERROR("OpenAI stream API returned status {} - body: {}",
+                  res.status, res.body);
+        push_event(create_error_event("HTTP " + std::to_string(res.status) +
+                                      " error: " + res.body));
+      }
+      break;
     }
   } catch (const std::exception& e) {
     LOG_ERROR("Exception in stream thread: {}", e.what());

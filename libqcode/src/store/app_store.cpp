@@ -509,7 +509,17 @@ void AppStore::notify_now() {
         std::lock_guard<std::mutex> lock(cb_mutex_);
         cbs = callbacks_;
     }
-    for (auto& entry : cbs) { entry.second(); }
+    for (auto& entry : cbs) {
+        if (entry.second) {
+            try {
+                entry.second();
+            } catch (const std::exception& e) {
+                LOG_ERROR("AppStore: exception in subscriber callback: {}", e.what());
+            } catch (...) {
+                LOG_ERROR("AppStore: unknown exception in subscriber callback");
+            }
+        }
+    }
 }
 
 } // namespace qcode

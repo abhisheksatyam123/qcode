@@ -99,6 +99,19 @@ set_target_properties(qcode-engine PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
+target_precompile_headers(qcode-engine PRIVATE
+    <algorithm>
+    <chrono>
+    <functional>
+    <map>
+    <memory>
+    <string>
+    <vector>
+    <nlohmann/json.hpp>
+    <httplib.h>
+)
+
+
 if(MSVC)
     target_compile_options(qcode-engine PRIVATE /W3)
 else()

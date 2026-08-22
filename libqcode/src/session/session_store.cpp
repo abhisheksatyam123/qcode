@@ -66,6 +66,40 @@ static sqlite3* open_database(std::string& out_path) {
     return db;
 }
 
+class SharedDbHandle final {
+public:
+    static SharedDbHandle& instance() {
+        static SharedDbHandle inst;
+        return inst;
+    }
+
+    struct DbLock {
+        std::unique_lock<std::mutex> lock;
+        sqlite3* db = nullptr;
+        explicit operator bool() const { return db != nullptr; }
+    };
+
+    DbLock acquire() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!db_) {
+            std::string path;
+            db_ = open_database(path);
+        }
+        return DbLock{std::move(lock), db_};
+    }
+
+private:
+    SharedDbHandle() = default;
+    ~SharedDbHandle() {
+        if (db_) {
+            sqlite3_close(db_);
+            db_ = nullptr;
+        }
+    }
+    sqlite3* db_ = nullptr;
+    std::mutex mutex_;
+};
+
 static bool prepare_stmt(sqlite3* db, const char* sql, sqlite3_stmt** stmt) {
     if (sqlite3_prepare_v2(db, sql, -1, stmt, nullptr) != SQLITE_OK) {
         LOG_ERROR("SQLite: prepare failed: {}", sqlite3_errmsg(db));
@@ -129,8 +163,8 @@ static std::string generate_uuid() {
 }
 
 void init_database() {
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return;
 
     // Idempotent schema migrations, guarded by PRAGMA user_version.
@@ -301,15 +335,15 @@ void init_database() {
     }
 
     LOG_INFO("SQLite: database opened successfully at {}", path);
-    sqlite3_close(db);
+    // shared db handle
     seed_model_capabilities_if_needed();
 }
 
 std::string create_new_session(const std::string& provider, const std::string& model,
                                const std::string& workspace,
                                const std::string& custom_id) {
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return "";
     }
@@ -355,13 +389,13 @@ std::string create_new_session(const std::string& provider, const std::string& m
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_close(db);
+    // shared db handle
     return final_id;
 }
 
 std::string get_last_active_session() {
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return "";
     }
@@ -386,7 +420,7 @@ std::string get_last_active_session() {
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_close(db);
+    // shared db handle
     return uuid;
 }
 
@@ -420,8 +454,8 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
         return history;
     }
 
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return history;
     }
@@ -540,7 +574,7 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_close(db);
+    // shared db handle
     return history;
 }
 
@@ -587,8 +621,8 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
         return;
     }
 
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return;
     }
@@ -597,7 +631,7 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
     if (sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
         LOG_ERROR("SQLite: failed to begin transaction: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
-        sqlite3_close(db);
+        // shared db handle
         return;
     }
 
@@ -703,15 +737,15 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
         sqlite3_free(err_msg);
     }
 
-    sqlite3_close(db);
+    // shared db handle
 }
 
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
     std::vector<std::pair<std::string, std::string>> out;
     if (session_id.empty() || !is_valid_session_id(session_id)) return out;
 
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return out;
 
     const char* sql = "SELECT sender, content FROM messages WHERE session_id = ? ORDER BY id ASC;";
@@ -727,14 +761,14 @@ std::vector<std::pair<std::string, std::string>> load_session_messages(const std
         }
         sqlite3_finalize(stmt);
     }
-    sqlite3_close(db);
+    // shared db handle
     return out;
 }
 
 std::vector<std::pair<std::string, std::string>> list_sessions() {
     std::vector<std::pair<std::string, std::string>> sessions;
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return sessions;
     }
@@ -761,14 +795,14 @@ std::vector<std::pair<std::string, std::string>> list_sessions() {
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_close(db);
+    // shared db handle
     return sessions;
 }
 
 std::vector<SessionInfo> list_sessions_full() {
     std::vector<SessionInfo> sessions;
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return sessions;
     }
@@ -806,14 +840,14 @@ std::vector<SessionInfo> list_sessions_full() {
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_close(db);
+    // shared db handle
     return sessions;
 }
 
 std::string get_session_workspace(const std::string& session_id) {
     if (session_id.empty() || !is_valid_session_id(session_id)) return "";
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return "";
 
     std::string result;
@@ -827,14 +861,14 @@ std::string get_session_workspace(const std::string& session_id) {
         }
         sqlite3_finalize(stmt);
     }
-    sqlite3_close(db);
+    // shared db handle
     return result;
 }
 
 std::string get_session_title(const std::string& session_id) {
     if (session_id.empty() || !is_valid_session_id(session_id)) return "";
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return "";
 
     std::string result;
@@ -848,7 +882,7 @@ std::string get_session_title(const std::string& session_id) {
         }
         sqlite3_finalize(stmt);
     }
-    sqlite3_close(db);
+    // shared db handle
     return result;
 }
 
@@ -862,8 +896,8 @@ SessionStats get_session_stats(const std::string& session_id,
     stats.id = session_id;
     if (session_id.empty() || !is_valid_session_id(session_id)) return stats;
 
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return stats;
 
     // ── Session metadata ──
@@ -937,7 +971,7 @@ SessionStats get_session_stats(const std::string& session_id,
         }
     }
 
-    sqlite3_close(db);
+    // shared db handle
 
     // Tool calls / tool time are reconstructed from persisted messages rows,
     // so add any live counters from the in-flight generation on top.
@@ -958,8 +992,8 @@ void persist_session_token_stats(const std::string& session_id,
                                  int completion_tokens_delta,
                                  int total_tokens_delta) {
     if (session_id.empty() || !is_valid_session_id(session_id)) return;
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return;
 
     const char* sql =
@@ -977,7 +1011,7 @@ void persist_session_token_stats(const std::string& session_id,
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
-    sqlite3_close(db);
+    // shared db handle
 }
 
 void rename_session(const std::string& session_id, const std::string& new_title) {
@@ -986,8 +1020,8 @@ void rename_session(const std::string& session_id, const std::string& new_title)
         return;
     }
 
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return;
     }
@@ -1001,7 +1035,7 @@ void rename_session(const std::string& session_id, const std::string& new_title)
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_close(db);
+    // shared db handle
 }
 
 void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model) {
@@ -1010,8 +1044,8 @@ void set_session_provider_model(const std::string& session_id, const std::string
         return;
     }
 
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return;
     }
@@ -1026,7 +1060,7 @@ void set_session_provider_model(const std::string& session_id, const std::string
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_close(db);
+    // shared db handle
 }
 
 void delete_session(const std::string& session_id) {
@@ -1035,8 +1069,8 @@ void delete_session(const std::string& session_id) {
         return;
     }
 
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) {
         return;
     }
@@ -1052,15 +1086,15 @@ void delete_session(const std::string& session_id) {
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_close(db);
+    // shared db handle
 }
 
 
 
 
 void seed_model_capabilities_if_needed() {
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return;
 
     struct SeedCap {
@@ -1137,14 +1171,14 @@ void seed_model_capabilities_if_needed() {
         }
     }
 
-    sqlite3_close(db);
+    // shared db handle
 }
 
 void record_generation_turn(const std::string& model_id, const std::string& provider,
                             bool success, bool is_loop_failure, double latency_ms) {
     if (model_id.empty()) return;
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return;
 
     // Ensure model_capabilities entry exists
@@ -1184,13 +1218,13 @@ void record_generation_turn(const std::string& model_id, const std::string& prov
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
-    sqlite3_close(db);
+    // shared db handle
 }
 
 void record_user_feedback(const std::string& model_id, bool is_positive) {
     if (model_id.empty()) return;
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return;
 
     const char* sql_upsert =
@@ -1209,7 +1243,7 @@ void record_user_feedback(const std::string& model_id, bool is_positive) {
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
-    sqlite3_close(db);
+    // shared db handle
 }
 
 ModelPerformanceSummary get_model_performance_summary(const std::string& model_id, const std::string& provider) {
@@ -1218,8 +1252,8 @@ ModelPerformanceSummary get_model_performance_summary(const std::string& model_i
     summary.provider = provider;
     if (model_id.empty()) return summary;
 
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return summary;
 
     const char* sql =
@@ -1258,14 +1292,14 @@ ModelPerformanceSummary get_model_performance_summary(const std::string& model_i
         }
         sqlite3_finalize(stmt);
     }
-    sqlite3_close(db);
+    // shared db handle
     return summary;
 }
 
 std::vector<ModelPerformanceSummary> list_all_model_performance_summaries() {
     std::vector<ModelPerformanceSummary> result;
-    std::string path;
-    sqlite3* db = open_database(path);
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return result;
 
     const char* sql =
@@ -1304,7 +1338,7 @@ std::vector<ModelPerformanceSummary> list_all_model_performance_summaries() {
         }
         sqlite3_finalize(stmt);
     }
-    sqlite3_close(db);
+    // shared db handle
     return result;
 }
 
