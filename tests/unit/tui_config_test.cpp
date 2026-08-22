@@ -133,7 +133,7 @@ TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
                          return model.id == id;
                        });
   };
-  EXPECT_TRUE(has_model("deepseek-v4-flash-free"));
+  EXPECT_TRUE(has_model("x-preview-f-free"));
   EXPECT_TRUE(has_model("big-pickle"));
   EXPECT_TRUE(has_model("mimo-v2.5-free"));
   EXPECT_TRUE(has_model("hy3-free"));
@@ -141,14 +141,14 @@ TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
   EXPECT_TRUE(has_model("nemotron-3-ultra-free"));
   EXPECT_TRUE(has_model("nemotron-3.5-lightning-free"));
   EXPECT_FALSE(has_model("north-mini-code-free"));
-  const auto deepseek = std::find_if(
+  const auto xpreview = std::find_if(
       models.begin(), models.end(), [](const ModelInfo& model) {
-        return model.id == "deepseek-v4-flash-free";
+        return model.id == "x-preview-f-free";
       });
-  ASSERT_NE(deepseek, models.end());
-  EXPECT_EQ(deepseek->context_window, 1000000);
-  EXPECT_TRUE(deepseek->tool_call);
-  EXPECT_TRUE(deepseek->reasoning);
+  ASSERT_NE(xpreview, models.end());
+  EXPECT_EQ(xpreview->context_window, 1000000);
+  EXPECT_TRUE(xpreview->tool_call);
+  EXPECT_TRUE(xpreview->reasoning);
   std::filesystem::remove(path);
 }
 
@@ -184,17 +184,13 @@ TEST(TuiConfigTest, AddsCurrentCursorModelsWhenDiscoveryIsUnavailable) {
                          return model.id == id;
                        });
   };
-  EXPECT_TRUE(has_model("composer-2.5"));
-  EXPECT_TRUE(has_model("cursor-grok-4.5-high"));
-  EXPECT_TRUE(has_model("gpt-5.6-sol-medium"));
-  EXPECT_TRUE(has_model("gpt-5.6-terra-medium"));
-  EXPECT_TRUE(has_model("gpt-5.6-luna-medium"));
-  EXPECT_TRUE(has_model("claude-fable-5-high"));
-  EXPECT_TRUE(has_model("claude-fable-5-thinking-high"));
-  EXPECT_FALSE(has_model("claude-opus-4.8"));
+  EXPECT_TRUE(has_model("cursor-grok-4.6"));
+  EXPECT_TRUE(has_model("claude-opus-5-high"));
+  EXPECT_FALSE(has_model("composer-2.5"));
+  EXPECT_FALSE(has_model("gpt-5.6-sol-medium"));
   const auto grok = std::find_if(
       models.begin(), models.end(), [](const ModelInfo& model) {
-        return model.id == "cursor-grok-4.5-high";
+        return model.id == "cursor-grok-4.6";
       });
   ASSERT_NE(grok, models.end());
   EXPECT_EQ(grok->context_window, 200000);

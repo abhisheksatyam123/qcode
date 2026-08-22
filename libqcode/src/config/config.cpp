@@ -103,7 +103,7 @@ static ModelInfo make_default_model(std::string name,
 // not a Zen model (401 ModelError) — it lives on OpenRouter instead.
 static std::vector<ModelInfo> official_opencode_free_models() {
     return {
-        make_default_model("DeepSeek V4 Flash (Free)", "deepseek-v4-flash-free",
+        make_default_model("X-Preview Frontier (Free)", "x-preview-f-free",
                            1000000, 65536, true, true),
         make_default_model("Big Pickle (Free)", "big-pickle", 200000, 32000,
                            true, true),
@@ -389,18 +389,18 @@ ModelInfo make_cursor_model(const std::string& id, std::string name = "") {
 }
 
 bool is_selected_cursor_family(const std::string& id) {
-    return id.starts_with("cursor-grok-") || id.starts_with("gpt-5.6-") ||
-           id.starts_with("claude-fable-5-") || id.starts_with("composer-");
+    return id.find("grok-4.6") != std::string::npos ||
+           id.find("grok-4-6") != std::string::npos ||
+           id.find("opus-5") != std::string::npos ||
+           id.find("opus-5.0") != std::string::npos ||
+           id.find("claude-5-opus") != std::string::npos ||
+           id.find("claude-opus-5") != std::string::npos;
 }
 
 std::string cursor_display_name(const std::string& id,
                                 const std::string& discovered_name) {
     auto name = discovered_name.empty() ? cursor_model_name(id)
                                         : discovered_name;
-    if (id.starts_with("claude-fable-5-") &&
-        name.find("Mythos") == std::string::npos) {
-        name = "Mythos - " + name;
-    }
     return name;
 }
 
@@ -472,23 +472,10 @@ void hydrate_cursor_models(ProviderInfo& provider) {
     std::erase_if(provider.models, [](const ModelInfo& model) {
         return !is_selected_cursor_family(model.id);
     });
-    add_cursor_model_if_missing(provider.models, "cursor-grok-4.5-high",
-                                "Cursor Grok 4.5");
-    add_cursor_model_if_missing(provider.models, "composer-2.5",
-                                "Composer 2.5");
-    add_cursor_model_if_missing(provider.models, "composer-2.5-fast",
-                                "Composer 2.5 Fast");
-    add_cursor_model_if_missing(provider.models, "gpt-5.6-sol-medium",
-                                "GPT-5.6 Sol");
-    add_cursor_model_if_missing(provider.models, "gpt-5.6-terra-medium",
-                                "GPT-5.6 Terra");
-    add_cursor_model_if_missing(provider.models, "gpt-5.6-luna-medium",
-                                "GPT-5.6 Luna");
-    add_cursor_model_if_missing(provider.models, "claude-fable-5-high",
-                                "Mythos - Fable 5");
-    add_cursor_model_if_missing(provider.models,
-                                "claude-fable-5-thinking-high",
-                                "Mythos - Fable 5 Thinking High");
+    add_cursor_model_if_missing(provider.models, "cursor-grok-4.6",
+                                "Cursor Grok 4.6");
+    add_cursor_model_if_missing(provider.models, "claude-opus-5-high",
+                                "Claude Opus 5");
 }
 
 }  // namespace

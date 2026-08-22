@@ -484,19 +484,16 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
                 text(" · " + model_label) | dim | color(Color::GrayDark));
         }
         parts.push_back(hbox(std::move(header)));
-        parts.push_back(text(""));
     } else if (msg.role == kMessageRoleUser && !has_tool_results) {
         parts.push_back(hbox({
             text("❯ ") | bold | color(user_green()),
             text("You") | bold | color(user_green()),
         }));
-        parts.push_back(text(""));
     } else if (msg.role == kMessageRoleSystem) {
         parts.push_back(hbox({
             text("ℹ ") | dim | color(theme_muted(theme)),
             text("System") | dim | color(theme_muted(theme)),
         }));
-        parts.push_back(text(""));
     }
 
     std::unordered_map<std::string, const qcode::ToolCallContentPart*> tool_calls;

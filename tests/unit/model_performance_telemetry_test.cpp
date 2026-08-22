@@ -10,7 +10,7 @@ namespace {
 TEST(ModelPerformanceTelemetryTest, TelemetryPersistenceAndAggregation) {
     init_database();
 
-    std::string test_model = "deepseek-v4-flash-free";
+    std::string test_model = "x-preview-f-free";
 
     // 1. Record generation turns
     record_generation_turn(test_model, "opencode", true, false, 250.0);

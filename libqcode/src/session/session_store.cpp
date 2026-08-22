@@ -1077,7 +1077,7 @@ void seed_model_capabilities_if_needed() {
     };
 
     static const SeedCap kDefaults[] = {
-        {"deepseek-v4-flash-free", "opencode", "DeepSeek V4 Flash (Free)", "DeepSeek 284B MoE (13B Active)", 1000000, 65536, 1, 1, "High Function-Calling Fidelity", "Iterative Fast Multi-Turn Agent Tool Loops"},
+        {"x-preview-f-free", "opencode", "X-Preview Frontier (Free)", "High-Fidelity Agentic Model", 1000000, 65536, 1, 1, "Frontier Reasoning & High Fidelity", "Agentic Code Edits, Reasoning & Tool Calls"},
         {"big-pickle", "opencode", "Big Pickle (Free)", "Community Stealth Model", 200000, 32000, 1, 1, "Experimental High Context", "Large Text Ingestion & Bulk Payload Inspection"},
         {"mimo-v2.5-free", "opencode", "MiMo V2.5 (Free)", "Xiaomi MoE Instruction Model", 200000, 32000, 1, 1, "General Agentic Benchmark", "General Chat & Single-turn Instructions"},
         {"hy3-free", "opencode", "HY3 (Free)", "OpenCode High-Throughput MoE", 262144, 64000, 1, 1, "Fast General Instructions", "Quick Questions & Instruction Following"},
@@ -1095,8 +1095,12 @@ void seed_model_capabilities_if_needed() {
         {"nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter", "Nemotron 3 Ultra 550B (Free)", "NVIDIA 550B MoE (55B Active)", 1000000, 65536, 1, 1, "Frontier MoE 1M Context", "Deep Reasoning & Large File Inspection"},
         {"nvidia/nemotron-3.5-lightning:free", "openrouter", "Nemotron 3.5 Lightning (Free)", "NVIDIA High-Speed Reasoning", 1000000, 65536, 1, 1, "Ultra-Low Latency Agentic", "Fast Multi-Turn Tools & Real-Time Code Edits"},
         {"nvidia/nemotron-3-super-120b-a12b:free", "openrouter", "Nemotron 3 Super 120B (Free)", "NVIDIA 120B MoE (12B Active)", 262144, 32768, 1, 1, "High-Speed Code Assistant", "Fast Command Execution & Lightweight Tool Calls"},
+        {"nvidia/nemotron-3-nano-30b-a3b:free", "openrouter", "Nemotron 3 Nano 30B (Free)", "NVIDIA 30B MoE (3B Active)", 256000, 32768, 1, 1, "Ultra-Efficient MoE", "Fast Lightweight Tool Calls & Autocomplete"},
         {"poolside/laguna-s-2.1:free", "openrouter", "Poolside Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Iterative Code Modifications & Diffs"},
-        {"cohere/north-mini-code:free", "openrouter", "Cohere North Mini Code (Free)", "Cohere 30B MoE (3B Active)", 256000, 32768, 1, 1, "Cohere Debut Sparse MoE", "Fast Command Execution & Auto-complete"}
+        {"cohere/north-mini-code:free", "openrouter", "Cohere North Mini Code (Free)", "Cohere 30B MoE (3B Active)", 256000, 32768, 1, 1, "Cohere Debut Sparse MoE", "Fast Command Execution & Auto-complete"},
+        {"openai/gpt-oss-20b:free", "openrouter", "OpenAI gpt-oss-20b (Free)", "OpenAI 21B Open Weights", 131072, 32768, 1, 1, "OpenAI Apache 2.0 Open Weights", "General Instruction & Code Completion"},
+        {"poolside/laguna-xs-2.1:free", "openrouter", "Poolside Laguna XS 2.1 (Free)", "Poolside 33B MoE (3B Active)", 262144, 32768, 1, 1, "Laguna XS.2 Successor", "Lightweight Code Edits & Fast Iteration"},
+        {"dots-studio/dots-3-note-preview:free", "openrouter", "Dots Studio 3 Note (Free)", "Dots Studio High Context", 512000, 32768, 1, 1, "512K High Context Preview", "Large Document & Payload Inspection"}
     };
 
     const char* sql_insert =

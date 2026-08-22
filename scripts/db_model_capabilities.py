@@ -84,7 +84,7 @@ def seed_data():
         ("antigravity", "gemini-3-pro-high", "Gemini 3 Pro High", "Google DeepMind Pro Reasoning", 2000000, 8192, 1, 1, "2M Context Diagnostics", "Google DeepMind Spec", "Internal OAuth (Free)", "Long-Context Deep Reasoning & Architecture Diagnostics", int(time.time())),
 
         # OpenCode Zen (Keyless Free Tier) — IDs from https://opencode.ai/zen/v1/models
-        ("opencode", "deepseek-v4-flash-free", "DeepSeek V4 Flash (Free)", "DeepSeek 284B MoE (13B Active)", 1000000, 65536, 1, 1, "High Function-Calling Fidelity", "DeepSeek Official Spec", "Keyless Free Tier", "Iterative Fast Multi-Turn Agent Tool Loops", int(time.time())),
+        ("opencode", "x-preview-f-free", "X-Preview Frontier (Free)", "High-Fidelity Agentic Model", 1000000, 65536, 1, 1, "Frontier Reasoning & High Fidelity", "OpenCode Zen Specs", "Keyless Free Tier", "Agentic Code Edits, Reasoning & Tool Calls", int(time.time())),
         ("opencode", "big-pickle", "Big Pickle (Free)", "Community Stealth Model", 200000, 32000, 1, 1, "Experimental High Context", "OpenCode Zen Docs", "Keyless Free Tier", "Large Text Ingestion & Bulk Payload Inspection", int(time.time())),
         ("opencode", "mimo-v2.5-free", "MiMo V2.5 (Free)", "Xiaomi MoE Instruction Model", 200000, 32000, 1, 1, "General Agentic Benchmark", "Xiaomi Official Spec via OpenCode Zen", "Keyless Free Tier", "General Chat & Single-turn Instructions", int(time.time())),
         ("opencode", "hy3-free", "HY3 (Free)", "OpenCode High-Throughput MoE", 262144, 64000, 1, 1, "Fast General Instructions", "OpenCode Zen Docs", "Keyless Free Tier", "Quick Questions & Instruction Following", int(time.time())),
@@ -93,11 +93,15 @@ def seed_data():
         ("opencode", "nemotron-3.5-lightning-free", "Nemotron 3.5 Lightning (Free)", "NVIDIA High-Speed Reasoning", 262144, 65536, 1, 1, "Ultra-Low Latency Agentic", "NVIDIA Spec via OpenCode Zen", "Keyless Free Tier", "Fast Multi-Turn Tools & Real-Time Code Edits", int(time.time())),
 
         # OpenRouter Free Models
-        ("openrouter", "poolside/laguna-s-2.1:free", "Poolside Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Poolside Official Spec via OpenRouter API", "Strict (20 req/min)", "Iterative Code Modifications & Diffs", int(time.time())),
-        ("openrouter", "poolside/laguna-xs-2.1:free", "Poolside Laguna XS 2.1 (Free)", "Poolside 33B MoE (3B Active)", 262144, 32768, 1, 1, "Laguna XS.2 Successor", "Poolside Official Spec via OpenRouter API", "Strict (20 req/min)", "Lightweight Code Edits", int(time.time())),
         ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free", "Nemotron 3 Ultra 550B (Free)", "NVIDIA 550B MoE (55B Active)", 1000000, 65536, 1, 1, "Frontier MoE 1M Context", "NVIDIA Spec via OpenRouter API", "Strict (20 req/min)", "Deep Reasoning & Large File Inspection", int(time.time())),
+        ("openrouter", "nvidia/nemotron-3.5-lightning:free", "Nemotron 3.5 Lightning (Free)", "NVIDIA High-Speed Reasoning", 1000000, 65536, 1, 1, "Ultra-Low Latency Agentic", "NVIDIA Spec via OpenRouter API", "Strict (20 req/min)", "Fast Multi-Turn Tools & Real-Time Code Edits", int(time.time())),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super 120B (Free)", "NVIDIA 120B MoE (12B Active)", 262144, 32768, 1, 1, "Hybrid Mamba-Transformer MoE", "NVIDIA Spec via OpenRouter API", "Strict (20 req/min)", "Multi-agent Compute Efficiency Tasks", int(time.time())),
-        ("openrouter", "cohere/north-mini-code:free", "Cohere North Mini Code (Free)", "Cohere 30B MoE (3B Active)", 256000, 32768, 1, 1, "Cohere Debut Sparse MoE", "Cohere Spec via OpenRouter API", "Strict (20 req/min)", "Fast Command Execution & Auto-complete", int(time.time()))
+        ("openrouter", "nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B (Free)", "NVIDIA 30B MoE (3B Active)", 256000, 32768, 1, 1, "Ultra-Efficient MoE", "NVIDIA Spec via OpenRouter API", "Strict (20 req/min)", "Fast Lightweight Tool Calls & Autocomplete", int(time.time())),
+        ("openrouter", "poolside/laguna-s-2.1:free", "Poolside Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Poolside Official Spec via OpenRouter API", "Strict (20 req/min)", "Iterative Code Modifications & Diffs", int(time.time())),
+        ("openrouter", "cohere/north-mini-code:free", "Cohere North Mini Code (Free)", "Cohere 30B MoE (3B Active)", 256000, 32768, 1, 1, "Cohere Debut Sparse MoE", "Cohere Spec via OpenRouter API", "Strict (20 req/min)", "Fast Command Execution & Auto-complete", int(time.time())),
+        ("openrouter", "openai/gpt-oss-20b:free", "OpenAI gpt-oss-20b (Free)", "OpenAI 21B Open Weights", 131072, 32768, 1, 1, "OpenAI Apache 2.0 Open Weights", "OpenAI Spec via OpenRouter API", "Strict (20 req/min)", "General Instruction & Code Completion", int(time.time())),
+        ("openrouter", "poolside/laguna-xs-2.1:free", "Poolside Laguna XS 2.1 (Free)", "Poolside 33B MoE (3B Active)", 262144, 32768, 1, 1, "Laguna XS.2 Successor", "Poolside Official Spec via OpenRouter API", "Strict (20 req/min)", "Lightweight Code Edits & Fast Iteration", int(time.time())),
+        ("openrouter", "dots-studio/dots-3-note-preview:free", "Dots Studio 3 Note (Free)", "Dots Studio High Context", 512000, 32768, 1, 1, "512K High Context Preview", "Dots Studio Spec via OpenRouter API", "Strict (20 req/min)", "Large Document & Payload Inspection", int(time.time()))
     ]
 
     for row in models_data:

@@ -33,7 +33,7 @@ ftxui::Element build_theme_popup(
         const int total = static_cast<int>(entries.size());
         select_idx = std::clamp(select_idx, 0, total - 1);
 
-        constexpr int MAX_VISIBLE = 12;
+        constexpr int MAX_VISIBLE = 8;
         int window_start = 0;
         if (select_idx >= MAX_VISIBLE) {
             window_start = select_idx - MAX_VISIBLE + 1;
@@ -77,7 +77,7 @@ ftxui::Element build_theme_popup(
     lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
 
     return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) |
-           size(WIDTH, EQUAL, 72) | hcenter;
+           size(WIDTH, EQUAL, 56) | hcenter;
 }
 
 // ── Model selector popup with Capability & Telemetry Inspector ──
@@ -111,7 +111,7 @@ ftxui::Element build_model_popup(
         const int total = static_cast<int>(entries.size());
         select_idx = std::clamp(select_idx, 0, total - 1);
 
-        constexpr int MAX_VISIBLE = 12;
+        constexpr int MAX_VISIBLE = 8;
         int window_start = 0;
         if (select_idx >= MAX_VISIBLE) {
             window_start = select_idx - MAX_VISIBLE + 1;
@@ -207,8 +207,8 @@ ftxui::Element build_model_popup(
     left_lines.push_back(separatorLight());
     left_lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
 
-    auto left_box = vbox(std::move(left_lines)) | size(WIDTH, EQUAL, 42);
-    auto right_box = vbox(std::move(right_lines)) | size(WIDTH, EQUAL, 46);
+    auto left_box = vbox(std::move(left_lines)) | size(WIDTH, EQUAL, 34);
+    auto right_box = vbox(std::move(right_lines)) | size(WIDTH, EQUAL, 40);
 
     return hbox({ left_box, separatorLight(), right_box }) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) | hcenter;
 }
@@ -256,7 +256,7 @@ ftxui::Element build_session_popup(
         const int total = static_cast<int>(entries.size());
         select_idx = std::clamp(select_idx, 0, total - 1);
 
-        constexpr int MAX_VISIBLE = 12;
+        constexpr int MAX_VISIBLE = 8;
         int window_start = 0;
         if (select_idx >= MAX_VISIBLE) {
             window_start = select_idx - MAX_VISIBLE + 1;
@@ -301,7 +301,7 @@ ftxui::Element build_session_popup(
     lines.push_back(text(" ↑↓ navigate  Enter select  Ctrl-D delete  Esc cancel") | dim);
 
     return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) |
-           size(WIDTH, EQUAL, 80) | hcenter;
+           size(WIDTH, EQUAL, 60) | hcenter;
 }
 
 }  // namespace tui
