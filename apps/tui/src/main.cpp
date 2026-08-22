@@ -213,6 +213,45 @@ int main() {
         };
     };
 
+    auto get_last_user_prompt = [&]() -> std::string {
+        if (state.last_user_prompt && !state.last_user_prompt->empty()) {
+            return *state.last_user_prompt;
+        }
+        if (state.messages_history) {
+            for (auto it = state.messages_history->rbegin();
+                 it != state.messages_history->rend(); ++it) {
+                if (it->role == qcode::kMessageRoleUser && !it->has_tool_results()) {
+                    std::string t = it->get_text();
+                    if (!t.empty()) return t;
+                }
+            }
+        }
+        return "";
+    };
+
+    auto trigger_retry = [&]() -> bool {
+        if (generation.is_active()) {
+            store.add_toast("Cannot retry while generation is active", "warning", 2000);
+            return false;
+        }
+        std::string retry_prompt = get_last_user_prompt();
+        if (retry_prompt.empty()) {
+            return false;
+        }
+        if (state.last_user_prompt) *state.last_user_prompt = retry_prompt;
+        auto req = make_generation_request();
+        bool last_is_user = (!state.messages_history->empty() &&
+                             state.messages_history->back().role == qcode::kMessageRoleUser &&
+                             !state.messages_history->back().has_tool_results());
+        req.append_user_message = !last_is_user;
+        store.clear_retry();
+        store.clear_error();
+        store.add_toast("Retrying last prompt…", "info", 1500);
+        generation.spawn(retry_prompt, std::move(req));
+        screen.Post(Event::Custom);
+        return true;
+    };
+
     auto submit = [&] {
         if (prompt_input.empty()) return;
         if (generation.is_active()) {
@@ -593,6 +632,8 @@ int main() {
                                     break;
                                 }
                             }
+                        } else if (cmd_name == "retry") {
+                            trigger_retry();
                         } else if (cmd_name == "theme") {
                             show_theme_select = true;
                             theme_select_idx = 0;
@@ -742,17 +783,11 @@ int main() {
         // message is already in history, so we resend without re-appending it.
         if (state.tab_selected == 0 && prompt_input.empty() && !show_model_select && !show_session_select &&
             !show_theme_select && !state.slash_suggestion_mode &&
-            !generation.is_active() && state.last_user_prompt &&
-            !state.last_user_prompt->empty() &&
+            !generation.is_active() &&
             (e == Event::Character('r') || e == Event::Character('R'))) {
-            auto req = make_generation_request();
-            req.append_user_message = false;
-            store.clear_retry();
-            store.clear_error();
-            store.add_toast("Retrying last prompt…", "info", 1500);
-            generation.spawn(*state.last_user_prompt, std::move(req));
-            screen.Post(Event::Custom);
-            return true;
+            if (trigger_retry()) {
+                return true;
+            }
         }
 
         // ── Tool block keyboard navigation (only when prompt is empty) ──

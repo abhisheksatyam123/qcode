@@ -41,6 +41,7 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"compact",  "Compact",       "Summarize conversation to save context", "Session"},
         {"variant",  "Model variant", "/variant off|low|medium|high",      "Model"},
         {"clear-queue", "Clear queue", "Clear all queued prompts",          "Session"},
+        {"retry",       "Retry prompt", "/retry - resend last prompt",           "Session"},
     };
 }
 

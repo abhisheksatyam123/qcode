@@ -320,6 +320,36 @@ bool handle_slash_command(
         return true;
     }
 
+    if (cmd == "retry") {
+        std::string prompt;
+        if (state.last_user_prompt && !state.last_user_prompt->empty()) {
+            prompt = *state.last_user_prompt;
+        } else if (state.messages_history) {
+            for (auto it = state.messages_history->rbegin(); it != state.messages_history->rend(); ++it) {
+                if (it->role == kMessageRoleUser && !it->has_tool_results()) {
+                    prompt = it->get_text();
+                    if (!prompt.empty()) break;
+                }
+            }
+        }
+        if (prompt.empty()) {
+            bus.publish<qcode::contract::ToastRequested>({
+                "No user prompt available to retry.",
+                "warning",
+                2000
+            });
+            return true;
+        }
+        if (state.last_user_prompt) *state.last_user_prompt = prompt;
+        if (state.retry_available) *state.retry_available = true;
+        bus.publish<qcode::contract::ToastRequested>({
+            "Prompt ready for retry (press r to resend)",
+            "info",
+            2000
+        });
+        return true;
+    }
+
     if (cmd == "compact") {
         LOG_DEBUG("Commands: /compact args='{}'", args);
         int keep = 4;
