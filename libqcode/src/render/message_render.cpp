@@ -436,7 +436,8 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
         });
     };
 
-    // Collapsed summary — mirrors opencode hide-mode "+ Thought".
+    // Collapsed summary — mirrors opencode hide-mode "+ Thought" (click the
+    // header to expand; markers communicate the toggle).
     if (!expanded) {
         Element line;
         if (busy) {
@@ -447,10 +448,7 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
         } else {
             line = hbox({
                 thought_line("+ "),
-                text(" · ") | dim,
-                text(std::to_string(rp.text.size()) + " chars") | dim |
-                    color(muted_fg(theme)),
-                text(" · Ctrl+E") | dim | color(Color::GrayDark),
+                text(" · click to expand") | dim | color(Color::GrayDark),
             }) | flex;
         }
         return vbox({text(""), line});
@@ -458,16 +456,16 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
 
     Elements md = render_markdown(rp.text, theme);
     Elements indented;
-                for (auto& el : md) {
-                    indented.push_back(
-                        hbox({text("     "), std::move(el)}) | dim);
-                }
+    for (auto& el : md) {
+        indented.push_back(
+            hbox({text("     "), std::move(el)}) | dim);
+    }
 
     return vbox({
         text(""),
         hbox({
-            thought_line(expanded ? "- " : "+ "),
-            text(" · Ctrl+E to collapse") | dim | color(Color::GrayDark),
+            thought_line("- "),
+            text(" · click to collapse") | dim | color(Color::GrayDark),
         }),
         text(""),
         vbox(std::move(indented)),
@@ -542,18 +540,32 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
 
     std::unordered_set<std::string> rendered_tool_results;
 
-    // Thinking blocks stay collapsed to a compact "+ Thought" line by
-    // default (opencode hide-mode); Ctrl+E expands the full markdown trace.
-    const bool thinking_expanded = *state.show_thinking && *state.expand_thinking;
+    // Thinking traces toggle by CLICKING the "+/- Thought" header (mirrors
+    // opencode's onMouseUp toggle); per-message state, default collapsed.
     const bool turn_busy =
         state.is_generating && state.is_generating->load();
+    const unsigned long thinking_key =
+        reinterpret_cast<unsigned long>(&msg);
+    bool thinking_expanded = false;
+    if (state.thinking_expand_state) {
+        auto it = state.thinking_expand_state->find(thinking_key);
+        thinking_expanded =
+            it != state.thinking_expand_state->end() && it->second;
+    }
 
     for (const auto& part : msg.content) {
         if (const auto* reasoning_part =
                        std::get_if<qcode::ReasoningContentPart>(&part)) {
             if (*state.show_thinking) {
-                parts.push_back(render_reasoning(*reasoning_part, theme,
-                                                 thinking_expanded, turn_busy));
+                Element block = render_reasoning(*reasoning_part, theme,
+                                                 thinking_expanded, turn_busy);
+                // Make the header line clickable for the NEXT frame (same
+                // hit-testing approach as tool-call arrows).
+                if (state.thinking_header_boxes) {
+                    HitBox& box = (*state.thinking_header_boxes)[thinking_key];
+                    block = block | reflect_simple(box);
+                }
+                parts.push_back(std::move(block));
             }
         } else if (const auto* tool_part =
                        std::get_if<qcode::ToolCallContentPart>(&part)) {

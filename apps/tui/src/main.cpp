@@ -762,15 +762,6 @@ int main() {
                             "info", 2000);
             return true;
         }
-        // Expand/collapse completed thinking traces (Ctrl-E)
-        if (e == Event::Special(std::string(1, '\x05'))) {
-            *state.expand_thinking = !*state.expand_thinking;
-            store.add_toast(*state.expand_thinking
-                                ? "Thinking traces: expanded"
-                                : "Thinking traces: collapsed",
-                            "info", 2000);
-            return true;
-        }
         // Toggle build/plan agent mode (Ctrl-P)
         if (e == Event::Special(std::string(1, '\x10'))) {
             *state.agent_mode = (*state.agent_mode == "plan") ? "build" : "plan";
@@ -1066,6 +1057,22 @@ int main() {
                                 !state.tool_collapse_state->count(id) ||
                                 (*state.tool_collapse_state)[id];
                             (*state.tool_collapse_state)[id] = !currently_collapsed;
+                            screen.Post(Event::Custom);
+                            return true;
+                        }
+                    }
+                }
+                // Clicking a "+/- Thought" header toggles that thinking trace
+                // (opencode parity).
+                if (state.thinking_header_boxes && state.thinking_expand_state) {
+                    for (const auto& [key, box] : *state.thinking_header_boxes) {
+                        if (box.Contain(e.mouse().x, e.mouse().y)) {
+                            bool expanded = false;
+                            if (auto it = state.thinking_expand_state->find(key);
+                                it != state.thinking_expand_state->end()) {
+                                expanded = it->second;
+                            }
+                            (*state.thinking_expand_state)[key] = !expanded;
                             screen.Post(Event::Custom);
                             return true;
                         }

@@ -464,6 +464,8 @@ ftxui::Element render_view(
 
             if (state.tool_block_order) state.tool_block_order->clear();
             if (state.tool_arrow_boxes) state.tool_arrow_boxes->clear();
+            if (state.thinking_header_boxes)
+                state.thinking_header_boxes->clear();
             if (first > 0) {
                 msgs.push_back(
                     text(" " + std::to_string(first) +

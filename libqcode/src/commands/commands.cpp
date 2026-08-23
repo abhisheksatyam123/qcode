@@ -433,7 +433,7 @@ bool handle_slash_command(
           << "  /queue [rm <n>]   - list queued prompts / remove one (/cq clears all)\n"
           << "  /help             - show this help\n"
           << "Keys: Esc stop · r retry last failed turn · F3 copy mode\n"
-          << "      Ctrl-E expand thinking · Ctrl-P build/plan agent\n"
+          << "      Click Thought headers to expand · Ctrl-P plan mode\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
         append_system_message(state, h.str());
         return true;

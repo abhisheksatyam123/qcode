@@ -94,11 +94,16 @@ struct ChatState {
     // FTXUI nodes on each frame.
     std::shared_ptr<size_t> history_window_start = std::make_shared<size_t>(0);
     std::shared_ptr<bool> show_thinking = std::make_shared<bool>(true);
-    // Expand full thinking traces (Ctrl+E). By default traces stay collapsed
-    // to a compact one-line summary — same treatment as tool-call cards.
-    // Reasoning is still captured and replayed to the model regardless of
-    // visibility; this flag only controls rendering.
-    std::shared_ptr<bool> expand_thinking = std::make_shared<bool>(false);
+    // Per-message thinking trace expansion, toggled by CLICKING the
+    // "+/- Thought" header (opencode behaviour). Keyed by the assistant
+    // message's address; entries are rebuilt every frame alongside tool
+    // arrow boxes. Reasoning stays captured/replayed regardless of this.
+    std::shared_ptr<std::unordered_map<unsigned long, bool>>
+        thinking_expand_state =
+            std::make_shared<std::unordered_map<unsigned long, bool>>();
+    std::shared_ptr<std::unordered_map<unsigned long, HitBox>>
+        thinking_header_boxes =
+            std::make_shared<std::unordered_map<unsigned long, HitBox>>();
     // Agent mode: "build" (full access) or "plan" (read-only research).
     std::shared_ptr<std::string> agent_mode = std::make_shared<std::string>("build");
     // Reasoning/thinking level: "off" | "low" | "medium" | "high" (opt-in)
