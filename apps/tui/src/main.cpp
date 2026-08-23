@@ -1101,6 +1101,33 @@ int main() {
 
     bool was_generating = store.is_generating();
     int previous_tab = state.tab_selected;
+    // Async git refresh — off the UI thread (opencode parity: sdk async).
+    // Debounced 500ms and single-flight so rapid generation completions / tab
+    // switches don't spawn popen storms. Result is posted back via screen.Post
+    // and applied on the UI thread to avoid data races on state.file_changes.
+    auto git_refresh_running = std::make_shared<std::atomic<bool>>(false);
+    auto git_last_refresh = std::make_shared<std::chrono::steady_clock::time_point>(
+        std::chrono::steady_clock::now() - std::chrono::seconds(10));
+    auto git_pending_mutex = std::make_shared<std::mutex>();
+    auto git_pending = std::make_shared<std::optional<std::vector<qcode::FileChangeEntry>>>();
+    auto async_refresh_files = [&, git_refresh_running, git_last_refresh, git_pending, git_pending_mutex]() {
+        if (git_refresh_running->exchange(true)) return;
+        auto now = std::chrono::steady_clock::now();
+        if (now - *git_last_refresh < std::chrono::milliseconds(500)) {
+            git_refresh_running->store(false);
+            return;
+        }
+        *git_last_refresh = now;
+        std::thread([git_pending, git_pending_mutex, &screen, git_refresh_running]() {
+            auto vec = qcode::fetch_modified_files();
+            {
+                std::lock_guard<std::mutex> lock(*git_pending_mutex);
+                *git_pending = std::move(vec);
+            }
+            git_refresh_running->store(false);
+            screen.Post(Event::Custom);
+        }).detach();
+    };
     auto renderer = Renderer(main_container, [&] {
         // Track terminal height for mouse selection calculations. Use the
         // debounced stable size so transient PTY size churn during long bash
@@ -1109,15 +1136,34 @@ int main() {
         // Drain bus events on the UI thread — this is where store mutations happen
         // (all bus event handlers run synchronously during drain)
         bus->drain();
+        // Apply async git results on the UI thread (thread-safe handoff)
+        {
+            std::lock_guard<std::mutex> lock(*git_pending_mutex);
+            if (git_pending->has_value()) {
+                if (!state.file_changes) {
+                    state.file_changes = std::make_shared<std::vector<qcode::FileChangeEntry>>();
+                }
+                *state.file_changes = std::move(**git_pending);
+                ++*state.files_revision;
+                if (state.file_changes->empty()) {
+                    state.selected_file = 0;
+                    state.files_detail_open = false;
+                } else {
+                    state.selected_file = std::clamp(state.selected_file, 0,
+                        static_cast<int>(state.file_changes->size()) - 1);
+                }
+                git_pending->reset();
+            }
+        }
         if (was_generating && !store.is_generating()) {
-            qcode::update_modified_files(state);
+            async_refresh_files();
         }
 
         // Start queued work only after the prior worker has fully exited.
         generation.maybe_start_queued(make_generation_request());
         was_generating = store.is_generating();
         if (state.tab_selected == 1 && previous_tab != 1) {
-            qcode::update_modified_files(state);
+            async_refresh_files();
             state.files_detail_open = false;
             *state.scroll_line = 0;
         }

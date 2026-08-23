@@ -60,13 +60,8 @@ bool read_git_lines(const char* cmd,
 
 }  // namespace
 
-void update_modified_files(ChatState& state) {
-    if (!state.file_changes) {
-        state.file_changes = std::make_shared<std::vector<FileChangeEntry>>();
-    }
-    state.file_changes->clear();
-    ++*state.files_revision;
-
+std::vector<FileChangeEntry> fetch_modified_files() {
+    std::vector<FileChangeEntry> out;
     std::unordered_set<std::string> seen;
 
     // All staged + unstaged changes vs HEAD (matches get_file_diff_raw).
@@ -96,7 +91,7 @@ void update_modified_files(ChatState& state) {
                     entry.binary = true;
                 }
             }
-            state.file_changes->push_back(std::move(entry));
+            out.push_back(std::move(entry));
         });
 
     // Untracked files/dirs from status (dirs stay as a single row).
@@ -116,14 +111,24 @@ void update_modified_files(ChatState& state) {
             entry.path = path;
             entry.untracked = true;
             if (!path.empty() && path.back() == '/') {
-                // Untracked directory — no line counts until opened.
                 entry.additions = 0;
                 entry.deletions = 0;
             } else if (std::filesystem::is_regular_file(path)) {
                 entry.additions = count_file_lines_capped(path);
             }
-            state.file_changes->push_back(std::move(entry));
+            out.push_back(std::move(entry));
         });
+
+    return out;
+}
+
+void update_modified_files(ChatState& state) {
+    if (!state.file_changes) {
+        state.file_changes = std::make_shared<std::vector<FileChangeEntry>>();
+    }
+    auto fetched = fetch_modified_files();
+    *state.file_changes = std::move(fetched);
+    ++*state.files_revision;
 
     if (state.file_changes->empty()) {
         state.selected_file = 0;
