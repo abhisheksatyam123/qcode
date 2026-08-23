@@ -420,53 +420,57 @@ static Element render_tool_result(const qcode::ToolResultContentPart& part,
                       tool_name.empty() ? "tool" : tool_name, theme, const_cast<ChatState*>(&state), part.tool_call_id);
 }
 
+// Opencode-style reasoning header: warning-coloured "+/- Thought" toggle
+// (collapsed by default), live "Thinking" spinner while the model works.
 static Element render_reasoning(const qcode::ReasoningContentPart& rp,
                                  const std::string& theme,
-                                 bool expanded = true) {
+                                 bool expanded = true,
+                                 bool busy = false) {
     if (rp.text.empty()) return emptyElement();
 
-    // Collapsed summary — mirrors opencode's "Thought for Ns" collapsed part.
-    if (!expanded) {
-        auto collapsed = hbox({
-            text("┃") | color(accent2(theme)),
-            text("  🧠 ") | color(accent2(theme)),
-            text("Thinking") | bold | color(accent2(theme)),
-            text(" · ") | dim,
-            text(std::to_string(rp.text.size()) + " chars") | dim |
-                color(muted_fg(theme)),
-            text(" · Ctrl+T to expand") | dim | color(Color::GrayDark),
+    auto thought_line = [&](const char* marker) {
+        return hbox({
+            text("   ") ,
+            text(marker) | bold | color(theme_warning(theme)),
+            text(" Thought") | color(theme_warning(theme)),
         });
-        return vbox({text(""), std::move(collapsed), text("")});
+    };
+
+    // Collapsed summary — mirrors opencode hide-mode "+ Thought".
+    if (!expanded) {
+        Element line;
+        if (busy) {
+            line = hbox({
+                text("   ◐ ") | color(theme_warning(theme)),
+                text("Thinking") | color(theme_warning(theme)),
+            }) | flex;
+        } else {
+            line = hbox({
+                thought_line("+ "),
+                text(" · ") | dim,
+                text(std::to_string(rp.text.size()) + " chars") | dim |
+                    color(muted_fg(theme)),
+                text(" · Ctrl+E") | dim | color(Color::GrayDark),
+            }) | flex;
+        }
+        return vbox({text(""), line});
     }
 
     Elements md = render_markdown(rp.text, theme);
     Elements indented;
-    for (auto& el : md) {
-        indented.push_back(hbox({text("  "), std::move(el)}));
-    }
-
-    auto thinking_header = hbox({
-        text("🧠 ") | color(accent2(theme)),
-        text("Thinking Process") | bold | color(accent2(theme)),
-        text(" · ") | dim | color(Color::GrayDark),
-        text("Ctrl+T to collapse") | dim | color(Color::GrayDark),
-    });
-
-    auto inner_box = vbox({
-        std::move(thinking_header),
-        text(""),
-        vbox(std::move(indented)),
-    });
-
-    auto card = hbox({
-        text("┃") | color(accent2(theme)),
-        text(" "),
-        std::move(inner_box) | flex,
-    }) | bgcolor(panel_bg(theme));
+                for (auto& el : md) {
+                    indented.push_back(
+                        hbox({text("     "), std::move(el)}) | dim);
+                }
 
     return vbox({
         text(""),
-        std::move(card),
+        hbox({
+            thought_line(expanded ? "- " : "+ "),
+            text(" · Ctrl+E to collapse") | dim | color(Color::GrayDark),
+        }),
+        text(""),
+        vbox(std::move(indented)),
         text(""),
     });
 }
@@ -491,20 +495,24 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
             model_label =
                 providers_list[selected_provider].models[selected_model].name;
         }
-
-        Elements header;
-        header.push_back(text("❯ ") | bold | color(accent(theme)));
-        header.push_back(text("Assistant") | bold | color(accent(theme)));
-        if (!model_label.empty()) {
-            header.push_back(
-                text(" · " + model_label) | dim | color(Color::GrayDark));
-        }
-        parts.push_back(hbox(std::move(header)));
+        (void)model_label;  // used by the completion tail below
     } else if (msg.role == kMessageRoleUser && !has_tool_results) {
-        parts.push_back(hbox({
-            text("❯ ") | bold | color(user_green()),
-            text("You") | bold | color(user_green()),
-        }));
+        // Opencode-style user block: left border in the agent colour with a
+        // subtle panel background — no label chrome.
+        Elements user_lines;
+        for (const auto& part : msg.content) {
+            const auto* tp = std::get_if<qcode::TextContentPart>(&part);
+            if (!tp || tp->text.empty()) continue;
+            std::istringstream body(tp->text);
+            std::string ln;
+            while (std::getline(body, ln)) {
+                user_lines.push_back(
+                    hbox({text("┃ ") | color(user_green()),
+                          text(ln) | flex}) |
+                    bgcolor(theme_panel_bg(theme)));
+            }
+        }
+        parts.push_back(vbox(std::move(user_lines)));
     } else if (msg.role == kMessageRoleSystem) {
         parts.push_back(hbox({
             text("ℹ ") | dim | color(theme_muted(theme)),
@@ -534,16 +542,18 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
 
     std::unordered_set<std::string> rendered_tool_results;
 
-    // Thinking blocks stay collapsed to a compact summary by default — same
-    // treatment as tool-call cards (▸). Ctrl+E expands full traces.
+    // Thinking blocks stay collapsed to a compact "+ Thought" line by
+    // default (opencode hide-mode); Ctrl+E expands the full markdown trace.
     const bool thinking_expanded = *state.show_thinking && *state.expand_thinking;
+    const bool turn_busy =
+        state.is_generating && state.is_generating->load();
 
     for (const auto& part : msg.content) {
         if (const auto* reasoning_part =
                        std::get_if<qcode::ReasoningContentPart>(&part)) {
             if (*state.show_thinking) {
                 parts.push_back(render_reasoning(*reasoning_part, theme,
-                                                 thinking_expanded));
+                                                 thinking_expanded, turn_busy));
             }
         } else if (const auto* tool_part =
                        std::get_if<qcode::ToolCallContentPart>(&part)) {
@@ -589,11 +599,51 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
                 Elements md = render_markdown(text_part->text, theme);
                 Elements indented;
                 for (auto& el : md) {
-                    indented.push_back(hbox({text("  "), std::move(el)}));
+                    indented.push_back(hbox({text("   "), std::move(el)}));
                 }
                 parts.push_back(vbox(std::move(indented)));
             }
         }
+    }
+
+    // Opencode-style completion tail "▣ Build · Model" — only on the FINAL
+    // assistant message of the conversation, never per tool-loop step (the
+    // header already carries model/mode info).
+    bool is_last_assistant = false;
+    if (state.messages_history) {
+        for (auto it = state.messages_history->rbegin();
+             it != state.messages_history->rend(); ++it) {
+            if (it->role == kMessageRoleAssistant) {
+                is_last_assistant = (&*it == &msg);
+                break;
+            }
+        }
+    }
+    if (msg.role == kMessageRoleAssistant && is_last_assistant && !turn_busy &&
+        (!parts.empty() || has_text)) {
+        std::string model_label;
+        if (selected_provider >= 0 &&
+            selected_provider < static_cast<int>(providers_list.size()) &&
+            selected_model >= 0 &&
+            selected_model < static_cast<int>(
+                providers_list[selected_provider].models.size())) {
+            model_label =
+                providers_list[selected_provider].models[selected_model].name;
+        }
+        const std::string mode =
+            state.agent_mode && *state.agent_mode == "plan" ? "Plan" : "Build";
+        auto tail = hbox({
+            text("   ▣ ") | color(accent(theme)),
+            text(mode) | color(accent(theme)),
+        });
+        if (!model_label.empty()) {
+            tail = hbox({
+                std::move(tail),
+                text(" · " + model_label) | dim | color(theme_muted(theme)),
+            });
+        }
+        parts.push_back(text(""));
+        parts.push_back(std::move(tail));
     }
 
     return vbox(std::move(parts));
