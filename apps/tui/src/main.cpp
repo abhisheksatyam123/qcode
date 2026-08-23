@@ -765,6 +765,11 @@ int main() {
         // Toggle build/plan agent mode (Ctrl-P)
         if (e == Event::Special(std::string(1, '\x10'))) {
             *state.agent_mode = (*state.agent_mode == "plan") ? "build" : "plan";
+            if (state.session_id && !state.session_id->empty()) {
+                qcode::session::set_session_modes(
+                    *state.session_id, *state.agent_mode,
+                    state.reasoning_mode ? *state.reasoning_mode : "off");
+            }
             store.add_toast(*state.agent_mode == "plan"
                                 ? "Plan mode: read-only research, no edits"
                                 : "Build mode: full tool access",

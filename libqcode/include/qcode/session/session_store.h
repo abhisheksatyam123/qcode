@@ -80,6 +80,14 @@ void rename_session(const std::string& session_id, const std::string& new_title)
 // selection in sync with what was actually used for generation)
 void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model);
 
+// Persisted per-session agent ("build"/"plan") and reasoning
+// ("off"/"low"/...) modes. get returns {agent, reasoning}; either string is
+// empty when the row predates migration v7 or the mode was never changed.
+std::pair<std::string, std::string> get_session_modes(const std::string& session_id);
+void set_session_modes(const std::string& session_id,
+                       const std::string& agent_mode,
+                       const std::string& reasoning_mode);
+
 // Aggregate statistics for a session (computed from messages + live counters).
 struct SessionStats {
     std::string id;

@@ -361,6 +361,19 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
+    // ── Migration v6 → v7: persist agent/reasoning mode per session ──
+    if (user_version < 7) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "ALTER TABLE sessions ADD COLUMN agent_mode TEXT DEFAULT '';",
+            nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "ALTER TABLE sessions ADD COLUMN reasoning_mode TEXT DEFAULT '';",
+            nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 7;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    }
+
     LOG_INFO("SQLite: database opened successfully at {}", get_db_path());
     // shared db handle
     seed_model_capabilities_if_needed();
@@ -1189,6 +1202,58 @@ void set_session_provider_model(const std::string& session_id, const std::string
     if (prepare_stmt(db, sql, &stmt)) {
         sqlite3_bind_text(stmt, 1, provider.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 2, model.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    // shared db handle
+}
+
+std::pair<std::string, std::string> get_session_modes(const std::string& session_id) {
+    // Returns {agent_mode, reasoning_mode}; either is empty when unset
+    // (pre-v7 rows or brand-new sessions).
+    if (session_id.empty() || !is_valid_session_id(session_id)) return {};
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return {};
+
+    const char* sql =
+        "SELECT agent_mode, reasoning_mode FROM sessions WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    std::pair<std::string, std::string> modes;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* agent = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            const auto* reasoning = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            if (agent) modes.first = agent;
+            if (reasoning) modes.second = reasoning;
+        }
+        sqlite3_finalize(stmt);
+    }
+    return modes;
+}
+
+void set_session_modes(const std::string& session_id,
+                       const std::string& agent_mode,
+                       const std::string& reasoning_mode) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) {
+        LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
+        return;
+    }
+
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) {
+        return;
+    }
+
+    const char* sql = "UPDATE sessions SET agent_mode = ?, reasoning_mode = ? WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, agent_mode.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, reasoning_mode.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 3, session_id.c_str(), -1, SQLITE_STATIC);
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);

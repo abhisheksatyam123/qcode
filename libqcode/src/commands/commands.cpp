@@ -313,6 +313,11 @@ bool handle_slash_command(
             return true;
         }
         *state.agent_mode = name;
+        if (state.session_id && !state.session_id->empty()) {
+            qcode::session::set_session_modes(
+                *state.session_id, name,
+                state.reasoning_mode ? *state.reasoning_mode : "off");
+        }
         bus.publish<qcode::contract::ToastRequested>({
             .message = name == "plan"
                            ? "Plan mode: read-only research, no edits"
@@ -345,6 +350,11 @@ bool handle_slash_command(
             return true;
         }
         *state.reasoning_mode = lvl;
+        if (state.session_id && !state.session_id->empty()) {
+            qcode::session::set_session_modes(
+                *state.session_id,
+                state.agent_mode ? *state.agent_mode : "build", lvl);
+        }
         bus.publish<qcode::contract::ToastRequested>({
             .message = "Model variant (effort): " + lvl,
             .variant = (lvl == "off" ? "info" : "success")

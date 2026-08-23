@@ -161,6 +161,18 @@ void AppStore::set_session_id(const std::string& id) {
     for (auto& prompt : qcode::session::queued_prompt_load(id)) {
         restore_queued_prompt(prompt);
     }
+    // Restore persisted agent/reasoning modes (migration v7+ rows). Empty
+    // strings mean "never changed" — keep current defaults in that case.
+    {
+        const auto [agent_mode, reasoning_mode] =
+            qcode::session::get_session_modes(id);
+        if (!agent_mode.empty() && state_.agent_mode) {
+            *state_.agent_mode = agent_mode;
+        }
+        if (!reasoning_mode.empty() && state_.reasoning_mode) {
+            *state_.reasoning_mode = reasoning_mode;
+        }
+    }
     notify();
 }
 
