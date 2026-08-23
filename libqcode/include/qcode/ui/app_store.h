@@ -95,6 +95,7 @@ private:
     mutable std::mutex cb_mutex_;
     std::atomic<uint64_t> next_id_{1};
     bus::BusRuntime* runtime_ = nullptr;
+    std::atomic<bool> pending_notify_{false};
 
     std::string latest_assistant_text() const;
     void remove_callback(uint64_t id);

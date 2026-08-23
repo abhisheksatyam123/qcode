@@ -11,8 +11,11 @@
 #include "md4c.h"
 
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace ftxui;
@@ -97,7 +100,8 @@ static std::string decode_entity(const std::string& s) {
   return out;
 }
 
-static int avail_width() {
+static int avail_width_cached(int override_w = -1) {
+  if (override_w > 0) return std::max(20, override_w - 6);
   int w = 100;
   try {
     w = ftxui::Terminal::Size().dimx;
@@ -107,6 +111,35 @@ static int avail_width() {
   // Account for: 2 chars message indent ("  ") + 2 chars scrollbar + 2 chars right safety margin
   return std::max(20, w - 6);
 }
+static int avail_width() { return avail_width_cached(-1); }
+
+// LRU cache for parsed markdown — eliminates O(n²) re-parse of growing
+// streaming text and repeated parse of completed messages. Keyed by
+// (text hash + theme + width). Streaming deltas coalesce via bus, but each
+// drain still grows the visible text; the cache turns the steady-state
+// completed-message renders into O(1) hits.
+namespace {
+struct MdCacheKey {
+  std::string text;
+  std::string theme;
+  int width = 0;
+  bool operator==(const MdCacheKey& o) const {
+    return width == o.width && theme == o.theme && text == o.text;
+  }
+};
+struct MdCacheKeyHash {
+  size_t operator()(const MdCacheKey& k) const noexcept {
+    size_t h = std::hash<std::string>{}(k.text);
+    h ^= std::hash<std::string>{}(k.theme) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    h ^= std::hash<int>{}(k.width) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    return h;
+  }
+};
+constexpr size_t kMdCacheMax = 32;
+std::mutex g_md_cache_mutex;
+std::unordered_map<MdCacheKey, ftxui::Elements, MdCacheKeyHash> g_md_cache;
+std::deque<MdCacheKey> g_md_cache_order;
+}  // namespace
 
 // Flush collected inline items into a word-wrapped block. `first_prefix` is
 // rendered on the first line; continuation lines are indented by `hang`.
@@ -678,8 +711,21 @@ static int md_text(MD_TEXTTYPE type, const MD_CHAR* txt, MD_SIZE size, void* ud)
 
 // ── Public entry point ─────────────────────────────────────────────────────
 ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme) {
+  return render_markdown(input_text, theme, avail_width_cached(-1));
+}
+
+ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme, int avail_w_override) {
   Elements out;
   if (input_text.empty()) return out;
+  const int avail_for_key = avail_width_cached(avail_w_override);
+
+  // Fast LRU lookup — completed messages and stable streaming prefixes hit here.
+  {
+    std::lock_guard<std::mutex> lock(g_md_cache_mutex);
+    MdCacheKey key{input_text, theme, avail_for_key};
+    auto it = g_md_cache.find(key);
+    if (it != g_md_cache.end()) return it->second;
+  }
 
   Ctx ctx;
   ctx.theme = theme;
@@ -702,7 +748,20 @@ ftxui::Elements render_markdown(const std::string& input_text, const std::string
     out.push_back(paragraph(input_text));
     return out;
   }
-  return ctx.result;
+  out = ctx.result;
+
+  {
+    std::lock_guard<std::mutex> lock(g_md_cache_mutex);
+    MdCacheKey key{input_text, theme, avail_for_key};
+    if (g_md_cache.size() >= kMdCacheMax) {
+      auto oldest = g_md_cache_order.front();
+      g_md_cache_order.pop_front();
+      g_md_cache.erase(oldest);
+    }
+    g_md_cache.emplace(key, out);
+    g_md_cache_order.push_back(std::move(key));
+  }
+  return out;
 }
 
 }  // namespace qcode

@@ -11,5 +11,6 @@ namespace qcode {
 // opencode's marked + marked-shiki pipeline (CommonMark + GFM tables,
 // strikethrough, task lists, autolinks).
 ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme = "orange");
+ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme, int avail_width_override);
 
 }  // namespace qcode

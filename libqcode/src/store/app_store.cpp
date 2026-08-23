@@ -12,6 +12,13 @@ namespace qcode {
 
 AppStore::AppStore(bus::BusPort& bus) : bus_(bus) {
     runtime_ = dynamic_cast<bus::BusRuntime*>(&bus_);
+    if (runtime_ != nullptr) {
+        subs_.push_back(runtime_->on_drain_complete([this]() {
+            if (pending_notify_.exchange(false, std::memory_order_acq_rel)) {
+                notify_now();
+            }
+        }));
+    }
 }
 
 std::vector<Toast> AppStore::toasts() const {
@@ -589,6 +596,7 @@ void AppStore::wire() {
 
 void AppStore::notify() {
     if (runtime_ != nullptr && runtime_->is_draining()) {
+        pending_notify_.store(true, std::memory_order_release);
         return;
     }
     notify_now();

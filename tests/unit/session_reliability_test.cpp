@@ -124,10 +124,6 @@ TEST_F(FileLoggerRotationTest, ReplacesPreviousRotatedFile) {
     }  // rotated at least once
     std::error_code ec;
     std::filesystem::remove(path_, ec);  // fresh start for run two
-    std::cout << "[dbg] removed active, exists="
-              << (std::filesystem::exists(path_) ? "Y" : "N")
-              << " old_size=" << size_or_zero(path_ + ".old") << "\n";
-    std::filesystem::remove(path_, ec);  // fresh start for run two
     {
         FileLogger logger(path_, logger::LogLevel::kLogLevelInfo, 512);
         std::string second_payload;
