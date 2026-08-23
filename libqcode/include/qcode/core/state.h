@@ -94,9 +94,10 @@ struct ChatState {
     // FTXUI nodes on each frame.
     std::shared_ptr<size_t> history_window_start = std::make_shared<size_t>(0);
     std::shared_ptr<bool> show_thinking = std::make_shared<bool>(true);
-    // Expand completed thinking traces (Ctrl+T). While a turn is generating,
-    // the live trace always streams open; afterwards blocks collapse to a
-    // one-line summary like opencode's part renderer.
+    // Expand full thinking traces (Ctrl+E). By default traces stay collapsed
+    // to a compact one-line summary — same treatment as tool-call cards.
+    // Reasoning is still captured and replayed to the model regardless of
+    // visibility; this flag only controls rendering.
     std::shared_ptr<bool> expand_thinking = std::make_shared<bool>(false);
     // Agent mode: "build" (full access) or "plan" (read-only research).
     std::shared_ptr<std::string> agent_mode = std::make_shared<std::string>("build");

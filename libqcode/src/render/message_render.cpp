@@ -534,12 +534,9 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
 
     std::unordered_set<std::string> rendered_tool_results;
 
-    // Thinking blocks stream fully open while a turn is running; once idle
-    // they collapse to a summary line unless the user expanded them (Ctrl+T).
-    const bool thinking_expanded =
-        *state.show_thinking &&
-        (*state.expand_thinking ||
-         (state.is_generating && state.is_generating->load()));
+    // Thinking blocks stay collapsed to a compact summary by default — same
+    // treatment as tool-call cards (▸). Ctrl+E expands full traces.
+    const bool thinking_expanded = *state.show_thinking && *state.expand_thinking;
 
     for (const auto& part : msg.content) {
         if (const auto* reasoning_part =
