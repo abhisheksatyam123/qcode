@@ -12,6 +12,33 @@
 
 namespace qcode {
 
+// Decides whether `prompt` still needs a visible User message appended to
+// history. Guards against DUPLICATE user prompts after retries/aborts: if
+// the trailing conversation already ends with this exact user prompt (an
+// aborted turn leaves it in place with no assistant reply yet), re-sending
+// must reuse it rather than append a second copy.
+bool should_append_user_message(const qcode::Messages& history,
+                                const std::string& prompt) {
+    for (auto it = history.rbegin(); it != history.rend(); ++it) {
+        if (it->role == kMessageRoleUser && !it->has_tool_results()) {
+            return it->get_text() != prompt;
+        }
+        if (it->role == kMessageRoleAssistant) {
+            // A text-bearing assistant reply closes the turn: fresh send.
+            // A text-less assistant holding only tool calls is an aborted
+            // mid-tool artifact — keep scanning for the open user prompt.
+            bool has_text = false;
+            for (const auto& part : it->content) {
+                if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
+                    if (!tp->text.empty()) has_text = true;
+                }
+            }
+            if (has_text) return true;
+        }
+    }
+    return true;
+}
+
 GenerationController::GenerationController(
     AppStore& store,
     std::shared_ptr<bus::BusRuntime> bus,
@@ -100,6 +127,10 @@ void GenerationController::spawn_unlocked(std::string prompt,
     if (store_.state().last_user_prompt) {
         // Keep for retry even if this turn later fails.
         *store_.state().last_user_prompt = prompt;
+    }
+    if (request.append_user_message) {
+        request.append_user_message =
+            should_append_user_message(*store_.state().messages_history, prompt);
     }
     if (request.append_user_message) {
         store_.append_chat_message("User", prompt);

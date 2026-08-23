@@ -248,6 +248,15 @@ void AppStore::sync_queue_mirror_unlocked() {
 }
 
 void AppStore::enqueue_prompt(const std::string& prompt) {
+    // Mirror upstream: the user message becomes visible in chat immediately
+    // when queued (the queue drain later reuses it via
+    // append_user_message=false, so it must already be in history).
+    if (state_.messages_history) {
+        state_.messages_history->emplace_back(qcode::Message::user(prompt));
+    }
+    if (!session_id().empty()) {
+        qcode::session::save_message(session_id(), "User", prompt);
+    }
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         prompt_queue_.push_back(prompt);

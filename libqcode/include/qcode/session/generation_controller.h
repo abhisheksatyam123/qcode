@@ -12,6 +12,13 @@
 
 namespace qcode {
 
+// True when `prompt` still needs a visible User message appended to history.
+// False when history already ends with this exact prompt (aborted turn /
+// retry) — prevents duplicate user prompts. Defined in
+// generation_controller.cpp; unit-tested for retry/abort parity.
+bool should_append_user_message(const qcode::Messages& history,
+                                const std::string& prompt);
+
 // Snapshot of provider selection captured when a turn starts.
 struct GenerationRequest {
     std::vector<ProviderInfo> providers;

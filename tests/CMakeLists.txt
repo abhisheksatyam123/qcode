@@ -25,6 +25,7 @@ add_executable(qcode_tests
     unit/session_stats_test.cpp
     unit/queued_prompt_store_test.cpp
     unit/session_reliability_test.cpp
+    unit/dedupe_user_prompt_test.cpp
     unit/task_tool_test.cpp
 
     # Integration tests
