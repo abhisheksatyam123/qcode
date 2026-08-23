@@ -234,7 +234,9 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
       }
 
       const bool is_network_error = !send_success;
-      const bool is_retryable_status = send_success &&
+      const bool is_overflow = send_success &&
+          qcode::is_context_overflow_error(res.status, res.body);
+      const bool is_retryable_status = send_success && !is_overflow &&
           (qcode::is_status_code_retryable(res.status) ||
            qcode::is_error_message_retryable(res.body));
 

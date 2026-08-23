@@ -7,7 +7,8 @@ namespace qcode {
 
 /// Check if an HTTP status code indicates a retryable error
 inline bool is_status_code_retryable(int status_code) {
-  return status_code == 408 ||  // Request Timeout
+  return status_code == 404 ||  // Not Found — transient for OpenAI-compatible (opencode parity)
+         status_code == 408 ||  // Request Timeout
          status_code == 409 ||  // Conflict
          status_code == 425 ||  // Too Early
          status_code == 429 ||  // Too Many Requests
@@ -92,6 +93,41 @@ inline bool is_error_message_retryable(std::string_view msg) {
          lower.find("temporarily at capacity") != std::string::npos ||
          lower.find("temporarily unavailable") != std::string::npos ||
          lower.find("freeusagelimiterror") != std::string::npos;
+}
+
+/// Check if a provider error indicates context-window overflow (needs
+/// compaction, not retry). Mirrors upstream llm/src/provider-error.ts
+/// isContextOverflow and provider/error.ts parseAPICallError logic.
+inline bool is_context_overflow_error(int status_code, std::string_view msg) {
+  if (status_code == 413) return true;  // Payload Too Large always overflow
+  if (msg.empty()) return false;
+  std::string lower;
+  lower.reserve(msg.size());
+  for (char c : msg) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+  // Exclude transient throttling that also mentions tokens but is retryable
+  if (lower.find("throttl") != std::string::npos ||
+      lower.find("service unavailable") != std::string::npos ||
+      lower.find("service_unavailable") != std::string::npos ||
+      lower.find("rate limit") != std::string::npos ||
+      lower.find("rate-limit") != std::string::npos ||
+      lower.find("too many requests") != std::string::npos) {
+    return false;
+  }
+  // Core overflow signals (32 patterns in upstream; cover the common 10 here)
+  return lower.find("context_length_exceeded") != std::string::npos ||
+         lower.find("context window") != std::string::npos ||
+         lower.find("maximum context") != std::string::npos ||
+         lower.find("max context") != std::string::npos ||
+         lower.find("input is too long") != std::string::npos ||
+         lower.find("prompt is too long") != std::string::npos ||
+         lower.find("too many tokens") != std::string::npos ||
+         lower.find("token limit") != std::string::npos ||
+         lower.find("context limit") != std::string::npos ||
+         lower.find("exceeds the maximum") != std::string::npos ||
+         lower.find("request too large") != std::string::npos ||
+         lower.find("payload too large") != std::string::npos ||
+         (status_code == 400 && lower.find("maximum") != std::string::npos) ||
+         (status_code == 400 && lower.find("too large") != std::string::npos);
 }
 
 /// Base class for all qcode errors

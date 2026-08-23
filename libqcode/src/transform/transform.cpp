@@ -131,23 +131,87 @@ std::optional<int> top_k(const Model& model) {
 
 static const std::set<std::string> UNSUPPORTED_ROLES = {"tool"};
 
+// Mirrors upstream sanitizeSurrogates: lone surrogates \uD800-\uDBFF -> \uFFFD.
+// In UTF-8, surrogates appear as overlong 3-byte sequences ED A0 80 - ED BF BF;
+// replace those bytes with the UTF-8 replacement character EF BF BD.
+static std::string sanitize_surrogates(std::string s) {
+  std::string out;
+  out.reserve(s.size());
+  for (size_t i = 0; i < s.size();) {
+    unsigned char c = static_cast<unsigned char>(s[i]);
+    // Check for 3-byte surrogate range ED A0 80 .. ED BF BF
+    if (c == 0xED && i + 2 < s.size()) {
+      unsigned char c1 = static_cast<unsigned char>(s[i + 1]);
+      unsigned char c2 = static_cast<unsigned char>(s[i + 2]);
+      if (c1 >= 0xA0 && c1 <= 0xBF && (c2 & 0xC0) == 0x80) {
+        out += "\xEF\xBF\xBD";
+        i += 3;
+        continue;
+      }
+    }
+    out.push_back(s[i++]);
+  }
+  return out;
+}
+
+static std::string scrub_tool_id(const std::string& id) {
+  std::string out = id;
+  for (char& ch : out) {
+    if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+          (ch >= '0' && ch <= '9') || ch == '_' || ch == '-')) {
+      ch = '_';
+    }
+  }
+  return out;
+}
+
+static bool is_empty_text(const std::string& t) {
+  for (char c : t) if (c != ' ' && c != '\t' && c != '\n' && c != '\r') return false;
+  return true;
+}
+
 Messages normalize_messages(const Messages& messages, const Model& model) {
   Messages result;
-  (void)model; // Future: model-specific normalization
+  const std::string prov = to_lower(model.provider);
+  const std::string mid = to_lower(model.name);
+  const bool is_claude = prov == "anthropic" || contains(mid, "claude");
+  const bool is_bedrock = prov == "bedrock" || prov == "amazon" || contains(mid, "bedrock");
 
   for (const auto& msg : messages) {
-    // Filter out unsupported roles
-    if (msg.role == kMessageRoleSystem) {
-      // Keep system messages
-    }
-
     MessageContent filtered_content;
     for (const auto& part : msg.content) {
-      // Strip unsupported content types
-      if (std::holds_alternative<TextContentPart>(part) ||
-          std::holds_alternative<ToolCallContentPart>(part) ||
-          std::holds_alternative<ToolResultContentPart>(part)) {
-        filtered_content.push_back(part);
+      if (std::holds_alternative<TextContentPart>(part)) {
+        auto tp = std::get<TextContentPart>(part);
+        tp.text = sanitize_surrogates(tp.text);
+        // Anthropic/Bedrock empty-filter: drop empty text parts
+        if ((is_claude || is_bedrock) && is_empty_text(tp.text)) continue;
+        filtered_content.push_back(std::move(tp));
+      } else if (std::holds_alternative<ToolCallContentPart>(part)) {
+        auto tc = std::get<ToolCallContentPart>(part);
+        tc.id = scrub_tool_id(tc.id);
+        // Sanitize arguments JSON string values if present
+        if (tc.arguments.is_string()) {
+          std::string s = tc.arguments.get<std::string>();
+          s = sanitize_surrogates(s);
+          tc.arguments = s;
+        } else if (tc.arguments.is_object() || tc.arguments.is_array()) {
+          // Dump and sanitize string values inside — lightweight: stringify then sanitize
+          std::string dumped = tc.arguments.dump();
+          dumped = sanitize_surrogates(dumped);
+          try { tc.arguments = nlohmann::json::parse(dumped); } catch (...) {}
+        }
+        filtered_content.push_back(std::move(tc));
+      } else if (std::holds_alternative<ToolResultContentPart>(part)) {
+        auto tr = std::get<ToolResultContentPart>(part);
+        tr.tool_call_id = scrub_tool_id(tr.tool_call_id);
+        tr.result = sanitize_surrogates(tr.result);
+        if ((is_claude || is_bedrock) && is_empty_text(tr.result)) continue;
+        filtered_content.push_back(std::move(tr));
+      } else if (std::holds_alternative<ReasoningContentPart>(part)) {
+        auto rp = std::get<ReasoningContentPart>(part);
+        rp.text = sanitize_surrogates(rp.text);
+        if ((is_claude || is_bedrock) && is_empty_text(rp.text) && rp.signature.empty()) continue;
+        filtered_content.push_back(std::move(rp));
       }
     }
 

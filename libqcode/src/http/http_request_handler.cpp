@@ -137,9 +137,16 @@ GenerateResult HttpRequestHandler::execute_single_request(
     error_result.error = res->body;
     error_result.finish_reason = kFinishReasonError;
     error_result.provider_metadata = std::to_string(res->status);
-    error_result.is_retryable =
-        is_status_code_retryable(res->status) ||
-        is_error_message_retryable(res->body);
+    // Context overflow must NOT be retried (needs compaction), even though
+    // some messages contain retryable substrings like "overloaded".
+    if (is_context_overflow_error(res->status, res->body)) {
+      LOG_WARN("Context overflow detected (status={}), not retrying", res->status);
+      error_result.is_retryable = false;
+    } else {
+      error_result.is_retryable =
+          is_status_code_retryable(res->status) ||
+          is_error_message_retryable(res->body);
+    }
 
     // Honor Retry-After / retry-after-ms response headers when present — the
     // retry policy uses this hint verbatim (upstream SessionRetry.delay()).
