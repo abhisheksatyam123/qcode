@@ -762,6 +762,25 @@ int main() {
                             "info", 2000);
             return true;
         }
+        // Expand/collapse completed thinking traces (Ctrl-E)
+        if (e == Event::Special(std::string(1, '\x05'))) {
+            *state.expand_thinking = !*state.expand_thinking;
+            store.add_toast(*state.expand_thinking
+                                ? "Thinking traces: expanded"
+                                : "Thinking traces: collapsed",
+                            "info", 2000);
+            return true;
+        }
+        // Toggle build/plan agent mode (Ctrl-P)
+        if (e == Event::Special(std::string(1, '\x10'))) {
+            *state.agent_mode = (*state.agent_mode == "plan") ? "build" : "plan";
+            store.add_toast(*state.agent_mode == "plan"
+                                ? "Plan mode: read-only research, no edits"
+                                : "Build mode: full tool access",
+                            *state.agent_mode == "plan" ? "warning" : "success",
+                            2500);
+            return true;
+        }
         // Toggle COPY MODE (F3): disables mouse tracking so the terminal
         // emulator can do native text selection (clean copy/paste).
         if (e == Event::F3) {

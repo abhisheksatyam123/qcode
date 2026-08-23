@@ -184,11 +184,15 @@ ftxui::Element render_view(
       hdr_tokens = format_tokens(ctx_used) + " tok";
     }
 
-    // Prompt-cache hit badge: tokens served from the provider cache on the
-    // latest turn (OpenCode Zen / OpenRouter report cached_tokens).
+    // Prompt-cache hit + thinking-token badges for the latest turn
+    // (OpenCode Zen / OpenRouter report cached_tokens and reasoning_tokens).
     std::string hdr_cache;
     if (state.last_cached_prompt_tokens && *state.last_cached_prompt_tokens > 0) {
         hdr_cache = "⚡cache " + format_tokens(*state.last_cached_prompt_tokens);
+    }
+    if (state.last_reasoning_tokens && *state.last_reasoning_tokens > 0) {
+        if (!hdr_cache.empty()) hdr_cache += " ";
+        hdr_cache += "🧠 " + format_tokens(*state.last_reasoning_tokens);
     }
 
     // Status (compact, no spinner — spinner is rendered in the header below)
@@ -241,6 +245,9 @@ ftxui::Element render_view(
     if (state.reasoning_mode && *state.reasoning_mode != "off" && !state.reasoning_mode->empty()) {
         effort_str = "⚡ " + *state.reasoning_mode;
     }
+    // Agent mode badge (opencode build/plan parity).
+    const bool plan_mode =
+        state.agent_mode && *state.agent_mode == "plan";
 
     auto header = hbox({
         text(" QCODE ") | bold | bgcolor(accent(theme)) | color(Color::White),
@@ -255,6 +262,11 @@ ftxui::Element render_view(
         (effort_str.empty()
              ? emptyElement()
              : hbox({separatorLight(), text(" " + effort_str + " ") | color(accent(theme)) | bold})),
+        (plan_mode
+             ? hbox({separatorLight(),
+                     text(" ⏸ plan ") | bold | bgcolor(queue_amber()) |
+                         color(Color::Black)})
+             : emptyElement()),
         separatorLight(),
         text(" " + hdr_tokens + " ") |
             (ctx_pct > 0 ? color(ctx_color) : dim),

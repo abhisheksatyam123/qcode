@@ -129,6 +129,12 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
         continue;
       }
 
+      // Upstream lowerAssistantMessage sends an explicit null content for
+      // reasoning/tool-call-only assistant messages.
+      if (msg.role == kMessageRoleAssistant && !message.contains("content")) {
+        message["content"] = nullptr;
+      }
+
       request["messages"].push_back(message);
     }
   } else {

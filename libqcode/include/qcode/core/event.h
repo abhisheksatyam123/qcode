@@ -128,6 +128,9 @@ struct TokenUsageUpdated {
         // provider reports them, e.g. cached_tokens on OpenCode Zen /
         // OpenRouter). 0 when unknown.
         int cached_prompt_tokens = 0;
+        // Thinking/reasoning output tokens this turn
+        // (completion_tokens_details.reasoning_tokens) when reported.
+        int reasoning_tokens = 0;
     };
 };
 

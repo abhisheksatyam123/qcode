@@ -421,8 +421,24 @@ static Element render_tool_result(const qcode::ToolResultContentPart& part,
 }
 
 static Element render_reasoning(const qcode::ReasoningContentPart& rp,
-                                 const std::string& theme) {
+                                 const std::string& theme,
+                                 bool expanded = true) {
     if (rp.text.empty()) return emptyElement();
+
+    // Collapsed summary — mirrors opencode's "Thought for Ns" collapsed part.
+    if (!expanded) {
+        auto collapsed = hbox({
+            text("┃") | color(accent2(theme)),
+            text("  🧠 ") | color(accent2(theme)),
+            text("Thinking") | bold | color(accent2(theme)),
+            text(" · ") | dim,
+            text(std::to_string(rp.text.size()) + " chars") | dim |
+                color(muted_fg(theme)),
+            text(" · Ctrl+T to expand") | dim | color(Color::GrayDark),
+        });
+        return vbox({text(""), std::move(collapsed), text("")});
+    }
+
     Elements md = render_markdown(rp.text, theme);
     Elements indented;
     for (auto& el : md) {
@@ -433,7 +449,7 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
         text("🧠 ") | color(accent2(theme)),
         text("Thinking Process") | bold | color(accent2(theme)),
         text(" · ") | dim | color(Color::GrayDark),
-        text("Reasoning Trace") | dim | color(muted_fg(theme)),
+        text("Ctrl+T to collapse") | dim | color(Color::GrayDark),
     });
 
     auto inner_box = vbox({
@@ -518,11 +534,19 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
 
     std::unordered_set<std::string> rendered_tool_results;
 
+    // Thinking blocks stream fully open while a turn is running; once idle
+    // they collapse to a summary line unless the user expanded them (Ctrl+T).
+    const bool thinking_expanded =
+        *state.show_thinking &&
+        (*state.expand_thinking ||
+         (state.is_generating && state.is_generating->load()));
+
     for (const auto& part : msg.content) {
         if (const auto* reasoning_part =
                        std::get_if<qcode::ReasoningContentPart>(&part)) {
             if (*state.show_thinking) {
-                parts.push_back(render_reasoning(*reasoning_part, theme));
+                parts.push_back(render_reasoning(*reasoning_part, theme,
+                                                 thinking_expanded));
             }
         } else if (const auto* tool_part =
                        std::get_if<qcode::ToolCallContentPart>(&part)) {

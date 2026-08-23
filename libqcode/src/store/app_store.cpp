@@ -142,6 +142,17 @@ void AppStore::set_session_id(const std::string& id) {
     if (state_.session_title) {
         *state_.session_title = qcode::session::get_session_title(id);
     }
+    // Swap the in-memory queue to the newly active session. Rows for the
+    // previous session stay persisted; the new session's rows (if any)
+    // resume where they left off.
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        prompt_queue_.clear();
+        sync_queue_mirror_unlocked();
+    }
+    for (auto& prompt : qcode::session::queued_prompt_load(id)) {
+        restore_queued_prompt(prompt);
+    }
     notify();
 }
 
@@ -224,7 +235,20 @@ void AppStore::enqueue_prompt(const std::string& prompt) {
         LOG_DEBUG("Store: enqueue_prompt queue_size={}",
                   static_cast<int>(prompt_queue_.size()));
     }
+    // Persist so the queue survives restarts (upstream keeps pending prompts
+    // as session data). Memory-only enqueues use restore_queued_prompt.
+    if (!session_id().empty()) {
+        qcode::session::queued_prompt_add(session_id(), prompt);
+    }
     notify();
+}
+
+void AppStore::restore_queued_prompt(const std::string& prompt) {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    prompt_queue_.push_back(prompt);
+    sync_queue_mirror_unlocked();
+    LOG_DEBUG("Store: restore_queued_prompt queue_size={}",
+              static_cast<int>(prompt_queue_.size()));
 }
 
 bool AppStore::has_queued_prompt() {
@@ -242,6 +266,9 @@ std::string AppStore::dequeue_prompt() {
         LOG_DEBUG("Store: dequeue_prompt queue_size={}",
                   static_cast<int>(prompt_queue_.size()));
     }
+    if (!session_id().empty()) {
+        qcode::session::queued_prompt_pop(session_id());
+    }
     notify();
     return prompt;
 }
@@ -252,6 +279,19 @@ size_t AppStore::queue_size() const {
 }
 
 void AppStore::clear_prompt_queue() {
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        prompt_queue_.clear();
+        sync_queue_mirror_unlocked();
+    }
+    // User-initiated clear also drops persisted rows so they never resume.
+    if (!session_id().empty()) {
+        qcode::session::queued_prompt_clear(session_id());
+    }
+    notify();
+}
+
+void AppStore::clear_prompt_queue_memory_only() {
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         prompt_queue_.clear();
@@ -271,6 +311,9 @@ bool AppStore::remove_queued_prompt(size_t index_1based) {
             sync_queue_mirror_unlocked();
             removed = true;
         }
+    }
+    if (removed && !session_id().empty()) {
+        qcode::session::queued_prompt_remove_at(session_id(), index_1based);
     }
     if (removed) notify();
     return removed;
@@ -496,8 +539,9 @@ void AppStore::wire() {
         *state_.total_prompt_tokens += p.prompt_tokens;
         *state_.total_completion_tokens += p.completion_tokens;
         *state_.total_tokens += p.total_tokens;
-        // Cache-hit mirror for the header/footer (latest turn, not cumulative).
+        // Cache-hit + thinking-token mirrors for the header (latest turn).
         *state_.last_cached_prompt_tokens = p.cached_prompt_tokens;
+        *state_.last_reasoning_tokens = p.reasoning_tokens;
         qcode::session::persist_session_token_stats(
             session_id(), p.prompt_tokens, p.completion_tokens, p.total_tokens);
         // Calibration anchor: remember the actual prompt token count so the

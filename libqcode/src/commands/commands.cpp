@@ -291,6 +291,38 @@ bool handle_slash_command(
         return true;
     }
 
+    if (cmd == "agent") {
+        // /agent          — show current agent
+        // /agent <name>   — switch (build|plan)
+        std::string name = args;
+        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
+        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
+        if (name.empty()) {
+            const std::string cur = state.agent_mode ? *state.agent_mode : "build";
+            bus.publish<qcode::contract::ToastRequested>({
+                .message = "Agent: " + cur + " (/agent build|plan)",
+                .variant = "info"
+            });
+            return true;
+        }
+        if (name != "build" && name != "plan") {
+            bus.publish<qcode::contract::ToastRequested>({
+                .message = "Unknown agent '" + name + "'. Use build|plan.",
+                .variant = "warning"
+            });
+            return true;
+        }
+        *state.agent_mode = name;
+        bus.publish<qcode::contract::ToastRequested>({
+            .message = name == "plan"
+                           ? "Plan mode: read-only research, no edits"
+                           : "Build mode: full tool access",
+            .variant = "success"
+        });
+        LOG_INFO("Commands: agent mode set to '{}'", name);
+        return true;
+    }
+
     if (cmd == "variant") {
         std::string lvl = args;
         // Trim whitespace
@@ -390,6 +422,7 @@ bool handle_slash_command(
         std::ostringstream h;
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
+          << "  /agent [build|plan] - switch agent mode (plan = read-only research)\n"
           << "  /variant [off|low|medium|high|max] - set model variant / reasoning effort\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
           << "  /new [name] [workspace] - new session (optional title + workspace path)\n"
@@ -400,6 +433,7 @@ bool handle_slash_command(
           << "  /queue [rm <n>]   - list queued prompts / remove one (/cq clears all)\n"
           << "  /help             - show this help\n"
           << "Keys: Esc stop · r retry last failed turn · F3 copy mode\n"
+          << "      Ctrl-E expand thinking · Ctrl-P build/plan agent\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
         append_system_message(state, h.str());
         return true;

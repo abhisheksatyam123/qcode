@@ -45,6 +45,19 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
 // Load saved messages (sender, content) for a session, oldest first
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id);
 
+// ── Persisted prompt queue (mirrors upstream: prompts submitted while busy
+// become pending session data and survive restarts) ──
+// Append a queued prompt for a session (FIFO by insertion).
+void queued_prompt_add(const std::string& session_id, const std::string& content);
+// All queued prompts for a session, oldest first.
+std::vector<std::string> queued_prompt_load(const std::string& session_id);
+// Drop the oldest queued prompt (call after it starts running).
+void queued_prompt_pop(const std::string& session_id);
+// Remove the 1-based entry; no-op when out of range.
+void queued_prompt_remove_at(const std::string& session_id, size_t index_1based);
+// Drop every queued prompt for the session (user-initiated clear).
+void queued_prompt_clear(const std::string& session_id);
+
 // Retrieve a list of all saved sessions (session_id, display_title)
 std::vector<std::pair<std::string, std::string>> list_sessions();
 

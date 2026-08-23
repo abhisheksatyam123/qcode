@@ -70,6 +70,77 @@ TEST(OpenAIResponsesTest, ParsesTextAndFunctionCalls) {
   EXPECT_EQ(result.usage.total_tokens, 5);
 }
 
+// ── Interleaved-reasoning (ox-alpha / deepseek-v4-flash) parity ──
+
+// Zen free models return thinking in message.reasoning_content; the parser
+// must surface it even when tool calls ride along, so the tool loop can
+// replay it on the next step.
+TEST(OpenAIChatCompletionsTest, ParsesReasoningContentWithToolCalls) {
+  OpenAIResponseParser parser;
+  const nlohmann::json response{
+      {"choices",
+       {{{"index", 0},
+         {"finish_reason", "tool_calls"},
+         {"message",
+          {{"role", "assistant"},
+           {"content", ""},
+           {"reasoning_content", "need to read the file first"},
+           {"tool_calls",
+            {{{"id", "call-1"},
+              {"type", "function"},
+              {"function",
+               {{"name", "read_file"}, {"arguments", R"({"path":"a"})"}}}}}}}}}}},
+      {"usage",
+       {{"prompt_tokens", 100},
+        {"completion_tokens", 40},
+        {"total_tokens", 140},
+        {"prompt_tokens_details", {{"cached_tokens", 64}}},
+        {"completion_tokens_details", {{"reasoning_tokens", 30}}}}}};
+
+  const auto result = parser.parse_success_completion_response(response);
+  ASSERT_TRUE(result.is_success());
+  EXPECT_TRUE(result.text.empty());
+  ASSERT_EQ(result.tool_calls.size(), 1u);
+
+  // Reasoning part rides alongside the tool-call parts.
+  const auto& msg = result.response_messages.at(0);
+  EXPECT_EQ(msg.role, kMessageRoleAssistant);
+  bool saw_reasoning = false;
+  for (const auto& part : msg.content) {
+    if (const auto* rp = std::get_if<ReasoningContentPart>(&part)) {
+      saw_reasoning = rp->text == "need to read the file first";
+    }
+  }
+  EXPECT_TRUE(saw_reasoning);
+
+  // Thinking-token accounting.
+  EXPECT_EQ(result.usage.reasoning_completion_tokens, 30);
+  EXPECT_EQ(result.usage.cached_prompt_tokens, 64);
+}
+
+// The request builder replays reasoning via reasoning_content and sends an
+// explicit null content when the assistant turn had no text.
+TEST(OpenAIChatCompletionsTest, ReplaysReasoningContentAndNullContent) {
+  OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+
+  GenerateOptions options;
+  options.model = "x-preview-f-free";
+  Message assistant =
+      Message::assistant_with_tools("", {ToolCallContentPart(
+                                            "call_1", "read_file",
+                                            nlohmann::json{{"path", "a"}})});
+  assistant.content.emplace_back(ReasoningContentPart{"prior thoughts", ""});
+  options.messages = {Message::user("hi"), std::move(assistant)};
+
+  const auto body = builder.build_request_json(options);
+  const auto& replayed = body["messages"].at(1);
+  EXPECT_EQ(replayed.value("role", ""), "assistant");
+  EXPECT_TRUE(replayed.contains("content"));
+  EXPECT_TRUE(replayed["content"].is_null());
+  EXPECT_EQ(replayed.value("reasoning_content", ""), "prior thoughts");
+}
+
 }  // namespace
 }  // namespace openai
 }  // namespace qcode

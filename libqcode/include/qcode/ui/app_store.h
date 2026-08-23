@@ -38,11 +38,15 @@ public:
     const std::string& last_error() const { return last_error_; }
 
     void enqueue_prompt(const std::string& prompt);
+    // Memory-only enqueue for prompts already persisted (session restore).
+    void restore_queued_prompt(const std::string& prompt);
     bool has_queued_prompt();
     std::string dequeue_prompt();
     void append_to_last_queued_prompt(const std::string& text);
     size_t queue_size() const;
     void clear_prompt_queue();
+    // Drop the in-memory mirror only; persisted rows stay (app exit).
+    void clear_prompt_queue_memory_only();
     // Remove the 1-based queued prompt; false when out of range.
     bool remove_queued_prompt(size_t index_1based);
     // Snapshot of queued prompt bodies for the message list (thread-safe copy).

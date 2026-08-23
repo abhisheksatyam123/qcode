@@ -149,6 +149,8 @@ void GenerationController::spawn_unlocked(std::string prompt,
             GenerationContext ctx{
                 .session_id = *state_ptr->session_id,
                 .reasoning_mode = *state_ptr->reasoning_mode,
+                .agent_mode = state_ptr->agent_mode ? *state_ptr->agent_mode
+                                                    : "build",
                 .workspace = session::get_session_workspace(*state_ptr->session_id),
                 .abort_flag = state_ptr->abort_flag};
             if (state_ptr->abort_flag) {
@@ -260,7 +262,9 @@ void GenerationController::spawn_unlocked(std::string prompt,
 
 void GenerationController::shutdown() {
     request_abort();
-    store_.clear_prompt_queue();
+    // App exit: drop only the in-memory mirror so queued prompts survive in
+    // the session store and resume on next launch.
+    store_.clear_prompt_queue_memory_only();
     if (app_running_) {
         app_running_->store(false, std::memory_order_release);
     }

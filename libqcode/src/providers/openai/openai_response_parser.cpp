@@ -148,7 +148,15 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
 
       std::string reasoning;
       std::string reasoning_signature;
-      if (message.contains("reasoning") && message["reasoning"].is_string()) {
+      // Field priority mirrors the stream parser: DeepSeek-style
+      // reasoning_content (OpenCode Zen ox-alpha / deepseek-v4-flash),
+      // o-series reasoning, then OpenRouter reasoning_details.
+      if (message.contains("reasoning_content") &&
+          message["reasoning_content"].is_string()) {
+        reasoning = message["reasoning_content"].get<std::string>();
+      }
+      if (reasoning.empty() && message.contains("reasoning") &&
+          message["reasoning"].is_string()) {
         reasoning = message["reasoning"].get<std::string>();
       }
       if (message.contains("reasoning_details") &&
@@ -168,8 +176,14 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
           calls.emplace_back(call.id, call.tool_name, call.arguments,
                              call.thought_signature);
         }
-        result.response_messages.push_back(
-            Message::assistant_with_tools(result.text, calls));
+        auto assistant = Message::assistant_with_tools(result.text, calls);
+        // Keep the model's chain-of-thought so interleaved-reasoning models
+        // (ox-alpha, deepseek-v4-flash) can replay it across tool steps.
+        if (!reasoning.empty()) {
+          assistant.content.emplace_back(
+              ReasoningContentPart{reasoning, reasoning_signature});
+        }
+        result.response_messages.push_back(std::move(assistant));
       } else if (!reasoning.empty()) {
         result.response_messages.push_back(Message::assistant_with_reasoning(
             result.text, reasoning, reasoning_signature));
@@ -214,10 +228,15 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     if (usage.contains("prompt_tokens_details") && usage["prompt_tokens_details"].is_object()) {
       result.usage.cached_prompt_tokens = usage["prompt_tokens_details"].value("cached_tokens", 0);
     }
-    LOG_DEBUG("Token usage - prompt: {}, cached: {}, completion: {}, total: {}",
+    if (usage.contains("completion_tokens_details") && usage["completion_tokens_details"].is_object()) {
+      result.usage.reasoning_completion_tokens =
+          usage["completion_tokens_details"].value("reasoning_tokens", 0);
+    }
+    LOG_DEBUG("Token usage - prompt: {}, cached: {}, completion: {}, reasoning: {}, total: {}",
                           result.usage.prompt_tokens,
                           result.usage.cached_prompt_tokens,
                           result.usage.completion_tokens,
+                          result.usage.reasoning_completion_tokens,
                           result.usage.total_tokens);
   }
 

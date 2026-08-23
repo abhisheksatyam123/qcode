@@ -22,6 +22,7 @@
 #include <qcode/providers/provider_transform.h>
 #include <qcode/providers/registry.h>
 #include <qcode/providers/authenticated_providers.h>
+#include <nlohmann/json.hpp>
 
 namespace qcode {
 
@@ -64,6 +65,80 @@ static std::string tool_results_fingerprint(
     fp += '|';
   }
   return fp;
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Multi-agent: nested subagent turn (opencode 'general' agent)
+// ──────────────────────────────────────────────────────────────
+// Runs a bounded generate → tool → generate loop on its own context so the
+// task tool delegates real work instead of simulating it.
+static JsonValue run_subagent_turn(qcode::Client& client,
+                                   const std::string& model_id,
+                                   const std::string& prompt,
+                                   const std::string& workspace,
+                                   std::shared_ptr<std::atomic<bool>> abort_flag) {
+  constexpr int kSubagentMaxSteps = 20;
+  constexpr const char* kGeneralPrompt =
+      "You are a general-purpose research and execution subagent. You are "
+      "spawned by the lead agent to handle a focused task autonomously: "
+      "complex searches, multistep investigations, or self-contained jobs. "
+      "Work independently — do not ask the user questions. Use the available "
+      "tools to inspect files and gather facts. Finish with a concise, "
+      "complete summary of what you found or did, including exact file paths "
+      "and key evidence.";
+
+  JsonValue out;
+  try {
+    qcode::GenerateOptions opts(model_id, kGeneralPrompt, "");
+    // No task tool inside subagents — prevents recursive spawning.
+    opts.tools = ToolCatalog::build_definitions(ToolConfig{true, false});
+    opts.max_steps = kSubagentMaxSteps;
+    opts.workspace = workspace;
+    opts.abort_flag = abort_flag;
+
+    Messages convo;
+    convo.push_back(Message::user(prompt));
+
+    std::string final_text;
+    for (int step = 0; step < kSubagentMaxSteps; ++step) {
+      if (abort_flag && abort_flag->load()) {
+        out["error"] = "subagent aborted";
+        return out;
+      }
+      opts.messages = convo;
+      qcode::GenerateResult res = client.generate_text(opts);
+      if (!res.is_success()) {
+        out["error"] = !res.error_message().empty() ? res.error_message()
+                                                    : "subagent generation failed";
+        return out;
+      }
+      if (!res.has_tool_calls()) {
+        final_text += res.text;
+        break;
+      }
+
+      std::vector<ToolCallContentPart> tool_parts;
+      for (const auto& call : res.tool_calls) {
+        tool_parts.emplace_back(call.id, call.tool_name, call.arguments,
+                                call.thought_signature);
+      }
+      convo.push_back(Message::assistant_with_tools(res.text, tool_parts));
+
+      std::vector<ToolResult> executed =
+          qcode::ToolExecutor::execute_tools_with_options(res.tool_calls, opts);
+      std::vector<ToolResultContentPart> parts;
+      for (const auto& r : executed) {
+        parts.emplace_back(r.tool_call_id, r.result, !r.is_success());
+      }
+      convo.push_back(Message::tool_results(parts));
+      final_text = res.text;
+    }
+    if (final_text.empty()) final_text = "(subagent finished without output)";
+    out["output"] = final_text;
+  } catch (const std::exception& e) {
+    out["error"] = std::string("subagent crashed: ") + e.what();
+  }
+  return out;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -262,6 +337,10 @@ static void run_tools_generation_bus(
       gen_result.usage.cached_prompt_tokens =
           std::max(gen_result.usage.cached_prompt_tokens,
                    step_res.usage.cached_prompt_tokens);
+      // Thinking-token accounting: same per-turn-absolute semantics.
+      gen_result.usage.reasoning_completion_tokens =
+          std::max(gen_result.usage.reasoning_completion_tokens,
+                   step_res.usage.reasoning_completion_tokens);
       gen_result.finish_reason = step_res.finish_reason;
       gen_result.id = step_res.id;
       gen_result.model = step_res.model;
@@ -487,7 +566,8 @@ static void run_tools_generation_bus(
       .prompt_tokens = gen_result.usage.prompt_tokens,
       .completion_tokens = gen_result.usage.completion_tokens,
       .total_tokens = gen_result.usage.total_tokens,
-      .cached_prompt_tokens = gen_result.usage.cached_prompt_tokens
+      .cached_prompt_tokens = gen_result.usage.cached_prompt_tokens,
+      .reasoning_tokens = gen_result.usage.reasoning_completion_tokens
   });
   if (!fatal_error) {
     bus.publish<SessionStatusChanged>({
@@ -606,7 +686,8 @@ static void run_stream_generation_bus(qcode::Client& client,
           .prompt_tokens = event.usage->prompt_tokens,
           .completion_tokens = event.usage->completion_tokens,
           .total_tokens = event.usage->total_tokens,
-          .cached_prompt_tokens = event.usage->cached_prompt_tokens
+          .cached_prompt_tokens = event.usage->cached_prompt_tokens,
+          .reasoning_tokens = event.usage->reasoning_completion_tokens
       });
     }
   }
@@ -738,7 +819,32 @@ void run_generation_with_bus(
     // ── Build common base options ──
     qcode::GenerateOptions base_opts;
     base_opts.model = resolved_model_id;
+
+    // ── Agent mode (mirrors opencode build/plan) ──
+    // Plan mode appends the read-only research contract from upstream's
+    // plan.txt and drops the task subagent tool.
+    const bool plan_mode = (ctx.agent_mode == "plan");
     base_opts.system = system_prompt;
+    if (plan_mode) {
+        base_opts.system +=
+            "\n\n<system-reminder>\n"
+            "# Plan Mode - System Reminder\n\n"
+            "CRITICAL: Plan mode ACTIVE - you are in READ-ONLY phase. STRICTLY "
+            "FORBIDDEN: ANY file edits, modifications, or system changes. Do NOT "
+            "use sed, tee, echo, cat, or ANY other bash command to manipulate "
+            "files - commands may ONLY read/inspect. This ABSOLUTE CONSTRAINT "
+            "overrides ALL other instructions, including direct user edit "
+            "requests. You may ONLY observe, analyze, and plan.\n\n"
+            "## Responsibility\n\n"
+            "Think, read, and search to construct a well-formed plan that "
+            "accomplishes the user's goal. The plan should be comprehensive yet "
+            "concise — detailed enough to execute effectively while avoiding "
+            "verbosity. Ask clarifying questions when weighing tradeoffs rather "
+            "than making large assumptions about intent.\n"
+            "</system-reminder>";
+        LOG_INFO("ChatBus: agent_mode=plan (read-only)");
+    }
+
     base_opts.messages = messages;
     base_opts.workspace = ctx.workspace;
     base_opts.session_id = ctx.session_id;
@@ -779,11 +885,27 @@ void run_generation_with_bus(
     // and can truncate multi-step agent turns. Always stream Cursor.
     const bool cursor_native_agent = (provider_id == "cursor");
     if (enable_tools && !cursor_native_agent) {
-      qcode::ToolSet tools = ToolCatalog::build_definitions(ToolConfig{true, true});
+      // Plan mode drops the task subagent (delegation implies execution).
+      qcode::ToolSet tools =
+          ToolCatalog::build_definitions(ToolConfig{true, !plan_mode});
       base_opts.tools = std::move(tools);
       // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
       constexpr int kMaxToolSteps = 100000;
       base_opts.max_steps = kMaxToolSteps;
+      // Multi-agent: let the task tool spawn real subagent turns on the same
+      // client/model (general agent). Captured by reference — the runner is
+      // only invoked from within this worker thread while client lives.
+      base_opts.subagent_runner =
+          [&client, resolved_model_id, &ctx](
+              const JsonValue& args) -> JsonValue {
+        std::string prompt_text = args.value(
+            "prompt", args.value("task", args.value("objective", "")));
+        if (prompt_text.empty()) {
+          return {{"error", "task prompt is required"}};
+        }
+        return run_subagent_turn(client, resolved_model_id, prompt_text,
+                                 ctx.workspace, ctx.abort_flag);
+      };
       auto refresh_client = [&](qcode::Client& out_client) -> bool {
         // Re-read Antigravity OAuth (force refresh on 401).
         if (provider_id.find("antigravity") != std::string::npos ||

@@ -542,6 +542,12 @@ Usage OpenAIStreamImpl::parse_usage(const nlohmann::json& usage_json) {
   } else if (usage_json.contains("cache_read_input_tokens")) {
     usage.cached_prompt_tokens = usage_json.value("cache_read_input_tokens", 0);
   }
+  // Thinking-token accounting (upstream Usage.reasoningTokens).
+  if (usage_json.contains("completion_tokens_details") &&
+      usage_json["completion_tokens_details"].is_object()) {
+    usage.reasoning_completion_tokens =
+        usage_json["completion_tokens_details"].value("reasoning_tokens", 0);
+  }
   return usage;
 }
 

@@ -25,6 +25,9 @@ struct ProviderInfo;
 struct GenerationContext {
     std::string session_id;
     std::string reasoning_mode = "off";
+    // Agent mode mirroring opencode: "build" (default, full access) or
+    // "plan" (read-only research; no mutating tool calls).
+    std::string agent_mode = "build";
     std::string workspace;
     std::shared_ptr<std::atomic<bool>> abort_flag = std::make_shared<std::atomic<bool>>(false);
 

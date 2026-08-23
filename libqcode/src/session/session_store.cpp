@@ -346,6 +346,21 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
+    // ── Migration v5 → v6: persisted per-session prompt queue ──
+    if (user_version < 6) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS queued_prompts ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  session_id TEXT,"
+            "  content TEXT,"
+            "  created_at INTEGER,"
+            "  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE"
+            ");", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 6;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    }
+
     LOG_INFO("SQLite: database opened successfully at {}", get_db_path());
     // shared db handle
     seed_model_capabilities_if_needed();
@@ -457,6 +472,113 @@ void save_message(const std::string& session_id, const std::string& sender, cons
     long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     static MessageWriterConnection writer;
     writer.write(session_id, sender, content, created_at);
+}
+
+// ── Persisted prompt queue ──
+
+void queued_prompt_add(const std::string& session_id, const std::string& content) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+
+    auto now = std::chrono::system_clock::now();
+    const long long created_at =
+        std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db,
+            "INSERT INTO queued_prompts (session_id, content, created_at) VALUES (?, ?, ?);",
+            &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, content.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 3, created_at);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            LOG_ERROR("SQLite: queued_prompt_add failed: {}", sqlite3_errmsg(db));
+        }
+        sqlite3_finalize(stmt);
+    }
+}
+
+std::vector<std::string> queued_prompt_load(const std::string& session_id) {
+    std::vector<std::string> out;
+    if (session_id.empty() || !is_valid_session_id(session_id)) return out;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return out;
+
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db,
+            "SELECT content FROM queued_prompts WHERE session_id = ? ORDER BY id ASC;",
+            &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* text = sqlite3_column_text(stmt, 0);
+            if (text) out.emplace_back(reinterpret_cast<const char*>(text));
+        }
+        sqlite3_finalize(stmt);
+    }
+    return out;
+}
+
+void queued_prompt_pop(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+
+    // Delete only the oldest row for this session.
+    const std::string sql =
+        "DELETE FROM queued_prompts WHERE id = ("
+        "  SELECT id FROM queued_prompts WHERE session_id = ?"
+        "  ORDER BY id ASC LIMIT 1);";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql.c_str(), &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            LOG_ERROR("SQLite: queued_prompt_pop failed: {}", sqlite3_errmsg(db));
+        }
+        sqlite3_finalize(stmt);
+    }
+}
+
+void queued_prompt_remove_at(const std::string& session_id, size_t index_1based) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return;
+    if (index_1based == 0) return;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+
+    // Positional delete: nth row in FIFO order.
+    const std::string sql =
+        "DELETE FROM queued_prompts WHERE id = ("
+        "  SELECT id FROM queued_prompts WHERE session_id = ?"
+        "  ORDER BY id ASC LIMIT 1 OFFSET ?);";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql.c_str(), &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 2, static_cast<long long>(index_1based - 1));
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            LOG_ERROR("SQLite: queued_prompt_remove_at failed: {}", sqlite3_errmsg(db));
+        }
+        sqlite3_finalize(stmt);
+    }
+}
+
+void queued_prompt_clear(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, "DELETE FROM queued_prompts WHERE session_id = ?;", &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            LOG_ERROR("SQLite: queued_prompt_clear failed: {}", sqlite3_errmsg(db));
+        }
+        sqlite3_finalize(stmt);
+    }
 }
 
 std::vector<qcode::Message> load_session_history_parsed(const std::string& session_id) {

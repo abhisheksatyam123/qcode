@@ -23,6 +23,8 @@ add_executable(qcode_tests
     unit/retry_policy_test.cpp
     unit/model_performance_telemetry_test.cpp
     unit/session_stats_test.cpp
+    unit/queued_prompt_store_test.cpp
+    unit/task_tool_test.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp

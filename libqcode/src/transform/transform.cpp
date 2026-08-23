@@ -46,6 +46,13 @@ std::string default_variant(const ModelInfo& model) {
     if (std::find(efforts.begin(), efforts.end(), preferred) != efforts.end()) {
       return preferred;
     }
+    // Fallback order keeps thinking meaningful when the preferred effort is
+    // not declared (e.g. gpt-5 ids with only low/high).
+    for (const std::string candidate : {"high", "medium", "max"}) {
+      if (std::find(efforts.begin(), efforts.end(), candidate) != efforts.end()) {
+        return candidate;
+      }
+    }
     return efforts.front();
   }
   return gpt5 ? "medium" : "high";

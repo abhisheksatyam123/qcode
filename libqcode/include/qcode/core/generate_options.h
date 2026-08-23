@@ -42,6 +42,11 @@ struct GenerateOptions {
   ToolChoice tool_choice = ToolChoice::auto_choice();
   int max_steps = 1;
   std::vector<std::string> active_tools;
+
+  // Multi-agent hook (opencode TaskTool parity): injected by the generation
+  // layer so the task tool can run a real nested subagent turn. Returns JSON
+  // with "output" (final subagent text) or "error".
+  std::function<JsonValue(const JsonValue& args)> subagent_runner;
   std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
 
   // Callbacks for tool calling and retries

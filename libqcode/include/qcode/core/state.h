@@ -73,6 +73,8 @@ struct ChatState {
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
     // Latest turn's prompt-cache hit (tokens served from the provider cache).
     std::shared_ptr<int> last_cached_prompt_tokens = std::make_shared<int>(0);
+    // Latest turn's thinking/reasoning output tokens (when reported).
+    std::shared_ptr<int> last_reasoning_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> current_context_tokens = std::make_shared<int>(0);
     std::shared_ptr<std::vector<FileChangeEntry>> file_changes =
         std::make_shared<std::vector<FileChangeEntry>>();
@@ -92,6 +94,12 @@ struct ChatState {
     // FTXUI nodes on each frame.
     std::shared_ptr<size_t> history_window_start = std::make_shared<size_t>(0);
     std::shared_ptr<bool> show_thinking = std::make_shared<bool>(true);
+    // Expand completed thinking traces (Ctrl+T). While a turn is generating,
+    // the live trace always streams open; afterwards blocks collapse to a
+    // one-line summary like opencode's part renderer.
+    std::shared_ptr<bool> expand_thinking = std::make_shared<bool>(false);
+    // Agent mode: "build" (full access) or "plan" (read-only research).
+    std::shared_ptr<std::string> agent_mode = std::make_shared<std::string>("build");
     // Reasoning/thinking level: "off" | "low" | "medium" | "high" (opt-in)
     std::shared_ptr<std::string> reasoning_mode = std::make_shared<std::string>("off");
     std::shared_ptr<std::atomic<int>> generation_frame = std::make_shared<std::atomic<int>>(0);

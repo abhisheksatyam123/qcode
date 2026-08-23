@@ -59,6 +59,9 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   if (options) {
     context.workspace = options->workspace;
   }
+  if (options && options->subagent_runner) {
+    context.subagent_runner = options->subagent_runner;
+  }
   if (options && options->abort_flag) {
     context.abort_flag = std::make_shared<std::atomic<bool>>(options->abort_flag->load());
   } else {

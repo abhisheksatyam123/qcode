@@ -129,24 +129,40 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
       budget_timeout = args["budget"]["timeout_ms"].get<int>();
   }
 
-  // For foreground spawn, create simulated result
+  // For foreground spawn, run a REAL nested subagent turn when the
+  // generation layer provided a runner (multi-agent parity with opencode).
   if (!is_background) {
-    std::stringstream output_ss;
-    output_ss << "task_id: " << session_id << " (for resuming this subagent if needed)\n\n";
-    output_ss << "<task_result>\n";
-    output_ss << "@subagent " << subagent_type << " " << description << "\n\n";
-    if (!objective.empty()) output_ss << "Objective: " << objective << "\n";
-    if (scope_ss.tellp() > 0) output_ss << "Scope:\n" << scope_ss.str();
-    if (out_of_scope_ss.tellp() > 0) output_ss << "Out of scope:\n" << out_of_scope_ss.str();
-    output_ss << "Prompt: " << prompt_text << "\n";
-    output_ss << "</task_result>\n";
-    output_ss << "\n<task_result_parsed>\n{}\n</task_result_parsed>";
+    std::string output_text;
+    bool ran = false;
+    if (context.subagent_runner) {
+      JsonValue sub = context.subagent_runner(args);
+      if (sub.is_object() && sub.contains("error")) {
+        return sub;
+      }
+      output_text =
+          sub.value("output", std::string("Subagent finished with no output"));
+      ran = true;
+    }
+    if (!ran) {
+      // No generation-layer runner available (e.g. direct tool invocation):
+      // fall back to the acknowledgement template.
+      std::stringstream fallback;
+      fallback << "task_id: " << session_id << "\n\n";
+      fallback << "<task_result>\n";
+      fallback << "@subagent " << subagent_type << " " << description << "\n\n";
+      if (!objective.empty()) fallback << "Objective: " << objective << "\n";
+      if (scope_ss.tellp() > 0) fallback << "Scope:\n" << scope_ss.str();
+      fallback << "Prompt: " << prompt_text << "\n";
+      fallback << "</task_result>";
+      output_text = fallback.str();
+    }
 
     JsonValue result;
     result["title"] = std::string("task complete: ") + description;
-    result["output"] = output_ss.str();
+    result["output"] = output_text;
     result["metadata"] = metadata;
     result["metadata"]["status"] = "done";
+    result["metadata"]["real_subagent"] = ran;
     return result;
   }
 
