@@ -85,7 +85,15 @@ void AppStore::append_assistant_chunk(const std::string& chunk) {
 
 void AppStore::append_reasoning(const std::string& chunk,
                                 const std::string& signature) {
+    // Start a fresh assistant message when the trailing one already carries
+    // visible text — keeps per-step thinking blocks ordered like opencode's
+    // part renderers instead of appending below earlier prose.
+    const bool trailing_has_text =
+        !state_.messages_history->empty() &&
+        state_.messages_history->back().role == qcode::kMessageRoleAssistant &&
+        state_.messages_history->back().has_text();
     if (state_.messages_history->empty() ||
+        trailing_has_text ||
         state_.messages_history->back().role != qcode::kMessageRoleAssistant) {
         if (chunk.empty()) return;
         state_.messages_history->emplace_back(

@@ -104,6 +104,9 @@ struct GenerateOptions {
 
 struct GenerateResult {
   std::string text;
+  // Thinking/reasoning text returned alongside this step (non-streaming
+  // responses carry it on message.reasoning_content etc).
+  std::string reasoning;
   FinishReason finish_reason = kFinishReasonError;
   Usage usage;
 

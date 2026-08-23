@@ -68,10 +68,11 @@ GenerateResult BaseProviderClient::generate_text_single_step(
     // Build headers
     auto headers = request_builder_->build_headers(config_);
 
-    // Make the request
+    // Make the request — abort_flag rides along so Esc cancels retries
     auto result = http_handler_->post(config_.completions_endpoint_path,
                                       headers, json_body, "application/json",
-                                      options.on_retry ? *options.on_retry : nullptr);
+                                      options.on_retry ? *options.on_retry : nullptr,
+                                      options.abort_flag);
 
     if (!result.is_success()) {
       // Parse error response using provider-specific parser

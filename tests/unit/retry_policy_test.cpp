@@ -3,7 +3,9 @@
 
 #include <qcode/core/retry_policy.h>
 #include <qcode/core/generate_options.h>
+#include <atomic>
 #include <chrono>
+#include <thread>
 
 namespace qcode {
 namespace test {
@@ -275,6 +277,45 @@ TEST(RetryPolicyTest, HonorsRetryAfterHint) {
 
   EXPECT_TRUE(result.is_success());
   EXPECT_EQ(seen_delay, std::chrono::milliseconds(200));
+}
+
+// Esc must stop the retry schedule entirely: the abort hook cuts both the
+// pre-attempt gate and the backoff sleep.
+TEST(RetryPolicyTest, AbortStopsRetryScheduleImmediately) {
+  retry::RetryConfig config;
+  config.max_retries = 5;
+  config.initial_delay = std::chrono::milliseconds(5000);  // long backoff
+  config.jitter = 0.0;
+  std::atomic<bool> aborted{false};
+  config.should_stop = [&aborted]() { return aborted.load(); };
+  retry::RetryPolicy policy(config);
+
+  int call_count = 0;
+  auto t_start = std::chrono::steady_clock::now();
+  // Flip abort shortly after the first failure enters the backoff sleep.
+  std::thread flipper([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    aborted.store(true);
+  });
+
+  auto result =
+      policy.execute_with_retry<std::function<GenerateResult()>, GenerateResult>(
+          [&call_count]() -> GenerateResult {
+            call_count++;
+            GenerateResult r("HTTP 429");
+            r.is_retryable = true;
+            return r;
+          },
+          [](const GenerateResult& res) {
+            return res.is_retryable.value_or(false);
+          });
+  flipper.join();
+
+  const auto elapsed = std::chrono::steady_clock::now() - t_start;
+  // Only the initial attempt ran; the 5s backoff was cut to ~150ms.
+  EXPECT_EQ(call_count, 1);
+  EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(),
+            2000);
 }
 
 }  // namespace test

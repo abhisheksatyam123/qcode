@@ -4,6 +4,7 @@
 #include <qcode/core/generate_options.h>
 
 #include <functional>
+#include <atomic>
 #include <httplib.h>
 #include <string>
 
@@ -30,12 +31,15 @@ class HttpRequestHandler {
  public:
   explicit HttpRequestHandler(const HttpConfig& config);
 
-  // Makes a POST request and returns the raw response wrapped in GenerateResult
+  // Makes a POST request and returns the raw response wrapped in GenerateResult.
+  // When `abort_flag` is set, the retry schedule stops as soon as it flips
+  // (Esc during generation must cancel pending retries).
   GenerateResult post(const std::string& path,
                       const httplib::Headers& headers,
                       const std::string& body,
                       const std::string& content_type = "application/json",
-                      retry::RetryCallback on_retry = nullptr);
+                      retry::RetryCallback on_retry = nullptr,
+                      const std::shared_ptr<std::atomic<bool>>& abort_flag = nullptr);
 
   // Extracts host and SSL settings from a base URL
   static HttpConfig parse_base_url(const std::string& base_url);

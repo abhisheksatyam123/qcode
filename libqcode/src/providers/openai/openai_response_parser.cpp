@@ -190,6 +190,9 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
       } else if (!result.text.empty()) {
         result.response_messages.push_back(Message::assistant(result.text));
       }
+      // Surface reasoning on the result so tool-loop callers can display and
+      // replay it even when they rebuild messages themselves.
+      result.reasoning = reasoning;
     }
 
     // Extract finish reason

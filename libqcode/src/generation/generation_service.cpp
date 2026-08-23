@@ -299,6 +299,13 @@ static void run_tools_generation_bus(
       if (!step_res.is_success()) {
         const std::string err = step_res.error_message();
         LOG_ERROR("run_tools_generation_bus: step={} generate_text failed: finish_reason={} error=\"{}\" provider_metadata_size={}", step, step_res.finishReasonToString(), err, step_res.provider_metadata.value_or("").size());
+        // User pressed Esc (or the retry schedule was cut short) — exit
+        // quietly instead of surfacing a scary error toast.
+        if (ctx.abort_flag && ctx.abort_flag->load()) {
+          LOG_INFO("run_tools_generation_bus: aborted at step={}", step);
+          aborted = true;
+          break;
+        }
         if (!auth_retried && looks_like_auth_error(err) && refresh_client &&
             refresh_client(client)) {
           auth_retried = true;
@@ -328,6 +335,18 @@ static void run_tools_generation_bus(
         break;
       }
 
+      // Thinking tokens from this step: publish as a reasoning event BEFORE
+      // the text delta so the TUI renders the thinking block above the
+      // assistant text (opencode-style), and replay it in later requests.
+      if (!step_res.reasoning.empty()) {
+        bus.publish<ReasoningDelta>({
+            .session_id = ctx.session_id,
+            .text = step_res.reasoning,
+            .signature = "",
+            .done = true,
+        });
+      }
+
       gen_result.text += step_res.text;
       gen_result.usage.prompt_tokens += step_res.usage.prompt_tokens;
       gen_result.usage.completion_tokens += step_res.usage.completion_tokens;
@@ -355,7 +374,14 @@ static void run_tools_generation_bus(
                                   call.thought_signature);
           gen_result.tool_calls.push_back(call);
         }
-        response_messages.push_back(qcode::Message::assistant_with_tools(step_res.text, tool_parts));
+        if (!step_res.response_messages.empty()) {
+          // Parser already attached the reasoning part alongside tool calls —
+          // reuse it so thinking replays across steps.
+          response_messages.push_back(step_res.response_messages.front());
+        } else {
+          response_messages.push_back(
+              qcode::Message::assistant_with_tools(step_res.text, tool_parts));
+        }
 
         // Execute tool calls to produce tool results
         std::vector<qcode::ToolResult> executed_results =

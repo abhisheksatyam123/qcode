@@ -30,6 +30,9 @@ struct RetryConfig {
   // base + base * jitter * rand(0,1).
   double jitter = 0.25;
   RetryCallback on_retry = nullptr;
+  // Abort hook: checked before every wait and attempt so Esc stops the
+  // retry schedule entirely instead of sleeping through all attempts.
+  std::function<bool()> should_stop = nullptr;
 };
 
 class RetryPolicy {
@@ -37,21 +40,31 @@ class RetryPolicy {
   explicit RetryPolicy(const RetryConfig& config = RetryConfig())
       : config_(config) {}
 
+  RetryConfig& config() { return config_; }
+
   template <typename Func, typename Result>
   Result execute_with_retry(
       Func&& func,
       std::function<bool(const Result&)> is_retryable,
       RetryCallback override_on_retry = nullptr) {
     auto cb = override_on_retry ? override_on_retry : config_.on_retry;
+    auto aborted = [this]() -> bool {
+      return config_.should_stop != nullptr && config_.should_stop();
+    };
 
     for (int attempt = 0; attempt <= config_.max_retries; ++attempt) {
+      if (aborted()) {
+        LOG_INFO("Retry loop aborted before attempt {}", attempt + 1);
+        Result stopped("Aborted by user");
+        return stopped;
+      }
       Result result = func();
 
       if (!result.is_success()) {
         // Retry only when the result is explicitly retryable and attempts
         // remain. Otherwise surface the failed result directly rather than
         // throwing RetryError (callers prefer a failed Result).
-        if (is_retryable(result) && attempt < config_.max_retries) {
+        if (is_retryable(result) && attempt < config_.max_retries && !aborted()) {
           const auto wait = next_wait(attempt + 1, extract_retry_after(result));
           LOG_WARN(
               "Request failed (attempt {}/{}), retrying after {} ms delay...",
@@ -67,7 +80,21 @@ class RetryPolicy {
             cb(attempt + 1, config_.max_retries + 1, wait, err_msg);
           }
 
-          std::this_thread::sleep_for(wait);
+          // Sleep in small slices so an abort cuts the wait short instead of
+          // blocking for the full backoff (Esc must stop retries instantly).
+          constexpr int kSliceMs = 50;
+          auto waited = std::chrono::milliseconds(0);
+          while (waited < wait) {
+            if (aborted()) {
+              LOG_INFO("Retry backoff aborted after {} ms", waited.count());
+              Result stopped("Aborted by user");
+              return stopped;
+            }
+            const auto slice = std::min(std::chrono::milliseconds(kSliceMs),
+                                        wait - waited);
+            std::this_thread::sleep_for(slice);
+            waited += slice;
+          }
           continue;
         }
         if (!result.is_success() && attempt > 0) {

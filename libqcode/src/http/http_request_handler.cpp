@@ -67,13 +67,22 @@ HttpConfig HttpRequestHandler::parse_base_url(const std::string& base_url) {
   return config;
 }
 
-GenerateResult HttpRequestHandler::post(const std::string& path,
-                                        const httplib::Headers& headers,
-                                        const std::string& body,
-                                        const std::string& content_type,
-                                        retry::RetryCallback on_retry) {
+GenerateResult HttpRequestHandler::post(
+    const std::string& path,
+    const httplib::Headers& headers,
+    const std::string& body,
+    const std::string& content_type,
+    retry::RetryCallback on_retry,
+    const std::shared_ptr<std::atomic<bool>>& abort_flag) {
   // Create a retry policy with the configured settings
   retry::RetryPolicy retry_policy(config_.retry_config);
+  if (abort_flag) {
+    std::weak_ptr<std::atomic<bool>> weak_abort = abort_flag;
+    retry_policy.config().should_stop = [weak_abort]() -> bool {
+      if (auto flag = weak_abort.lock()) return flag->load();
+      return true;  // request context died — stop scheduling
+    };
+  }
 
   // Define the function to execute with retry
   auto execute_request = [this, &path, &headers, &body,
