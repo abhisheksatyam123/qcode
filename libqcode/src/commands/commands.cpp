@@ -1,4 +1,6 @@
 #include <qcode/ui/commands.h>
+#include <qcode/providers/provider_profile.h>
+#include <qcode/providers/provider_transform.h>
 #include <qcode/session/session_store.h>
 #include <qcode/core/config.h>
 #include <qcode/core/event.h>
@@ -44,6 +46,29 @@ std::vector<ModelEntry> build_model_entries(
                 providers[pi].name,
             });
         }
+    }
+    return entries;
+}
+
+std::vector<VariantEntry> build_variant_entries(const ModelInfo& model) {
+    std::vector<VariantEntry> entries;
+    entries.push_back({"off", "Off", "No extra thinking tokens"});
+    auto efforts = ProviderTransform::reasoning_variants(model);
+    if (efforts.empty()) {
+        efforts = {"low", "medium", "high", "max"};
+    }
+    const auto describe = [](const std::string& id) -> std::string {
+        if (id == "low") return "Fast, light reasoning";
+        if (id == "medium") return "Balanced thinking";
+        if (id == "high") return "Deep reasoning";
+        if (id == "max") return "Maximum thinking budget";
+        return "Model-specific effort";
+    };
+    for (const auto& id : efforts) {
+        if (id.empty() || id == "off") continue;
+        std::string title = id;
+        if (!title.empty()) title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(title[0])));
+        entries.push_back({id, title, describe(id)});
     }
     return entries;
 }
@@ -334,9 +359,10 @@ bool handle_slash_command(
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.front()))) lvl.erase(lvl.begin());
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.back()))) lvl.pop_back();
         if (lvl.empty()) {
-            // Cycle: off -> low -> medium -> high -> max -> off
+            // TUI intercepts bare /variant and opens the picker. Keep a
+            // cycle here for non-TUI callers (CLI / server).
             std::string cur = state.reasoning_mode ? *state.reasoning_mode : "off";
-            if (cur == "off") lvl = "low";
+            if (cur == "off" || cur.empty()) lvl = "low";
             else if (cur == "low") lvl = "medium";
             else if (cur == "medium") lvl = "high";
             else if (cur == "high") lvl = "max";
@@ -433,7 +459,7 @@ bool handle_slash_command(
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
           << "  /agent [build|plan] - switch agent mode (plan = read-only research)\n"
-          << "  /variant [off|low|medium|high|max] - set model variant / reasoning effort\n"
+          << "  /variant [off|low|medium|high|max] - open variant picker (or set effort)\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
           << "  /new [name] [workspace] - new session (optional title + workspace path)\n"
           << "  /session <id>     - load a persistent session by id\n"
@@ -566,6 +592,7 @@ void run_compaction(
             "Use tools only when they improve summary accuracy; otherwise answer directly.";
 
         const auto& sel = providers_copy[sp];
+        const auto& model_id = providers_copy[sp].models[sm].id;
         qcode::providers::register_authenticated_providers();
         qcode::providers::ProviderOptions provider_options;
         provider_options.base_url = sel.api_url;
@@ -573,6 +600,9 @@ void run_compaction(
         provider_options.headers = sel.headers;
         provider_options.protocol = sel.protocol;
         provider_options.project_id = sel.project_id;
+        const auto call =
+            prepare_provider_call(provider_options, sel.id, model_id);
+        const auto& wire_model = call.wire_model_id;
         auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
             sel.id, provider_options);
         if (!resolution.ok()) {
@@ -586,7 +616,7 @@ void run_compaction(
         qcode::Client client = std::move(resolution.client);
 
         qcode::GenerateOptions opts;
-        opts.model = providers_copy[sp].models[sm].id;
+        opts.model = wire_model;
         opts.system = compaction_instruction;
         opts.messages = {qcode::Message::user(transcript.str())};
 

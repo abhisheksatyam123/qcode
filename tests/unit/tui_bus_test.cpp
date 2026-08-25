@@ -158,6 +158,18 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
   ASSERT_EQ(messages.size(), 2U);
   EXPECT_EQ(messages[1].second, "Error: Upstream request failed");
 
+  const size_t before_info = messages.size();
+  bus.publish<contract::ErrorOccurred>({
+      .session_id = test_session_id,
+      .message =
+          "Retrying 1/6 in 2.5s — {\"error\":{\"message\":\"Endpoint is "
+          "unavailable\"}}",
+      .severity = "info",
+  });
+  bus.drain();
+  messages = session::load_session_messages(test_session_id);
+  EXPECT_EQ(messages.size(), before_info);
+
   // Clean up
   std::remove("tui_store_test_temp.db");
   std::remove("tui_store_test_temp.db-wal");

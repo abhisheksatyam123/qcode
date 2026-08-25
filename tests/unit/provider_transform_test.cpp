@@ -7,7 +7,10 @@
 #include <gtest/gtest.h>
 
 #include <qcode/core/generate_options.h>
+#include <qcode/providers/provider_profile.h>
 #include <qcode/providers/provider_transform.h>
+#include <qcode/providers/zen_route.h>
+#include <qcode/ui/commands.h>
 
 #include "providers/openai/openai_client.h"
 #include "providers/openai/openai_request_builder.h"
@@ -28,6 +31,131 @@ static ModelInfo ox_alpha_zen() {
 }
 
 // ── Transport flavor detection ──
+
+TEST(ProviderTransformTest, ZenWireModelIdAliases) {
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("x-preview-f-free"),
+            "x-preview-f-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("ox-alpha"), "x-preview-f-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("stealth/ox-alpha"),
+            "x-preview-f-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("opencode/big-pickle"),
+            "big-pickle");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("meta/muse-spark-1.2"),
+            "muse-spark-1.2-contributor-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.2"),
+            "muse-spark-1.2");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("  "), "");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id(""), "");
+}
+
+TEST(ProviderTransformTest, ZenApiProtocolMatchesOpenCodeDocs) {
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("x-preview-f-free"),
+            "chat_completions");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("ox-alpha"), "chat_completions");
+  EXPECT_EQ(ProviderTransform::zen_completions_path("x-preview-f-free"),
+            "/chat/completions");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("big-pickle"),
+            "chat_completions");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("kimi-k2.5-free"),
+            "chat_completions");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("deepseek-v4-flash-free"),
+            "chat_completions");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("muse-spark-1.2-contributor-free"),
+            "responses");
+  EXPECT_EQ(ProviderTransform::zen_completions_path("muse-spark-1.2"),
+            "/responses");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("gpt-5.3-codex"), "responses");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("grok-4.6"), "responses");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("claude-sonnet-4-6"), "messages");
+  EXPECT_EQ(ProviderTransform::zen_completions_path("claude-opus-5"),
+            "/messages");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("qwen3.7-plus"), "messages");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("gemini-3-pro"), "google");
+  EXPECT_EQ(ProviderTransform::zen_completions_path("gemini-3.7-flash"),
+            "/models/gemini-3.7-flash:generateContent");
+  EXPECT_EQ(zen_stream_path("/models/gemini-3.7-flash:generateContent"),
+            "/models/gemini-3.7-flash:streamGenerateContent?alt=sse");
+  EXPECT_EQ(zen_stream_path("/chat/completions"), "/chat/completions");
+}
+
+TEST(ProviderProfileTest, KindFromIdAndUrl) {
+  EXPECT_EQ(provider_kind("opencode", ""), ProviderKind::kOpenCodeZen);
+  EXPECT_EQ(provider_kind("openrouter", ""), ProviderKind::kOpenRouter);
+  EXPECT_EQ(provider_kind("anthropic", ""), ProviderKind::kAnthropic);
+  EXPECT_EQ(provider_kind("cursor", ""), ProviderKind::kCursor);
+  EXPECT_EQ(provider_kind("antigravity", ""), ProviderKind::kAntigravity);
+  EXPECT_EQ(provider_kind("openai", ""), ProviderKind::kOpenAI);
+  EXPECT_EQ(provider_kind("qpilot", ""), ProviderKind::kQPilot);
+  EXPECT_EQ(provider_kind("qgenie", ""), ProviderKind::kQGenie);
+  EXPECT_EQ(provider_kind("custom", "https://opencode.ai/zen/v1"),
+            ProviderKind::kOpenCodeZen);
+  EXPECT_EQ(provider_kind("custom", "https://openrouter.ai/api/v1"),
+            ProviderKind::kOpenRouter);
+  EXPECT_EQ(provider_kind("custom", "https://api.anthropic.com"),
+            ProviderKind::kAnthropic);
+}
+
+TEST(ProviderProfileTest, PrepareZenAndOpenRouterAndAnthropic) {
+  providers::ProviderOptions zen;
+  zen.base_url = "https://opencode.ai/zen/v1";
+  zen.project_id = "proj";
+  const auto zen_call =
+      prepare_provider_call(zen, "opencode", "ox-alpha", "sess-1");
+  EXPECT_EQ(zen_call.kind, ProviderKind::kOpenCodeZen);
+  EXPECT_EQ(zen_call.wire_model_id, "x-preview-f-free");
+  EXPECT_EQ(zen.protocol, "chat_completions");
+  EXPECT_EQ(zen.completions_path, "/chat/completions");
+  EXPECT_EQ(zen.headers["x-opencode-session"], "sess-1");
+  EXPECT_EQ(zen.headers["x-opencode-project"], "proj");
+
+  providers::ProviderOptions muse;
+  const auto muse_call =
+      prepare_provider_call(muse, "opencode", "muse-spark-1.2-contributor-free");
+  EXPECT_EQ(muse.protocol, "responses");
+  EXPECT_EQ(muse.completions_path, "/responses");
+  EXPECT_EQ(muse_call.wire_model_id, "muse-spark-1.2-contributor-free");
+
+  providers::ProviderOptions claude;
+  const auto claude_call =
+      prepare_provider_call(claude, "opencode", "claude-sonnet-4-6");
+  EXPECT_EQ(claude.protocol, "messages");
+  EXPECT_EQ(claude.completions_path, "/messages");
+  EXPECT_EQ(claude_call.wire_model_id, "claude-sonnet-4-6");
+
+  providers::ProviderOptions gemini;
+  prepare_provider_call(gemini, "opencode", "gemini-3-pro");
+  EXPECT_EQ(gemini.protocol, "google");
+  EXPECT_EQ(gemini.completions_path, "/models/gemini-3-pro:generateContent");
+
+  providers::ProviderOptions openrouter;
+  const auto or_call =
+      prepare_provider_call(openrouter, "openrouter", "x-preview-f-free");
+  EXPECT_EQ(or_call.kind, ProviderKind::kOpenRouter);
+  EXPECT_EQ(or_call.wire_model_id, "stealth/ox-alpha");
+  EXPECT_EQ(openrouter.protocol, "chat_completions");
+  EXPECT_TRUE(openrouter.completions_path.empty());
+
+  providers::ProviderOptions anthropic;
+  const auto anthro =
+      prepare_provider_call(anthropic, "anthropic", "claude-sonnet-4-6");
+  EXPECT_EQ(anthro.kind, ProviderKind::kAnthropic);
+  EXPECT_EQ(anthropic.protocol, "messages");
+}
+
+TEST(ProviderTransformTest, OpenRouterWireModelIdAliases) {
+  EXPECT_EQ(ProviderTransform::openrouter_wire_model_id("ox-alpha"),
+            "stealth/ox-alpha");
+  EXPECT_EQ(ProviderTransform::openrouter_wire_model_id("x-preview-f-free"),
+            "stealth/ox-alpha");
+  EXPECT_EQ(ProviderTransform::openrouter_wire_model_id(
+                "muse-spark-1.2-contributor-free"),
+            "meta/muse-spark-1.2-contributor");
+  EXPECT_EQ(ProviderTransform::openrouter_wire_model_id("muse-spark-1.2"),
+            "meta/muse-spark-1.2");
+  EXPECT_EQ(ProviderTransform::chat_wire_model_id(ChatTransport::kOpenRouter,
+                                                 "Ox Alpha Free (Unlimited)"),
+            "stealth/ox-alpha");
+}
 
 TEST(ProviderTransformTest, ChatTransportDetection) {
   EXPECT_EQ(ProviderTransform::chat_transport_for("https://opencode.ai/zen/v1"),
@@ -55,6 +183,51 @@ TEST(ProviderTransformTest, VariantsFallbackForDeepSeekV4AddsMax) {
   EXPECT_THAT(efforts, testing::ElementsAre("low", "medium", "high", "max"));
 }
 
+TEST(ProviderTransformTest, VariantPickerListsModelEfforts) {
+  const auto entries = build_variant_entries(ox_alpha_zen());
+  std::vector<std::string> ids;
+  ids.reserve(entries.size());
+  for (const auto& e : entries) ids.push_back(e.id);
+  EXPECT_THAT(ids, testing::ElementsAre("off", "low", "high", "max"));
+}
+
+TEST(ProviderTransformTest, ClampVariantSnapsUnsupportedEffort) {
+  ModelInfo ox = ox_alpha_zen();  // low/high/max
+  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "off"), "off");
+  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "high"), "high");
+  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "medium"), "high");
+  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "max"), "max");
+}
+
+TEST(ProviderTransformTest, CursorFamilyAndWireIds) {
+  EXPECT_EQ(ProviderTransform::cursor_family_id("grok-4.6-high"), "grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_family_id("cursor-grok-4.6"), "grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_family_id("claude-opus-5-thinking-low"),
+            "claude-opus-5");
+  EXPECT_EQ(ProviderTransform::cursor_family_id("composer-2.5"), "");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "medium"),
+            "grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "high"),
+            "grok-4.6-high");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "low"),
+            "grok-4.6-low");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("claude-opus-5", "high"),
+            "claude-opus-5-thinking-high");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("claude-opus-5", "off"),
+            "claude-opus-5");
+}
+
+TEST(ProviderTransformTest, MuseSparkGetsReasoningDefaults) {
+  ModelInfo muse;
+  muse.id = "muse-spark-1.2-contributor-free";
+  muse.name = "Muse Spark";
+  ProviderTransform::apply_reasoning_defaults(muse);
+  EXPECT_TRUE(muse.reasoning);
+  EXPECT_FALSE(muse.reasoning_efforts.empty());
+  EXPECT_EQ(ProviderTransform::default_variant(muse), "high");
+  EXPECT_TRUE(ProviderTransform::is_reasoning_model_id(muse.id));
+}
+
 TEST(ProviderTransformTest, DefaultVariantThinkingOn) {
   // ox-alpha: low/high/max declared -> high by default.
   EXPECT_EQ(ProviderTransform::default_variant(ox_alpha_zen()), "high");
@@ -64,6 +237,11 @@ TEST(ProviderTransformTest, DefaultVariantThinkingOn) {
   gpt5.reasoning = true;
   gpt5.reasoning_efforts = {"low", "medium", "high"};
   EXPECT_EQ(ProviderTransform::default_variant(gpt5), "medium");
+  ModelInfo grok;
+  grok.id = "grok-4.6";
+  grok.reasoning = true;
+  grok.reasoning_efforts = {"low", "medium", "high"};
+  EXPECT_EQ(ProviderTransform::default_variant(grok), "medium");
   // Non-reasoning models stay off.
   ModelInfo plain;
   plain.id = "laguna-s-2.1-free";
@@ -77,16 +255,30 @@ TEST(ProviderTransformTest, ReasoningPlacementPerTransport) {
   nlohmann::json compatible;
   ProviderTransform::apply_reasoning_options(compatible, ChatTransport::kOpenCodeZen, std::string("max"));
   EXPECT_EQ(compatible.value("reasoning_effort", ""), "max");
+  EXPECT_FALSE(compatible.contains("include_reasoning"));
   EXPECT_FALSE(compatible.contains("reasoning"));
 
   nlohmann::json openrouter;
   ProviderTransform::apply_reasoning_options(openrouter, ChatTransport::kOpenRouter, std::string("high"));
   EXPECT_EQ(openrouter["reasoning"].value("effort", ""), "high");
+  EXPECT_FALSE(openrouter["reasoning"].contains("exclude"));
   EXPECT_FALSE(openrouter.contains("reasoning_effort"));
 
   nlohmann::json off;
   ProviderTransform::apply_reasoning_options(off, ChatTransport::kOpenCodeZen, std::string("off"));
   EXPECT_TRUE(off.empty());
+}
+
+TEST(ProviderTransformTest, InterleavedReplayFieldMatchesOpenCode) {
+  EXPECT_EQ(ProviderTransform::interleaved_replay_field(
+                ChatTransport::kOpenCodeZen, "x-preview-f-free"),
+            "reasoning_content");
+  EXPECT_EQ(ProviderTransform::interleaved_replay_field(
+                ChatTransport::kOpenCodeZen, "muse-spark-1.2-contributor-free"),
+            "reasoning");
+  EXPECT_TRUE(ProviderTransform::interleaved_replay_field(
+                  ChatTransport::kOpenRouter, "stealth/ox-alpha")
+                  .empty());
 }
 
 TEST(ProviderTransformTest, StreamOptionsIncludeUsage) {
@@ -147,11 +339,28 @@ TEST_F(ZenWireFormatTest, ReasoningReplaysAsReasoningContent) {
     if (msg.value("role", "") == "assistant") {
       saw_reasoning_content = msg.contains("reasoning_content") &&
                               !msg["reasoning_content"].get<std::string>().empty();
-      // The legacy field must not ride along on chat transports.
+      // The legacy field must not ride along on ox-alpha chat transports.
       EXPECT_FALSE(msg.contains("reasoning"));
     }
   }
   EXPECT_TRUE(saw_reasoning_content);
+}
+
+TEST_F(ZenWireFormatTest, MuseSparkReplaysAsReasoningField) {
+  openai::OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  auto opts = conversation_with_reasoning();
+  opts.model = "muse-spark-1.2-contributor-free";
+  const auto body = builder.build_request_json(opts);
+  bool saw_reasoning = false;
+  for (const auto& msg : body["messages"]) {
+    if (msg.value("role", "") != "assistant") continue;
+    saw_reasoning = msg.contains("reasoning") &&
+                    msg["reasoning"].is_string() &&
+                    !msg["reasoning"].get<std::string>().empty();
+    EXPECT_FALSE(msg.contains("reasoning_content"));
+  }
+  EXPECT_TRUE(saw_reasoning);
 }
 
 TEST_F(ZenWireFormatTest, MaxTokensNotMaxCompletionTokens) {
@@ -164,6 +373,14 @@ TEST_F(ZenWireFormatTest, MaxTokensNotMaxCompletionTokens) {
   EXPECT_FALSE(body.contains("max_completion_tokens"));
 }
 
+TEST_F(ZenWireFormatTest, RemapsOxAlphaAliasInRequestBody) {
+  openai::OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  auto opts = GenerateOptions("ox-alpha", "hello");
+  const auto body = builder.build_request_json(opts);
+  EXPECT_EQ(body.value("model", ""), "x-preview-f-free");
+}
+
 TEST_F(ZenWireFormatTest, EffortLandsOnReasoningEffortField) {
   openai::OpenAIRequestBuilder builder(false);
   builder.set_base_url("https://opencode.ai/zen/v1");
@@ -171,9 +388,26 @@ TEST_F(ZenWireFormatTest, EffortLandsOnReasoningEffortField) {
   opts.reasoning_effort = "max";
   const auto body = builder.build_request_json(opts);
   EXPECT_EQ(body.value("reasoning_effort", ""), "max");
+  EXPECT_FALSE(body.contains("include_reasoning"));
   EXPECT_FALSE(body.contains("reasoning"));
   // Reasoning-capable requests carry a token budget via max_tokens here.
   EXPECT_GT(body.value("max_tokens", 0), 0);
+}
+
+TEST_F(ZenWireFormatTest, RemapsMuseSparkOpenRouterAlias) {
+  openai::OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  auto opts = GenerateOptions("meta/muse-spark-1.2", "hello");
+  const auto body = builder.build_request_json(opts);
+  EXPECT_EQ(body.value("model", ""), "muse-spark-1.2-contributor-free");
+}
+
+TEST(OpenRouterWireFormatTest, RemapsZenOxAlphaAlias) {
+  openai::OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://openrouter.ai/api/v1");
+  auto opts = GenerateOptions("x-preview-f-free", "hello");
+  const auto body = builder.build_request_json(opts);
+  EXPECT_EQ(body.value("model", ""), "stealth/ox-alpha");
 }
 
 // ── Wire format through the real builder (OpenRouter flavor) ──
@@ -187,9 +421,24 @@ TEST(OpenRouterWireFormatTest, EffortAndUsageAccounting) {
   const auto body = builder.build_request_json(opts);
 
   EXPECT_EQ(body["reasoning"].value("effort", ""), "high");
+  EXPECT_FALSE(body["reasoning"].contains("exclude"));
   EXPECT_FALSE(body.contains("reasoning_effort"));
+  EXPECT_FALSE(body.contains("include_reasoning"));
   EXPECT_TRUE(body["usage"].value("include", false));
   EXPECT_EQ(body.value("max_tokens", 0), 8192);  // safe default budget
+}
+
+TEST(OpenRouterWireFormatTest, SkipsInterleavedReasoningReplay) {
+  openai::OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://openrouter.ai/api/v1");
+  auto opts = conversation_with_reasoning();
+  opts.model = "stealth/ox-alpha";
+  const auto body = builder.build_request_json(opts);
+  for (const auto& msg : body["messages"]) {
+    if (msg.value("role", "") != "assistant") continue;
+    EXPECT_FALSE(msg.contains("reasoning_content"));
+    EXPECT_FALSE(msg.contains("reasoning"));
+  }
 }
 
 }  // namespace test

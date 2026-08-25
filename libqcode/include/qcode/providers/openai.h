@@ -18,7 +18,9 @@ namespace openai {
 struct CompatibleOptions {
   std::string base_url;
   std::string protocol = "chat_completions";
+  std::string completions_path;
   std::map<std::string, std::string> headers;
+  std::optional<retry::RetryConfig> retry_config;
 };
 
 namespace models {

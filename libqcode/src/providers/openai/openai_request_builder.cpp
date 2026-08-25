@@ -3,20 +3,87 @@
 #include <algorithm>
 #include <functional>
 #include <unordered_set>
+#include <vector>
 
 #include <qcode/core/logger.h>
 #include <qcode/core/random.h>
 #include "providers/opencode_zen_headers.h"
 #include "utils/message_utils.h"
+#include <qcode/providers/gemini_transform.h>
 
 namespace qcode {
 
+namespace {
+
+const nlohmann::json kEphemeralCache = {{"type", "ephemeral"}};
+
+bool is_claude_cache_model(const std::string& model) {
+  return model.find("claude") != std::string::npos ||
+         model.find("anthropic") != std::string::npos;
+}
+
+bool is_opencode_gpt5_cache_model(const std::string& model) {
+  return model.find("gpt-5") != std::string::npos &&
+         model.find("gpt-5-chat") == std::string::npos;
+}
+
+void mark_message_cache_control(nlohmann::json& message) {
+  if (!message.is_object() || !message.contains("content")) {
+    return;
+  }
+  auto& content = message["content"];
+  if (content.is_null()) {
+    return;
+  }
+  if (content.is_string()) {
+    content = nlohmann::json::array({nlohmann::json{
+        {"type", "text"},
+        {"text", content.get<std::string>()},
+        {"cache_control", kEphemeralCache},
+    }});
+    return;
+  }
+  if (content.is_array() && !content.empty() && content.back().is_object()) {
+    content.back()["cache_control"] = kEphemeralCache;
+  }
+}
+
+// OpenCode ProviderTransform.applyCaching: first 2 system + last 2 non-system.
+void apply_opencode_message_caching(nlohmann::json& messages) {
+  if (!messages.is_array() || messages.empty()) {
+    return;
+  }
+  std::vector<std::size_t> system_idx;
+  std::vector<std::size_t> other_idx;
+  for (std::size_t i = 0; i < messages.size(); ++i) {
+    if (messages[i].value("role", "") == "system") {
+      system_idx.push_back(i);
+    } else {
+      other_idx.push_back(i);
+    }
+  }
+  std::unordered_set<std::size_t> mark;
+  for (std::size_t i = 0; i < system_idx.size() && i < 2; ++i) {
+    mark.insert(system_idx[i]);
+  }
+  const auto other_n = other_idx.size();
+  for (std::size_t n = 0; n < other_n && n < 2; ++n) {
+    mark.insert(other_idx[other_n - 1 - n]);
+  }
+  for (const auto i : mark) {
+    mark_message_cache_control(messages[i]);
+  }
+}
+
+}  // namespace
 
 namespace openai {
 
 nlohmann::json OpenAIRequestBuilder::build_request_json(
     const GenerateOptions& options) {
-  nlohmann::json request{{"model", options.model},
+  std::string model_id =
+      ProviderTransform::chat_wire_model_id(transport_, options.model);
+  nlohmann::json request{{"model", model_id},
                          {"messages", nlohmann::json::array()}};
 
   if (options.response_format) {
@@ -97,11 +164,13 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
               break;
             }
           }
-        } else {
-          // Chat Completions transports replay interleaved reasoning through
-          // the assistant "reasoning_content" back-channel, mirroring
-          // upstream's lowerAssistantMessage (packages/llm openai-chat).
-          message["reasoning_content"] = reasoning_content;
+        } else if (const auto field = ProviderTransform::interleaved_replay_field(
+                       transport_, options.model);
+                   !field.empty()) {
+          // OpenCode injects capabilities.interleaved.field onto
+          // openaiCompatible (reasoning_content for Ox Alpha / DeepSeek,
+          // reasoning for Muse Spark). OpenRouter skips this.
+          message[field] = reasoning_content;
         }
       }
 
@@ -264,10 +333,33 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     }
   }
 
+  const auto uses_opencode_cache_transport =
+      transport_ == ProviderTransform::ChatTransport::kOpenCodeZen ||
+      transport_ == ProviderTransform::ChatTransport::kOpenRouter;
+  // OpenCode ProviderTransform.applyCaching: first 2 system + last 2
+  // non-system, only for Claude/Anthropic. OpenRouter and Zen Claude honor
+  // content-part cache_control; other models use implicit prefix cache.
+  if (uses_opencode_cache_transport && is_claude_cache_model(model_id) &&
+      request.contains("messages")) {
+    apply_opencode_message_caching(request["messages"]);
+  }
+
+  // OpenCode options(): promptCacheKey = sessionID for Zen gpt-5 (not
+  // gpt-5-chat). Do not send OpenRouter prompt_cache_key (undocumented).
+  if (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen &&
+      is_opencode_gpt5_cache_model(model_id) && !options.session_id.empty()) {
+    request["promptCacheKey"] = options.session_id;
+    request["prompt_cache_key"] = options.session_id;
+  }
+
   // OpenRouter only reports usage accounting (cached-token details) when
   // explicitly asked — mirrors upstream options(): usage.include = true.
   if (transport_ == ProviderTransform::ChatTransport::kOpenRouter && !use_responses_) {
     request["usage"] = {{"include", true}};
+  }
+
+  if (wire_protocol_ == "google") {
+    return qcode::gemini::convert_openai_to_gemini(request);
   }
 
   if (!use_responses_) return request;

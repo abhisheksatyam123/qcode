@@ -6,27 +6,63 @@
 #include "anthropic_response_parser.h"
 #include "anthropic_stream.h"
 
+#include <httplib.h>
+
 #include <algorithm>
+#include <map>
 #include <memory>
 
 namespace qcode {
 namespace anthropic {
+namespace {
+
+httplib::Headers extra_headers(
+    const std::map<std::string, std::string>& headers) {
+  httplib::Headers extra{{"anthropic-version", "2023-06-01"}};
+  for (const auto& [name, value] : headers) extra.emplace(name, value);
+  return extra;
+}
+
+std::string messages_path(const std::string& base_url,
+                          const std::string& override_path) {
+  if (!override_path.empty()) {
+    return override_path.front() == '/' ? override_path : "/" + override_path;
+  }
+  return (base_url.ends_with("/v1") || base_url.ends_with("/v1/"))
+             ? "/messages"
+             : "/v1/messages";
+}
+
+}  // namespace
 
 AnthropicClient::AnthropicClient(const std::string& api_key,
                                  const std::string& base_url)
+    : AnthropicClient(api_key, CompatibleOptions{.base_url = base_url}) {}
+
+AnthropicClient::AnthropicClient(const std::string& api_key,
+                                 const std::string& base_url,
+                                 const retry::RetryConfig& retry_config)
+    : AnthropicClient(api_key, CompatibleOptions{.base_url = base_url,
+                                                 .retry_config = retry_config}) {}
+
+AnthropicClient::AnthropicClient(const std::string& api_key,
+                                 const CompatibleOptions& options)
     : BaseProviderClient(
           providers::ProviderConfig{
               .api_key = api_key,
-              .base_url = base_url,
-              .completions_endpoint_path = "/v1/messages",
+              .base_url = options.base_url,
+              .completions_endpoint_path =
+                  messages_path(options.base_url, options.completions_path),
               .embeddings_endpoint_path = "/v1/embeddings",
-              .auth_header_name = "x-api-key",
-              .auth_header_prefix = "",
-              .extra_headers = {{"anthropic-version", "2023-06-01"}}},
+              .auth_header_name =
+                  options.bearer_auth ? "Authorization" : "x-api-key",
+              .auth_header_prefix = options.bearer_auth ? "Bearer " : "",
+              .extra_headers = extra_headers(options.headers),
+              .retry_config = options.retry_config},
           std::make_unique<AnthropicRequestBuilder>(),
           std::make_unique<AnthropicResponseParser>()) {
-  LOG_DEBUG("Anthropic client initialized with base_url: {}",
-                        base_url);
+  LOG_DEBUG("Anthropic client initialized with base_url: {} bearer={}",
+            options.base_url, options.bearer_auth);
 }
 
 StreamResult AnthropicClient::stream_text(const StreamOptions& options) {

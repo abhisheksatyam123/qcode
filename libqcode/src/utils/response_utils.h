@@ -11,6 +11,38 @@
 namespace qcode {
 namespace utils {
 
+// OpenRouter (Stealth / ox-alpha) sometimes returns HTTP 200 with
+// finish_reason=stop and native_finish_reason=network_error plus a null
+// message. Treat that as a dropped upstream, not a successful empty reply.
+inline bool is_empty_upstream_network_drop(const nlohmann::json& response) {
+  if (!response.contains("choices") || !response["choices"].is_array() ||
+      response["choices"].empty() || !response["choices"][0].is_object()) {
+    return false;
+  }
+  const auto& choice = response["choices"][0];
+  if (choice.value("native_finish_reason", std::string{}) != "network_error") {
+    return false;
+  }
+
+  const nlohmann::json* payload = nullptr;
+  if (choice.contains("message") && choice["message"].is_object()) {
+    payload = &choice["message"];
+  } else if (choice.contains("delta") && choice["delta"].is_object()) {
+    payload = &choice["delta"];
+  }
+  if (payload == nullptr) return true;
+
+  if (payload->contains("content") && (*payload)["content"].is_string() &&
+      !(*payload)["content"].get<std::string>().empty()) {
+    return false;
+  }
+  if (payload->contains("tool_calls") && (*payload)["tool_calls"].is_array() &&
+      !(*payload)["tool_calls"].empty()) {
+    return false;
+  }
+  return true;
+}
+
 // Parse a generic error response that follows the common pattern of
 // { "error": { "message": "...", "type": "..." } }
 inline GenerateResult parse_standard_error_response(

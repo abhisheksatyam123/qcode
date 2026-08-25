@@ -98,6 +98,14 @@ std::string sdk_key(const std::string& provider_name);
 
 // ── Reasoning variants (mirrors transform.ts reasoningVariants) ──
 
+/// True for ids that think even when the catalog omitted reasoning=true
+/// (Muse Spark, Ox Alpha, DeepSeek V4, GPT-5, Grok, Gemini 2.5/3, ...).
+bool is_reasoning_model_id(const std::string& model_id);
+
+/// Mark a catalog/config entry as a reasoner and fill effort levels / field
+/// when they were omitted. Safe to call more than once.
+void apply_reasoning_defaults(ModelInfo& model);
+
 /// Effort levels a model supports. Catalog-declared reasoning_options win;
 /// falls back to upstream's widely-supported set for known families.
 std::vector<std::string> reasoning_variants(const ModelInfo& model);
@@ -106,6 +114,10 @@ std::vector<std::string> reasoning_variants(const ModelInfo& model);
 /// default per family: medium for gpt-5.x, high elsewhere). "off" when the
 /// model cannot reason.
 std::string default_variant(const ModelInfo& model);
+
+/// Map a user-selected effort onto one the model actually advertises.
+/// "off" stays "off". Unknown levels snap to the nearest supported effort.
+std::string clamp_variant(const ModelInfo& model, const std::string& requested);
 
 // ── Chat transport flavors (mirrors providerID / api.npm dispatch) ──
 
@@ -118,12 +130,54 @@ enum class ChatTransport {
 
 ChatTransport chat_transport_for(const std::string& base_url);
 
-/// Place reasoning-effort options the way each transport expects:
-/// - OpenRouter: {"reasoning": {"effort": e}}
-/// - others:     {"reasoning_effort": e}
+/// Canonical chat/completions id for this transport. Cross-maps the aliases
+/// users pick (ox-alpha, stealth/ox-alpha, x-preview-f-free, Muse Spark
+/// slugs) onto the id that endpoint actually validates.
+std::string chat_wire_model_id(ChatTransport transport, std::string model_id);
+
+/// Wire id for OpenCode Zen chat/completions. Strips an `opencode/` prefix
+/// and remaps catalog/display aliases (ox-alpha) to the ids Zen validates
+/// (packages/console/app/src/routes/zen/v1/chat/completions.ts).
+std::string zen_wire_model_id(std::string model_id);
+
+/// Zen API flavor from OpenCode's zen.mdx endpoint table:
+/// - responses: Muse Spark, GPT-5.x, Grok
+/// - messages: Claude, Qwen 3.x
+/// - google: Gemini (`/models/{id}:generateContent`)
+/// - chat_completions: Ox Alpha, DeepSeek, Kimi, GLM, MiniMax, free pool
+std::string zen_api_protocol(const std::string& model_id);
+
+/// Path under `https://opencode.ai/zen/v1` for that model.
+std::string zen_completions_path(const std::string& model_id);
+
+/// Wire id for OpenRouter. Maps Zen free-pool aliases onto stealth/ox-alpha
+/// and meta/muse-spark-1.2.
+std::string openrouter_wire_model_id(std::string model_id);
+
+/// Cursor Agent exposes many effort SKUs (grok-4.6-high, opus-5-thinking-low).
+/// Collapse those to the two family ids the picker should show.
+std::string cursor_family_id(const std::string& model_id);
+
+/// Map family + /variant effort onto the slug AgentService accepts.
+/// Grok: grok-4.6 / grok-4.6-low / grok-4.6-high
+/// Opus: claude-opus-5 / claude-opus-5-thinking-{low,high}
+std::string cursor_wire_model_id(
+    const std::string& model_id,
+    const std::optional<std::string>& effort = std::nullopt);
+
+/// Place reasoning-effort options the way OpenCode's transform.ts does:
+/// - OpenRouter (`@openrouter/ai-sdk-provider`): {"reasoning": {"effort": e}}
+/// - Zen / openai-compatible: {"reasoning_effort": e}
+/// Do not add include_reasoning or reasoning.exclude — OpenCode does not.
 void apply_reasoning_options(nlohmann::json& body,
                              ChatTransport transport,
                              const std::optional<std::string>& effort);
+
+/// Assistant-message field used to replay interleaved thinking, matching
+/// OpenCode's `capabilities.interleaved.field` injection. Empty means skip
+/// (OpenRouter — OpenCode does not inject the field for that SDK).
+std::string interleaved_replay_field(ChatTransport transport,
+                                     const std::string& model_id);
 
 /// Streaming/usage body options: stream_options.include_usage always with
 /// streaming; OpenRouter additionally gets usage.include so cached-token

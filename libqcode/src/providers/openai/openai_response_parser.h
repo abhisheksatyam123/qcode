@@ -8,6 +8,11 @@
 namespace qcode {
 namespace openai {
 
+// Pull thinking text from a chat message or stream delta. Muse Spark /
+// OpenRouter send `reasoning` as an object and `reasoning_details` with
+// types other than "text"; those used to throw or be ignored.
+std::string extract_openai_reasoning_text(const nlohmann::json& node);
+
 class OpenAIResponseParser : public providers::ResponseParser {
  public:
   GenerateResult parse_success_completion_response(

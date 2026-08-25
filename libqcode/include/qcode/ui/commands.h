@@ -39,16 +39,25 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"rename",   "Rename session", "/rename <new name>",               "Session"},
         {"session",  "Select session", "Manage and load saved sessions",   "Session"},
         {"compact",  "Compact",       "Summarize conversation to save context", "Session"},
-        {"variant",  "Model variant", "/variant off|low|medium|high",      "Model"},
+        {"variant",  "Model variant", "Select thinking / reasoning effort", "Model"},
         {"clear-queue", "Clear queue", "Clear all queued prompts",          "Session"},
         {"retry",       "Retry prompt", "/retry - resend last prompt",           "Session"},
     };
 }
 
 // Build flat list of all models across all providers.
+struct VariantEntry {
+    std::string id;
+    std::string title;
+    std::string description;
+};
+
 std::vector<ModelEntry> build_model_entries(
     const std::vector<ProviderInfo>& providers
 );
+
+// Model-specific thinking variants plus "off". Used by the /variant picker.
+std::vector<VariantEntry> build_variant_entries(const ModelInfo& model);
 
 // Dispatch a slash command.
 bool handle_slash_command(

@@ -33,5 +33,12 @@ ftxui::Element build_theme_popup(
     const std::string& query,
     const std::string& theme);
 
+ftxui::Element build_variant_popup(
+    const std::vector<VariantEntry>& entries,
+    int select_idx,
+    const std::string& active_variant,
+    const std::string& query,
+    const std::string& theme);
+
 }  // namespace tui
 }  // namespace qcode

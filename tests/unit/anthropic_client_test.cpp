@@ -115,8 +115,10 @@ TEST_F(AnthropicClientTest, GenerateTextWithInvalidApiKey) {
 }
 
 TEST_F(AnthropicClientTest, GenerateTextWithBadUrl) {
+  qcode::retry::RetryConfig retry_config;
+  retry_config.max_retries = 0;
   qcode::anthropic::AnthropicClient client(
-      "sk-ant-test", "http://invalid-url-that-does-not-exist.example");
+      "sk-ant-test", "http://invalid-url-that-does-not-exist.example", retry_config);
   auto options = createBasicAnthropicOptions();
 
   // This should fail due to network connectivity

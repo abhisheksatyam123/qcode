@@ -24,6 +24,45 @@ TEST(OpenAIResponsesTest, BuildsResponsesRequestWithTools) {
   EXPECT_EQ(request["tools"][0]["name"], "lookup");
 }
 
+TEST(OpenAIChatCompletionsTest, ExtractsMuseSparkObjectReasoning) {
+  EXPECT_EQ(extract_openai_reasoning_text(nlohmann::json{
+                {"reasoning", {{"content", "step one"}}}}),
+            "step one");
+  EXPECT_EQ(extract_openai_reasoning_text(nlohmann::json{
+                {"reasoning_details",
+                 {{{"type", "reasoning.text"}, {"text", "think "}},
+                  {{"type", "reasoning.summary"}, {"summary", "done"}}}}}),
+            "think done");
+  EXPECT_EQ(extract_openai_reasoning_text(nlohmann::json{
+                {"reasoning", nlohmann::json::array({{"step a"}, {"step b"}})}}),
+            "step astep b");
+  EXPECT_EQ(extract_openai_reasoning_text(nlohmann::json{
+                {"content",
+                 {{{"type", "thought"}, {"text", "ponder"}},
+                  {{"type", "text"}, {"text", "hello"}}}}}),
+            "ponder");
+}
+
+TEST(OpenAIChatCompletionsTest, ParsesMuseSparkReasoningAndUsage) {
+  OpenAIResponseParser parser;
+  const nlohmann::json response{
+      {"choices",
+       {{{"message",
+          {{"role", "assistant"},
+           {"content", "ok"},
+           {"reasoning", {{"content", "consider the repo"}}}}},
+         {"finish_reason", "stop"}}}},
+      {"usage",
+       {{"prompt_tokens", 10},
+        {"completion_tokens", 4},
+        {"total_tokens", 14},
+        {"reasoning_tokens", 32}}}};
+  const auto result = parser.parse_success_completion_response(response);
+  EXPECT_TRUE(result.is_success());
+  EXPECT_EQ(result.reasoning, "consider the repo");
+  EXPECT_EQ(result.usage.reasoning_completion_tokens, 32);
+}
+
 TEST(OpenAIChatCompletionsTest, AddsCacheControlForClaudeModelIds) {
   OpenAIRequestBuilder builder(false);
   GenerateOptions options;
@@ -45,6 +84,60 @@ TEST(OpenAIChatCompletionsTest, SkipsCacheControlForNonClaudeModels) {
 
   const auto request = builder.build_request_json(options);
   EXPECT_FALSE(request.contains("cache_control"));
+}
+
+TEST(OpenAIChatCompletionsTest, OpenRouterClaudeMarksMessageCacheBreakpoints) {
+  OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://openrouter.ai/api/v1");
+  GenerateOptions options;
+  options.model = "anthropic/claude-sonnet-4";
+  options.system = "sys-a";
+  options.messages = {
+      Message::user("u1"),
+      Message::assistant("a1"),
+      Message::user("u2"),
+  };
+
+  const auto request = builder.build_request_json(options);
+  ASSERT_TRUE(request.contains("messages"));
+  const auto& messages = request["messages"];
+  ASSERT_GE(messages.size(), 4u);
+  ASSERT_TRUE(messages[0]["content"].is_array());
+  EXPECT_EQ(messages[0]["content"][0]["cache_control"]["type"], "ephemeral");
+  EXPECT_TRUE(messages[1]["content"].is_string());
+  ASSERT_TRUE(messages[2]["content"].is_array());
+  EXPECT_EQ(messages[2]["content"][0]["cache_control"]["type"], "ephemeral");
+  ASSERT_TRUE(messages[3]["content"].is_array());
+  EXPECT_EQ(messages[3]["content"][0]["cache_control"]["type"], "ephemeral");
+  EXPECT_TRUE(request.contains("usage"));
+  EXPECT_TRUE(request["usage"].value("include", false));
+  EXPECT_FALSE(request.contains("prompt_cache_key"));
+  EXPECT_FALSE(request.contains("promptCacheKey"));
+}
+
+TEST(OpenAIChatCompletionsTest, ZenNonClaudeSkipsMessageCacheBreakpoints) {
+  OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  GenerateOptions options;
+  options.model = "x-preview-f-free";
+  options.messages = {Message::user("hi")};
+
+  const auto request = builder.build_request_json(options);
+  ASSERT_TRUE(request["messages"][0]["content"].is_string());
+  EXPECT_FALSE(request.contains("prompt_cache_key"));
+}
+
+TEST(OpenAIChatCompletionsTest, ZenGpt5SetsPromptCacheKeyFromSession) {
+  OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  GenerateOptions options;
+  options.model = "gpt-5";
+  options.session_id = "sess-cache-1";
+  options.messages = {Message::user("hi")};
+
+  const auto request = builder.build_request_json(options);
+  EXPECT_EQ(request.value("promptCacheKey", ""), "sess-cache-1");
+  EXPECT_EQ(request.value("prompt_cache_key", ""), "sess-cache-1");
 }
 
 TEST(OpenAIResponsesTest, ParsesTextAndFunctionCalls) {
@@ -116,6 +209,28 @@ TEST(OpenAIChatCompletionsTest, ParsesReasoningContentWithToolCalls) {
   // Thinking-token accounting.
   EXPECT_EQ(result.usage.reasoning_completion_tokens, 30);
   EXPECT_EQ(result.usage.cached_prompt_tokens, 64);
+}
+
+TEST(OpenAIChatCompletionsTest, TreatsNativeNetworkErrorAsRetryableDrop) {
+  OpenAIResponseParser parser;
+  const nlohmann::json response = {
+      {"id", "gen-drop"},
+      {"model", "stealth/ox-alpha"},
+      {"choices",
+       {{{"index", 0},
+         {"finish_reason", "stop"},
+         {"native_finish_reason", "network_error"},
+         {"message",
+          {{"role", "assistant"},
+           {"content", nullptr},
+           {"reasoning", nullptr}}}}}}};
+
+  const auto result = parser.parse_success_completion_response(response);
+  EXPECT_FALSE(result.is_success());
+  EXPECT_EQ(result.finish_reason, kFinishReasonError);
+  ASSERT_TRUE(result.is_retryable.has_value());
+  EXPECT_TRUE(*result.is_retryable);
+  EXPECT_NE(result.error_message().find("network error"), std::string::npos);
 }
 
 // The request builder replays reasoning via reasoning_content and sends an

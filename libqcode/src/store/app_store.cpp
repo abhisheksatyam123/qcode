@@ -6,6 +6,7 @@
 #include <climits>
 #include <qcode/core/message.h>
 #include <qcode/core/logger.h>
+#include <qcode/core/errors.h>
 #include <nlohmann/json.hpp>
 
 namespace qcode {
@@ -31,7 +32,7 @@ void AppStore::add_toast(const std::string& message, const std::string& variant,
     {
         std::lock_guard<std::mutex> lock(toast_mutex_);
         toasts_.push_back({
-            .message = message,
+            .message = format_user_facing_error(message, 120),
             .variant = variant,
             .expires_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration_ms)
         });
@@ -255,15 +256,10 @@ void AppStore::sync_queue_mirror_unlocked() {
 }
 
 void AppStore::enqueue_prompt(const std::string& prompt) {
-    // Mirror upstream: the user message becomes visible in chat immediately
-    // when queued (the queue drain later reuses it via
-    // append_user_message=false, so it must already be in history).
-    if (state_.messages_history) {
-        state_.messages_history->emplace_back(qcode::Message::user(prompt));
-    }
-    if (!session_id().empty()) {
-        qcode::session::save_message(session_id(), "User", prompt);
-    }
+    // Queued prompts live in prompt_queue_ / queued_prompt_texts and are rendered
+    // in the dedicated queued prompt cards section. They enter messages_history
+    // and session history only when dequeued and actually executed, avoiding
+    // premature history corruption and duplicate rendering in qcode-tui.
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         prompt_queue_.push_back(prompt);
@@ -271,8 +267,7 @@ void AppStore::enqueue_prompt(const std::string& prompt) {
         LOG_DEBUG("Store: enqueue_prompt queue_size={}",
                   static_cast<int>(prompt_queue_.size()));
     }
-    // Persist so the queue survives restarts (upstream keeps pending prompts
-    // as session data). Memory-only enqueues use restore_queued_prompt.
+    // Persist so the queue survives restarts.
     if (!session_id().empty()) {
         qcode::session::queued_prompt_add(session_id(), prompt);
     }
@@ -536,19 +531,28 @@ void AppStore::wire() {
     subs_.push_back(bus_.subscribe<SessionStatusChanged>([this](const SessionStatusChanged::Payload& p) { set_status(p.status); }));
 
     subs_.push_back(bus_.subscribe<ErrorOccurred>([this](const ErrorOccurred::Payload& p) {
+        // Retry progress is "info": keep the turn running and never dump the
+        // raw provider JSON into the transcript (that wraps vertically and
+        // blanks the screen).
+        if (p.severity == "info") {
+            add_toast(p.message, "info", 3500);
+            notify();
+            return;
+        }
         // Any error/warning must clear the generating flag. Warnings previously
         // set status to "warn" and left is_generating stuck true, freezing Esc
         // and queue drain until a later idle event arrived (or never did).
+        const std::string msg = format_user_facing_error(p.message);
         if (p.severity == "warning") {
-            LOG_WARN("Store: warning message={}", p.message);
+            LOG_WARN("Store: warning message={}", msg);
             set_generating(false);
             if (state_.last_user_prompt && !state_.last_user_prompt->empty() &&
                 state_.retry_available) {
                 *state_.retry_available = true;
-                add_toast("\u26a0 " + p.message + "  · press r to retry",
+                add_toast("\u26a0 " + msg + "  · press r to retry",
                           "warning", 6000);
             } else {
-                add_toast("\u26a0 " + p.message, "warning", 6000);
+                add_toast("\u26a0 " + msg, "warning", 6000);
             }
             if (status_ == "generating" || status_ == "agent") {
                 set_status("idle");
@@ -556,13 +560,13 @@ void AppStore::wire() {
                 notify();
             }
         } else {
-            set_error(p.message);
-            std::string msg = p.message;
-            if (!msg.starts_with("Error:") && !msg.starts_with("Exception:")) {
-                msg = "Error: " + msg;
+            set_error(msg);
+            std::string chat = msg;
+            if (!chat.starts_with("Error:") && !chat.starts_with("Exception:")) {
+                chat = "Error: " + chat;
             }
-            append_chat_message("System", msg);
-            qcode::session::save_message(p.session_id, "System", msg);
+            append_chat_message("System", chat);
+            qcode::session::save_message(p.session_id, "System", chat);
         }
     }));
 

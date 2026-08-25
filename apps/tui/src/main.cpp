@@ -19,6 +19,7 @@
 #include <qcode/session/generation_service.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/ui/commands.h>
+#include <qcode/providers/provider_transform.h>
 #include <qcode/core/config.h>
 #include <qcode/session/session_store.h>
 #include <qcode/core/state.h>
@@ -181,6 +182,11 @@ int main() {
     std::vector<qcode::ThemeEntry> theme_entries =
         qcode::builtin_theme_entries();
 
+    bool show_variant_select = false;
+    int variant_select_idx = 0;
+    std::string variant_query = "";
+    std::vector<qcode::VariantEntry> variant_entries;
+
     bool show_slash = false;
     int slash_idx = 0;
     auto slash_commands = qcode::builtin_slash_commands();
@@ -203,6 +209,54 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     //  3. Submit handler (uses bus-aware chat)
     // ═══════════════════════════════════════════════════════════
+    auto current_model_info = [&]() -> const qcode::ModelInfo* {
+        if (selected_provider < 0 ||
+            selected_provider >= static_cast<int>(providers_list.size())) {
+            return nullptr;
+        }
+        const auto& models = providers_list[selected_provider].models;
+        if (selected_model < 0 ||
+            selected_model >= static_cast<int>(models.size())) {
+            return nullptr;
+        }
+        return &models[selected_model];
+    };
+
+    auto open_variant_picker = [&]() {
+        qcode::ModelInfo fallback;
+        const auto* model = current_model_info();
+        variant_entries = qcode::build_variant_entries(model ? *model : fallback);
+        variant_query = "";
+        variant_select_idx = 0;
+        const std::string cur =
+            state.reasoning_mode ? *state.reasoning_mode : std::string{};
+        const std::string highlight =
+            cur.empty() && model
+                ? qcode::ProviderTransform::default_variant(*model)
+                : cur;
+        for (int i = 0; i < static_cast<int>(variant_entries.size()); ++i) {
+            if (variant_entries[i].id == highlight) {
+                variant_select_idx = i;
+                break;
+            }
+        }
+        show_variant_select = true;
+        state.slash_suggestion_mode = false;
+        state.slash_suggestion_idx = 0;
+        prompt_input.clear();
+    };
+
+    auto apply_variant = [&](const std::string& lvl) {
+        if (state.reasoning_mode) *state.reasoning_mode = lvl;
+        if (state.session_id && !state.session_id->empty()) {
+            qcode::session::set_session_modes(
+                *state.session_id,
+                state.agent_mode ? *state.agent_mode : "build", lvl);
+        }
+        store.add_toast("Variant: " + lvl, lvl == "off" ? "info" : "success",
+                        1500);
+    };
+
     auto make_generation_request = [&]() -> qcode::GenerationRequest {
         return qcode::GenerationRequest{
             .providers = providers_list,
@@ -240,10 +294,8 @@ int main() {
         }
         if (state.last_user_prompt) *state.last_user_prompt = retry_prompt;
         auto req = make_generation_request();
-        bool last_is_user = (!state.messages_history->empty() &&
-                             state.messages_history->back().role == qcode::kMessageRoleUser &&
-                             !state.messages_history->back().has_tool_results());
-        req.append_user_message = !last_is_user;
+        // spawn_unlocked applies should_append_user_message so retries of an
+        // open turn reuse the existing User row instead of duplicating it.
         store.clear_retry();
         store.clear_error();
         store.add_toast("Retrying last prompt…", "info", 1500);
@@ -381,6 +433,12 @@ int main() {
                 return;
             }
 
+            if (cmd == "variant" || cmd == "variants") {
+                prompt_input = "";
+                open_variant_picker();
+                return;
+            }
+
             prompt_input = "";
             qcode::handle_slash_command(raw, prompt_input, providers_list,
                                           selected_provider, selected_model,
@@ -399,6 +457,64 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     //  4. Event handlers (keyboard, mouse, etc.)
     // ═══════════════════════════════════════════════════════════
+    auto handle_variant_list_keys = [&](Event e) -> bool {
+        if (!show_variant_select) return false;
+        std::vector<qcode::VariantEntry> filtered;
+        for (const auto& entry : variant_entries) {
+            if (matches_query(entry.id, variant_query) ||
+                matches_query(entry.title, variant_query) ||
+                matches_query(entry.description, variant_query)) {
+                filtered.push_back(entry);
+            }
+        }
+        if (!filtered.empty()) {
+            variant_select_idx = std::clamp(
+                variant_select_idx, 0, static_cast<int>(filtered.size()) - 1);
+        } else {
+            variant_select_idx = 0;
+        }
+        const bool down = e == Event::ArrowDown || e == Event::Character('j');
+        const bool up = e == Event::ArrowUp || e == Event::Character('k');
+        if (down && !filtered.empty()) {
+            variant_select_idx = std::min(
+                variant_select_idx + 1,
+                static_cast<int>(filtered.size()) - 1);
+            return true;
+        }
+        if (up && !filtered.empty()) {
+            variant_select_idx = std::max(variant_select_idx - 1, 0);
+            return true;
+        }
+        if (e == Event::Return) {
+            if (!filtered.empty() && variant_select_idx >= 0 &&
+                variant_select_idx < static_cast<int>(filtered.size())) {
+                apply_variant(filtered[variant_select_idx].id);
+            }
+            show_variant_select = false;
+            variant_query = "";
+            return true;
+        }
+        if (e == Event::Escape) {
+            show_variant_select = false;
+            variant_query = "";
+            return true;
+        }
+        if (e == Event::Backspace || e == Event::Special("\x7f")) {
+            if (!variant_query.empty()) {
+                variant_query.pop_back();
+                variant_select_idx = 0;
+            }
+            return true;
+        }
+        if (e.is_character() && e != Event::Character('j') &&
+            e != Event::Character('k')) {
+            variant_query += e.character();
+            variant_select_idx = 0;
+            return true;
+        }
+        return true;
+    };
+
     input |= CatchEvent([&](Event e) {
         // ── Model select popup ──
         if (show_model_select) {
@@ -611,6 +727,53 @@ int main() {
             return true;
         }
 
+        // ── Variant select popup ──
+        if (handle_variant_list_keys(e)) return true;
+
+        // ── /variant <effort> inline list ──
+        if (prompt_input.size() >= 9 && prompt_input.rfind("/variant ", 0) == 0) {
+            qcode::ModelInfo fallback;
+            const auto* model = current_model_info();
+            auto all = qcode::build_variant_entries(model ? *model : fallback);
+            const std::string filter = prompt_input.substr(9);
+            std::vector<qcode::VariantEntry> matches;
+            for (const auto& v : all) {
+                if (filter.empty() || matches_query(v.id, filter) ||
+                    matches_query(v.title, filter)) {
+                    matches.push_back(v);
+                }
+            }
+            if (!matches.empty()) {
+                if (!state.slash_suggestion_mode) {
+                    state.slash_suggestion_mode = true;
+                    state.slash_suggestion_idx = 0;
+                }
+                state.slash_suggestion_idx = std::clamp(
+                    state.slash_suggestion_idx, 0,
+                    static_cast<int>(matches.size()) - 1);
+                if (e == Event::ArrowDown) {
+                    state.slash_suggestion_idx =
+                        (state.slash_suggestion_idx + 1) %
+                        static_cast<int>(matches.size());
+                    return true;
+                }
+                if (e == Event::ArrowUp) {
+                    state.slash_suggestion_idx =
+                        (state.slash_suggestion_idx - 1 +
+                         static_cast<int>(matches.size())) %
+                        static_cast<int>(matches.size());
+                    return true;
+                }
+                if (e == Event::Return || e == Event::Tab) {
+                    apply_variant(matches[state.slash_suggestion_idx].id);
+                    prompt_input = "";
+                    state.slash_suggestion_mode = false;
+                    state.slash_suggestion_idx = 0;
+                    return true;
+                }
+            }
+        }
+
         // ── Slash completion popup ──
         if (!prompt_input.empty() && prompt_input[0] == '/') {
             std::string partial = prompt_input.substr(1);
@@ -686,6 +849,8 @@ int main() {
                                     break;
                                 }
                             }
+                        } else if (cmd_name == "variant") {
+                            open_variant_picker();
                         } else {
                             std::string raw = "/" + cmd_name;
                             qcode::handle_slash_command(raw, prompt_input, providers_list,
@@ -727,7 +892,8 @@ int main() {
         // One-key retry (r/R): triggers when retry is available and prompt input is empty.
         // Intercepted BEFORE the Input component processes characters so 'r'/'R' is not typed into input.
         if (state.tab_selected == 0 && prompt_input.empty() && !show_model_select &&
-            !show_session_select && !show_theme_select && !state.slash_suggestion_mode &&
+            !show_session_select && !show_theme_select && !show_variant_select &&
+            !state.slash_suggestion_mode &&
             !generation.is_active() &&
             (state.retry_available && *state.retry_available) &&
             (e == Event::Character('r') || e == Event::Character('R'))) {
@@ -754,6 +920,7 @@ int main() {
     });
 
     main_container |= CatchEvent([&](Event e) {
+        if (handle_variant_list_keys(e)) return true;
         // Toggle visibility of reasoning/thinking blocks (Ctrl-T or F2)
         if (e == Event::Special(std::string(1, '\x14')) || e == Event::F2) {
             *state.show_thinking = !*state.show_thinking;
@@ -813,6 +980,11 @@ int main() {
             if (show_model_select) { show_model_select = false; model_query = ""; return true; }
             if (show_session_select) { show_session_select = false; session_query = ""; return true; }
             if (show_theme_select) { show_theme_select = false; theme_query = ""; return true; }
+            if (show_variant_select) {
+                show_variant_select = false;
+                variant_query = "";
+                return true;
+            }
             if (state.slash_suggestion_mode) {
                 state.slash_suggestion_mode = false;
                 state.slash_suggestion_idx = 0;
@@ -852,7 +1024,8 @@ int main() {
         // j/k focus tools, h/← collapse (3 lines), l/→ expand (full), Enter toggles.
         const bool tool_keys_active =
             prompt_input.empty() && !show_model_select && !show_session_select &&
-            !show_theme_select && !state.slash_suggestion_mode;
+            !show_theme_select && !show_variant_select &&
+            !state.slash_suggestion_mode;
         auto ensure_tool_focused = [&]() -> bool {
             if (!state.tool_block_order || state.tool_block_order->empty()) {
                 return false;
@@ -919,7 +1092,8 @@ int main() {
 
         // ── Files tab: list navigation / open diff / refresh ──
         if (state.tab_selected == 1 && !show_model_select &&
-            !show_session_select && !show_theme_select) {
+            !show_session_select && !show_theme_select &&
+            !show_variant_select) {
             const auto file_count =
                 state.file_changes ? state.file_changes->size() : 0;
             if (!state.files_detail_open && file_count > 0) {
@@ -1203,6 +1377,15 @@ int main() {
             }
         }
 
+        std::vector<qcode::VariantEntry> filtered_variant_entries;
+        for (const auto& e : variant_entries) {
+            if (matches_query(e.id, variant_query) ||
+                matches_query(e.title, variant_query) ||
+                matches_query(e.description, variant_query)) {
+                filtered_variant_entries.push_back(e);
+            }
+        }
+
         auto main_view = qcode::tui::render_view(
             state, providers_list, selected_provider, selected_model,
             enable_tools, prompt_input,
@@ -1210,6 +1393,8 @@ int main() {
             show_model_select, model_select_idx, filtered_model_entries, model_query,
             show_session_select, session_select_idx, filtered_session_entries, session_query,
             show_theme_select, theme_select_idx, filtered_theme_entries, theme_query,
+            show_variant_select, variant_select_idx, filtered_variant_entries,
+            variant_query,
             tab_toggle, state.scroll_line, input);
         
         // Everything is in the header strip now — no separate footer

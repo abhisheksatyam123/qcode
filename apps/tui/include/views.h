@@ -47,6 +47,10 @@ ftxui::Element render_view(
     int theme_select_idx,
     const std::vector<ThemeEntry>& theme_entries,
     const std::string& theme_query,
+    bool show_variant_select,
+    int variant_select_idx,
+    const std::vector<VariantEntry>& variant_entries,
+    const std::string& variant_query,
     const ftxui::Component& tab_toggle,
     const std::shared_ptr<int>& scroll_line,
     const ftxui::Component& input

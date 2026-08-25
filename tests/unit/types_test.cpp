@@ -433,5 +433,20 @@ TEST(ErrorClassificationTest, PermanentErrorsAreNotRetryable) {
   EXPECT_FALSE(is_error_message_retryable("Invalid request: bad schema"));
 }
 
+TEST(ErrorClassificationTest, FormatsZenConsoleJsonToShortLine) {
+  const std::string raw =
+      "⏳ Retrying attempt 1/6 in 2.5s: {\"error\":{\"type\":\"server_error\","
+      "\"message\":\"Error from provider (Console): Upstream request failed: "
+      "Endpoint is unavailable\"}}";
+  const auto shown = format_user_facing_error(raw);
+  EXPECT_EQ(shown, "Endpoint is unavailable");
+  EXPECT_EQ(shown.find('{'), std::string::npos);
+}
+
+TEST(ErrorClassificationTest, KeepsErrorPrefixOnPlainMessages) {
+  EXPECT_EQ(format_user_facing_error("Error: Upstream request failed"),
+            "Error: Upstream request failed");
+}
+
 }  // namespace test
 }  // namespace qcode

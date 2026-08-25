@@ -50,6 +50,15 @@ ftxui::Element render_toast_overlay(
             hint_text = raw_msg.substr(sep_pos + (raw_msg.find("  ·  ") != std::string::npos ? 5 : 3));
         }
 
+        if (main_text.size() > 72) {
+            main_text.resize(69);
+            main_text += "...";
+        }
+        if (hint_text.size() > 32) {
+            hint_text.resize(29);
+            hint_text += "...";
+        }
+
         Elements row_parts;
         row_parts.push_back(text(badge_icon) | bold | color(badge_col));
         row_parts.push_back(text(main_text) | color(Color::White));

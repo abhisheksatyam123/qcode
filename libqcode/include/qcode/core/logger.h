@@ -45,6 +45,16 @@ inline std::string thread_name_string() {
   return ss.str();
 }
 
+/// Thread-safe cross-platform localtime helper
+inline std::tm* portable_localtime(const std::time_t* t, std::tm* tm_buf) {
+#if defined(_WIN32) || defined(_WIN64)
+  localtime_s(tm_buf, t);
+  return tm_buf;
+#else
+  return localtime_r(t, tm_buf);
+#endif
+}
+
 /// Short file-name from full path (e.g. "src/tui/chat.cpp")
 inline std::string_view short_file_name(std::string_view path) {
   auto pos = path.find_last_of("/\\");
@@ -132,8 +142,8 @@ class ConsoleLogger final : public Logger {
 
     std::tm tm_buf{};
     char time_buf[32];
-    std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S",
-                  localtime_r(&time_t_now, &tm_buf));
+    portable_localtime(&time_t_now, &tm_buf);
+    std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &tm_buf);
 
     auto& stream = (level == LogLevel::kLogLevelError) ? std::cerr : std::cout;
     stream << "[" << time_buf << "." << std::setfill('0') << std::setw(3)

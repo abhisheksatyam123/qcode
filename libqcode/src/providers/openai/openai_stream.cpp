@@ -1,9 +1,11 @@
 #include "openai_stream.h"
 
+#include "openai_response_parser.h"
 #include <qcode/core/ssl_config.h>
 #include <qcode/core/logger.h>
 #include "http/http_request_handler.h"
 #include "providers/opencode_zen_headers.h"
+#include "utils/response_utils.h"
 
 #include <chrono>
 #include <cmath>
@@ -372,8 +374,7 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       }
 
       // Google Gemini / Antigravity SSE parsing
-      if (protocol_ == StreamProtocol::kGeminiEnvelope &&
-          json.contains("candidates")) {
+      if (json.contains("candidates")) {
         auto& candidates = json["candidates"];
         if (!candidates.empty()) {
           auto& cand = candidates[0];
@@ -410,6 +411,8 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
               usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
               usage.total_tokens = usage_meta.value("totalTokenCount", 0);
               usage.cached_prompt_tokens = usage_meta.value("cachedContentTokenCount", 0);
+              usage.reasoning_completion_tokens =
+                  usage_meta.value("thoughtsTokenCount", 0);
               push_event(StreamEvent(kStreamEventTypeFinish, usage, finish_reason));
             } else {
               push_event(StreamEvent(kStreamEventTypeFinish));
@@ -425,6 +428,8 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
         usage.total_tokens = usage_meta.value("totalTokenCount", 0);
         usage.cached_prompt_tokens = usage_meta.value("cachedContentTokenCount", 0);
+        usage.reasoning_completion_tokens =
+            usage_meta.value("thoughtsTokenCount", 0);
         finish_event_pushed_ = true;
         push_event(StreamEvent(kStreamEventTypeFinish, usage, kFinishReasonStop));
         return;
@@ -436,35 +441,51 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       if (!choices.empty() && choices[0].contains("delta")) {
         auto& delta = choices[0]["delta"];
         if (delta.contains("content") && !delta["content"].is_null()) {
-          std::string content = delta["content"].get<std::string>();
-          LOG_DEBUG("Received content chunk - length: {}",
-                                content.length());
-          push_event(StreamEvent(content));
+          const auto& content = delta["content"];
+          if (content.is_string()) {
+            LOG_DEBUG("Received content chunk - length: {}",
+                      content.get<std::string>().length());
+            push_event(StreamEvent(content.get<std::string>()));
+          } else if (content.is_array()) {
+            // Muse Spark: mixed text + thought parts in one delta.
+            std::string text;
+            std::string thought;
+            for (const auto& part : content) {
+              if (!part.is_object()) {
+                if (part.is_string()) text += part.get<std::string>();
+                continue;
+              }
+              const auto type = part.value("type", "");
+              std::string piece;
+              if (part.contains("text") && part["text"].is_string()) {
+                piece = part["text"].get<std::string>();
+              } else if (part.contains("content") && part["content"].is_string()) {
+                piece = part["content"].get<std::string>();
+              } else if (part.contains("thought") && part["thought"].is_string()) {
+                piece = part["thought"].get<std::string>();
+              }
+              const bool is_thought =
+                  type == "thought" || type == "reasoning" ||
+                  type == "thinking" ||
+                  (part.contains("thought") && part["thought"].is_boolean() &&
+                   part["thought"].get<bool>());
+              if (is_thought) {
+                thought += piece;
+              } else {
+                text += piece;
+              }
+            }
+            if (!thought.empty()) {
+              push_event(StreamEvent::reasoning(thought));
+            }
+            if (!text.empty()) push_event(StreamEvent(text));
+          }
         }
 
-        // Reasoning deltas, in upstream priority order: DeepSeek-style
-        // "reasoning_content" (OpenCode Zen ox-alpha / deepseek-v4-flash),
-        // o-series "reasoning", then OpenRouter structured reasoning_details.
-        if (delta.contains("reasoning_content") &&
-            delta["reasoning_content"].is_string() &&
-            !delta["reasoning_content"].get<std::string>().empty()) {
-          const std::string& reasoning =
-              delta["reasoning_content"].get<std::string>();
+        const auto reasoning = extract_openai_reasoning_text(delta);
+        if (!reasoning.empty()) {
           LOG_DEBUG("Received reasoning chunk - length: {}", reasoning.length());
           push_event(StreamEvent::reasoning(reasoning));
-        } else if (delta.contains("reasoning") && !delta["reasoning"].is_null()) {
-          std::string reasoning = delta["reasoning"].get<std::string>();
-          LOG_DEBUG("Received reasoning chunk - length: {}", reasoning.length());
-          push_event(StreamEvent::reasoning(reasoning));
-        } else if (delta.contains("reasoning_details") &&
-                   delta["reasoning_details"].is_array()) {
-          for (const auto& rd : delta["reasoning_details"]) {
-            if (rd.is_object() && rd.value("type", "") == "text" &&
-                rd.contains("text")) {
-              std::string reasoning = rd["text"].get<std::string>();
-              push_event(StreamEvent::reasoning(reasoning));
-            }
-          }
         }
       }
 
@@ -479,7 +500,10 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
 
         finish_event_pushed_ = true;
 
-        if (json.contains("usage")) {
+        if (qcode::utils::is_empty_upstream_network_drop(json)) {
+          push_event(create_error_event(
+              "Upstream network error: empty completion"));
+        } else if (json.contains("usage")) {
           auto usage = parse_usage(json["usage"]);
           LOG_INFO(
               "Stream completed - tokens used: {} prompt, {} completion, {} "
@@ -549,6 +573,9 @@ Usage OpenAIStreamImpl::parse_usage(const nlohmann::json& usage_json) {
       usage_json["completion_tokens_details"].is_object()) {
     usage.reasoning_completion_tokens =
         usage_json["completion_tokens_details"].value("reasoning_tokens", 0);
+  }
+  if (usage.reasoning_completion_tokens == 0) {
+    usage.reasoning_completion_tokens = usage_json.value("reasoning_tokens", 0);
   }
   return usage;
 }

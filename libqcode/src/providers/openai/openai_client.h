@@ -2,6 +2,7 @@
 
 #include <qcode/core/retry_policy.h>
 #include <qcode/core/stream_options.h>
+#include <qcode/providers/openai.h>
 #include "providers/base_provider_client.h"
 
 #include <string>
@@ -22,6 +23,8 @@ class OpenAIClient : public providers::BaseProviderClient {
   OpenAIClient(const std::string& api_key, const std::string& base_url,
                bool use_responses,
                const std::map<std::string, std::string>& headers);
+  OpenAIClient(const std::string& api_key, const std::string& base_url,
+               const CompatibleOptions& options);
 
   // Override only what's specific to OpenAI
   StreamResult stream_text(const StreamOptions& options) override;
@@ -37,6 +40,9 @@ class OpenAIClient : public providers::BaseProviderClient {
   const std::string& get_completions_path() const {
     return config_.completions_endpoint_path;
   }
+
+ private:
+  std::string wire_protocol_{"chat_completions"};
 };
 
 }  // namespace openai

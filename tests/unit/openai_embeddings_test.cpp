@@ -129,8 +129,10 @@ TEST_F(OpenAIEmbeddingsTest, EmbeddingsWithInvalidApiKey) {
 }
 
 TEST_F(OpenAIEmbeddingsTest, EmbeddingsWithBadUrl) {
+  qcode::retry::RetryConfig retry_config;
+  retry_config.max_retries = 0;
   qcode::openai::OpenAIClient client(
-      "sk-test", "http://invalid-url-that-does-not-exist.example");
+      "sk-test", "http://invalid-url-that-does-not-exist.example", retry_config);
 
   nlohmann::json input = "test text";
   EmbeddingOptions options("text-embedding-3-small", input);

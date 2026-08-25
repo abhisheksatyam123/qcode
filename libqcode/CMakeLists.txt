@@ -39,6 +39,8 @@ target_sources(qcode-engine PRIVATE
     # Providers
     src/providers/base_provider_client.cpp
     src/providers/registry.cpp
+    src/providers/zen_route.cpp
+    src/providers/provider_profile.cpp
     src/providers/authenticated_providers.cpp
     src/providers/openai/openai_client.cpp
     src/providers/openai/openai_request_builder.cpp

@@ -46,9 +46,10 @@ class FileLogger final : public logger::Logger {
                   now.time_since_epoch()) %
               1000;
 
+    std::tm tm_buf{};
     char time_buf[32];
-    std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S",
-                  std::localtime(&time_t_now));
+    logger::portable_localtime(&time_t_now, &tm_buf);
+    std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_buf);
 
     std::string line;
     line.reserve(message.size() + 96);

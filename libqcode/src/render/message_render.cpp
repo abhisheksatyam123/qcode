@@ -8,6 +8,7 @@
 #include <qcode/ui/themes.h>
 #include <nlohmann/json.hpp>
 #include <qcode/core/logger.h>
+#include <ftxui/screen/terminal.hpp>
 
 namespace qcode {
 
@@ -41,6 +42,40 @@ ftxui::Decorator reflect_simple(HitBox& box) {
   return [&](ftxui::Element child) -> ftxui::Element {
     return std::make_shared<ReflectSimple>(std::move(child), box);
   };
+}
+
+int plain_wrap_width() {
+    int w = 80;
+    try {
+        w = Terminal::Size().dimx;
+    } catch (...) {
+    }
+    if (w <= 0) w = 80;
+    // Role gutter ("┃ " / "  ") + scrollbar + margin.
+    return std::max(24, w - 8);
+}
+
+Elements wrap_plain_block(const std::string& body_text, int width) {
+    Elements lines;
+    std::istringstream body(body_text);
+    std::string ln;
+    bool any = false;
+    while (std::getline(body, ln)) {
+        any = true;
+        if (ln.empty()) {
+            lines.push_back(text(""));
+            continue;
+        }
+        if (width <= 0 || static_cast<int>(ln.size()) <= width) {
+            lines.push_back(text(ln));
+            continue;
+        }
+        for (size_t i = 0; i < ln.size(); i += static_cast<size_t>(width)) {
+            lines.push_back(text(ln.substr(i, static_cast<size_t>(width))));
+        }
+    }
+    if (!any) lines.push_back(text(""));
+    return lines;
 }
 
 Color prompt_green(const std::string& theme) { return theme_prompt(theme); }
@@ -444,32 +479,29 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
             line = hbox({
                 text("   ◐ ") | color(theme_warning(theme)),
                 text("Thinking") | color(theme_warning(theme)),
-            }) | flex;
+            });
         } else {
             line = hbox({
                 thought_line("+ "),
                 text(" · click to expand") | dim | color(Color::GrayDark),
-            }) | flex;
+            });
         }
-        return vbox({text(""), line});
+        return line;
     }
 
     Elements md = render_markdown(rp.text, theme);
     Elements indented;
     for (auto& el : md) {
         indented.push_back(
-            hbox({text("     "), std::move(el)}) | dim);
+            hbox({text("     "), std::move(el) | flex}) | dim);
     }
 
     return vbox({
-        text(""),
         hbox({
             thought_line("- "),
             text(" · click to collapse") | dim | color(Color::GrayDark),
         }),
-        text(""),
         vbox(std::move(indented)),
-        text(""),
     });
 }
 
@@ -498,15 +530,13 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
         // Opencode-style user block: left border in the agent colour with a
         // subtle panel background — no label chrome.
         Elements user_lines;
+        const int wrap_w = plain_wrap_width();
         for (const auto& part : msg.content) {
             const auto* tp = std::get_if<qcode::TextContentPart>(&part);
             if (!tp || tp->text.empty()) continue;
-            std::istringstream body(tp->text);
-            std::string ln;
-            while (std::getline(body, ln)) {
+            for (auto& chunk : wrap_plain_block(tp->text, wrap_w)) {
                 user_lines.push_back(
-                    hbox({text("┃ ") | color(user_green()),
-                          text(ln) | flex}) |
+                    hbox({text("┃ ") | color(user_green()), std::move(chunk)}) |
                     bgcolor(theme_panel_bg(theme)));
             }
         }
@@ -604,14 +634,22 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
             rendered_tool_results.insert(result_part->tool_call_id);
         } else if (const auto* text_part = std::get_if<qcode::TextContentPart>(&part)) {
             if (text_part->text.empty()) continue;
+            if (msg.role == kMessageRoleUser && !has_tool_results) {
+                continue;
+            }
             if (msg.role == kMessageRoleSystem) {
-                parts.push_back(
-                    hbox({text("  "), text(text_part->text) | dim}));
+                Elements sys_lines;
+                for (auto& chunk :
+                     wrap_plain_block(text_part->text, plain_wrap_width())) {
+                    sys_lines.push_back(
+                        hbox({text("  "), std::move(chunk) | dim}));
+                }
+                parts.push_back(vbox(std::move(sys_lines)));
             } else {
                 Elements md = render_markdown(text_part->text, theme);
                 Elements indented;
                 for (auto& el : md) {
-                    indented.push_back(hbox({text("   "), std::move(el)}));
+                    indented.push_back(hbox({text("   "), std::move(el) | flex}));
                 }
                 parts.push_back(vbox(std::move(indented)));
             }

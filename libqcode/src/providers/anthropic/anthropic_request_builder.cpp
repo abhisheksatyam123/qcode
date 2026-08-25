@@ -13,11 +13,21 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   nlohmann::json request;
   request["model"] = options.model;
   int max_tokens = options.max_tokens.value_or(4096);
-  if (options.budget_tokens.has_value()) {
+  std::optional<int> thinking_budget = options.budget_tokens;
+  if (!thinking_budget && options.reasoning_effort &&
+      *options.reasoning_effort != "off" &&
+      !options.reasoning_effort->empty()) {
+    const auto& effort = *options.reasoning_effort;
+    thinking_budget = effort == "low"      ? 2000
+                      : effort == "medium" ? 8000
+                      : effort == "max"    ? 24000
+                                           : 16000;
+  }
+  if (thinking_budget.has_value()) {
     // Anthropic requires max_tokens > budget_tokens.
-    max_tokens = std::max(max_tokens, *options.budget_tokens + 1024);
+    max_tokens = std::max(max_tokens, *thinking_budget + 1024);
     request["thinking"] = {{"type", "enabled"},
-                           {"budget_tokens", *options.budget_tokens}};
+                           {"budget_tokens", *thinking_budget}};
   }
   request["max_tokens"] = max_tokens;
   request["messages"] = nlohmann::json::array();
@@ -91,7 +101,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
           // Echo thinking blocks (required when extended thinking is enabled).
           // Must appear before the text block and carry the original signature.
-          if (options.budget_tokens.has_value() && msg.has_reasoning()) {
+          if (thinking_budget.has_value() && msg.has_reasoning()) {
             for (const auto& part : msg.content) {
               if (const auto* rp =
                       std::get_if<qcode::ReasoningContentPart>(&part)) {
@@ -217,8 +227,15 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
 httplib::Headers AnthropicRequestBuilder::build_headers(
     const providers::ProviderConfig& config) {
+  const auto key =
+      (!config.api_key.empty() && config.api_key != "__EMPTY__")
+          ? config.api_key
+          : (config.api_key == "__EMPTY__" ||
+                     config.base_url.find("opencode.ai") != std::string::npos
+                 ? "public"
+                 : config.api_key);
   httplib::Headers headers = {
-      {config.auth_header_name, config.auth_header_prefix + config.api_key}};
+      {config.auth_header_name, config.auth_header_prefix + key}};
 
   // Add any extra headers
   for (const auto& [key, value] : config.extra_headers) {

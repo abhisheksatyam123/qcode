@@ -5,6 +5,7 @@
 #include <qcode/tools/tool_executor.h>
 #include <qcode/session/session_store.h>
 #include <qcode/core/event.h>
+#include <qcode/core/errors.h>
 
 #include <algorithm>
 #include <atomic>
@@ -19,6 +20,7 @@
 #include <qcode/core/client.h>
 #include <qcode/core/logger.h>
 #include <qcode/providers/openai.h>
+#include <qcode/providers/provider_profile.h>
 #include <qcode/providers/provider_transform.h>
 #include <qcode/providers/registry.h>
 #include <qcode/providers/authenticated_providers.h>
@@ -29,6 +31,13 @@ namespace qcode {
 using namespace contract;
 
 static bool looks_like_auth_error(const std::string& message) {
+  // Zen returns ModelError / content-policy failures as HTTP 401. Those are
+  // request-shape problems, not expired credentials.
+  if (message.find("ModelError") != std::string::npos ||
+      message.find("is not supported") != std::string::npos ||
+      message.find("content_filter") != std::string::npos) {
+    return false;
+  }
   return message.find("401") != std::string::npos ||
          message.find("authentication") != std::string::npos ||
          message.find("unauthenticated") != std::string::npos ||
@@ -277,8 +286,10 @@ static void run_tools_generation_bus(
       double secs = delay.count() / 1000.0;
       char buf[16];
       snprintf(buf, sizeof(buf), "%.1fs", secs);
-      std::string toast_msg = "⏳ Retrying attempt " + std::to_string(attempt) + "/" +
-                              std::to_string(total_attempts) + " in " + buf + ": " + err_msg;
+      const std::string why = format_user_facing_error(err_msg, 80);
+      std::string toast_msg = "Retrying " + std::to_string(attempt) + "/" +
+                              std::to_string(total_attempts) + " in " + buf;
+      if (!why.empty()) toast_msg += " — " + why;
       bus.publish<contract::ErrorOccurred>({
           .session_id = ctx.session_id,
           .message = toast_msg,
@@ -313,7 +324,11 @@ static void run_tools_generation_bus(
                    step);
           continue;
         }
-        if (looks_like_auth_error(err)) {
+        if (step_res.finish_reason == qcode::kFinishReasonContentFilter) {
+          gen_result.error =
+              "Provider blocked this turn (content filter). Rephrase the "
+              "prompt or switch models.";
+        } else if (looks_like_auth_error(err)) {
           // Only blame Antigravity credentials when we are actually talking to
           // Antigravity — a Zen/OpenRouter ModelError(401) must not ask the
           // user to re-login with a unrelated CLI.
@@ -360,6 +375,11 @@ static void run_tools_generation_bus(
       gen_result.usage.reasoning_completion_tokens =
           std::max(gen_result.usage.reasoning_completion_tokens,
                    step_res.usage.reasoning_completion_tokens);
+      if (gen_result.usage.reasoning_completion_tokens == 0 &&
+          !step_res.reasoning.empty()) {
+        gen_result.usage.reasoning_completion_tokens = std::max(
+            1, static_cast<int>(step_res.reasoning.size() / 4));
+      }
       gen_result.finish_reason = step_res.finish_reason;
       gen_result.id = step_res.id;
       gen_result.model = step_res.model;
@@ -507,14 +527,17 @@ static void run_tools_generation_bus(
 
   if (has_error) {
     fatal_error = true;
-    std::string err_str = "Error: " + gen_result.error_message();
-    if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
-      err_str += "\n[Response] " + gen_result.provider_metadata.value().substr(0, 500);
+    const std::string raw = gen_result.error_message();
+    if (gen_result.provider_metadata.has_value() &&
+        !gen_result.provider_metadata->empty()) {
+      LOG_ERROR("run_tools_generation_bus: error occurred: {} [Response] {}",
+                raw, gen_result.provider_metadata->substr(0, 500));
+    } else {
+      LOG_ERROR("run_tools_generation_bus: error occurred: {}", raw);
     }
-    LOG_ERROR("run_tools_generation_bus: error occurred: {}", err_str);
     bus.publish<ErrorOccurred>({
         .session_id = ctx.session_id,
-        .message = err_str,
+        .message = format_user_facing_error("Error: " + raw),
         .severity = "error"
     });
     bus.publish<MessageDelta>({
@@ -576,10 +599,15 @@ static void run_tools_generation_bus(
 
   } else {
     fatal_error = true;
-    std::string err_str = "Error: " + gen_result.error_message();
-    if (err_str == "Error: ") err_str = "Error: Model generation failed (unknown error)";
-    if (gen_result.provider_metadata.has_value() && !gen_result.provider_metadata->empty()) {
-      err_str += "\n[Response] " + gen_result.provider_metadata.value().substr(0, 500);
+    std::string err_str = format_user_facing_error(
+        "Error: " + gen_result.error_message());
+    if (err_str == "Error:" || err_str == "Error: ") {
+      err_str = "Error: Model generation failed (unknown error)";
+    }
+    if (gen_result.provider_metadata.has_value() &&
+        !gen_result.provider_metadata->empty()) {
+      LOG_ERROR("run_tools_generation_bus: provider_metadata {}",
+                gen_result.provider_metadata->substr(0, 500));
     }
     bus.publish<ErrorOccurred>({
         .session_id = ctx.session_id,
@@ -620,7 +648,7 @@ static void run_stream_generation_bus(qcode::Client& client,
     LOG_ERROR("ChatBus: stream error: {}", stream.error_message());
     bus.publish<ErrorOccurred>({
         .session_id = ctx.session_id,
-        .message = stream.error_message(),
+        .message = format_user_facing_error(stream.error_message()),
         .severity = "error"
     });
     double latency_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - gen_start_time).count();
@@ -645,6 +673,7 @@ static void run_stream_generation_bus(qcode::Client& client,
   };
 
   std::string reasoning_buffer;
+  size_t reasoning_chars = 0;
   bool has_reasoning = false;
   std::string last_reasoning_signature;
   auto last_reasoning_flush = std::chrono::steady_clock::now();
@@ -684,6 +713,7 @@ static void run_stream_generation_bus(qcode::Client& client,
         LOG_DEBUG("ChatBus: dropping redacted reasoning chunk");
       } else {
         reasoning_buffer += chunk;
+        reasoning_chars += chunk.size();
         has_reasoning = true;
         if (event.metadata.has_value() && !event.metadata->empty()) {
           last_reasoning_signature = *event.metadata;
@@ -708,12 +738,16 @@ static void run_stream_generation_bus(qcode::Client& client,
     } else if (event.is_finish() && event.usage.has_value()) {
       LOG_DEBUG("run_stream_generation_bus: stream finished text_len={}", text_buffer.size());
       flush_text();
+      int think_tokens = event.usage->reasoning_completion_tokens;
+      if (think_tokens == 0 && reasoning_chars > 0) {
+        think_tokens = std::max(1, static_cast<int>(reasoning_chars / 4));
+      }
       bus.publish<TokenUsageUpdated>({
           .prompt_tokens = event.usage->prompt_tokens,
           .completion_tokens = event.usage->completion_tokens,
           .total_tokens = event.usage->total_tokens,
           .cached_prompt_tokens = event.usage->cached_prompt_tokens,
-          .reasoning_tokens = event.usage->reasoning_completion_tokens
+          .reasoning_tokens = think_tokens
       });
     }
   }
@@ -809,8 +843,16 @@ void run_generation_with_bus(
       }
     }
 
-    LOG_DEBUG("generation_service: resolved provider={} api_url={}", provider_id,
-              provider_options.base_url);
+    const auto call = prepare_provider_call(
+        provider_options, provider_id, resolved_model_id, ctx.session_id);
+    resolved_model_id = call.wire_model_id;
+
+    LOG_INFO("generation_service: provider={} model={} protocol={} path={} api={}",
+             provider_id, resolved_model_id, provider_options.protocol,
+             provider_options.completions_path.empty()
+                 ? "(default)"
+                 : provider_options.completions_path,
+             provider_options.base_url);
 
     if (provider_id.empty()) {
       const std::string msg = provider_name.empty()
@@ -839,6 +881,17 @@ void run_generation_with_bus(
       return;
     }
     client = std::move(resolution.client);
+
+    if (resolved_model_id.empty()) {
+      bus.publish<ErrorOccurred>({
+          .session_id = ctx.session_id,
+          .message =
+              "No model id selected for provider '" + provider_id +
+              "'. Pick a model with /model — OpenCode Zen rejects an empty "
+              "model field (401 ModelError).",
+          .severity = "error"});
+      return;
+    }
 
     LOG_INFO("ChatBus: provider={}, model={}, tools={}", provider_id, resolved_model_id, enable_tools);
 
@@ -876,32 +929,45 @@ void run_generation_with_bus(
     base_opts.session_id = ctx.session_id;
     base_opts.abort_flag = ctx.abort_flag;
 
-    // ── Opt-in extended thinking / reasoning ──
-    // Native Anthropic uses budget_tokens. Everyone else (OpenAI, OpenRouter,
-    // Antigravity/Gemini, Cursor, OpenCode Zen) uses reasoning_effort — even
-    // when the model id contains "claude" (those paths go through OpenAI/Gemini
-    // transforms that read reasoning_effort, not Anthropic thinking).
-    // Thinking is ON by default for reasoning models on OpenCode Zen and
-    // OpenRouter (mirrors upstream, which defaults effort per family), with
-    // the full low/medium/high/max range selectable via /variant.
+    // ── Extended thinking / reasoning ──
+    // Empty /variant = auto default for every reasoning model. Explicit "off"
+    // disables thinking. Native Anthropic uses budget_tokens; every other
+    // provider (OpenAI, OpenRouter, Antigravity/Gemini, Cursor, Zen) uses
+    // reasoning_effort, including Claude ids that ride those transports.
     const std::string& rm = ctx.reasoning_mode;
-    const bool zen_or_openrouter =
-        provider_options.base_url.find("opencode.ai") != std::string::npos ||
-        provider_options.base_url.find("openrouter.ai") != std::string::npos;
-    if ((rm.empty() || rm == "off") && zen_or_openrouter && resolved_model &&
-        resolved_model->reasoning) {
-      base_opts.reasoning_effort =
-          ProviderTransform::default_variant(*resolved_model);
-      LOG_INFO("generation_service: default thinking variant '{}' for {}",
-               *base_opts.reasoning_effort, resolved_model_id);
-    } else if (rm == "low" || rm == "medium" || rm == "high" || rm == "max") {
-      const bool is_native_anthropic =
-          provider_id.find("anthropic") != std::string::npos;
-      if (is_native_anthropic) {
-        int budget = (rm == "low") ? 2000 : (rm == "medium") ? 8000 : 16000;
-        base_opts.budget_tokens = budget;
-      } else {
-        base_opts.reasoning_effort = rm;
+    const auto effort_budget = [](const std::string& effort) {
+      return effort == "low"      ? 2000
+             : effort == "medium" ? 8000
+             : effort == "max"    ? 24000
+                                  : 16000;
+    };
+    if (rm != "off") {
+      std::string effort;
+      if (rm == "low" || rm == "medium" || rm == "high" || rm == "max" ||
+          rm == "xhigh" || rm == "minimal") {
+        effort = resolved_model
+                     ? ProviderTransform::clamp_variant(*resolved_model, rm)
+                     : rm;
+      } else if (rm.empty()) {
+        if (resolved_model && resolved_model->reasoning) {
+          effort = ProviderTransform::default_variant(*resolved_model);
+        } else if (ProviderTransform::is_reasoning_model_id(resolved_model_id)) {
+          // Config/catalog sometimes omit reasoning=true (Muse Spark).
+          effort = "high";
+        }
+      }
+      if (!effort.empty() && effort != "off") {
+        base_opts.reasoning_effort = effort;
+        if (provider_id.find("anthropic") != std::string::npos) {
+          base_opts.budget_tokens = effort_budget(effort);
+        }
+        if (!rm.empty() && effort != rm) {
+          LOG_INFO("generation_service: clamped variant '{}' -> '{}' for {}",
+                   rm, effort, resolved_model_id);
+        } else if (rm.empty()) {
+          LOG_INFO("generation_service: default thinking variant '{}' for {}",
+                   effort, resolved_model_id);
+        }
       }
     }
 

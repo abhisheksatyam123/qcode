@@ -6,6 +6,7 @@
 #include <fstream>
 #include <optional>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 namespace qcode {
@@ -113,6 +114,7 @@ TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
           "name": "OpenCode Zen",
           "models": {
             "hy3-free": {"name": "HY3 (Free)", "tool_call": true},
+            "muse-spark-1.2-contributor-free": {"name": "Muse Spark 1.2"},
             "north-mini-code-free": {"name": "North Mini Code (Free)"}
           }
         }
@@ -147,6 +149,20 @@ TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
   EXPECT_EQ(pickle->context_window, 200000);
   EXPECT_TRUE(pickle->tool_call);
   EXPECT_TRUE(pickle->reasoning);
+  const auto muse = std::find_if(
+      models.begin(), models.end(), [](const ModelInfo& model) {
+        return model.id == "muse-spark-1.2-contributor-free";
+      });
+  ASSERT_NE(muse, models.end());
+  EXPECT_TRUE(muse->reasoning);
+  EXPECT_FALSE(muse->reasoning_efforts.empty());
+  EXPECT_EQ(muse->protocol, "responses");
+  const auto ox = std::find_if(models.begin(), models.end(),
+                               [](const ModelInfo& model) {
+                                 return model.id == "x-preview-f-free";
+                               });
+  ASSERT_NE(ox, models.end());
+  EXPECT_EQ(ox->protocol, "chat_completions");
   std::filesystem::remove(path);
 }
 
@@ -182,8 +198,13 @@ TEST(TuiConfigTest, HandlesCursorProviderConfigWhenDiscoveryIsUnavailable) {
                          return model.id == id;
                        });
   };
-  EXPECT_TRUE(has_model("cursor-grok-4.6"));
+  EXPECT_TRUE(has_model("grok-4.6"));
+  EXPECT_TRUE(has_model("claude-opus-5"));
+  EXPECT_FALSE(has_model("cursor-grok-4.6"));
   EXPECT_FALSE(has_model("composer-2.5"));
+  ASSERT_EQ(models.size(), 2u);
+  EXPECT_THAT(models[0].reasoning_efforts,
+              testing::ElementsAre("low", "medium", "high"));
   std::filesystem::remove(path);
 }
 

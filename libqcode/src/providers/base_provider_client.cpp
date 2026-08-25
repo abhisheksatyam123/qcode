@@ -107,9 +107,10 @@ GenerateResult BaseProviderClient::generate_text_single_step(
     // Parse using provider-specific parser
     auto parsed_result =
         response_parser_->parse_success_completion_response(json_response);
-    
-    // Copy retryable state if any
-    parsed_result.is_retryable = result.is_retryable;
+
+    if (!parsed_result.is_retryable.has_value()) {
+      parsed_result.is_retryable = result.is_retryable;
+    }
     return parsed_result;
 
   } catch (const std::exception& e) {

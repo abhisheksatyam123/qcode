@@ -9,6 +9,70 @@ namespace qcode {
 namespace gemini {
 namespace {
 
+const nlohmann::json kEphemeralCache = {{"type", "ephemeral"}};
+
+std::string openai_message_text(const nlohmann::json& msg) {
+  if (!msg.contains("content")) {
+    return {};
+  }
+  const auto& content = msg["content"];
+  if (content.is_string()) {
+    return content.get<std::string>();
+  }
+  if (!content.is_array()) {
+    return {};
+  }
+  std::string text;
+  for (const auto& part : content) {
+    if (part.is_string()) {
+      text += part.get<std::string>();
+      continue;
+    }
+    if (part.is_object() && part.contains("text") && part["text"].is_string()) {
+      text += part["text"].get<std::string>();
+    }
+  }
+  return text;
+}
+
+void mark_last_part_cache(nlohmann::json& parts) {
+  if (!parts.is_array() || parts.empty() || !parts.back().is_object()) {
+    return;
+  }
+  parts.back()["cache_control"] = kEphemeralCache;
+}
+
+// Antigravity Claude rides the Gemini envelope but honors Anthropic
+// cache_control on the last part of system + the last two contents.
+void apply_antigravity_claude_cache(nlohmann::json& gemini_req) {
+  if (gemini_req.contains("systemInstruction") &&
+      gemini_req["systemInstruction"].is_object() &&
+      gemini_req["systemInstruction"].contains("parts")) {
+    mark_last_part_cache(gemini_req["systemInstruction"]["parts"]);
+  }
+  if (gemini_req.contains("contents") && gemini_req["contents"].is_array()) {
+    int marked = 0;
+    for (int i = static_cast<int>(gemini_req["contents"].size()) - 1;
+         i >= 0 && marked < 2; --i) {
+      auto& content = gemini_req["contents"][static_cast<std::size_t>(i)];
+      if (!content.is_object() || !content.contains("parts")) {
+        continue;
+      }
+      mark_last_part_cache(content["parts"]);
+      ++marked;
+    }
+  }
+  if (gemini_req.contains("tools") && gemini_req["tools"].is_array() &&
+      !gemini_req["tools"].empty() && gemini_req["tools"].back().is_object()) {
+    gemini_req["tools"].back()["cache_control"] = kEphemeralCache;
+  }
+}
+
+bool is_claude_model_id(const std::string& model) {
+  return model.find("claude") != std::string::npos ||
+         model.find("anthropic") != std::string::npos;
+}
+
 nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
   nlohmann::json gemini_req = nlohmann::json::object();
   nlohmann::json contents = nlohmann::json::array();
@@ -18,10 +82,7 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
   if (openai_req.contains("messages") && openai_req["messages"].is_array()) {
     for (const auto& msg : openai_req["messages"]) {
       const auto role = msg.value("role", "");
-      const auto text_content =
-          msg.contains("content") && msg["content"].is_string()
-              ? msg["content"].get<std::string>()
-              : std::string{};
+      const auto text_content = openai_message_text(msg);
       if (role == "system") {
         if (!system_instruction.empty()) system_instruction += "\n\n";
         system_instruction += text_content;
@@ -110,11 +171,20 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
   }
   if (openai_req.contains("top_p")) gen_config["topP"] = openai_req["top_p"];
   if (openai_req.contains("seed")) gen_config["seed"] = openai_req["seed"];
-  if (openai_req.contains("reasoning_effort") && openai_req["reasoning_effort"].is_string()) {
-    const auto effort = openai_req["reasoning_effort"].get<std::string>();
-    if (effort == "low" || effort == "medium" || effort == "high") {
-      gen_config["thinkingConfig"] = {{"thinkingLevel", effort}};
-    }
+  std::string effort;
+  if (openai_req.contains("reasoning_effort") &&
+      openai_req["reasoning_effort"].is_string()) {
+    effort = openai_req["reasoning_effort"].get<std::string>();
+  } else if (openai_req.contains("reasoning") &&
+             openai_req["reasoning"].is_object()) {
+    effort = openai_req["reasoning"].value("effort", "");
+  }
+  if (effort == "low" || effort == "medium" || effort == "high") {
+    gen_config["thinkingConfig"] = {{"thinkingLevel", effort}};
+  } else if (effort == "max") {
+    // Gemini thinkingLevel is low|medium|high; max maps to a large budget.
+    gen_config["thinkingConfig"] = {
+        {"thinkingLevel", "high"}, {"thinkingBudget", 24576}};
   }
   gemini_req["generationConfig"] = gen_config;
 
@@ -194,6 +264,9 @@ nlohmann::json wrap_antigravity_envelope_impl(const nlohmann::json& gemini_req,
   env["model"] = mapped_model;
   env["userAgent"] = "antigravity";
   env["requestType"] = "agent";
+  if (is_claude_model_id(mapped_model) && env["request"].is_object()) {
+    apply_antigravity_claude_cache(env["request"]);
+  }
 
   return env;
 }
@@ -291,6 +364,11 @@ nlohmann::json normalize_gemini_response_impl(const nlohmann::json& response) {
       if (usage_meta.contains("cachedContentTokenCount")) {
         usage["prompt_tokens_details"] = {
             {"cached_tokens", usage_meta.value("cachedContentTokenCount", 0)}};
+      }
+      if (usage_meta.contains("thoughtsTokenCount")) {
+        usage["completion_tokens_details"] = {
+            {"reasoning_tokens", usage_meta.value("thoughtsTokenCount", 0)}};
+        usage["reasoning_tokens"] = usage_meta.value("thoughtsTokenCount", 0);
       }
       normalized_response["usage"] = usage;
     }

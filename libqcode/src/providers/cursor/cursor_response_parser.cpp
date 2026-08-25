@@ -181,6 +181,7 @@ AgentStreamEvent CursorResponseParser::classify_agent_payload(
       bool saw_turn_ended = false;
       bool saw_token_delta = false;
       std::string text;
+      std::string thinking;
       for (const auto& upd : parse_fields(f.bytes)) {
         if (upd.num == 14) {
           saw_turn_ended = true;
@@ -188,10 +189,17 @@ AgentStreamEvent CursorResponseParser::classify_agent_payload(
         if (upd.num == 8) {
           saw_token_delta = true;
         }
-        if (upd.num == 1 && upd.wire == 2) {  // text_delta only (not thinking)
+        if (upd.num == 1 && upd.wire == 2) {  // text_delta
           for (const auto& delta : parse_fields(upd.bytes)) {
             if (delta.num == 1 && delta.wire == 2 && !delta.bytes.empty()) {
               text += delta.bytes;
+            }
+          }
+        }
+        if (upd.num == 4 && upd.wire == 2) {  // thinking_delta
+          for (const auto& delta : parse_fields(upd.bytes)) {
+            if (delta.num == 1 && delta.wire == 2 && !delta.bytes.empty()) {
+              thinking += delta.bytes;
             }
           }
         }
@@ -199,6 +207,11 @@ AgentStreamEvent CursorResponseParser::classify_agent_payload(
       if (saw_turn_ended) {
         ev.kind = AgentStreamEvent::Kind::kTurnEnded;
         ev.text = std::move(text);
+        return ev;
+      }
+      if (!thinking.empty()) {
+        ev.kind = AgentStreamEvent::Kind::kReasoningDelta;
+        ev.text = std::move(thinking);
         return ev;
       }
       if (!text.empty()) {

@@ -83,6 +83,22 @@ TEST(RegistryTest, OpenRouterSucceedsWithKey) {
   EXPECT_TRUE(res.ok());
 }
 
+TEST(RegistryTest, AnthropicRequiresKey) {
+  ScopedEnv key("ANTHROPIC_API_KEY");
+  key.unset();
+  register_core_providers();
+  ClientResolution res = ProviderRegistry::instance().resolve("anthropic", "");
+  EXPECT_FALSE(res.ok());
+}
+
+TEST(RegistryTest, AnthropicSucceedsWithKey) {
+  ScopedEnv key("ANTHROPIC_API_KEY");
+  key.set("dummy-token");
+  register_core_providers();
+  ClientResolution res = ProviderRegistry::instance().resolve("anthropic", "");
+  EXPECT_TRUE(res.ok());
+}
+
 TEST(RegistryTest, QpilotRequiresKey) {
   ScopedEnv key("QPILOT_API_KEY");
   key.unset();

@@ -130,6 +130,10 @@ ftxui::Element render_view(
     int theme_select_idx,
     const std::vector<ThemeEntry>& theme_entries,
     const std::string& theme_query,
+    bool show_variant_select,
+    int variant_select_idx,
+    const std::vector<VariantEntry>& variant_entries,
+    const std::string& variant_query,
     const ftxui::Component& tab_toggle,
     const std::shared_ptr<int>& /*scroll_line*/,
     const ftxui::Component& input
@@ -188,11 +192,11 @@ ftxui::Element render_view(
     // (OpenCode Zen / OpenRouter report cached_tokens and reasoning_tokens).
     std::string hdr_cache;
     if (state.last_cached_prompt_tokens && *state.last_cached_prompt_tokens > 0) {
-        hdr_cache = "⚡cache " + format_tokens(*state.last_cached_prompt_tokens);
+        hdr_cache = "⚡ cache " + format_tokens(*state.last_cached_prompt_tokens);
     }
+    std::string hdr_reasoning;
     if (state.last_reasoning_tokens && *state.last_reasoning_tokens > 0) {
-        if (!hdr_cache.empty()) hdr_cache += " ";
-        hdr_cache += "🧠 " + format_tokens(*state.last_reasoning_tokens);
+        hdr_reasoning = "🧠 " + format_tokens(*state.last_reasoning_tokens);
     }
 
     // Status (compact, no spinner — spinner is rendered in the header below)
@@ -274,6 +278,10 @@ ftxui::Element render_view(
              ? emptyElement()
              : hbox({separatorLight(),
                      text(" " + hdr_cache + " ") | color(accent(theme)) | dim})),
+        (hdr_reasoning.empty()
+             ? emptyElement()
+             : hbox({separatorLight(),
+                     text(" " + hdr_reasoning + " ") | color(theme_warning(theme))})),
         (ctx_pct >= 70
              ? hbox({separatorLight(),
                      text(" /compact? ") | color(Color::Yellow) | dim})
@@ -318,6 +326,45 @@ ftxui::Element render_view(
                     rows.push_back(row);
                 }
                 return vbox(std::move(rows)) | borderRounded | color(accent(theme)) | bgcolor(bg_popup());
+            }
+        } else if (prompt_input.size() >= 9 && prompt_input.substr(0, 9) == "/variant ") {
+            std::string filter_str = prompt_input.substr(9);
+            const ModelInfo* model = nullptr;
+            if (selected_provider >= 0 &&
+                selected_provider < static_cast<int>(providers_list.size()) &&
+                selected_model >= 0 &&
+                selected_model < static_cast<int>(
+                    providers_list[selected_provider].models.size())) {
+                model = &providers_list[selected_provider].models[selected_model];
+            }
+            ModelInfo fallback;
+            const auto variants = build_variant_entries(model ? *model : fallback);
+            std::vector<VariantEntry> matches;
+            for (const auto& v : variants) {
+                if (filter_str.empty() ||
+                    v.id.find(filter_str) != std::string::npos ||
+                    v.title.find(filter_str) != std::string::npos) {
+                    matches.push_back(v);
+                }
+            }
+            if (!matches.empty()) {
+                Elements rows;
+                rows.push_back(text(" ⎔ Select Variant:") | bold | color(accent2(theme)));
+                rows.push_back(separatorLight() | color(accent(theme)));
+                for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
+                    bool active = (state.slash_suggestion_mode &&
+                                   state.slash_suggestion_idx == i);
+                    std::string marker = active ? " ▶ " : "   ";
+                    auto row = hbox({
+                        text(marker + matches[i].title) |
+                            color(active ? accent2(theme) : Color::White) | bold,
+                        text("  " + matches[i].description) | dim
+                    });
+                    if (active) row = row | bgcolor(bg_popup()) | bold;
+                    rows.push_back(row);
+                }
+                return vbox(std::move(rows)) | borderRounded | color(accent(theme)) |
+                       bgcolor(bg_popup());
             }
         } else if (prompt_input.size() > 0 && prompt_input[0] == '/' && prompt_input.find(' ') == std::string::npos) {
             std::string filter_str = prompt_input.substr(1);
@@ -925,6 +972,16 @@ ftxui::Element render_view(
         return dbox({
             main_layout,
             clear_under(build_theme_popup(theme_entries, theme_select_idx, *state.theme, theme_query, theme)) | center
+        });
+    }
+    if (show_variant_select) {
+        const std::string active =
+            state.reasoning_mode ? *state.reasoning_mode : std::string{};
+        return dbox({
+            main_layout,
+            clear_under(build_variant_popup(variant_entries, variant_select_idx,
+                                            active, variant_query, theme)) |
+                center
         });
     }
 

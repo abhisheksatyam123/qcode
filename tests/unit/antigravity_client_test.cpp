@@ -39,6 +39,40 @@ TEST(AntigravityClientTest, RequestBuilderProducesAntigravityEnvelope) {
   ASSERT_TRUE(req["request"].contains("contents"));
 }
 
+TEST(AntigravityClientTest, ClaudeRequestMarksCacheAndThinking) {
+  AntigravityRequestBuilder builder("project-1");
+  GenerateOptions opts;
+  opts.model = "claude-sonnet-4-6";
+  opts.system = "be careful";
+  opts.reasoning_effort = "high";
+  opts.messages = {Message::user("hi"), Message::assistant("ok"),
+                   Message::user("again")};
+
+  const auto req = builder.build_request_json(opts);
+  EXPECT_EQ(req["model"].get<std::string>(), "claude-sonnet-4-6");
+  const auto& inner = req["request"];
+  EXPECT_EQ(inner["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high");
+  EXPECT_EQ(inner["systemInstruction"]["parts"][0]["cache_control"]["type"],
+            "ephemeral");
+  ASSERT_GE(inner["contents"].size(), 2u);
+  EXPECT_EQ(inner["contents"].back()["parts"][0]["cache_control"]["type"],
+            "ephemeral");
+}
+
+TEST(AntigravityClientTest, GeminiThinkingVariantIsMapped) {
+  AntigravityRequestBuilder builder("project-1");
+  GenerateOptions opts;
+  opts.model = "gemini-3.7-flash";
+  opts.reasoning_effort = "low";
+  opts.messages = {Message::user("hi")};
+
+  const auto req = builder.build_request_json(opts);
+  EXPECT_EQ(req["model"].get<std::string>(), "gemini-3.6-flash-low");
+  EXPECT_EQ(req["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "low");
+}
+
 TEST(AntigravityClientTest, EmbeddingsFailWithoutNetworkRequest) {
   auto client = create_client("dummy-token");
   const auto result = client.embeddings(

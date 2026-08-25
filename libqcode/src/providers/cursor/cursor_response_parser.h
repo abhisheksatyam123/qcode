@@ -22,6 +22,7 @@ struct AgentStreamEvent {
   enum class Kind {
     kHeartbeat,
     kTextDelta,
+    kReasoningDelta,
     kTurnEnded,
     // token_delta after assistant text — Cursor often omits turn_ended on
     // short turns, so this is the practical end-of-turn signal.

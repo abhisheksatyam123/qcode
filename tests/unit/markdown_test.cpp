@@ -110,6 +110,37 @@ TEST(MessageRenderTest, ToolCallAndResultRendering) {
   EXPECT_NE(output_expanded.find("✓"), std::string::npos);
 }
 
+TEST(MessageRenderTest, UserMessageSingleRendering) {
+  qcode::Message user_msg = qcode::Message::user("hi");
+  qcode::ChatState state;
+  std::vector<qcode::ProviderInfo> providers;
+
+  auto element = qcode::render_message(user_msg, state, providers, -1, -1, "orange");
+  auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fit(element));
+  ftxui::Render(screen, element);
+  std::string output = screen.ToString();
+
+  size_t count = 0;
+  size_t pos = 0;
+  while ((pos = output.find("hi", pos)) != std::string::npos) {
+    count++;
+    pos += 2;
+  }
+  EXPECT_EQ(count, 1u) << "User prompt text should be rendered exactly once, but output was:\n" << output;
+}
+
+TEST(MessageRenderTest, LongSystemJsonDoesNotRenderOneGlyphPerRow) {
+  const std::string blob(400, 'x');
+  qcode::Message sys = qcode::Message::system("Error: " + blob);
+  qcode::ChatState state;
+  std::vector<qcode::ProviderInfo> providers;
+  auto element = qcode::render_message(sys, state, providers, -1, -1, "orange");
+  auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40),
+                                      ftxui::Dimension::Fit(element));
+  ftxui::Render(screen, element);
+  EXPECT_LT(screen.dimy(), 30) << screen.ToString();
+}
+
 }
 }
 

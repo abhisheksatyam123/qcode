@@ -149,8 +149,10 @@ TEST_F(OpenAIClientTest, GenerateTextWithInvalidApiKey) {
 }
 
 TEST_F(OpenAIClientTest, GenerateTextWithBadUrl) {
+  qcode::retry::RetryConfig retry_config;
+  retry_config.max_retries = 0;
   qcode::openai::OpenAIClient client(
-      "sk-test", "http://invalid-url-that-does-not-exist.example");
+      "sk-test", "http://invalid-url-that-does-not-exist.example", retry_config);
   auto options = createBasicOptions();
 
   // This should fail due to network connectivity

@@ -25,6 +25,10 @@ class OpenAIRequestBuilder : public providers::RequestBuilder {
     transport_ = ProviderTransform::chat_transport_for(base_url);
   }
 
+  void set_wire_protocol(const std::string& protocol) override {
+    wire_protocol_ = protocol;
+  }
+
   nlohmann::json build_request_json(const GenerateOptions& options) override;
   nlohmann::json build_request_json(const EmbeddingOptions& options) override;
   httplib::Headers build_headers(
@@ -32,6 +36,7 @@ class OpenAIRequestBuilder : public providers::RequestBuilder {
 
  private:
   bool use_responses_;
+  std::string wire_protocol_;
   std::string base_url_;
   ProviderTransform::ChatTransport transport_ =
       ProviderTransform::ChatTransport::kCompatible;

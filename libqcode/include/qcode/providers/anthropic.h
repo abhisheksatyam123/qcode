@@ -6,7 +6,9 @@
 #endif
 
 #include <qcode/core/client.h>
+#include <qcode/core/retry_policy.h>
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -40,6 +42,16 @@ constexpr const char* kClaudeOpus4 =
 constexpr const char* kDefaultModel = kClaudeSonnet46;
 }  // namespace models
 
+/// Native Anthropic uses x-api-key. OpenCode Zen `/messages` uses Bearer
+/// like the rest of zen/v1.
+struct CompatibleOptions {
+  std::string base_url = "https://api.anthropic.com";
+  std::string completions_path;
+  std::map<std::string, std::string> headers;
+  bool bearer_auth = false;
+  std::optional<retry::RetryConfig> retry_config;
+};
+
 /// Create an Anthropic client with default configuration
 /// Reads API key from ANTHROPIC_API_KEY environment variable
 /// @return Configured Anthropic client
@@ -55,6 +67,18 @@ Client create_client(const std::string& api_key);
 /// @param base_url Custom base URL (for Anthropic-compatible APIs)
 /// @return Configured Anthropic client
 Client create_client(const std::string& api_key, const std::string& base_url);
+
+/// Create an Anthropic client with custom configuration and retry settings
+/// @param api_key Anthropic API key
+/// @param base_url Custom base URL (for Anthropic-compatible APIs)
+/// @param retry_config Custom retry configuration
+/// @return Configured Anthropic client
+Client create_client(const std::string& api_key,
+                     const std::string& base_url,
+                     const retry::RetryConfig& retry_config);
+
+Client create_client(const std::string& api_key,
+                     const CompatibleOptions& options);
 
 /// Try to create an Anthropic client using environment variables
 /// Reads API key from ANTHROPIC_API_KEY environment variable

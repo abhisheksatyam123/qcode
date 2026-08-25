@@ -248,6 +248,9 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
                   collected_text += ev.text;
                   last_activity = std::chrono::steady_clock::now();
                   break;
+                case Kind::kReasoningDelta:
+                  last_activity = std::chrono::steady_clock::now();
+                  break;
                 case Kind::kTurnEnded:
                   collected_text += ev.text;
                   turn_ended = true;
@@ -425,6 +428,10 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                     collected_text += ev.text;
                     last_activity = std::chrono::steady_clock::now();
                     impl_ptr->push_event(StreamEvent(ev.text));
+                    break;
+                  case Kind::kReasoningDelta:
+                    last_activity = std::chrono::steady_clock::now();
+                    impl_ptr->push_event(StreamEvent::reasoning(ev.text));
                     break;
                   case Kind::kTurnEnded:
                     if (!ev.text.empty()) {

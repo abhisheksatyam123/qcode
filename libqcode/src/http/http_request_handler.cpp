@@ -126,6 +126,18 @@ GenerateResult HttpRequestHandler::execute_single_request(
                           res->body.size());
 
     if (res->status == 200) {
+      try {
+        const auto json = nlohmann::json::parse(res->body);
+        if (qcode::utils::is_empty_upstream_network_drop(json)) {
+          LOG_WARN(
+              "HTTP 200 empty completion with native_finish_reason=network_error");
+          GenerateResult dropped("Upstream network error: empty completion");
+          dropped.is_retryable = true;
+          return dropped;
+        }
+      } catch (const nlohmann::json::exception&) {
+      }
+
       GenerateResult result;
       result.text = res->body;
       result.finish_reason = kFinishReasonStop;  // HTTP request succeeded

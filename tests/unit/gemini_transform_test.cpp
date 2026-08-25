@@ -67,6 +67,26 @@ TEST(GeminiTransformTest, ConvertMapsRolesAndSystem) {
   EXPECT_EQ(gem["generationConfig"]["maxOutputTokens"].get<int>(), 100);  // renamed
 }
 
+TEST(GeminiTransformTest, ConvertReadsMultipartOpenAIContent) {
+  json openai_req = parsed(R"({
+    "messages": [
+      {"role": "system", "content": [
+        {"type": "text", "text": "be brief", "cache_control": {"type": "ephemeral"}}
+      ]},
+      {"role": "user", "content": [
+        {"type": "text", "text": "hello cache"}
+      ]}
+    ]
+  })");
+
+  json gem = convert_openai_to_gemini(openai_req);
+  EXPECT_EQ(gem["systemInstruction"]["parts"][0]["text"].get<std::string>(),
+            "be brief");
+  ASSERT_EQ(gem["contents"].size(), 1u);
+  EXPECT_EQ(gem["contents"][0]["parts"][0]["text"].get<std::string>(),
+            "hello cache");
+}
+
 TEST(GeminiTransformTest, ConvertEmptyRequestYieldsEmptyStructures) {
   json gem = convert_openai_to_gemini(json::object());
   EXPECT_EQ(gem["contents"].size(), 0u);
@@ -99,6 +119,24 @@ TEST(GeminiTransformTest, ConvertPreservesToolsCallsAndResults) {
             "high");
 }
 
+TEST(GeminiTransformTest, ReasoningObjectEffortMapsToThinkingLevel) {
+  json request = parsed(R"({"messages":[{"role":"user","content":"hi"}],
+    "reasoning":{"effort":"medium","exclude":false}})");
+  const auto gemini = convert_openai_to_gemini(request);
+  EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "medium");
+}
+
+TEST(GeminiTransformTest, MaxEffortMapsToHighBudget) {
+  json request = parsed(R"({"messages":[{"role":"user","content":"hi"}],
+    "reasoning_effort":"max"})");
+  const auto gemini = convert_openai_to_gemini(request);
+  EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high");
+  EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            24576);
+}
+
 // ---- envelope -------------------------------------------------------------
 
 TEST(GeminiTransformTest, WrapEnvelopeWrapsRequestAndMapsFlashModel) {
@@ -116,6 +154,39 @@ TEST(GeminiTransformTest, WrapEnvelopeWrapsRequestAndMapsFlashModel) {
 TEST(GeminiTransformTest, WrapEnvelopeLeavesNonFlashModelUnchanged) {
   json env = wrap_antigravity_envelope(json::object(), "claude-sonnet");
   EXPECT_EQ(env["model"].get<std::string>(), "claude-sonnet");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeMarksClaudeCacheBreakpoints) {
+  json gem = parsed(R"({
+    "systemInstruction": {"parts": [{"text": "sys"}]},
+    "contents": [
+      {"role": "user", "parts": [{"text": "u1"}]},
+      {"role": "model", "parts": [{"text": "a1"}]},
+      {"role": "user", "parts": [{"text": "u2"}]}
+    ],
+    "tools": [{"functionDeclarations": [{"name": "lookup"}]}]
+  })");
+  json env = wrap_antigravity_envelope(gem, "claude-sonnet-4-6");
+  const auto& req = env["request"];
+  EXPECT_EQ(req["systemInstruction"]["parts"][0]["cache_control"]["type"],
+            "ephemeral");
+  EXPECT_FALSE(req["contents"][0]["parts"][0].contains("cache_control"));
+  EXPECT_EQ(req["contents"][1]["parts"][0]["cache_control"]["type"],
+            "ephemeral");
+  EXPECT_EQ(req["contents"][2]["parts"][0]["cache_control"]["type"],
+            "ephemeral");
+  EXPECT_EQ(req["tools"][0]["cache_control"]["type"], "ephemeral");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeSkipsCacheMarkersForGemini) {
+  json gem = parsed(R"({
+    "systemInstruction": {"parts": [{"text": "sys"}]},
+    "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
+  })");
+  json env = wrap_antigravity_envelope(gem, "gemini-3-flash");
+  EXPECT_FALSE(
+      env["request"]["systemInstruction"]["parts"][0].contains("cache_control"));
+  EXPECT_FALSE(env["request"]["contents"][0]["parts"][0].contains("cache_control"));
 }
 
 TEST(GeminiTransformTest, WrapEnvelopeUsesConfiguredProjectAndLegacyAlias) {
@@ -234,6 +305,24 @@ TEST(GeminiTransformTest, NormalizeExtractsCachedContentTokenCount) {
   EXPECT_EQ(normalized["usage"]["total_tokens"], 87667);
   ASSERT_TRUE(normalized["usage"].contains("prompt_tokens_details"));
   EXPECT_EQ(normalized["usage"]["prompt_tokens_details"]["cached_tokens"], 81878);
+}
+
+TEST(GeminiTransformTest, NormalizeExtractsThoughtsTokenCount) {
+  json payload = parsed(R"({
+    "response": {
+      "candidates": [{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],
+      "usageMetadata": {
+        "promptTokenCount": 10,
+        "candidatesTokenCount": 2,
+        "totalTokenCount": 40,
+        "thoughtsTokenCount": 28
+      }
+    }
+  })");
+  json normalized = normalize_gemini_response(payload);
+  EXPECT_EQ(normalized["usage"]["completion_tokens_details"]["reasoning_tokens"],
+            28);
+  EXPECT_EQ(normalized["usage"]["reasoning_tokens"], 28);
 }
 
 }  // namespace

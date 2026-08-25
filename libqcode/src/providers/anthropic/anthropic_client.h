@@ -1,6 +1,7 @@
 #pragma once
 
 #include <qcode/core/stream_options.h>
+#include <qcode/providers/anthropic.h>
 #include "providers/base_provider_client.h"
 
 #include <string>
@@ -14,6 +15,10 @@ class AnthropicClient : public providers::BaseProviderClient {
   explicit AnthropicClient(
       const std::string& api_key,
       const std::string& base_url = "https://api.anthropic.com");
+  AnthropicClient(const std::string& api_key,
+                  const std::string& base_url,
+                  const retry::RetryConfig& retry_config);
+  AnthropicClient(const std::string& api_key, const CompatibleOptions& options);
 
   // Override only what's specific to Anthropic
   StreamResult stream_text(const StreamOptions& options) override;

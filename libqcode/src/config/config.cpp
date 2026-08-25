@@ -2,6 +2,7 @@
 #include <qcode/session/session_store.h>
 #include <qcode/core/ssl_config.h>
 #include <qcode/providers/cursor.h>
+#include <qcode/providers/provider_transform.h>
 
 #include <algorithm>
 #include <array>
@@ -191,7 +192,13 @@ static ModelInfo model_from_catalog(const std::string& id,
                                     const ordered_json& data) {
     ModelInfo model;
     model.name = data.value("name", id);
-    model.id = id;
+    // Prefer the catalog's wire id when the object key is a display slug.
+    if (data.contains("id") && data["id"].is_string()) {
+        const auto wire_id = data["id"].get<std::string>();
+        model.id = wire_id.empty() ? id : wire_id;
+    } else {
+        model.id = id;
+    }
     if (data.contains("limit") && data["limit"].is_object()) {
         model.context_window = data["limit"].value("context", 0);
         model.output_limit = data["limit"].value("output", 0);
@@ -228,6 +235,7 @@ static ModelInfo model_from_catalog(const std::string& id,
     if (model.context_window <= 0) {
         model.context_window = resolve_model_context_window(id);
     }
+    ProviderTransform::apply_reasoning_defaults(model);
     return model;
 }
 
@@ -285,6 +293,14 @@ static std::vector<ModelInfo> filter_catalog_allowlist(
     const std::array<const char*, N>& allow) {
     std::erase_if(models, [&allow](const ModelInfo& model) {
         if (id_in_list(allow, model.id)) return false;
+        // Catalog keys drift (ox-alpha vs stealth/ox-alpha). Never drop the
+        // models this TUI is built to run.
+        const auto& id = model.id;
+        if (id.find("ox-alpha") != std::string::npos ||
+            id.find("x-preview-f-free") != std::string::npos ||
+            id.find("muse-spark") != std::string::npos) {
+            return false;
+        }
         LOG_DEBUG("Dropping non-curated catalog model from picker: {}",
                   model.id);
         return true;
@@ -296,14 +312,21 @@ static std::vector<ModelInfo> filter_catalog_allowlist(
 // lists ids that were probed to work end-to-end. has_api_key is unused here;
 // availability curation happens via the allowlist, not the key state.
 static std::vector<ModelInfo> zen_models_from_catalog(
-    const ordered_json& catalog, bool /*has_api_key*/) {
+    const ordered_json& catalog, bool has_api_key) {
     std::vector<ModelInfo> models;
     const auto zen_it = catalog.find("opencode");
     if (zen_it == catalog.end()) return models;
     const auto& entries = zen_it->value("models", ordered_json::object());
     models.reserve(entries.size());
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        models.push_back(model_from_catalog(it.key(), it.value()));
+        const auto& data = it.value();
+        // Upstream: without OPENCODE_API_KEY only cost.input == 0 models
+        // stay enabled (packages/core/src/plugin/provider/opencode.ts).
+        if (!has_api_key && data.contains("cost") && data["cost"].is_object() &&
+            data["cost"].value("input", 0.0) > 0.0) {
+            continue;
+        }
+        models.push_back(model_from_catalog(it.key(), data));
     }
     return filter_catalog_allowlist(std::move(models), kCuratedZenCatalog);
 }
@@ -338,7 +361,7 @@ static ProviderInfo openrouter_provider_from_catalog(
 // not a Zen model (401 ModelError) — it lives on OpenRouter instead.
 static std::vector<ModelInfo> official_opencode_free_models() {
     std::vector<ModelInfo> models;
-    models.reserve(9);
+    models.reserve(10);
 
     // Ox Alpha free pool: the wire id is x-preview-f-free; "ox-alpha" is
     // rejected by Zen (401 ModelError). Efforts per models.dev:
@@ -349,6 +372,7 @@ static std::vector<ModelInfo> official_opencode_free_models() {
             true, true);
         ox_alpha.reasoning_efforts = {"low", "high", "max"};
         ox_alpha.reasoning_field = "reasoning_content";
+        ox_alpha.protocol = "chat_completions";
         models.push_back(std::move(ox_alpha));
     }
     {
@@ -358,6 +382,15 @@ static std::vector<ModelInfo> official_opencode_free_models() {
         deepseek.reasoning_efforts = {"low", "high", "max"};
         deepseek.reasoning_field = "reasoning_content";
         models.push_back(std::move(deepseek));
+    }
+    {
+        ModelInfo muse = make_default_model(
+            "Muse Spark 1.2 (Free)", "muse-spark-1.2-contributor-free", 262144,
+            65536, true, true);
+        muse.reasoning_efforts = {"low", "medium", "high"};
+        muse.reasoning_field = "reasoning";
+        muse.protocol = "responses";
+        models.push_back(std::move(muse));
     }
     models.push_back(make_default_model("Big Pickle (Free)", "big-pickle",
                                         200000, 32000, true, true));
@@ -372,6 +405,26 @@ static std::vector<ModelInfo> official_opencode_free_models() {
     models.push_back(make_default_model("Nemotron 3.5 Lightning (Free)",
                                         "nemotron-3.5-lightning-free", 262144, 65536, true,
                                         true));
+    return models;
+}
+
+static std::vector<ModelInfo> official_openrouter_core_models() {
+    std::vector<ModelInfo> models;
+    {
+        ModelInfo ox = make_default_model("Ox Alpha", "stealth/ox-alpha",
+                                          1000000, 131072, true, true);
+        ox.reasoning_efforts = {"low", "high", "max"};
+        ox.reasoning_field = "reasoning";
+        models.push_back(std::move(ox));
+    }
+    {
+        ModelInfo muse = make_default_model(
+            "Muse Spark 1.2", "meta/muse-spark-1.2", 1000000, 65536, true,
+            true);
+        muse.reasoning_efforts = {"minimal", "low", "medium", "high", "xhigh"};
+        muse.reasoning_field = "reasoning";
+        models.push_back(std::move(muse));
+    }
     return models;
 }
 
@@ -427,6 +480,14 @@ static std::vector<ProviderInfo> default_providers() {
             openrouter.protocol = "chat_completions";
             openrouter.headers["HTTP-Referer"] = kOpenRouterReferer;
             openrouter.headers["X-Title"] = "opencode";
+        }
+        for (auto& model : official_openrouter_core_models()) {
+            if (std::none_of(openrouter.models.begin(), openrouter.models.end(),
+                             [&model](const ModelInfo& m) {
+                               return m.id == model.id;
+                             })) {
+                openrouter.models.push_back(std::move(model));
+            }
         }
         providers.push_back(std::move(openrouter));
     }
@@ -660,69 +721,23 @@ std::string get_notes_root() {
 
 namespace {
 
-std::string cursor_model_name(std::string id) {
-    std::replace(id.begin(), id.end(), '-', ' ');
-    std::ostringstream name;
-    bool first = true;
-    std::istringstream words(id);
-    for (std::string word; words >> word;) {
-        if (!first) name << ' ';
-        first = false;
-        if (word == "gpt") {
-            name << "GPT";
-        } else if (word == "claude") {
-            name << "Claude";
-        } else if (word == "xhigh") {
-            name << "XHigh";
-        } else {
-            word.front() =
-                static_cast<char>(std::toupper(static_cast<unsigned char>(
-                    word.front())));
-            name << word;
-        }
-    }
-    return name.str();
-}
-
-ModelInfo make_cursor_model(const std::string& id, std::string name = "") {
+ModelInfo make_cursor_family_model(const std::string& id, std::string name) {
     ModelInfo model;
-    model.name = name.empty() ? cursor_model_name(id) : std::move(name);
+    model.name = std::move(name);
     model.id = id;
-    model.reasoning = id.find("thinking") != std::string::npos ||
-                      id.find("gpt-5") != std::string::npos;
+    model.reasoning = true;
+    model.reasoning_efforts = {"low", "medium", "high"};
     model.tool_call = true;
-    // Cursor catalog does not expose context limits; use a sane default so
-    // TUI prune/warn and footer windows are not blind (0).
     model.context_window = 200000;
     model.output_limit = 8192;
     return model;
 }
 
-bool is_selected_cursor_family(const std::string& id) {
-    return id.find("grok-4.6") != std::string::npos ||
-           id.find("grok-4-6") != std::string::npos ||
-           id.find("opus-5") != std::string::npos ||
-           id.find("opus-5.0") != std::string::npos ||
-           id.find("claude-5-opus") != std::string::npos ||
-           id.find("claude-opus-5") != std::string::npos;
-}
-
-std::string cursor_display_name(const std::string& id,
-                                const std::string& discovered_name) {
-    auto name = discovered_name.empty() ? cursor_model_name(id)
-                                        : discovered_name;
-    return name;
-}
-
-void add_cursor_model_if_missing(std::vector<ModelInfo>& models,
-                                 const std::string& id,
-                                 const std::string& name) {
-    const auto found = std::find_if(
-        models.begin(), models.end(),
-        [&id](const ModelInfo& model) { return model.id == id; });
-    if (found == models.end()) {
-        models.emplace_back(make_cursor_model(id, name));
-    }
+std::vector<ModelInfo> cursor_picker_models() {
+    return {
+        make_cursor_family_model("grok-4.6", "Grok 4.6"),
+        make_cursor_family_model("claude-opus-5", "Claude Opus 5"),
+    };
 }
 
 void add_opencode_model_if_missing(std::vector<ModelInfo>& models,
@@ -739,9 +754,7 @@ void hydrate_opencode_models(ProviderInfo& provider) {
     if (provider.api_url.empty()) {
         provider.api_url = "https://opencode.ai/zen/v1";
     }
-    if (provider.protocol.empty()) {
-        provider.protocol = "chat_completions";
-    }
+    provider.protocol = "chat_completions";
     provider.headers["User-Agent"] = "opencode/1.18.18";
     provider.headers["x-opencode-client"] = "cli";
     // north-mini-code-free lives on OpenRouter only; Zen rejects it (401).
@@ -762,11 +775,19 @@ void hydrate_opencode_models(ProviderInfo& provider) {
         for (auto& model : official_opencode_free_models()) {
             add_opencode_model_if_missing(provider.models, std::move(model));
         }
+        for (auto& model : provider.models) {
+            ProviderTransform::apply_reasoning_defaults(model);
+            model.protocol = ProviderTransform::zen_api_protocol(model.id);
+        }
         return;
     }
     LOG_WARN("models.dev catalog unavailable; using built-in free list");
     for (auto& model : official_opencode_free_models()) {
         add_opencode_model_if_missing(provider.models, std::move(model));
+    }
+    for (auto& model : provider.models) {
+        ProviderTransform::apply_reasoning_defaults(model);
+        model.protocol = ProviderTransform::zen_api_protocol(model.id);
     }
 }
 
@@ -817,6 +838,9 @@ static void maybe_hydrate_openrouter(std::vector<ProviderInfo>& providers) {
             provider.models =
                 openrouter_provider_from_catalog(catalog).models;
         }
+        for (auto& model : official_openrouter_core_models()) {
+            add_opencode_model_if_missing(provider.models, std::move(model));
+        }
         providers.push_back(std::move(provider));
         return;
     }
@@ -830,7 +854,9 @@ static void maybe_hydrate_openrouter(std::vector<ProviderInfo>& providers) {
     }
     std::erase_if(existing->models, [](const ModelInfo& model) {
         const bool is_allowed = (model.input_cost == 0.0 && model.output_cost == 0.0) ||
-                                model.id == "stealth/ox-alpha" ||
+                                model.id.find("ox-alpha") != std::string::npos ||
+                                model.id.find("x-preview-f-free") != std::string::npos ||
+                                model.id.find("muse-spark") != std::string::npos ||
                                 model.id.find(":free") != std::string::npos ||
                                 model.id == "deepseek/deepseek-v4-flash-0731" ||
                                 model.id == "openai/gpt-5.3-codex" ||
@@ -844,37 +870,17 @@ static void maybe_hydrate_openrouter(std::vector<ProviderInfo>& providers) {
             add_opencode_model_if_missing(existing->models, std::move(model));
         }
     }
+    for (auto& model : official_openrouter_core_models()) {
+        add_opencode_model_if_missing(existing->models, std::move(model));
+    }
+    existing->protocol = "chat_completions";
 }
 
 void hydrate_cursor_models(ProviderInfo& provider) {
-    const auto token =
-        provider.api_key.empty() ? get_cursor_access_token() : provider.api_key;
-    if (!token.empty()) {
-        qcode::cursor::Options options;
-        if (!provider.api_url.empty()) {
-            options.agent_base_url = provider.api_url;
-        }
-        const auto available = qcode::cursor::list_models(token, options);
-        if (!available.empty()) {
-            std::vector<ModelInfo> live_models;
-            live_models.reserve(available.size());
-            for (const auto& model : available) {
-                if (!is_selected_cursor_family(model.id)) continue;
-                add_cursor_model_if_missing(
-                    live_models, model.id,
-                    cursor_display_name(model.id, model.name));
-            }
-            provider.models = std::move(live_models);
-            LOG_INFO("Loaded {} live Cursor models", provider.models.size());
-            return;
-        }
-        LOG_WARN("Cursor model discovery unavailable or failed");
-    }
-
-    // If discovery failed or returned empty, clean non-matching models
-    std::erase_if(provider.models, [](const ModelInfo& model) {
-        return !is_selected_cursor_family(model.id);
-    });
+    // Cursor lists every effort SKU as its own model. Collapse to the two
+    // families and let /variant pick low|medium|high.
+    provider.models = cursor_picker_models();
+    LOG_INFO("Cursor picker models: grok-4.6, claude-opus-5");
 }
 
 // Inject a Cursor provider when Cursor auth is available but the config does
@@ -888,28 +894,14 @@ static void maybe_inject_cursor_provider(std::vector<ProviderInfo>& providers) {
     const auto token = get_cursor_access_token();
     if (token.empty()) return;
 
-    // Check if live models can be discovered
-    qcode::cursor::Options options;
-    options.agent_base_url = "https://agentn.global.api5.cursor.sh";
-    const auto available = qcode::cursor::list_models(token, options);
-    if (available.empty()) return;
-
     ProviderInfo cursor;
     cursor.name = "Cursor";
     cursor.id = "cursor";
-    cursor.api_url = options.agent_base_url;
+    cursor.api_url = "https://agentn.global.api5.cursor.sh";
     cursor.protocol = "chat_completions";
-    for (const auto& model : available) {
-        if (!is_selected_cursor_family(model.id)) continue;
-        add_cursor_model_if_missing(
-            cursor.models, model.id,
-            cursor_display_name(model.id, model.name));
-    }
-    if (!cursor.models.empty()) {
-        LOG_INFO("Injected Cursor provider with {} live models",
-                 cursor.models.size());
-        providers.push_back(std::move(cursor));
-    }
+    cursor.models = cursor_picker_models();
+    LOG_INFO("Injected Cursor provider with {} models", cursor.models.size());
+    providers.push_back(std::move(cursor));
 }
 
 }  // namespace
@@ -946,7 +938,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
                     }
                 }
                 const auto package = prov_data.value("npm", "");
-                if (package == "@ai-sdk/openai") {
+                if (prov.id == "opencode" || prov.id == "openrouter") {
+                    prov.protocol = "chat_completions";
+                } else if (package == "@ai-sdk/openai") {
                     prov.protocol = "responses";
                 } else {
                     prov.protocol = "chat_completions";
@@ -969,6 +963,7 @@ std::vector<ProviderInfo> load_providers_from_config() {
                             model.output_cost = c.value("output", 0.0);
                         }
                         model.reasoning = model_data.value("reasoning", false);
+                        ProviderTransform::apply_reasoning_defaults(model);
                         model.tool_call = model_data.value("tool_call", false);
                         model.protocol = model_data.value("protocol", prov.protocol);
                         if (model.context_window <= 0) {

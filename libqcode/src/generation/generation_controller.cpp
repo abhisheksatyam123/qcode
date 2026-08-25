@@ -105,10 +105,8 @@ void GenerationController::maybe_start_queued(GenerationRequest request) {
     store_.add_toast(
         "Running queued prompt (" + std::to_string(remaining) + " left)",
         "info", 1500);
-    // Queued prompts were already appended to the history/DB when they were
-    // enqueued (mirrors upstream adding the user message immediately) — skip
-    // the second append here.
-    request.append_user_message = false;
+    // request.append_user_message remains true (default) so spawn_unlocked appends
+    // the user message to history and session DB when execution actually begins.
     spawn_unlocked(std::move(next), std::move(request));
 }
 
@@ -117,6 +115,21 @@ void GenerationController::spawn_unlocked(std::string prompt,
     if (worker_.joinable()) {
         // Safe: busy_ is false, so the previous worker has finished.
         worker_.join();
+    }
+
+    const auto& providers = request.providers;
+    const int sel_prov = request.provider_idx;
+    const int sel_mod = request.model_idx;
+    if (sel_prov < 0 || sel_prov >= static_cast<int>(providers.size()) ||
+        sel_mod < 0 ||
+        sel_mod >= static_cast<int>(providers[sel_prov].models.size()) ||
+        providers[sel_prov].models[sel_mod].id.empty()) {
+        LOG_ERROR(
+            "GenerationController: invalid selection provider_idx={} "
+            "model_idx={} providers={}",
+            sel_prov, sel_mod, providers.size());
+        store_.add_toast("No model selected — use /model", "error", 4000);
+        return;
     }
 
     busy_->store(true, std::memory_order_release);
@@ -136,16 +149,13 @@ void GenerationController::spawn_unlocked(std::string prompt,
         store_.append_chat_message("User", prompt);
         session::save_message(store_.session_id(), "User", prompt);
     }
-
-    const auto& providers = request.providers;
-    const int sel_prov = request.provider_idx;
-    const int sel_mod = request.model_idx;
     LOG_INFO(
         "GenerationController: spawn prompt_len={} queue_remaining={} "
-        "provider={} model={} append_user={}",
+        "provider={} model={} model_id={} append_user={}",
         prompt.size(), store_.queue_size(),
         providers[sel_prov].name,
         providers[sel_prov].models[sel_mod].name,
+        providers[sel_prov].models[sel_mod].id,
         request.append_user_message);
 
     auto bus_ptr = bus_;

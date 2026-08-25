@@ -54,8 +54,7 @@ Client create_client(const std::string& api_key,
                      const CompatibleOptions& options) {
   const auto base_url = get_base_url_or_default(options.base_url);
   return Client(std::make_unique<OpenAIClient>(
-      get_api_key_or_default(api_key), base_url,
-      options.protocol == "responses", options.headers));
+      get_api_key_or_default(api_key), base_url, options));
 }
 
 Client create_client(const std::string& api_key,

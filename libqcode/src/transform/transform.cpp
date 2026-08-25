@@ -1,4 +1,5 @@
 #include <qcode/providers/provider_transform.h>
+#include <qcode/providers/zen_route.h>
 
 #include <algorithm>
 #include <cctype>
@@ -26,6 +27,39 @@ static bool contains(const std::string& s, const std::string& sub) {
 // @ai-sdk/openai-compatible fallback (WIDELY_SUPPORTED_EFFORTS + max for
 // deepseek-v4).
 
+bool is_reasoning_model_id(const std::string& model_id) {
+  const std::string id = to_lower(model_id);
+  return contains(id, "muse-spark") || contains(id, "ox-alpha") ||
+         contains(id, "x-preview-f-free") || contains(id, "deepseek-v4") ||
+         contains(id, "gpt-5") || contains(id, "grok") ||
+         contains(id, "gemini-3") || contains(id, "gemini-2.5") ||
+         contains(id, "thinking") || contains(id, "kimi-k2");
+}
+
+void apply_reasoning_defaults(ModelInfo& model) {
+  if (!model.reasoning && (is_reasoning_model_id(model.id) ||
+                           is_reasoning_model_id(model.name))) {
+    model.reasoning = true;
+  }
+  if (model.reasoning && model.reasoning_efforts.empty()) {
+    // Ox Alpha catalog / OpenCode docs: low, high, max (no medium).
+    if (contains(model.id, "ox-alpha") || contains(model.id, "x-preview-f-free") ||
+        contains(model.id, "x-preview-f")) {
+      model.reasoning_efforts = {"low", "high", "max"};
+    } else {
+      model.reasoning_efforts = {"low", "medium", "high"};
+      if (contains(model.id, "deepseek-v4")) {
+        model.reasoning_efforts.push_back("max");
+      }
+    }
+  }
+  if (model.reasoning && model.reasoning_field.empty()) {
+    model.reasoning_field = contains(model.id, "muse-spark")
+                                ? "reasoning"
+                                : "reasoning_content";
+  }
+}
+
 std::vector<std::string> reasoning_variants(const ModelInfo& model) {
   if (!model.reasoning_efforts.empty()) return model.reasoning_efforts;
   if (!model.reasoning) return {};
@@ -41,7 +75,8 @@ std::string default_variant(const ModelInfo& model) {
   const std::string id = to_lower(model.id);
   // Upstream options(): gpt-5.x defaults to medium effort.
   const bool gpt5 = contains(id, "gpt-5");
-  const std::string preferred = gpt5 ? "medium" : "high";
+  const bool grok = contains(id, "grok");
+  const std::string preferred = (gpt5 || grok) ? "medium" : "high";
   if (!efforts.empty()) {
     if (std::find(efforts.begin(), efforts.end(), preferred) != efforts.end()) {
       return preferred;
@@ -58,6 +93,28 @@ std::string default_variant(const ModelInfo& model) {
   return gpt5 ? "medium" : "high";
 }
 
+std::string clamp_variant(const ModelInfo& model, const std::string& requested) {
+  if (requested.empty() || requested == "off") return "off";
+  const auto allowed = reasoning_variants(model);
+  if (allowed.empty()) return requested;
+  if (std::find(allowed.begin(), allowed.end(), requested) != allowed.end()) {
+    return requested;
+  }
+  const std::vector<std::string> fallbacks =
+      requested == "max" || requested == "xhigh"
+          ? std::vector<std::string>{"xhigh", "max", "high", "medium", "low"}
+      : requested == "medium" ? std::vector<std::string>{"high", "low", "max", "xhigh"}
+      : requested == "low" || requested == "minimal"
+          ? std::vector<std::string>{"minimal", "medium", "high", "max"}
+          : std::vector<std::string>{"high", "medium", "max", "xhigh", "low"};
+  for (const auto& candidate : fallbacks) {
+    if (std::find(allowed.begin(), allowed.end(), candidate) != allowed.end()) {
+      return candidate;
+    }
+  }
+  return allowed.front();
+}
+
 // ── Chat transport flavors ──
 
 ChatTransport chat_transport_for(const std::string& base_url) {
@@ -71,17 +128,138 @@ ChatTransport chat_transport_for(const std::string& base_url) {
   return ChatTransport::kCompatible;
 }
 
+static std::string trim_copy(std::string model_id) {
+  while (!model_id.empty() &&
+         (model_id.front() == ' ' || model_id.front() == '\t')) {
+    model_id.erase(model_id.begin());
+  }
+  while (!model_id.empty() &&
+         (model_id.back() == ' ' || model_id.back() == '\t')) {
+    model_id.pop_back();
+  }
+  return model_id;
+}
+
+std::string zen_wire_model_id(std::string model_id) {
+  // Trim whitespace — an empty/blank id is what Zen renders as
+  // "Model  is not supported" (401 ModelError).
+  model_id = trim_copy(std::move(model_id));
+  if (model_id.empty()) return {};
+
+  const std::string lower = to_lower(model_id);
+  static constexpr const char* kPrefix = "opencode/";
+  if (lower.rfind(kPrefix, 0) == 0) {
+    model_id = model_id.substr(std::char_traits<char>::length(kPrefix));
+  }
+
+  const std::string id = to_lower(model_id);
+  // GET https://opencode.ai/zen/v1/models: Ox Alpha free pool is
+  // x-preview-f-free. OpenRouter / display aliases 401 as ModelError.
+  if (contains(id, "ox-alpha") || contains(id, "ox alpha") ||
+      contains(id, "x-preview-f-free") || contains(id, "x-preview-f")) {
+    return "x-preview-f-free";
+  }
+  // Paid Zen id is muse-spark-1.2; the free pool is contributor-free.
+  // Any OpenRouter/meta alias must land on the free id unless the caller
+  // already picked the paid Zen slug.
+  if (contains(id, "muse-spark")) {
+    if (id == "muse-spark-1.2") return "muse-spark-1.2";
+    return "muse-spark-1.2-contributor-free";
+  }
+  return model_id;
+}
+
+std::string zen_api_protocol(const std::string& model_id) {
+  return wire_protocol_id(zen_model_route(model_id).protocol);
+}
+
+std::string zen_completions_path(const std::string& model_id) {
+  return zen_model_route(model_id).path;
+}
+
+std::string openrouter_wire_model_id(std::string model_id) {
+  model_id = trim_copy(std::move(model_id));
+  if (model_id.empty()) return {};
+  const std::string id = to_lower(model_id);
+  if (contains(id, "ox-alpha") || contains(id, "ox alpha") ||
+      contains(id, "x-preview-f-free") || contains(id, "x-preview-f")) {
+    return "stealth/ox-alpha";
+  }
+  if (contains(id, "muse-spark")) {
+    if (contains(id, "1.1")) return "meta/muse-spark-1.1";
+    if (contains(id, "contributor")) return "meta/muse-spark-1.2-contributor";
+    return "meta/muse-spark-1.2";
+  }
+  return model_id;
+}
+
+std::string chat_wire_model_id(ChatTransport transport, std::string model_id) {
+  if (transport == ChatTransport::kOpenCodeZen) {
+    return zen_wire_model_id(std::move(model_id));
+  }
+  if (transport == ChatTransport::kOpenRouter) {
+    return openrouter_wire_model_id(std::move(model_id));
+  }
+  return trim_copy(std::move(model_id));
+}
+
+std::string cursor_family_id(const std::string& model_id) {
+  const std::string id = to_lower(model_id);
+  if (id.find("grok-4.6") != std::string::npos ||
+      id.find("grok-4-6") != std::string::npos) {
+    return "grok-4.6";
+  }
+  if (id.find("opus-5") != std::string::npos ||
+      id.find("claude-5-opus") != std::string::npos ||
+      id.find("claude-opus-5") != std::string::npos) {
+    return "claude-opus-5";
+  }
+  return {};
+}
+
+std::string cursor_wire_model_id(const std::string& model_id,
+                                 const std::optional<std::string>& effort) {
+  const std::string family = cursor_family_id(model_id);
+  if (family.empty()) return model_id;
+
+  std::string level = effort.value_or("");
+  if (level == "off") level.clear();
+  if (level == "max") level = "high";
+
+  if (family == "grok-4.6") {
+    // Cursor CLI uses modelId grok-4.6 with effort as a parameter. Agent
+    // GetUsableModels lists suffixed SKUs; low/high must be on the slug or
+    // the run sits idle. Medium is the family default (bare id).
+    if (level == "low" || level == "high") return family + "-" + level;
+    return family;
+  }
+
+  if (level == "low" || level == "high") {
+    return family + "-thinking-" + level;
+  }
+  return family;
+}
+
 void apply_reasoning_options(nlohmann::json& body,
                              ChatTransport transport,
                              const std::optional<std::string>& effort) {
   if (!effort.has_value() || effort->empty() || *effort == "off") return;
   if (transport == ChatTransport::kOpenRouter) {
-    // @openrouter/ai-sdk-provider maps variants to reasoning:{effort}.
+    // transform.ts variants() / reasoningEffort(): { reasoning: { effort } }.
     body["reasoning"] = {{"effort", *effort}};
   } else {
-    // @ai-sdk/openai-compatible lowers variants to reasoning_effort.
+    // @ai-sdk/openai-compatible: { reasoningEffort } → reasoning_effort.
     body["reasoning_effort"] = *effort;
   }
+}
+
+std::string interleaved_replay_field(ChatTransport transport,
+                                     const std::string& model_id) {
+  // OpenCode only injects interleaved.field for openai-compatible, and
+  // explicitly skips @openrouter/ai-sdk-provider.
+  if (transport == ChatTransport::kOpenRouter) return {};
+  if (contains(model_id, "muse-spark")) return "reasoning";
+  return "reasoning_content";
 }
 
 void apply_stream_options(nlohmann::json& body,

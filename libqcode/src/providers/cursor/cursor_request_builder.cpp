@@ -2,6 +2,8 @@
 
 #include "cursor_proto.h"
 
+#include <qcode/providers/provider_transform.h>
+
 #include <random>
 #include <sstream>
 #include <variant>
@@ -23,18 +25,11 @@ std::string random_id() {
 
 // Cursor manages prompt caching on its backend. Keep the system prompt and
 // conversation in a stable prefix so subsequent turns can reuse that cache.
+// Effort is encoded in the model slug (see cursor_wire_model_id), not the
+// prompt — injecting it here made Grok treat the turn as malformed.
 std::string build_conversation_prompt(const GenerateOptions& options) {
   std::ostringstream prompt;
-  if (options.reasoning_effort && !options.reasoning_effort->empty()) {
-    // Stable first line so cache prefixes stay aligned across turns.
-    prompt << "System:\nReasoning effort: " << *options.reasoning_effort
-           << ".\n";
-    if (!options.system.empty()) {
-      prompt << options.system << "\n\n";
-    } else {
-      prompt << "\n";
-    }
-  } else if (!options.system.empty()) {
+  if (!options.system.empty()) {
     prompt << "System:\n" << options.system << "\n\n";
   }
 
@@ -112,7 +107,11 @@ std::string CursorRequestBuilder::build_get_usable_models_request() const {
 
 std::string CursorRequestBuilder::build_agent_run_request(
     const GenerateOptions& options) const {
-  const std::string model = options.model.empty() ? "default" : options.model;
+  const std::string model =
+      options.model.empty()
+          ? "default"
+          : ProviderTransform::cursor_wire_model_id(options.model,
+                                                    options.reasoning_effort);
   const std::string prompt = build_conversation_prompt(options);
   const std::string conversation_id = stable_conversation_id(options);
   const std::string message_id = random_id();

@@ -2,9 +2,73 @@
 
 #include "../../utils/response_utils.h"
 #include <qcode/core/logger.h>
+#include <qcode/providers/gemini_transform.h>
 
 namespace qcode {
 namespace openai {
+
+namespace {
+
+std::string reasoning_from_value(const nlohmann::json& value) {
+  if (value.is_string()) return value.get<std::string>();
+  if (value.is_object()) {
+    if (value.contains("content") && value["content"].is_string()) {
+      return value["content"].get<std::string>();
+    }
+    if (value.contains("text") && value["text"].is_string()) {
+      return value["text"].get<std::string>();
+    }
+    if (value.contains("thought") && value["thought"].is_string()) {
+      return value["thought"].get<std::string>();
+    }
+    if (value.contains("summary") && value["summary"].is_string()) {
+      return value["summary"].get<std::string>();
+    }
+  }
+  if (value.is_array()) {
+    std::string out;
+    for (const auto& item : value) out += reasoning_from_value(item);
+    return out;
+  }
+  return {};
+}
+
+}  // namespace
+
+std::string extract_openai_reasoning_text(const nlohmann::json& node) {
+  if (!node.is_object()) return {};
+  if (node.contains("reasoning_content") && !node["reasoning_content"].is_null()) {
+    if (auto text = reasoning_from_value(node["reasoning_content"]); !text.empty()) {
+      return text;
+    }
+  }
+  if (node.contains("reasoning") && !node["reasoning"].is_null()) {
+    if (auto text = reasoning_from_value(node["reasoning"]); !text.empty()) {
+      return text;
+    }
+  }
+  if (node.contains("reasoning_details") &&
+      node["reasoning_details"].is_array()) {
+    if (auto text = reasoning_from_value(node["reasoning_details"]); !text.empty()) {
+      return text;
+    }
+  }
+  // Muse Spark / Responses-style: content is an array of parts, some thought.
+  if (node.contains("content") && node["content"].is_array()) {
+    std::string out;
+    for (const auto& part : node["content"]) {
+      if (!part.is_object()) continue;
+      const auto type = part.value("type", "");
+      if (type == "thought" || type == "reasoning" || type == "thinking" ||
+          part.value("thought", false)) {
+        out += reasoning_from_value(part);
+      }
+    }
+    if (!out.empty()) return out;
+  }
+  return {};
+}
+
 namespace {
 
 nlohmann::json normalize_responses_api(const nlohmann::json& response) {
@@ -60,9 +124,13 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     const nlohmann::json& response) {
   LOG_DEBUG("Parsing OpenAI chat completion response");
 
-  // Gemini/Antigravity response normalization: unwrap the envelope and
-  // translate a generateContent payload into OpenAI-shaped JSON.
-  nlohmann::json normalized_response = normalize_responses_api(response);
+  nlohmann::json normalized_response = response;
+  if (response.contains("candidates") ||
+      (response.contains("response") && response["response"].is_object() &&
+       response["response"].contains("candidates"))) {
+    normalized_response = qcode::gemini::normalize_gemini_response(response);
+  }
+  normalized_response = normalize_responses_api(normalized_response);
 
   GenerateResult result;
 
@@ -146,23 +214,12 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
         }
       }
 
-      std::string reasoning;
+      std::string reasoning = extract_openai_reasoning_text(message);
       std::string reasoning_signature;
-      // Field priority mirrors the stream parser: DeepSeek-style
-      // reasoning_content (OpenCode Zen ox-alpha / deepseek-v4-flash),
-      // o-series reasoning, then OpenRouter reasoning_details.
-      if (message.contains("reasoning_content") &&
-          message["reasoning_content"].is_string()) {
-        reasoning = message["reasoning_content"].get<std::string>();
-      }
-      if (reasoning.empty() && message.contains("reasoning") &&
-          message["reasoning"].is_string()) {
-        reasoning = message["reasoning"].get<std::string>();
-      }
       if (message.contains("reasoning_details") &&
           message["reasoning_details"].is_array()) {
         for (const auto& detail : message["reasoning_details"]) {
-          if (reasoning.empty()) reasoning += detail.value("text", "");
+          if (!detail.is_object()) continue;
           if (reasoning_signature.empty()) {
             reasoning_signature = detail.value("signature", "");
           }
@@ -207,6 +264,13 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
       LOG_DEBUG(
           "Finish reason was null or missing, defaulting to stop");
     }
+
+    if (utils::is_empty_upstream_network_drop(normalized_response)) {
+      result.error = "Upstream network error: empty completion";
+      result.finish_reason = kFinishReasonError;
+      result.is_retryable = true;
+      LOG_WARN("Treating native_finish_reason=network_error as retryable drop");
+    }
   } else {
     std::string err = "Response has no valid choices";
     if (normalized_response.contains("error")) {
@@ -234,6 +298,10 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     if (usage.contains("completion_tokens_details") && usage["completion_tokens_details"].is_object()) {
       result.usage.reasoning_completion_tokens =
           usage["completion_tokens_details"].value("reasoning_tokens", 0);
+    }
+    if (result.usage.reasoning_completion_tokens == 0) {
+      result.usage.reasoning_completion_tokens =
+          usage.value("reasoning_tokens", 0);
     }
     LOG_DEBUG("Token usage - prompt: {}, cached: {}, completion: {}, reasoning: {}, total: {}",
                           result.usage.prompt_tokens,

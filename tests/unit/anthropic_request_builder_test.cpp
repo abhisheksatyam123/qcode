@@ -29,6 +29,18 @@ TEST(AnthropicRequestBuilderTest, EnablesPromptCachingOnSystemAndTopLevel) {
   EXPECT_EQ(request["thinking"]["budget_tokens"], 8000);
 }
 
+TEST(AnthropicRequestBuilderTest, MapsReasoningEffortToThinkingBudget) {
+  AnthropicRequestBuilder builder;
+  GenerateOptions options;
+  options.model = "claude-sonnet-4-6";
+  options.messages = {Message::user("Hello")};
+  options.reasoning_effort = "low";
+
+  const auto request = builder.build_request_json(options);
+  EXPECT_EQ(request["thinking"]["type"], "enabled");
+  EXPECT_EQ(request["thinking"]["budget_tokens"], 2000);
+}
+
 }  // namespace
 }  // namespace anthropic
 }  // namespace qcode

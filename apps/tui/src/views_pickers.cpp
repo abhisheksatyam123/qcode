@@ -304,5 +304,54 @@ ftxui::Element build_session_popup(
            size(WIDTH, EQUAL, 60) | hcenter;
 }
 
+ftxui::Element build_variant_popup(
+    const std::vector<VariantEntry>& entries,
+    int select_idx,
+    const std::string& active_variant,
+    const std::string& query,
+    const std::string& theme
+) {
+    Elements lines;
+    lines.push_back(text(" Select Variant") | bold | color(accent2(theme)));
+    lines.push_back(separatorLight());
+    lines.push_back(hbox({
+        text(" Find: ") | bold | color(accent(theme)),
+        text(query) | color(Color::White)
+    }));
+    lines.push_back(separatorLight());
+
+    if (entries.empty()) {
+        lines.push_back(text("  (no matches)") | dim);
+    } else {
+        const int total = static_cast<int>(entries.size());
+        select_idx = std::clamp(select_idx, 0, total - 1);
+        for (int i = 0; i < total; ++i) {
+            const auto& e = entries[i];
+            const bool active = (e.id == active_variant);
+            const std::string marker =
+                (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
+            auto row = hbox({
+                text(marker) | color(i == select_idx ? accent2(theme)
+                                : (active ? accent(theme) : Color::Default)),
+                text(e.title) |
+                    (i == select_idx ? bold : nothing) |
+                    color(i == select_idx ? Color::White
+                          : (active ? accent2(theme) : Color::GrayLight)),
+                text("  " + e.description) | dim,
+            });
+            if (i == select_idx)
+                row = row | bgcolor(bg_popup()) | bold;
+            else if (active)
+                row = row | color(accent2(theme));
+            lines.push_back(row);
+        }
+    }
+
+    lines.push_back(separatorLight());
+    lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
+    return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) |
+           color(accent(theme)) | size(WIDTH, EQUAL, 56) | hcenter;
+}
+
 }  // namespace tui
 }  // namespace qcode

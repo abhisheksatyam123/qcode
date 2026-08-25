@@ -78,9 +78,28 @@ TEST(CursorProviderTest, UsesSessionIdAsStableConversationId) {
   EXPECT_NE(b.find(options.session_id), std::string::npos);
 }
 
-TEST(CursorProviderTest, IncludesReasoningEffortInStableSystemPrefix) {
+TEST(CursorProviderTest, KeepsConversationIdStableForPromptCache) {
   GenerateOptions options;
-  options.model = "composer-2.5";
+  options.model = "claude-opus-5";
+  options.session_id = "cache-session-cursor";
+  options.system = "Stable prefix for Cursor automatic cache.";
+  options.reasoning_effort = "high";
+  options.messages = {Message::user("first"), Message::assistant("ack"),
+                      Message::user("second")};
+
+  CursorRequestBuilder builder;
+  const auto a = builder.build_agent_run_request(options);
+  const auto b = builder.build_agent_run_request(options);
+  EXPECT_NE(a.find(options.session_id), std::string::npos);
+  EXPECT_NE(b.find(options.session_id), std::string::npos);
+  EXPECT_NE(a.find("claude-opus-5-thinking-high"), std::string::npos);
+  EXPECT_NE(a.find("Stable prefix for Cursor automatic cache."),
+            std::string::npos);
+}
+
+TEST(CursorProviderTest, MapsGrokVariantOntoWireModelSlug) {
+  GenerateOptions options;
+  options.model = "grok-4.6";
   options.system = "Be concise.";
   options.reasoning_effort = "high";
   options.messages = {Message::user("hi")};
@@ -88,8 +107,20 @@ TEST(CursorProviderTest, IncludesReasoningEffortInStableSystemPrefix) {
   CursorRequestBuilder builder;
   const auto request = builder.build_agent_run_request(options);
 
-  EXPECT_NE(request.find("Reasoning effort: high."), std::string::npos);
+  EXPECT_NE(request.find("grok-4.6-high"), std::string::npos);
+  EXPECT_EQ(request.find("Reasoning effort:"), std::string::npos);
   EXPECT_NE(request.find("Be concise."), std::string::npos);
+}
+
+TEST(CursorProviderTest, MapsOpusLowVariantOntoThinkingSlug) {
+  GenerateOptions options;
+  options.model = "claude-opus-5";
+  options.reasoning_effort = "low";
+  options.messages = {Message::user("hi")};
+
+  CursorRequestBuilder builder;
+  const auto request = builder.build_agent_run_request(options);
+  EXPECT_NE(request.find("claude-opus-5-thinking-low"), std::string::npos);
 }
 
 TEST(CursorProviderTest, ClassifyAgentPayloadHandlesErrorsAndPreventsFalsePositives) {
@@ -109,6 +140,15 @@ TEST(CursorProviderTest, ClassifyAgentPayloadHandlesErrorsAndPreventsFalsePositi
   const std::string false_positive = " o-\"-MpQ>7J&System:Tools are available when needed, including error checks { ... }";
   auto ev3 = CursorResponseParser::classify_agent_payload(false_positive);
   EXPECT_NE(ev3.kind, AgentStreamEvent::Kind::kError);
+}
+
+TEST(CursorProviderTest, ClassifiesThinkingDeltaAsReasoning) {
+  const auto thinking_delta = proto::bytes_field(1, "ponder this");
+  const auto update = proto::bytes_field(4, thinking_delta);
+  const auto payload = proto::bytes_field(1, update);
+  const auto ev = CursorResponseParser::classify_agent_payload(payload);
+  EXPECT_EQ(ev.kind, AgentStreamEvent::Kind::kReasoningDelta);
+  EXPECT_EQ(ev.text, "ponder this");
 }
 
 TEST(CursorProviderTest, ConnectHeartbeatIsNotTurnEnded) {

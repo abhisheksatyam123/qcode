@@ -31,6 +31,7 @@ struct ProviderOptions {
   std::string api_key;
   std::map<std::string, std::string> headers;
   std::string protocol = "chat_completions";
+  std::string completions_path;
   std::string project_id;
 };
 
@@ -60,8 +61,9 @@ class ProviderRegistry {
   std::map<std::string, ProviderResolver> resolvers_;
 };
 
-// Register the core providers that need no UI-specific auth: openai, opencode
-// (generic fallback), openrouter, qpilot, qgenie.
+// Register key-based backends: openai, opencode, openrouter, anthropic,
+// qpilot, qgenie. Cursor and Antigravity are registered via
+// register_authenticated_providers().
 void register_core_providers();
 
 }  // namespace providers
