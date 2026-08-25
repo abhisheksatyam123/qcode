@@ -924,7 +924,17 @@ void run_generation_with_bus(
         LOG_INFO("ChatBus: agent_mode=plan (read-only)");
     }
 
-    base_opts.messages = messages;
+    Model transform_model(resolved_model_id, provider_id);
+    base_opts.messages = ProviderTransform::normalize_messages(messages, transform_model);
+    if (!base_opts.temperature.has_value()) {
+      base_opts.temperature = ProviderTransform::temperature(transform_model);
+    }
+    if (!base_opts.top_p.has_value()) {
+      base_opts.top_p = ProviderTransform::top_p(transform_model);
+    }
+    if (resolved_model && resolved_model->output_limit > 0 && !base_opts.max_tokens.has_value()) {
+      base_opts.max_tokens = ProviderTransform::max_output_tokens(resolved_model->output_limit);
+    }
     base_opts.workspace = ctx.workspace;
     base_opts.session_id = ctx.session_id;
     base_opts.abort_flag = ctx.abort_flag;

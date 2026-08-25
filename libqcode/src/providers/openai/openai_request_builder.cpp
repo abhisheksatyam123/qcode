@@ -276,17 +276,20 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
     nlohmann::json tools_array = nlohmann::json::array();
     auto active_tool_names = options.get_active_tool_names();
+    Model model_info(options.model, "openai");
 
     for (const auto& tool_name : active_tool_names) {
       auto it = options.tools.find(tool_name);
       if (it != options.tools.end()) {
         const auto& tool = it->second;
+        auto normalized_schema =
+            ProviderTransform::normalize_schema(tool.parameters_schema, model_info);
 
         nlohmann::json tool_def = {{"type", "function"},
                                    {"function",
                                     {{"name", tool_name},
                                      {"description", tool.description},
-                                     {"parameters", tool.parameters_schema}}}};
+                                     {"parameters", normalized_schema}}}};
 
         tools_array.push_back(tool_def);
       }

@@ -1,6 +1,7 @@
 #include "anthropic_request_builder.h"
 
 #include <qcode/core/logger.h>
+#include <qcode/providers/provider_transform.h>
 #include "utils/message_utils.h"
 
 #include <unordered_set>
@@ -152,7 +153,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   }
 
   // Add optional parameters
-  if (options.temperature) {
+  if (options.temperature && !thinking_budget.has_value()) {
     request["temperature"] = *options.temperature;
   }
 
@@ -172,15 +173,18 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
     nlohmann::json tools_array = nlohmann::json::array();
     auto active_tool_names = options.get_active_tool_names();
+    Model model_info(options.model, "anthropic");
 
     for (const auto& tool_name : active_tool_names) {
       auto it = options.tools.find(tool_name);
       if (it != options.tools.end()) {
         const auto& tool = it->second;
+        auto normalized_schema =
+            ProviderTransform::normalize_schema(tool.parameters_schema, model_info);
 
         nlohmann::json tool_def = {{"name", tool_name},
                                    {"description", tool.description},
-                                   {"input_schema", tool.parameters_schema}};
+                                   {"input_schema", normalized_schema}};
 
         tools_array.push_back(tool_def);
       }
