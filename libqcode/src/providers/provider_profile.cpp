@@ -68,11 +68,14 @@ ProviderCall prepare_provider_call(providers::ProviderOptions& options,
     case ProviderKind::kOpenRouter:
       call.wire_model_id =
           ProviderTransform::openrouter_wire_model_id(call.wire_model_id);
-      options.protocol = wire_protocol_id(WireProtocol::kChatCompletions);
-      options.completions_path.clear();
+      if (options.protocol.empty()) {
+        options.protocol = wire_protocol_id(WireProtocol::kChatCompletions);
+      }
       break;
     case ProviderKind::kAnthropic:
-      options.protocol = wire_protocol_id(WireProtocol::kMessages);
+      if (options.protocol.empty()) {
+        options.protocol = wire_protocol_id(WireProtocol::kMessages);
+      }
       break;
     case ProviderKind::kOpenAI:
     case ProviderKind::kCursor:

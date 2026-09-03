@@ -89,8 +89,22 @@ std::string zen_stream_path(std::string completions_path) {
 void apply_zen_route(providers::ProviderOptions& options,
                      const std::string& model_id) {
   const auto route = zen_model_route(model_id);
-  options.protocol = wire_protocol_id(route.protocol);
-  options.completions_path = route.path;
+  if (options.protocol.empty()) {
+    options.protocol = wire_protocol_id(route.protocol);
+  }
+  if (options.completions_path.empty()) {
+    if (options.protocol == wire_protocol_id(WireProtocol::kResponses)) {
+      options.completions_path = "/responses";
+    } else if (options.protocol == wire_protocol_id(WireProtocol::kMessages)) {
+      options.completions_path = "/messages";
+    } else if (options.protocol == wire_protocol_id(WireProtocol::kGoogle)) {
+      options.completions_path = route.path;
+    } else if (options.protocol == wire_protocol_id(WireProtocol::kChatCompletions)) {
+      options.completions_path = "/chat/completions";
+    } else {
+      options.completions_path = route.path;
+    }
+  }
 }
 
 }  // namespace qcode

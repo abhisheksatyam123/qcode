@@ -30,7 +30,7 @@ struct ProviderOptions {
   std::string base_url;
   std::string api_key;
   std::map<std::string, std::string> headers;
-  std::string protocol = "chat_completions";
+  std::string protocol;
   std::string completions_path;
   std::string project_id;
 };

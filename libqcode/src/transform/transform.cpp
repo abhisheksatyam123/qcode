@@ -34,64 +34,38 @@ bool is_reasoning_model_id(const std::string& model_id) {
          contains(id, "x-preview-f-free") || contains(id, "deepseek-v4") ||
          contains(id, "gpt-5") || contains(id, "grok") ||
          contains(id, "gemini-3") || contains(id, "gemini-2.5") ||
-         contains(id, "thinking") || contains(id, "kimi-k2");
+         contains(id, "thinking") || contains(id, "kimi-k") ||
+         contains(id, "claude") || contains(id, "composer") ||
+         contains(id, "nemotron") || contains(id, "fable");
 }
 
 void apply_reasoning_defaults(ModelInfo& model) {
-  if (!model.reasoning && (is_reasoning_model_id(model.id) ||
-                           is_reasoning_model_id(model.name))) {
-    model.reasoning = true;
-  }
   if (model.reasoning && model.reasoning_efforts.empty()) {
-    // Ox Alpha catalog / OpenCode docs: low, high, max (no medium).
-    if (contains(model.id, "ox-alpha") || contains(model.id, "x-preview-f-free") ||
-        contains(model.id, "x-preview-f")) {
-      model.reasoning_efforts = {"low", "high", "max"};
-    } else {
-      model.reasoning_efforts = {"low", "medium", "high"};
-      if (contains(model.id, "deepseek-v4")) {
-        model.reasoning_efforts.push_back("max");
-      }
-    }
+    model.reasoning_efforts = {"low", "medium", "high"};
   }
   if (model.reasoning && model.reasoning_field.empty()) {
-    model.reasoning_field = contains(model.id, "muse-spark")
-                                ? "reasoning"
-                                : "reasoning_content";
+    model.reasoning_field = "reasoning_content";
   }
 }
 
 std::vector<std::string> reasoning_variants(const ModelInfo& model) {
   if (!model.reasoning_efforts.empty()) return model.reasoning_efforts;
-  if (!model.reasoning) return {};
-  const std::string id = to_lower(model.id);
-  std::vector<std::string> efforts = {"low", "medium", "high"};
-  if (contains(id, "deepseek-v4")) efforts.push_back("max");
-  return efforts;
+  if (model.reasoning) return {"low", "medium", "high"};
+  return {};
 }
 
 std::string default_variant(const ModelInfo& model) {
   if (!model.reasoning) return "off";
   const auto efforts = reasoning_variants(model);
-  const std::string id = to_lower(model.id);
-  // Upstream options(): gpt-5.x defaults to medium effort.
-  const bool gpt5 = contains(id, "gpt-5");
-  const bool grok = contains(id, "grok");
-  const std::string preferred = (gpt5 || grok) ? "medium" : "high";
-  if (!efforts.empty()) {
-    if (std::find(efforts.begin(), efforts.end(), preferred) != efforts.end()) {
-      return preferred;
+  if (!model.reasoning_default.empty()) {
+    if (model.reasoning_default == "off") return "off";
+    if (std::find(efforts.begin(), efforts.end(), model.reasoning_default) !=
+        efforts.end()) {
+      return model.reasoning_default;
     }
-    // Fallback order keeps thinking meaningful when the preferred effort is
-    // not declared (e.g. gpt-5 ids with only low/high).
-    for (const std::string candidate : {"high", "medium", "max"}) {
-      if (std::find(efforts.begin(), efforts.end(), candidate) != efforts.end()) {
-        return candidate;
-      }
-    }
-    return efforts.front();
   }
-  return gpt5 ? "medium" : "high";
+  if (efforts.empty()) return "off";
+  return efforts.front();
 }
 
 std::string clamp_variant(const ModelInfo& model, const std::string& requested) {

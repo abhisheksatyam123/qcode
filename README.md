@@ -63,14 +63,12 @@ Binaries land at:
 
 ### Configuration
 
-Both the TUI and server load providers from an OpenCode-style config file. Lookup order:
+Both the TUI and server load providers from a single `opencode.json`:
 
-1. `OPENCODE_CONFIG` (if set)
-2. `$XDG_CONFIG_HOME/opencode/opencode.json`
-3. `~/.config/opencode/opencode.json`
-4. `~/notes/etc/opencode.json`
+- `$OPENCODE_CONFIG` if set
+- otherwise `~/.config/opencode/opencode.json` (`$XDG_CONFIG_HOME/opencode/opencode.json` when XDG is set)
 
-Set provider API keys via environment variables (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or in the config file’s provider options.
+Set provider API keys via environment variables (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or in that file’s provider options.
 
 ### Start the TUI
 

@@ -121,6 +121,7 @@ int main() {
     }
 
     qcode::session::init_database();
+    qcode::session::seed_model_capabilities(providers_list);
     std::string last_session = qcode::session::get_last_active_session();
     if (last_session.empty() && !providers_list.empty()) {
         std::string prov = providers_list[selected_provider].name;

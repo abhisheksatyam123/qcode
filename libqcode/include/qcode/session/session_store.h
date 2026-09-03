@@ -161,8 +161,8 @@ void record_generation_turn(const std::string& model_id, const std::string& prov
 // Record user feedback (thumbs up / down)
 void record_user_feedback(const std::string& model_id, bool is_positive);
 
-// Seed capabilities for known model set
-void seed_model_capabilities_if_needed();
+// Write picker models from opencode.json into the capabilities table.
+void seed_model_capabilities(const std::vector<ProviderInfo>& providers);
 
 // Get capability + performance summary for a specific model
 ModelPerformanceSummary get_model_performance_summary(const std::string& model_id, const std::string& provider = "");

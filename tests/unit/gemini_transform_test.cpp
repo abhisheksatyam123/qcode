@@ -210,6 +210,14 @@ TEST(GeminiTransformTest, WrapEnvelopeMapsGemini38FlashEffort) {
   EXPECT_EQ(env["model"].get<std::string>(), "gemini-3.8-flash-low");
 }
 
+TEST(GeminiTransformTest, WrapEnvelopeMapsGemini38FlashHighEffort) {
+  json gem = parsed(R"({
+    "generationConfig": {"thinkingConfig": {"thinkingLevel": "high"}}
+  })");
+  json env = wrap_antigravity_envelope(gem, "gemini-3.8-flash");
+  EXPECT_EQ(env["model"].get<std::string>(), "gemini-3.8-flash-high");
+}
+
 TEST(GeminiTransformTest, WrapEnvelopeDefaultsGemini38FlashToMediumSku) {
   // Bare gemini-3.8-flash 404s on Antigravity. Off/medium thinking must
   // still send the -medium wire id.

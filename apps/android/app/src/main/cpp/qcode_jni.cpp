@@ -377,6 +377,7 @@ Java_com_qcode_android_QCodeBridge_nativeStartServer(JNIEnv* env, jclass,
 
     auto providers = std::make_shared<std::vector<qcode::ProviderInfo>>(
         qcode::load_providers_from_config());
+    qcode::session::seed_model_capabilities(*providers);
     QLOG("Loaded %zu provider(s) for server", providers->size());
 
     g_server = std::make_unique<httplib::Server>();

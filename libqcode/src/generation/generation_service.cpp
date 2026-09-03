@@ -885,6 +885,9 @@ void run_generation_with_bus(
           if (m.id == model_id || m.name == model_id) {
             resolved_model_id = m.id;
             resolved_model = &m;
+            if (!m.protocol.empty()) {
+              provider_options.protocol = m.protocol;
+            }
             break;
           }
         }
@@ -1013,9 +1016,6 @@ void run_generation_with_bus(
       } else if (rm.empty()) {
         if (resolved_model && resolved_model->reasoning) {
           effort = ProviderTransform::default_variant(*resolved_model);
-        } else if (ProviderTransform::is_reasoning_model_id(resolved_model_id)) {
-          // Config/catalog sometimes omit reasoning=true (Muse Spark).
-          effort = "high";
         }
       }
       if (!effort.empty() && effort != "off") {

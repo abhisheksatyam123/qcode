@@ -376,7 +376,6 @@ void init_database() {
 
     LOG_INFO("SQLite: database opened successfully at {}", get_db_path());
     // shared db handle
-    seed_model_capabilities_if_needed();
 }
 
 std::string create_new_session(const std::string& provider, const std::string& model,
@@ -1291,91 +1290,38 @@ void delete_session(const std::string& session_id) {
 
 
 
-void seed_model_capabilities_if_needed() {
-    // Caller (init_database) already holds the SharedDbHandle lock; acquiring
-    // again here would deadlock on the non-recursive mutex.
-    sqlite3* db = SharedDbHandle::instance().peek();
+void seed_model_capabilities(const std::vector<ProviderInfo>& providers) {
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
     if (!db) return;
-
-    struct SeedCap {
-        const char* model_id;
-        const char* provider;
-        const char* model_name;
-        const char* arch;
-        int context_window;
-        int output_limit;
-        int tool_call;
-        int multi_turn;
-        const char* bench;
-        const char* rec;
-    };
-
-    static const SeedCap kDefaults[] = {
-        {"big-pickle", "opencode", "Big Pickle (Free)", "Community Stealth Model", 200000, 32000, 1, 1, "Experimental High Context", "Large Text Ingestion & Bulk Payload Inspection"},
-        {"mimo-v2.5-free", "opencode", "MiMo V2.5 (Free)", "Xiaomi MoE Instruction Model", 200000, 32000, 1, 1, "General Agentic Benchmark", "General Chat & Single-turn Instructions"},
-        {"muse-spark-1.3-contributor-free", "opencode", "Muse Spark 1.3 (Free)", "Muse Spark Contributor Free", 262144, 65536, 1, 1, "Frontier Reasoning Free Pool", "Agentic Code Edits, Reasoning & Tool Calls"},
-        {"muse-spark-1.2-contributor-free", "opencode", "Muse Spark 1.2 (Free)", "Muse Spark Contributor Free", 262144, 65536, 1, 1, "Frontier Reasoning Free Pool", "Agentic Code Edits, Reasoning & Tool Calls"},
-        {"deepseek-v4-flash-free", "opencode", "DeepSeek V4 Flash (Free)", "DeepSeek V4 Flash Free Pool", 262144, 65536, 1, 1, "Fast Reasoning Free Pool", "Multi-Turn Tools & Code Edits"},
-        {"ling-3.0-flash-fin-free", "opencode", "Ling 3.0 Flash Fin (Free)", "InclusionAI Ling 3.0", 262144, 65536, 1, 1, "Fast Instruction Free Pool", "Quick Questions & Instruction Following"},
-        {"laguna-s-2.1-free", "opencode", "Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Code Diffs & Precise File Modifications"},
-        {"nemotron-3-ultra-free", "opencode", "Nemotron 3 Ultra (Free)", "NVIDIA 550B MoE (55B Active, Mamba-Transformer)", 1000000, 128000, 1, 1, "Frontier Orchestration / 1M Context", "Massive Repository Context (1M) & Deep Reasoning"},
-        {"nemotron-3.5-lightning-free", "opencode", "Nemotron 3.5 Lightning (Free)", "NVIDIA High-Speed Reasoning", 262144, 65536, 1, 1, "Ultra-Low Latency Agentic", "Fast Multi-Turn Tools & Real-Time Code Edits"},
-
-        {"claude-opus-4-6-thinking", "antigravity", "Claude Opus 4.6 Thinking", "Anthropic Reasoning Model", 200000, 8192, 1, 1, "SWE-bench Verified ~74.5%", "Complex Multi-File Refactoring & Architect Tasks"},
-        {"claude-sonnet-4-6", "antigravity", "Claude Sonnet 4.6", "Anthropic Frontier Model", 200000, 8192, 1, 1, "SWE-bench Verified ~72.7%", "Production Agentic Workflows & Coding"},
-        {"gemini-3.8-flash", "antigravity", "Gemini 3.8 Flash", "Google DeepMind Latest Flash", 1000000, 65536, 1, 1, "Latest Flash Agentic", "Adaptive Thinking Levels (Low/Med/High) & Multi-Step Tools"},
-        {"gemini-3.7-flash", "antigravity", "Gemini 3.7 Flash", "Google DeepMind Frontier Flash", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "Adaptive Thinking Levels (Low/Med/High) & Multi-Step Tools"},
-        {"gemini-3.6-flash", "antigravity", "Gemini 3.6 Flash", "Google DeepMind Flash", 1000000, 65536, 1, 1, "Fast Flash Agentic", "Adaptive Thinking Levels (Low/Med/High) & Multi-Step Tools"},
-        {"gemini-3.1-pro", "antigravity", "Gemini 3.1 Pro", "Google DeepMind Dense/MoE", 2000000, 65536, 1, 1, "Top Tier (>60% SWE-bench)", "2M Context System Architecture & Large Repo Analysis"},
-        {"gemini-3-flash", "antigravity", "Gemini 3 Flash", "Google DeepMind High-Efficiency", 1000000, 8192, 1, 1, "Low Latency Agentic", "Fast Command Execution & Lightweight Tool Calls"},
-        {"gemini-2.5-flash", "antigravity", "Gemini 2.5 Flash", "Google DeepMind High-Speed", 1000000, 8192, 1, 1, "Efficient Flash Model", "Quick Single-Turn Questions & Standard Chat"},
-
-        {"nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter", "Nemotron 3 Ultra 550B (Free)", "NVIDIA 550B MoE (55B Active)", 1000000, 65536, 1, 1, "Frontier MoE 1M Context", "Deep Reasoning & Large File Inspection"},
-        {"nvidia/nemotron-3.5-lightning:free", "openrouter", "Nemotron 3.5 Lightning (Free)", "NVIDIA High-Speed Reasoning", 1000000, 65536, 1, 1, "Ultra-Low Latency Agentic", "Fast Multi-Turn Tools & Real-Time Code Edits"},
-        {"nvidia/nemotron-3-super-120b-a12b:free", "openrouter", "Nemotron 3 Super 120B (Free)", "NVIDIA 120B MoE (12B Active)", 262144, 32768, 1, 1, "High-Speed Code Assistant", "Fast Command Execution & Lightweight Tool Calls"},
-        {"nvidia/nemotron-3-nano-30b-a3b:free", "openrouter", "Nemotron 3 Nano 30B (Free)", "NVIDIA 30B MoE (3B Active)", 256000, 32768, 1, 1, "Ultra-Efficient MoE", "Fast Lightweight Tool Calls & Autocomplete"},
-        {"poolside/laguna-s-2.1:free", "openrouter", "Poolside Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Iterative Code Modifications & Diffs"},
-        {"cohere/north-mini-code:free", "openrouter", "Cohere North Mini Code (Free)", "Cohere 30B MoE (3B Active)", 256000, 32768, 1, 1, "Cohere Debut Sparse MoE", "Fast Command Execution & Auto-complete"},
-        {"openai/gpt-oss-20b:free", "openrouter", "OpenAI gpt-oss-20b (Free)", "OpenAI 21B Open Weights", 131072, 32768, 1, 1, "OpenAI Apache 2.0 Open Weights", "General Instruction & Code Completion"},
-        {"poolside/laguna-xs-2.1:free", "openrouter", "Poolside Laguna XS 2.1 (Free)", "Poolside 33B MoE (3B Active)", 262144, 32768, 1, 1, "Laguna XS.2 Successor", "Lightweight Code Edits & Fast Iteration"},
-        {"dots-studio/dots-3-note-preview:free", "openrouter", "Dots Studio 3 Note (Free)", "Dots Studio High Context", 512000, 32768, 1, 1, "512K High Context Preview", "Large Document & Payload Inspection"}
-    };
 
     const char* sql_insert =
         "INSERT INTO model_capabilities ("
-        "  model_id, provider, model_name, architecture_info, context_window, output_limit, "
-        "  tool_call_supported, multi_turn_reliable, verified_benchmark, recommended_for"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "  model_id, provider, model_name, context_window, output_limit, "
+        "  tool_call_supported"
+        ") VALUES (?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(model_id) DO UPDATE SET "
         "  provider=excluded.provider, "
         "  model_name=excluded.model_name, "
-        "  architecture_info=excluded.architecture_info, "
         "  context_window=excluded.context_window, "
         "  output_limit=excluded.output_limit, "
-        "  tool_call_supported=excluded.tool_call_supported, "
-        "  multi_turn_reliable=excluded.multi_turn_reliable, "
-        "  verified_benchmark=excluded.verified_benchmark, "
-        "  recommended_for=excluded.recommended_for;";
+        "  tool_call_supported=excluded.tool_call_supported;";
 
-    for (const auto& item : kDefaults) {
-        sqlite3_stmt* stmt = nullptr;
-        if (prepare_stmt(db, sql_insert, &stmt)) {
-            sqlite3_bind_text(stmt, 1, item.model_id, -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 2, item.provider, -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 3, item.model_name, -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 4, item.arch, -1, SQLITE_STATIC);
-            sqlite3_bind_int(stmt, 5, item.context_window);
-            sqlite3_bind_int(stmt, 6, item.output_limit);
-            sqlite3_bind_int(stmt, 7, item.tool_call);
-            sqlite3_bind_int(stmt, 8, item.multi_turn);
-            sqlite3_bind_text(stmt, 9, item.bench, -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 10, item.rec, -1, SQLITE_STATIC);
+    for (const auto& provider : providers) {
+        for (const auto& model : provider.models) {
+            if (model.id.empty()) continue;
+            sqlite3_stmt* stmt = nullptr;
+            if (!prepare_stmt(db, sql_insert, &stmt)) continue;
+            sqlite3_bind_text(stmt, 1, model.id.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt, 2, provider.id.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt, 3, model.name.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_int(stmt, 4, model.context_window);
+            sqlite3_bind_int(stmt, 5, model.output_limit);
+            sqlite3_bind_int(stmt, 6, model.tool_call ? 1 : 0);
             sqlite3_step(stmt);
             sqlite3_finalize(stmt);
         }
     }
-
-    // shared db handle
 }
 
 void record_generation_turn(const std::string& model_id, const std::string& provider,

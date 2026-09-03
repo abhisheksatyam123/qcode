@@ -909,6 +909,10 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     if (sm == -1) sm = 0;
 
     const auto& sel = (*providers_list)[sp];
+    const qcode::ModelInfo* selected_model =
+        (sm >= 0 && sm < static_cast<int>(sel.models.size()))
+            ? &sel.models[sm]
+            : nullptr;
 
     // Format the transcript for compaction
     std::ostringstream transcript;
@@ -952,7 +956,10 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     provider_options.base_url = sel.api_url;
     provider_options.api_key = sel.api_key;
     provider_options.headers = sel.headers;
-    provider_options.protocol = sel.protocol;
+    provider_options.protocol =
+        (selected_model != nullptr && !selected_model->protocol.empty())
+            ? selected_model->protocol
+            : sel.protocol;
     provider_options.project_id = sel.project_id;
     auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
         sel.id, provider_options);

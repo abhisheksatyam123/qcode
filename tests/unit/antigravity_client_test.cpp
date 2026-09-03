@@ -17,7 +17,7 @@ TEST(AntigravityClientTest, CreateClientIsValidAndNamed) {
       "https://daily-cloudcode-pa.googleapis.com/v1internal");
   EXPECT_TRUE(client.is_valid());  // api_key non-empty
   EXPECT_EQ(client.provider_name(), "antigravity");
-  EXPECT_EQ(client.default_model(), "gemini-3.8-flash");
+  EXPECT_TRUE(client.default_model().empty());
 }
 
 TEST(AntigravityClientTest, RequestBuilderProducesAntigravityEnvelope) {
@@ -58,19 +58,6 @@ TEST(AntigravityClientTest, ClaudeRequestMarksCacheAndThinking) {
   ASSERT_GE(inner["contents"].size(), 2u);
   EXPECT_EQ(inner["contents"].back()["parts"][0]["cache_control"]["type"],
             "ephemeral");
-}
-
-TEST(AntigravityClientTest, GeminiThinkingVariantIsMapped) {
-  AntigravityRequestBuilder builder("project-1");
-  GenerateOptions opts;
-  opts.model = "gemini-3.7-flash";
-  opts.reasoning_effort = "low";
-  opts.messages = {Message::user("hi")};
-
-  const auto req = builder.build_request_json(opts);
-  EXPECT_EQ(req["model"].get<std::string>(), "gemini-3.7-flash-low");
-  EXPECT_EQ(req["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
-            "low");
 }
 
 TEST(AntigravityClientTest, Gemini38FlashMapsEffortSku) {

@@ -5,8 +5,8 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <string_view>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 namespace qcode {
@@ -31,53 +31,165 @@ class ScopedEnv {
   std::optional<std::string> saved_;
 };
 
-TEST(TuiConfigTest, LoadsModernOpenCodeProviderOptions) {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "qcode-opencode-config-test.json";
-  {
-    std::ofstream output(path);
-    output << R"({
+class ScopedConfig {
+ public:
+  explicit ScopedConfig(std::string_view json)
+      : path_(std::filesystem::temp_directory_path() /
+              ("qcode-config-test-" + std::to_string(++seq_) + ".json")),
+        env_("OPENCODE_CONFIG", path_.string()) {
+    std::ofstream output(path_);
+    output << json;
+  }
+  ~ScopedConfig() { std::filesystem::remove(path_); }
+
+  std::vector<ProviderInfo> load() const { return load_providers_from_config(); }
+
+ private:
+  static inline int seq_ = 0;
+  std::filesystem::path path_;
+  ScopedEnv env_;
+};
+
+const ProviderInfo* FindProvider(const std::vector<ProviderInfo>& providers,
+                                 std::string_view id) {
+  const auto it = std::find_if(
+      providers.begin(), providers.end(),
+      [id](const ProviderInfo& provider) { return provider.id == id; });
+  return it == providers.end() ? nullptr : &*it;
+}
+
+const ModelInfo* FindModel(const std::vector<ModelInfo>& models,
+                           std::string_view id) {
+  const auto it = std::find_if(
+      models.begin(), models.end(),
+      [id](const ModelInfo& model) { return model.id == id; });
+  return it == models.end() ? nullptr : &*it;
+}
+
+TEST(TuiConfigTest, LoadsProviderOptionsFromJson) {
+  ScopedConfig config(R"({
       "provider": {
-        "custom": {
-          "name": "Custom",
-          "npm": "@ai-sdk/openai",
+        "opencode": {
+          "name": "OpenCode Zen",
+          "protocol": "chat_completions",
           "options": {
-            "baseURL": "https://example.test/v1/",
+            "baseURL": "https://zen.example.test/v1/",
             "apiKey": "{env:QCODE_TEST_PROVIDER_KEY}",
-            "headers": {"X-Test": "{env:QCODE_TEST_HEADER}"}
+            "headers": {
+              "User-Agent": "from-json",
+              "X-Test": "{env:QCODE_TEST_HEADER}"
+            }
           },
           "models": {
             "model-1": {
               "name": "Model One",
               "reasoning": true,
               "tool_call": true,
+              "protocol": "responses",
+              "reasoning_efforts": ["low", "high"],
+              "reasoning_default": "high",
               "limit": {"context": 1000, "output": 200}
             }
           }
         }
       }
-    })";
-  }
-  ScopedEnv config("OPENCODE_CONFIG", path.string());
+    })");
   ScopedEnv key("QCODE_TEST_PROVIDER_KEY", "secret");
   ScopedEnv header("QCODE_TEST_HEADER", "header-value");
-  const auto providers = load_providers_from_config();
+
+  const auto providers = config.load();
   ASSERT_EQ(providers.size(), 1u);
   const auto& provider = providers.front();
-  EXPECT_EQ(provider.id, "custom");
-  EXPECT_EQ(provider.api_url, "https://example.test/v1");
+  EXPECT_EQ(provider.api_url, "https://zen.example.test/v1");
   EXPECT_EQ(provider.api_key, "secret");
+  EXPECT_EQ(provider.headers.at("User-Agent"), "from-json");
   EXPECT_EQ(provider.headers.at("X-Test"), "header-value");
-  EXPECT_EQ(provider.protocol, "responses");
+  EXPECT_EQ(provider.protocol, "chat_completions");
   ASSERT_EQ(provider.models.size(), 1u);
-  EXPECT_EQ(provider.models.front().context_window, 1000);
-  EXPECT_EQ(provider.models.front().output_limit, 200);
-  EXPECT_TRUE(provider.models.front().reasoning);
-  EXPECT_TRUE(provider.models.front().tool_call);
-  std::filesystem::remove(path);
+  const auto& model = provider.models.front();
+  EXPECT_EQ(model.protocol, "responses");
+  EXPECT_EQ(model.context_window, 1000);
+  EXPECT_EQ(model.output_limit, 200);
+  EXPECT_TRUE(model.reasoning);
+  EXPECT_TRUE(model.tool_call);
+  ASSERT_EQ(model.reasoning_efforts.size(), 2u);
+  EXPECT_EQ(model.reasoning_efforts[0], "low");
+  EXPECT_EQ(model.reasoning_efforts[1], "high");
+  EXPECT_EQ(model.reasoning_default, "high");
 }
 
-TEST(TuiConfigTest, DetectsExpiredAntigravityTokenFile) {
+TEST(TuiConfigTest, ConfiguredModelsAreThePicker) {
+  ScopedConfig config(R"({
+      "provider": {
+        "opencode": {
+          "name": "OpenCode Zen",
+          "models": {
+            "configured-a": {"name": "A", "tool_call": true},
+            "configured-b": {"name": "B", "tool_call": false}
+          }
+        },
+        "openrouter": {"name": "OpenRouter", "models": {}}
+      }
+    })");
+
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 2u);
+
+  const auto* zen = FindProvider(providers, "opencode");
+  ASSERT_NE(zen, nullptr);
+  ASSERT_EQ(zen->models.size(), 2u);
+  const auto* keep = FindModel(zen->models, "configured-a");
+  const auto* plain = FindModel(zen->models, "configured-b");
+  ASSERT_NE(keep, nullptr);
+  ASSERT_NE(plain, nullptr);
+  EXPECT_TRUE(keep->tool_call);
+  EXPECT_FALSE(plain->tool_call);
+
+  const auto* openrouter = FindProvider(providers, "openrouter");
+  ASSERT_NE(openrouter, nullptr);
+  EXPECT_TRUE(openrouter->models.empty());
+}
+
+TEST(TuiConfigTest, DropsRetiredZenIds) {
+  ScopedConfig config(R"cfg({
+      "provider": {
+        "opencode": {
+          "name": "OpenCode Zen",
+          "models": {
+            "hy3-free": {"name": "HY3 retired"},
+            "keep-me": {"name": "Keep"}
+          }
+        }
+      }
+    })cfg");
+
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  ASSERT_EQ(providers.front().models.size(), 1u);
+  EXPECT_EQ(providers.front().models.front().id, "keep-me");
+}
+
+TEST(TuiConfigTest, RemapsCursorPickerIdsWithoutAddingFamilies) {
+  ScopedConfig config(R"({
+      "provider": {
+        "cursor": {
+          "name": "Cursor",
+          "models": {
+            "cursor-grok-4.6": {"name": "Cursor Grok 4.6"},
+            "composer-2.5": {"name": "Composer 2.5"}
+          }
+        }
+      }
+    })");
+
+  const auto models = config.load().front().models;
+  ASSERT_EQ(models.size(), 2u);
+  ASSERT_NE(FindModel(models, "grok-4.6"), nullptr);
+  ASSERT_NE(FindModel(models, "composer-2.5"), nullptr);
+  EXPECT_EQ(FindModel(models, "cursor-grok-4.6"), nullptr);
+}
+
+TEST(TuiConfigTest, AntigravityTokenRefreshHelpers) {
   const auto path = std::filesystem::temp_directory_path() /
                     "qcode-antigravity-token-test.json";
   {
@@ -91,235 +203,13 @@ TEST(TuiConfigTest, DetectsExpiredAntigravityTokenFile) {
       }
     })";
   }
-  ScopedEnv api_key("ANTIGRAVITY_API_KEY", "");
   unsetenv("ANTIGRAVITY_API_KEY");
   ScopedEnv token_file("ANTIGRAVITY_TOKEN_FILE", path.string());
   EXPECT_TRUE(antigravity_token_needs_refresh());
   std::filesystem::remove(path);
-}
 
-TEST(TuiConfigTest, EnvApiKeySkipsAntigravityRefreshCheck) {
   ScopedEnv api_key("ANTIGRAVITY_API_KEY", "env-token");
   EXPECT_FALSE(antigravity_token_needs_refresh());
-}
-
-TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "qcode-opencode-free-models-test.json";
-  {
-    std::ofstream output(path);
-    output << R"cfg({
-      "provider": {
-        "opencode": {
-          "name": "OpenCode Zen",
-          "models": {
-            "hy3-free": {"name": "HY3 (Free)", "tool_call": true},
-            "muse-spark-1.2-contributor-free": {"name": "Muse Spark 1.2"},
-            "north-mini-code-free": {"name": "North Mini Code (Free)"}
-          }
-        }
-      }
-    })cfg";
-  }
-  ScopedEnv config("OPENCODE_CONFIG", path.string());
-  const auto providers = load_providers_from_config();
-  ASSERT_EQ(providers.size(), 1u);
-  EXPECT_EQ(providers.front().id, "opencode");
-  EXPECT_EQ(providers.front().api_url, "https://opencode.ai/zen/v1");
-  EXPECT_EQ(providers.front().headers.at("User-Agent"), "opencode/1.18.18");
-  EXPECT_EQ(providers.front().headers.at("x-opencode-client"), "cli");
-  const auto& models = providers.front().models;
-  const auto has_model = [&models](const std::string& id) {
-    return std::any_of(models.begin(), models.end(),
-                       [&id](const ModelInfo& model) {
-                         return model.id == id;
-                       });
-  };
-  EXPECT_TRUE(has_model("big-pickle"));
-  EXPECT_TRUE(has_model("mimo-v2.5-free"));
-  EXPECT_FALSE(has_model("hy3-free"));
-  EXPECT_TRUE(has_model("laguna-s-2.1-free"));
-  EXPECT_TRUE(has_model("nemotron-3.5-lightning-free"));
-  EXPECT_FALSE(has_model("north-mini-code-free"));
-  EXPECT_FALSE(has_model("x-preview-f-free"));
-  const auto pickle = std::find_if(
-      models.begin(), models.end(), [](const ModelInfo& model) {
-        return model.id == "big-pickle";
-      });
-  ASSERT_NE(pickle, models.end());
-  EXPECT_EQ(pickle->context_window, 200000);
-  EXPECT_TRUE(pickle->tool_call);
-  EXPECT_TRUE(pickle->reasoning);
-  const auto muse = std::find_if(
-      models.begin(), models.end(), [](const ModelInfo& model) {
-        return model.id == "muse-spark-1.2-contributor-free";
-      });
-  ASSERT_NE(muse, models.end());
-  EXPECT_TRUE(muse->reasoning);
-  EXPECT_FALSE(muse->reasoning_efforts.empty());
-  EXPECT_EQ(muse->protocol, "responses");
-  const auto laguna = std::find_if(
-      models.begin(), models.end(), [](const ModelInfo& model) {
-        return model.id == "laguna-s-2.1-free";
-      });
-  ASSERT_NE(laguna, models.end());
-  EXPECT_EQ(laguna->protocol, "chat_completions");
-  std::filesystem::remove(path);
-}
-
-TEST(TuiConfigTest, HandlesCursorProviderConfigWhenDiscoveryIsUnavailable) {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "qcode-cursor-config-test.json";
-  {
-    std::ofstream output(path);
-    output << R"({
-      "provider": {
-        "cursor": {
-          "name": "Cursor",
-          "models": {
-            "cursor-grok-4.6": {"name": "Cursor Grok 4.6"},
-            "composer-2.5": {"name": "Composer 2.5"}
-          }
-        }
-      }
-    })";
-  }
-  ScopedEnv config("OPENCODE_CONFIG", path.string());
-  ScopedEnv auth_file("CURSOR_AUTH_FILE", path.string() + ".missing");
-  ScopedEnv api_key("CURSOR_API_KEY", "");
-  unsetenv("CURSOR_API_KEY");
-
-  const auto providers = load_providers_from_config();
-
-  ASSERT_EQ(providers.size(), 1u);
-  const auto& models = providers.front().models;
-  const auto has_model = [&models](const std::string& id) {
-    return std::any_of(models.begin(), models.end(),
-                       [&id](const ModelInfo& model) {
-                         return model.id == id;
-                       });
-  };
-  EXPECT_TRUE(has_model("grok-4.6"));
-  EXPECT_TRUE(has_model("claude-opus-5"));
-  EXPECT_TRUE(has_model("composer-2.5"));
-  EXPECT_TRUE(has_model("gpt-5.6-sol"));
-  EXPECT_TRUE(has_model("gpt-5.6-terra"));
-  EXPECT_TRUE(has_model("claude-fable-5-1"));
-  EXPECT_FALSE(has_model("cursor-grok-4.6"));
-  EXPECT_THAT(models[0].reasoning_efforts,
-              testing::ElementsAre("low", "medium", "high"));
-  std::filesystem::remove(path);
-}
-
-TEST(TuiConfigTest, HydratesAntigravityProviderModels) {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "qcode-antigravity-config-test.json";
-  {
-    std::ofstream output(path);
-    output << R"({
-      "provider": {
-        "antigravity": {
-          "name": "Antigravity"
-        }
-      }
-    })";
-  }
-  ScopedEnv config("OPENCODE_CONFIG", path.string());
-  const auto providers = load_providers_from_config();
-  ASSERT_EQ(providers.size(), 1u);
-  EXPECT_EQ(providers.front().id, "antigravity");
-  EXPECT_EQ(providers.front().protocol, "chat_completions");
-  const auto& models = providers.front().models;
-  const auto has_model = [&models](const std::string& id) {
-    return std::any_of(models.begin(), models.end(),
-                       [&id](const ModelInfo& model) {
-                         return model.id == id;
-                       });
-  };
-  EXPECT_TRUE(has_model("gemini-3.8-flash"));
-  EXPECT_TRUE(has_model("gemini-3.7-flash"));
-  EXPECT_TRUE(has_model("gemini-3.6-flash"));
-  EXPECT_TRUE(has_model("gemini-3.1-pro"));
-  EXPECT_TRUE(has_model("claude-sonnet-4-6"));
-  EXPECT_TRUE(has_model("claude-opus-4-6-thinking"));
-
-  const auto flash = std::find_if(
-      models.begin(), models.end(), [](const ModelInfo& m) {
-        return m.id == "gemini-3.7-flash";
-      });
-  ASSERT_NE(flash, models.end());
-  EXPECT_TRUE(flash->reasoning);
-  std::filesystem::remove(path);
-}
-
-TEST(TuiConfigTest, HydratesOpenRouterLatestFreeModels) {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "qcode-openrouter-latest-free-test.json";
-  {
-    std::ofstream output(path);
-    output << R"({
-      "provider": {
-        "openrouter": {
-          "name": "OpenRouter",
-          "models": {
-            "stealth/ox-alpha": {"name": "Ox Alpha"}
-          }
-        }
-      }
-    })";
-  }
-  ScopedEnv config("OPENCODE_CONFIG", path.string());
-  ScopedEnv key("OPENROUTER_API_KEY", "test-key");
-  const auto providers = load_providers_from_config();
-  ASSERT_EQ(providers.size(), 1u);
-  EXPECT_EQ(providers.front().id, "openrouter");
-  const auto& models = providers.front().models;
-  const auto has_model = [&models](const std::string& id) {
-    return std::any_of(models.begin(), models.end(),
-                       [&id](const ModelInfo& model) {
-                         return model.id == id;
-                       });
-  };
-  EXPECT_TRUE(has_model("stealth/ox-alpha"));
-  EXPECT_TRUE(has_model("meta/muse-spark-1.2"));
-  EXPECT_TRUE(has_model("nvidia/nemotron-3-super-120b-a12b:free"));
-  EXPECT_TRUE(has_model("poolside/laguna-xs-2.1:free"));
-  EXPECT_TRUE(has_model("inclusionai/ling-3.0-flash-fin:free"));
-  EXPECT_TRUE(has_model("minimax/minimax-m3:free"));
-  std::filesystem::remove(path);
-}
-
-TEST(TuiConfigTest, HydratesOpenCodeLatestFreeModels) {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "qcode-opencode-latest-free-test.json";
-  {
-    std::ofstream output(path);
-    output << R"({
-      "provider": {
-        "opencode": {
-          "name": "OpenCode Zen"
-        }
-      }
-    })";
-  }
-  ScopedEnv config("OPENCODE_CONFIG", path.string());
-  const auto providers = load_providers_from_config();
-  ASSERT_EQ(providers.size(), 1u);
-  const auto& models = providers.front().models;
-  const auto has_model = [&models](const std::string& id) {
-    return std::any_of(models.begin(), models.end(),
-                       [&id](const ModelInfo& model) {
-                         return model.id == id;
-                       });
-  };
-  EXPECT_TRUE(has_model("muse-spark-1.3-contributor-free"));
-  EXPECT_TRUE(has_model("muse-spark-1.2-contributor-free"));
-  EXPECT_TRUE(has_model("ling-3.0-flash-fin-free"));
-  EXPECT_TRUE(has_model("deepseek-v4-flash-free"));
-  EXPECT_TRUE(has_model("nemotron-3-ultra-free"));
-  EXPECT_TRUE(has_model("nemotron-3.5-lightning-free"));
-  EXPECT_TRUE(has_model("big-pickle"));
-  std::filesystem::remove(path);
 }
 
 }  // namespace

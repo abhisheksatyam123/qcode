@@ -34,11 +34,11 @@ struct ModelInfo {
     bool tool_call = false;
     int output_limit = 0;
     std::string protocol;
-    // Catalog-declared effort variants (models.dev reasoning_options of type
-    // "effort"), e.g. {"low","high","max"} for ox-alpha / deepseek-v4-flash.
+    // From opencode.json: reasoning_efforts / variants.
     std::vector<std::string> reasoning_efforts;
-    // Interleaved-reasoning back-channel field name the model expects on
-    // assistant messages when reasoning is replayed ("reasoning_content").
+    // From opencode.json: reasoning_default / variant.
+    std::string reasoning_default;
+    // From opencode.json: reasoning_field (e.g. "reasoning").
     std::string reasoning_field;
 };
 

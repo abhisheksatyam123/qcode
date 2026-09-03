@@ -45,8 +45,10 @@ int main(int argc, char* argv[]) {
 
     auto providers_list = std::make_shared<std::vector<qcode::ProviderInfo>>(
         qcode::load_providers_from_config());
+    qcode::session::seed_model_capabilities(*providers_list);
     if (providers_list->empty()) {
-        LOG_ERROR("No providers configured. Create ~/.config/qcode/providers.json");
+        LOG_ERROR("No providers configured. Add them to {}",
+                  qcode::config_path());
         return 1;
     }
     LOG_INFO("Loaded {} provider(s)", providers_list->size());

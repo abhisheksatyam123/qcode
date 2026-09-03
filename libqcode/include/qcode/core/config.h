@@ -17,7 +17,8 @@ bool antigravity_token_needs_refresh();
 // Retrieve Cursor access token from env var or ~/.config/cursor/auth.json.
 std::string get_cursor_access_token();
 
-// Resolve the opencode.json config path (OPENCODE_CONFIG env, else default).
+// The single config file: $OPENCODE_CONFIG, else
+// $XDG_CONFIG_HOME/opencode/opencode.json, else ~/.config/opencode/opencode.json.
 std::string config_path();
 
 // Resolve the notes root directory (OPENCODE_NOTES_ROOT / HOME env, else default).

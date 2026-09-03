@@ -32,77 +32,19 @@ static ModelInfo ox_alpha_zen() {
 
 // ── Transport flavor detection ──
 
-TEST(ProviderTransformTest, ZenWireModelIdAliases) {
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("x-preview-f-free"),
-            "big-pickle");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("ox-alpha"), "big-pickle");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("stealth/ox-alpha"),
-            "big-pickle");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("hy3-free"),
-            "laguna-s-2.1-free");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("opencode/big-pickle"),
-            "big-pickle");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("meta/muse-spark-1.2"),
-            "muse-spark-1.2-contributor-free");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.2"),
-            "muse-spark-1.2");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("meta/muse-spark-1.3"),
-            "muse-spark-1.3-contributor-free");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.3"),
-            "muse-spark-1.3");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.3-contributor-free"),
-            "muse-spark-1.3-contributor-free");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("  "), "");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id(""), "");
-}
-
-TEST(ProviderTransformTest, CursorPickerIdCollapsesSkus) {
-  EXPECT_EQ(ProviderTransform::cursor_picker_id("claude-opus-5-thinking-high"),
-            "claude-opus-5");
-  EXPECT_EQ(ProviderTransform::cursor_picker_id("claude-opus-5"),
-            "claude-opus-5");
-  EXPECT_EQ(ProviderTransform::cursor_picker_id("grok-4.6-high-fast"),
-            "grok-4.6");
-  EXPECT_EQ(ProviderTransform::cursor_picker_id("cursor-grok-4.6-xhigh-fast"),
-            "grok-4.6");
-  EXPECT_EQ(ProviderTransform::cursor_picker_id("composer-2.5-fast"),
-            "composer-2.5");
-  EXPECT_EQ(ProviderTransform::cursor_picker_id("gpt-5.6-terra-medium"),
-            "gpt-5.6-terra");
-  EXPECT_EQ(ProviderTransform::cursor_picker_id("claude-fable-5-1-thinking-high"),
-            "claude-fable-5-1");
-  EXPECT_EQ(ProviderTransform::cursor_picker_id("gpt-5.6-sol-low"),
-            "gpt-5.6-sol");
-}
-
 TEST(ProviderTransformTest, ZenApiProtocolMatchesOpenCodeDocs) {
-  EXPECT_EQ(ProviderTransform::zen_api_protocol("x-preview-f-free"),
-            "chat_completions");
   EXPECT_EQ(ProviderTransform::zen_api_protocol("ox-alpha"), "chat_completions");
-  EXPECT_EQ(ProviderTransform::zen_completions_path("x-preview-f-free"),
+  EXPECT_EQ(ProviderTransform::zen_completions_path("ox-alpha"),
             "/chat/completions");
-  EXPECT_EQ(ProviderTransform::zen_api_protocol("big-pickle"),
-            "chat_completions");
-  EXPECT_EQ(ProviderTransform::zen_api_protocol("kimi-k2.5-free"),
-            "chat_completions");
-  EXPECT_EQ(ProviderTransform::zen_api_protocol("deepseek-v4-flash-free"),
-            "chat_completions");
   EXPECT_EQ(ProviderTransform::zen_api_protocol("muse-spark-1.2-contributor-free"),
             "responses");
   EXPECT_EQ(ProviderTransform::zen_completions_path("muse-spark-1.2"),
             "/responses");
-  EXPECT_EQ(ProviderTransform::zen_api_protocol("gpt-5.3-codex"), "responses");
-  EXPECT_EQ(ProviderTransform::zen_api_protocol("grok-4.6"), "responses");
-  EXPECT_EQ(ProviderTransform::zen_api_protocol("claude-sonnet-4-6"), "messages");
-  EXPECT_EQ(ProviderTransform::zen_completions_path("claude-opus-5"),
-            "/messages");
-  EXPECT_EQ(ProviderTransform::zen_api_protocol("qwen3.7-plus"), "messages");
   EXPECT_EQ(ProviderTransform::zen_api_protocol("gemini-3-pro"), "google");
   EXPECT_EQ(ProviderTransform::zen_completions_path("gemini-3.7-flash"),
             "/models/gemini-3.7-flash:generateContent");
   EXPECT_EQ(zen_stream_path("/models/gemini-3.7-flash:generateContent"),
             "/models/gemini-3.7-flash:streamGenerateContent?alt=sse");
-  EXPECT_EQ(zen_stream_path("/chat/completions"), "/chat/completions");
 }
 
 TEST(ProviderProfileTest, KindFromIdAndUrl) {
@@ -169,21 +111,6 @@ TEST(ProviderProfileTest, PrepareZenAndOpenRouterAndAnthropic) {
   EXPECT_EQ(anthropic.protocol, "messages");
 }
 
-TEST(ProviderTransformTest, OpenRouterWireModelIdAliases) {
-  EXPECT_EQ(ProviderTransform::openrouter_wire_model_id("ox-alpha"),
-            "stealth/ox-alpha");
-  EXPECT_EQ(ProviderTransform::openrouter_wire_model_id("x-preview-f-free"),
-            "stealth/ox-alpha");
-  EXPECT_EQ(ProviderTransform::openrouter_wire_model_id(
-                "muse-spark-1.2-contributor-free"),
-            "meta/muse-spark-1.2-contributor");
-  EXPECT_EQ(ProviderTransform::openrouter_wire_model_id("muse-spark-1.2"),
-            "meta/muse-spark-1.2");
-  EXPECT_EQ(ProviderTransform::chat_wire_model_id(ChatTransport::kOpenRouter,
-                                                 "Ox Alpha Free (Unlimited)"),
-            "stealth/ox-alpha");
-}
-
 TEST(ProviderTransformTest, ChatTransportDetection) {
   EXPECT_EQ(ProviderTransform::chat_transport_for("https://opencode.ai/zen/v1"),
             ChatTransport::kOpenCodeZen);
@@ -202,12 +129,12 @@ TEST(ProviderTransformTest, VariantsFromCatalogEfforts) {
   EXPECT_THAT(efforts, testing::ElementsAre("low", "high", "max"));
 }
 
-TEST(ProviderTransformTest, VariantsFallbackForDeepSeekV4AddsMax) {
-  ModelInfo m;
-  m.id = "deepseek-v4-flash-free";
-  m.reasoning = true;
-  const auto efforts = ProviderTransform::reasoning_variants(m);
-  EXPECT_THAT(efforts, testing::ElementsAre("low", "medium", "high", "max"));
+TEST(ProviderTransformTest, ReasoningWithoutEffortsGetsGenericLevels) {
+  ModelInfo model;
+  model.reasoning = true;
+  ProviderTransform::apply_reasoning_defaults(model);
+  EXPECT_THAT(model.reasoning_efforts,
+              testing::ElementsAre("low", "medium", "high"));
 }
 
 TEST(ProviderTransformTest, VariantPickerListsModelEfforts) {
@@ -227,57 +154,32 @@ TEST(ProviderTransformTest, ClampVariantSnapsUnsupportedEffort) {
 }
 
 TEST(ProviderTransformTest, CursorFamilyAndWireIds) {
-  EXPECT_EQ(ProviderTransform::cursor_family_id("grok-4.6-high"), "grok-4.6");
-  EXPECT_EQ(ProviderTransform::cursor_family_id("cursor-grok-4.6"), "grok-4.6");
-  EXPECT_EQ(ProviderTransform::cursor_family_id("claude-opus-5-thinking-low"),
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("claude-opus-5-thinking-high"),
             "claude-opus-5");
-  EXPECT_EQ(ProviderTransform::cursor_family_id("composer-2.5"), "");
+  EXPECT_EQ(ProviderTransform::cursor_family_id("grok-4.6-high"), "grok-4.6");
   EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "medium"),
             "grok-4.6");
   EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "high"),
             "grok-4.6-high");
-  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "low"),
-            "grok-4.6-low");
-  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("claude-opus-5", "high"),
-            "claude-opus-5-thinking-high");
-  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("claude-opus-5", "off"),
-            "claude-opus-5");
-  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("composer-2.5", "high"),
-            "composer-2.5-high");
-  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("gpt-5.6-terra", "medium"),
-            "gpt-5.6-terra-medium");
-  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("claude-fable-5-1", "high"),
-            "claude-fable-5-1-thinking-high");
 }
 
-TEST(ProviderTransformTest, MuseSparkGetsReasoningDefaults) {
-  ModelInfo muse;
-  muse.id = "muse-spark-1.2-contributor-free";
-  muse.name = "Muse Spark";
-  ProviderTransform::apply_reasoning_defaults(muse);
-  EXPECT_TRUE(muse.reasoning);
-  EXPECT_FALSE(muse.reasoning_efforts.empty());
-  EXPECT_EQ(ProviderTransform::default_variant(muse), "high");
-  EXPECT_TRUE(ProviderTransform::is_reasoning_model_id(muse.id));
+TEST(ProviderTransformTest, DefaultVariantUsesConfiguredValue) {
+  ModelInfo model;
+  model.reasoning = true;
+  model.reasoning_efforts = {"low", "medium", "high"};
+  model.reasoning_default = "medium";
+  EXPECT_EQ(ProviderTransform::default_variant(model), "medium");
 }
 
-TEST(ProviderTransformTest, DefaultVariantThinkingOn) {
-  // ox-alpha: low/high/max declared -> high by default.
-  EXPECT_EQ(ProviderTransform::default_variant(ox_alpha_zen()), "high");
-  // gpt-5.x defaults to medium (upstream options()).
-  ModelInfo gpt5;
-  gpt5.id = "gpt-5.3-codex";
-  gpt5.reasoning = true;
-  gpt5.reasoning_efforts = {"low", "medium", "high"};
-  EXPECT_EQ(ProviderTransform::default_variant(gpt5), "medium");
-  ModelInfo grok;
-  grok.id = "grok-4.6";
-  grok.reasoning = true;
-  grok.reasoning_efforts = {"low", "medium", "high"};
-  EXPECT_EQ(ProviderTransform::default_variant(grok), "medium");
-  // Non-reasoning models stay off.
+TEST(ProviderTransformTest, DefaultVariantFallsBackToFirstEffort) {
+  ModelInfo model;
+  model.reasoning = true;
+  model.reasoning_efforts = {"low", "high", "max"};
+  EXPECT_EQ(ProviderTransform::default_variant(model), "low");
+}
+
+TEST(ProviderTransformTest, NonReasoningDefaultIsOff) {
   ModelInfo plain;
-  plain.id = "laguna-s-2.1-free";
   plain.reasoning = false;
   EXPECT_EQ(ProviderTransform::default_variant(plain), "off");
 }

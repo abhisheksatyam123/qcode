@@ -548,8 +548,9 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
     headers.emplace("x-encrypted-key", enc_key);
   }
 
-  // Add any extra headers
+  // Config/JSON headers win over the built-in Referer/X-Title defaults.
   for (const auto& [key, value] : config.extra_headers) {
+    headers.erase(key);
     headers.emplace(key, value);
   }
 

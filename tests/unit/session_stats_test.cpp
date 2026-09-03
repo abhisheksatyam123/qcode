@@ -80,10 +80,3 @@ TEST_F(SessionStatsTest, LiveTokensAddedOnTopOfStoredNoDoubleCount) {
 }  // namespace
 }  // namespace qcode
 
-TEST(ModelContextResolutionTest, AntigravityGeminiModelsHaveLargeContextWindow) {
-    auto summary = qcode::session::get_model_performance_summary("gemini-3.7-flash");
-    EXPECT_GE(summary.context_window, 1000000);
-
-    auto summary_pro = qcode::session::get_model_performance_summary("gemini-3.1-pro");
-    EXPECT_GE(summary_pro.context_window, 2000000);
-}

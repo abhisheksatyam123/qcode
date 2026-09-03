@@ -85,14 +85,22 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
     compatible.base_url = base_url;
     compatible.completions_path = options.completions_path;
     compatible.headers = options.headers;
-    compatible.headers["User-Agent"] = "opencode/1.18.18";
-    compatible.headers["x-opencode-client"] = "cli";
+    if (!compatible.headers.contains("User-Agent")) {
+      compatible.headers["User-Agent"] = "opencode/1.18.18";
+    }
+    if (!compatible.headers.contains("x-opencode-client")) {
+      compatible.headers["x-opencode-client"] = "cli";
+    }
     compatible.bearer_auth = true;
     return ClientResolution{anthropic::create_client(api_key, compatible)};
   }
   auto compatible = to_openai(options, base_url);
-  compatible.headers["User-Agent"] = "opencode/1.18.18";
-  compatible.headers["x-opencode-client"] = "cli";
+  if (!compatible.headers.contains("User-Agent")) {
+    compatible.headers["User-Agent"] = "opencode/1.18.18";
+  }
+  if (!compatible.headers.contains("x-opencode-client")) {
+    compatible.headers["x-opencode-client"] = "cli";
+  }
   return ClientResolution{openai::create_client(api_key, compatible)};
 }
 

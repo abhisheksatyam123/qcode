@@ -78,25 +78,13 @@ TEST_F(AnthropicClientTest, ConstructorWithHttpUrl) {
 }
 
 // Model Support Tests
-TEST_F(AnthropicClientTest, SupportedModelsContainsExpectedModels) {
-  auto models = client_->supported_models();
-
-  EXPECT_THAT(models, testing::Contains("claude-opus-4-7"));
-  EXPECT_THAT(models, testing::Contains("claude-sonnet-4-6"));
-  EXPECT_THAT(models, testing::Contains("claude-haiku-4-5-20251001"));
-  EXPECT_THAT(models, testing::Contains("claude-sonnet-4-5-20250929"));
-  EXPECT_FALSE(models.empty());
+TEST_F(AnthropicClientTest, SupportedModelsIsNotABuiltinCatalog) {
+  EXPECT_TRUE(client_->supported_models().empty());
 }
 
-TEST_F(AnthropicClientTest, SupportsValidModel) {
-  EXPECT_TRUE(client_->supports_model("claude-opus-4-7"));
+TEST_F(AnthropicClientTest, SupportsAnyNonEmptyModel) {
   EXPECT_TRUE(client_->supports_model("claude-sonnet-4-6"));
-  EXPECT_TRUE(client_->supports_model("claude-haiku-4-5-20251001"));
-}
-
-TEST_F(AnthropicClientTest, DoesNotSupportInvalidModel) {
-  EXPECT_FALSE(client_->supports_model("invalid-model"));
-  EXPECT_FALSE(client_->supports_model("gpt-4"));
+  EXPECT_TRUE(client_->supports_model("any-configured-id"));
   EXPECT_FALSE(client_->supports_model(""));
 }
 

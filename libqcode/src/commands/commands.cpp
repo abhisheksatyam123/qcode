@@ -53,10 +53,7 @@ std::vector<ModelEntry> build_model_entries(
 std::vector<VariantEntry> build_variant_entries(const ModelInfo& model) {
     std::vector<VariantEntry> entries;
     entries.push_back({"off", "Off", "No extra thinking tokens"});
-    auto efforts = ProviderTransform::reasoning_variants(model);
-    if (efforts.empty()) {
-        efforts = {"low", "medium", "high", "max"};
-    }
+    const auto efforts = ProviderTransform::reasoning_variants(model);
     const auto describe = [](const std::string& id) -> std::string {
         if (id == "low") return "Fast, light reasoning";
         if (id == "medium") return "Balanced thinking";
@@ -592,13 +589,16 @@ void run_compaction(
             "Use tools only when they improve summary accuracy; otherwise answer directly.";
 
         const auto& sel = providers_copy[sp];
-        const auto& model_id = providers_copy[sp].models[sm].id;
+        const auto& selected_model = providers_copy[sp].models[sm];
+        const auto& model_id = selected_model.id;
         qcode::providers::register_authenticated_providers();
         qcode::providers::ProviderOptions provider_options;
         provider_options.base_url = sel.api_url;
         provider_options.api_key = sel.api_key;
         provider_options.headers = sel.headers;
-        provider_options.protocol = sel.protocol;
+        provider_options.protocol = selected_model.protocol.empty()
+                                       ? sel.protocol
+                                       : selected_model.protocol;
         provider_options.project_id = sel.project_id;
         const auto call =
             prepare_provider_call(provider_options, sel.id, model_id);
