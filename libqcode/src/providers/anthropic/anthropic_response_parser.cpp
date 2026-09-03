@@ -23,6 +23,8 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
   // Extract content from the response
   if (response.contains("content") && response["content"].is_array()) {
     std::string full_text;
+    std::string thinking_text;
+    std::string thinking_signature;
 
     for (const auto& content_block : response["content"]) {
       if (content_block.contains("type")) {
@@ -30,6 +32,15 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
 
         if (type == "text" && content_block.contains("text")) {
           full_text += content_block["text"].get<std::string>();
+        } else if (type == "thinking" && content_block.contains("thinking")) {
+          // Extended-thinking block: text (+ signature for replay).
+          thinking_text += content_block["thinking"].get<std::string>();
+          if (thinking_signature.empty())
+            thinking_signature = content_block.value("signature", "");
+        } else if (type == "redacted_thinking") {
+          // Encrypted/opaque thinking: nothing user-visible to keep.
+          if (thinking_signature.empty())
+            thinking_signature = content_block.value("data", "");
         } else if (type == "tool_use") {
           // Parse Anthropic tool use
           if (content_block.contains("id") && content_block.contains("name") &&
@@ -50,13 +61,19 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
     }
 
     result.text = full_text;
+    result.reasoning = thinking_text;
     LOG_DEBUG(
-        "Extracted message content - length: {}, tool calls: {}",
-        result.text.length(), result.tool_calls.size());
+        "Extracted message content - length: {}, thinking_len: {}, tool calls: {}",
+        result.text.length(), thinking_text.size(), result.tool_calls.size());
 
-    // Add assistant response to messages
-    if (!result.text.empty()) {
-      result.response_messages.push_back(Message::assistant(result.text));
+    // Add assistant response to messages (keep thinking for display/replay)
+    if (!result.text.empty() || !thinking_text.empty()) {
+      if (!thinking_text.empty()) {
+        result.response_messages.push_back(Message::assistant_with_reasoning(
+            result.text, thinking_text, thinking_signature));
+      } else {
+        result.response_messages.push_back(Message::assistant(result.text));
+      }
     }
   } else {
     LOG_DEBUG("Response has no content array");
@@ -69,16 +86,32 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
     LOG_DEBUG("Stop reason: {}", stop_reason);
   }
 
-  // Extract usage
+  // Extract usage (incl. prompt-cache + thinking token details)
   if (response.contains("usage")) {
     auto& usage = response["usage"];
     result.usage.prompt_tokens = usage.value("input_tokens", 0);
     result.usage.completion_tokens = usage.value("output_tokens", 0);
     result.usage.total_tokens =
         result.usage.prompt_tokens + result.usage.completion_tokens;
-    LOG_DEBUG("Token usage - input: {}, output: {}, total: {}",
+    result.usage.cached_prompt_tokens =
+        usage.value("cache_read_input_tokens", 0);
+    if (result.usage.cached_prompt_tokens == 0 &&
+        usage.contains("cache_creation_input_tokens")) {
+      // Creation tokens are cache writes, not hits; record hits only.
+    }
+    // Thinking output lives inside output_tokens; providers may split it out.
+    if (usage.contains("output_tokens_details") && usage["output_tokens_details"].is_object()) {
+      result.usage.reasoning_completion_tokens =
+          usage["output_tokens_details"].value("reasoning_tokens",
+              usage["output_tokens_details"].value("thinking_tokens", 0));
+    }
+    if (result.usage.reasoning_completion_tokens == 0)
+      result.usage.reasoning_completion_tokens = usage.value("thinking_tokens", 0);
+    LOG_DEBUG("Token usage - input: {}, cached: {}, output: {}, thinking: {}, total: {}",
                           result.usage.prompt_tokens,
+                          result.usage.cached_prompt_tokens,
                           result.usage.completion_tokens,
+                          result.usage.reasoning_completion_tokens,
                           result.usage.total_tokens);
   }
 

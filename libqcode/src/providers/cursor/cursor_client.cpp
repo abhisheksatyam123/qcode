@@ -192,6 +192,7 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
     std::atomic<uint64_t> append_seqno{0};
     std::mutex append_mu;
     std::string collected_text;
+    std::string collected_reasoning;
     std::string stream_error;
     std::atomic<bool> turn_ended{false};
     std::atomic<bool> context_replied{false};
@@ -249,6 +250,7 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
                   last_activity = std::chrono::steady_clock::now();
                   break;
                 case Kind::kReasoningDelta:
+                  collected_reasoning += ev.text;
                   last_activity = std::chrono::steady_clock::now();
                   break;
                 case Kind::kTurnEnded:
@@ -323,7 +325,17 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
           "Cursor returned an empty response (check model id / auth).");
     }
 
-    GenerateResult result(collected_text, kFinishReasonStop, Usage());
+    Usage usage;
+    if (!collected_reasoning.empty()) {
+      usage.reasoning_completion_tokens =
+          std::max(1, static_cast<int>(collected_reasoning.size() / 4));
+    }
+    GenerateResult result(collected_text, kFinishReasonStop, usage);
+    result.reasoning = collected_reasoning;
+    if (!collected_reasoning.empty()) {
+      result.response_messages.push_back(Message::assistant_with_reasoning(
+          collected_text, collected_reasoning, ""));
+    }
     result.model = options.model;
     result.provider_metadata =
         R"({"prompt_cache":"cursor_automatic","transport":"agent"})";

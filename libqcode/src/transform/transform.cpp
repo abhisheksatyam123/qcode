@@ -5,6 +5,7 @@
 #include <cctype>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace qcode {
@@ -153,17 +154,28 @@ std::string zen_wire_model_id(std::string model_id) {
   }
 
   const std::string id = to_lower(model_id);
-  // GET https://opencode.ai/zen/v1/models: Ox Alpha free pool is
-  // x-preview-f-free. OpenRouter / display aliases 401 as ModelError.
+  // Retired Zen free-pool ids 401 as ModelError. Snap them onto a live
+  // keyless model so old sessions / configs keep working.
   if (contains(id, "ox-alpha") || contains(id, "ox alpha") ||
       contains(id, "x-preview-f-free") || contains(id, "x-preview-f")) {
-    return "x-preview-f-free";
+    return "big-pickle";
   }
-  // Paid Zen id is muse-spark-1.2; the free pool is contributor-free.
-  // Any OpenRouter/meta alias must land on the free id unless the caller
-  // already picked the paid Zen slug.
+  if (contains(id, "hy3-free") || contains(id, "hy3-preview-free") ||
+      id == "hy3") {
+    return "laguna-s-2.1-free";
+  }
+  // Paid Zen slugs (muse-spark-1.2) and free-pool slugs
+  // (muse-spark-1.2-contributor-free, muse-spark-1.3-contributor-free) are
+  // already wire ids — keep them. OpenRouter / display aliases (meta/...)
+  // map onto the current free pool so a cross-provider pick does not 401.
   if (contains(id, "muse-spark")) {
+    if (contains(id, "meta/") || contains(id, "openrouter/")) {
+      if (contains(id, "1.3")) return "muse-spark-1.3-contributor-free";
+      return "muse-spark-1.2-contributor-free";
+    }
     if (id == "muse-spark-1.2") return "muse-spark-1.2";
+    if (id == "muse-spark-1.3") return "muse-spark-1.3";
+    if (contains(id, "1.3")) return "muse-spark-1.3-contributor-free";
     return "muse-spark-1.2-contributor-free";
   }
   return model_id;
@@ -217,27 +229,64 @@ std::string cursor_family_id(const std::string& model_id) {
   return {};
 }
 
+std::string cursor_picker_id(const std::string& model_id) {
+  const auto family = cursor_family_id(model_id);
+  if (!family.empty()) return family;
+
+  const std::string id = to_lower(model_id);
+  static constexpr std::string_view kSuffixes[] = {
+      "-thinking-low", "-thinking-medium", "-thinking-high",
+      "-xhigh-fast",   "-high-fast",       "-medium-fast",    "-low-fast",
+      "-fast",         "-xhigh",           "-high",           "-medium",
+      "-low",
+  };
+  for (const auto suffix : kSuffixes) {
+    if (id.size() > suffix.size() &&
+        id.compare(id.size() - suffix.size(), suffix.size(), suffix) == 0) {
+      return model_id.substr(0, model_id.size() - suffix.size());
+    }
+  }
+  return model_id;
+}
+
 std::string cursor_wire_model_id(const std::string& model_id,
                                  const std::optional<std::string>& effort) {
   const std::string family = cursor_family_id(model_id);
-  if (family.empty()) return model_id;
+  const std::string base = family.empty() ? cursor_picker_id(model_id)
+                                          : family;
 
   std::string level = effort.value_or("");
   if (level == "off") level.clear();
   if (level == "max") level = "high";
 
-  if (family == "grok-4.6") {
+  if (base.empty()) return model_id;
+
+  const std::string id = to_lower(base);
+  const bool claude = contains(id, "claude") || contains(id, "opus") ||
+                      contains(id, "sonnet") || contains(id, "fable") ||
+                      contains(id, "haiku");
+  const bool grok = contains(id, "grok");
+
+  if (grok) {
     // Cursor CLI uses modelId grok-4.6 with effort as a parameter. Agent
     // GetUsableModels lists suffixed SKUs; low/high must be on the slug or
     // the run sits idle. Medium is the family default (bare id).
-    if (level == "low" || level == "high") return family + "-" + level;
-    return family;
+    if (level == "low" || level == "high") return base + "-" + level;
+    return base;
   }
 
-  if (level == "low" || level == "high") {
-    return family + "-thinking-" + level;
+  if (claude) {
+    if (level == "low" || level == "high") {
+      return base + "-thinking-" + level;
+    }
+    return base;
   }
-  return family;
+
+  // Composer / GPT-5.6 / other Agent SKUs use a trailing effort suffix.
+  if (level == "low" || level == "medium" || level == "high") {
+    return base + "-" + level;
+  }
+  return base;
 }
 
 void apply_reasoning_options(nlohmann::json& body,
@@ -348,6 +397,31 @@ static bool is_empty_text(const std::string& t) {
   return true;
 }
 
+// Tool call arguments and tool results are often JSON objects (bash output,
+// file reads). nlohmann throws type_error.302 if those are passed to a
+// std::string helper — sanitize by dumping, then re-parse.
+static JsonValue sanitize_json_value(JsonValue value) {
+  if (value.is_string()) {
+    return sanitize_surrogates(value.get<std::string>());
+  }
+  if (value.is_object() || value.is_array()) {
+    std::string dumped = value.dump();
+    dumped = sanitize_surrogates(dumped);
+    try {
+      return nlohmann::json::parse(dumped);
+    } catch (...) {
+      return value;
+    }
+  }
+  return value;
+}
+
+static bool is_empty_json_text(const JsonValue& value) {
+  if (value.is_null()) return true;
+  if (value.is_string()) return is_empty_text(value.get<std::string>());
+  return false;
+}
+
 Messages normalize_messages(const Messages& messages, const Model& model) {
   Messages result;
   const std::string prov = to_lower(model.provider);
@@ -367,23 +441,13 @@ Messages normalize_messages(const Messages& messages, const Model& model) {
       } else if (std::holds_alternative<ToolCallContentPart>(part)) {
         auto tc = std::get<ToolCallContentPart>(part);
         tc.id = scrub_tool_id(tc.id);
-        // Sanitize arguments JSON string values if present
-        if (tc.arguments.is_string()) {
-          std::string s = tc.arguments.get<std::string>();
-          s = sanitize_surrogates(s);
-          tc.arguments = s;
-        } else if (tc.arguments.is_object() || tc.arguments.is_array()) {
-          // Dump and sanitize string values inside — lightweight: stringify then sanitize
-          std::string dumped = tc.arguments.dump();
-          dumped = sanitize_surrogates(dumped);
-          try { tc.arguments = nlohmann::json::parse(dumped); } catch (...) {}
-        }
+        tc.arguments = sanitize_json_value(std::move(tc.arguments));
         filtered_content.push_back(std::move(tc));
       } else if (std::holds_alternative<ToolResultContentPart>(part)) {
         auto tr = std::get<ToolResultContentPart>(part);
         tr.tool_call_id = scrub_tool_id(tr.tool_call_id);
-        tr.result = sanitize_surrogates(tr.result);
-        if ((is_claude || is_bedrock) && is_empty_text(tr.result)) continue;
+        tr.result = sanitize_json_value(std::move(tr.result));
+        if ((is_claude || is_bedrock) && is_empty_json_text(tr.result)) continue;
         filtered_content.push_back(std::move(tr));
       } else if (std::holds_alternative<ReasoningContentPart>(part)) {
         auto rp = std::get<ReasoningContentPart>(part);

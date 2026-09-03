@@ -31,6 +31,9 @@ struct MStyle {
   bool underline = false;
   bool mark = false;
   bool link = false;
+  bool url = false;  // markup.link.url suffix: markdownLink (vs label cyan)
+  bool img = false;  // markup.image: markdownImage
+  bool img_text = false; // markup.image.text: markdownImageText
   bool dim = false;
   std::string href;
 };
@@ -47,6 +50,7 @@ struct BlockCtx {
   Elements children;
   std::vector<IItem> inline_items;
   std::string code_text;
+  std::string code_lang;
   // List item prefix / indentation
   std::string bullet;
   int hang = 0;
@@ -67,7 +71,7 @@ struct Ctx {
   std::string cell_buf;
   std::vector<std::vector<std::string>> table_grid;
   std::vector<std::vector<MD_ALIGN>> table_align;
-  std::string theme = "orange";
+  std::string theme = "opencode";
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -229,20 +233,37 @@ static Element flush_inline(const std::vector<IItem>& items, int avail,
   for (size_t li = 0; li < lines.size(); li++) {
     Elements row;
     std::string pfx = (li == 0) ? first_prefix : std::string(hang, ' ');
-    if (!pfx.empty()) row.push_back(text(pfx));
+    // opencode markup.list: enumeration cyan (md_list_enum), item peach
+    // (md_list_item); body text keeps its own inline colors.
+    if (!pfx.empty()) {
+      if (!first_prefix.empty() && li == 0) {
+        bool is_enum = (!pfx.empty() && pfx[0] >= '0' && pfx[0] <= '9');
+        auto col = is_enum ? theme_md_list_enum(theme) : theme_md_list_item(theme);
+        row.push_back(text(pfx) | color(col));
+      } else {
+        row.push_back(text(pfx));
+      }
+    }
     for (size_t k = 0; k < lines[li].size(); k++) {
       const auto& tk = lines[li][k];
       Element e = text(tk.w);
-      if (tk.s.bold) e = e | bold;
+      // opencode TUI scopes: markup.bold/strong → markdownStrong+bold,
+      // markup.italic → markdownEmph, markup.raw.inline → markdownCode on
+      // background, markup.link.label → markdownLinkText ul,
+      // markup.link.url → markdownLink ul.
+      if (tk.s.bold) e = e | bold | color(theme_md_strong(theme));
       if (tk.s.code)
-        e = e | bgcolor(theme_focus_bg(theme)) |
-            color(accent2(theme));
-      if (tk.s.del) e = e | dim;
-      if (tk.s.em) e = e | dim;  // italic not available in ftxui
+        e = e | bgcolor(theme_bg(theme)) | color(theme_md_code(theme));
+      if (tk.s.del) e = e | strikethrough | color(theme_muted(theme));
+      if (tk.s.em) e = e | color(theme_md_emph(theme));
       if (tk.s.dim) e = e | dim;
       if (tk.s.underline) e = e | underlined;
       if (tk.s.mark) e = e | inverted;
-      if (tk.s.link) e = e | color(accent2(theme)) | underlined;
+      if (tk.s.link)
+        e = e | color(theme_md_link_text(theme)) | underlined;
+      if (tk.s.url) e = e | color(theme_md_link(theme)) | underlined;
+      if (tk.s.img) e = e | color(theme_md_image(theme));
+      if (tk.s.img_text) e = e | color(theme_md_image_text(theme));
       row.push_back(e);
       if (k + 1 < lines[li].size()) row.push_back(text(" "));
     }
@@ -251,6 +272,263 @@ static Element flush_inline(const std::vector<IItem>& items, int avail,
   if (out.empty()) out.push_back(text(""));
   return vbox(std::move(out));
 }
+
+
+// ── Lightweight per-line syntax highlighter ─────────────────────────────────
+// Mirrors opencode's TUI element roles (theme index.ts): code body text uses
+// markdownCodeBlock, comments → syntaxComment, keywords → syntaxKeyword,
+// function calls → syntaxFunction, strings → syntaxString, numbers →
+// syntaxNumber, types → syntaxType, operators → syntaxOperator, punctuation →
+// syntaxPunctuation, diff +/-/@@ lines → diffAdded/diffRemoved/diffHunkHeader.
+// A hand tokenizer (not tree-sitter/shiki): terminal has no web worker, and
+// ftxui renders plain Elements — this gives per-theme coloring at O(n) cost.
+namespace {
+
+enum class HlKind {
+  Plain, Comment, Keyword, Str, Num, Func, Type, Op, Punct,
+  DiffAdd, DiffDel, DiffHunk
+};
+
+struct HlTok { std::string w; HlKind k = HlKind::Plain; };
+
+// C-like keyword set shared by c/cpp/js/ts/java/go/rust/sh-ish families.
+inline bool hl_is_keyword(const std::string& w) {
+  static const char* kws[] = {
+    "if","else","elif","for","while","do","switch","case","default","break",
+    "continue","return","yield","try","except","catch","finally","throw","raise",
+    "import","from","export","as","with","using","namespace","package",
+    "class","struct","enum","union","interface","trait","impl","extends",
+    "implements","public","private","protected","static","final","const",
+    "constexpr","virtual","override","abstract","sealed","readonly","volatile",
+    "async","await","function","def","fn","lambda","let","var","new","delete",
+    "typeof","sizeof","typedef","template","typename","self","this","super",
+    "true","false","null","nullptr","nil","None","True","False","and","or",
+    "not","in","is","of","pass","goto","do","end","begin","then","until",
+    "local","echo","exit","fi","done"
+  };
+  for (auto* kw : kws) if (w == kw) return true;
+  return false;
+}
+
+inline bool hl_is_type(const std::string& w) {
+  if (w.empty() || !(w[0] >= 'A' && w[0] <= 'Z')) return false;
+  for (char ch : w)
+    if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+          (ch >= '0' && ch <= '9') || ch == '_')) return false;
+  return true;
+}
+
+inline bool hl_is_number(const std::string& w) {
+  if (w.empty()) return false;
+  size_t i = 0;
+  if (w.size() > 2 && w[0] == '0' && (w[1] == 'x' || w[1] == 'X')) {
+    if (w.size() == 2) return false;
+    for (i = 2; i < w.size(); i++)
+      if (!((w[i] >= '0' && w[i] <= '9') || (w[i] >= 'a' && w[i] <= 'f') ||
+            (w[i] >= 'A' && w[i] <= 'F') || w[i] == '_')) return false;
+    return true;
+  }
+  bool dot = false, digit = false;
+  for (; i < w.size(); i++) {
+    char ch = w[i];
+    if (ch >= '0' && ch <= '9') { digit = true; continue; }
+    if (ch == '.' && !dot) { dot = true; continue; }
+    if (ch == '_' && digit) continue;
+    return false;
+  }
+  return digit;
+}
+
+// Tokenize one code line into colored spans. `lang` selects comment/string
+// conventions; unknown/empty lang still gets strings/numbers/operators.
+inline std::vector<HlTok> hl_tokenize_line(const std::string& ln,
+                                           const std::string& lang,
+                                           bool& in_block, bool& in_pystr) {
+  std::vector<HlTok> out;
+  const size_t n = ln.size();
+  size_t i = 0;
+  auto is_word = [](char ch) {
+    return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+           (ch >= '0' && ch <= '9') || ch == '_' || ch == '$';
+  };
+  const bool hash_comment = (lang == "py" || lang == "python" || lang == "rb" ||
+                             lang == "ruby" || lang == "sh" || lang == "bash" ||
+                             lang == "zsh" || lang == "yaml" || lang == "yml" ||
+                             lang == "toml" || lang == "dockerfile" || lang.empty());
+  const bool dash_comment = (lang == "sql" || lang == "lua" || lang == "hs" ||
+                             lang == "haskell");
+  const bool slash_comment = !dash_comment;  // c-like default
+
+  // diff热量: whole-line roles (opencode theme diff.* roles)
+  if ((lang == "diff" || lang == "patch") && n > 0 &&
+      (ln[0] == '+' || ln[0] == '-' || ln.compare(0, 2, "@@") == 0) && !in_block) {
+    HlKind k = HlKind::Plain;
+    if (ln[0] == '+') k = HlKind::DiffAdd;
+    else if (ln[0] == '-') k = HlKind::DiffDel;
+    else k = HlKind::DiffHunk;
+    out.push_back({ln, k});
+    return out;
+  }
+  if (in_pystr) {
+    size_t e = ln.find("\"\"\"");
+    if (e == std::string::npos) { out.push_back({ln, HlKind::Str}); return out; }
+    out.push_back({ln.substr(0, e + 3), HlKind::Str});
+    i = e + 3;
+    in_pystr = false;
+  }
+  if (in_block) {
+    size_t e = ln.find("*/");
+    if (e == std::string::npos) { out.push_back({ln, HlKind::Comment}); return out; }
+    out.push_back({ln.substr(0, e + 2), HlKind::Comment});
+    i = e + 2;
+    in_block = false;
+  }
+
+  std::string plain;
+  auto flush_plain = [&]() {
+    if (!plain.empty()) { out.push_back({plain, HlKind::Plain}); plain.clear(); }
+  };
+  while (i < n) {
+    char ch = ln[i];
+    // line comments
+    if (slash_comment && ch == '/' && i + 1 < n && ln[i + 1] == '/') {
+      flush_plain(); out.push_back({ln.substr(i), HlKind::Comment}); break;
+    }
+    if (hash_comment && ch == '#') {
+      flush_plain(); out.push_back({ln.substr(i), HlKind::Comment}); break;
+    }
+    if (dash_comment && ch == '-' && i + 1 < n && ln[i + 1] == '-') {
+      flush_plain(); out.push_back({ln.substr(i), HlKind::Comment}); break;
+    }
+    // block comments
+    if (slash_comment && ch == '/' && i + 1 < n && ln[i + 1] == '*') {
+      size_t e = ln.find("*/", i + 2);
+      flush_plain();
+      if (e == std::string::npos) { out.push_back({ln.substr(i), HlKind::Comment}); in_block = true; break; }
+      out.push_back({ln.substr(i, e + 2 - i), HlKind::Comment}); i = e + 2; continue;
+    }
+    // python triple-quoted strings
+    if ((lang == "py" || lang == "python") && ln.compare(i, 3, "\"\"\"") == 0) {
+      size_t e = ln.find("\"\"\"", i + 3);
+      flush_plain();
+      if (e == std::string::npos) { out.push_back({ln.substr(i), HlKind::Str}); in_pystr = true; break; }
+      out.push_back({ln.substr(i, e + 3 - i), HlKind::Str}); i = e + 3; continue;
+    }
+    // strings
+    if (ch == '"' || ch == '\'' || ch == '`') {
+      size_t j = i + 1;
+      while (j < n) {
+        if (ln[j] == '\\' && j + 1 < n) { j += 2; continue; }
+        if (ln[j] == ch) break;
+        j++;
+      }
+      flush_plain();
+      out.push_back({ln.substr(i, (j < n ? j + 1 : n) - i), HlKind::Str});
+      i = (j < n ? j + 1 : n);
+      continue;
+    }
+    // numbers
+    if ((ch >= '0' && ch <= '9') &&
+        (i == 0 || (!is_word(ln[i - 1]) && ln[i - 1] != '.'))) {
+      size_t j = i;
+      bool dot = false;
+      while (j < n && ((ln[j] >= '0' && ln[j] <= '9') || ln[j] == '_' ||
+                       (!dot && ln[j] == '.'))) {
+        if (ln[j] == '.') dot = true;
+        j++;
+      }
+      if ((ch == '0' && j == i + 1 && j < n && (ln[j] == 'x' || ln[j] == 'X'))) {
+        j++;
+        while (j < n && ((ln[j] >= '0' && ln[j] <= '9') ||
+                         (ln[j] >= 'a' && ln[j] <= 'f') ||
+                         (ln[j] >= 'A' && ln[j] <= 'F') || ln[j] == '_')) j++;
+      }
+      flush_plain();
+      out.push_back({ln.substr(i, j - i), HlKind::Num});
+      i = j;
+      continue;
+    }
+    // words: keyword / function-call / type / variable
+    if (is_word(ch) && (i == 0 || !is_word(ln[i - 1]))) {
+      size_t j = i;
+      while (j < n && is_word(ln[j])) j++;
+      std::string w = ln.substr(i, j - i);
+      size_t k = j;
+      while (k < n && (ln[k] == ' ' || ln[k] == '\t')) k++;
+      flush_plain();
+      if (hl_is_keyword(w)) out.push_back({w, HlKind::Keyword});
+      else if (k < n && ln[k] == '(') out.push_back({w, HlKind::Func});
+      else if (hl_is_type(w)) out.push_back({w, HlKind::Type});
+      else out.push_back({w, HlKind::Plain});
+      i = j;
+      continue;
+    }
+    // operators
+    if (std::string("=+-*/%<>!&|^~?:").find(ch) != std::string::npos) {
+      flush_plain(); out.push_back({std::string(1, ch), HlKind::Op}); i++;
+      continue;
+    }
+    // punctuation
+    if (std::string("()[]{}.,;@").find(ch) != std::string::npos) {
+      flush_plain(); out.push_back({std::string(1, ch), HlKind::Punct}); i++;
+      continue;
+    }
+    plain += ch;
+    i++;
+  }
+  flush_plain();
+  // hl_is_number validation pass: reclassify plain-looking numeric runs that
+  // the scanner above may have merged with units (e.g. "100ms" stays plain).
+  return out;
+}
+
+// Normalize fence info to a highlight family.
+inline std::string hl_lang_family(std::string lang) {
+  for (auto& ch : lang) ch = static_cast<char>(std::tolower(ch));
+  if (lang == "py" || lang == "python3") return "py";
+  if (lang == "js" || lang == "jsx" || lang == "ts" || lang == "tsx" ||
+      lang == "mjs" || lang == "cjs") return "js";
+  if (lang == "sh" || lang == "shell" || lang == "bash" || lang == "zsh" ||
+      lang == "console" || lang == "terminal") return "sh";
+  if (lang == "yml" || lang == "toml" || lang == "ini" || lang == "cfg") return "yaml";
+  if (lang == "cc" || lang == "hh" || lang == "cxx" || lang == "hpp" ||
+      lang == "c++" || lang == "cpp" || lang == "h" || lang == "java" ||
+      lang == "cs" || lang == "go" || lang == "rs" || lang == "swift" ||
+      lang == "kt" || lang == "scala" || lang == "c") return "c";
+  return lang;
+}
+
+// Render one highlighted code line as an hbox of colored spans on panel_bg.
+inline Element hl_render_line(const std::string& pfx, const std::string& ln,
+                              const std::string& lang, const std::string& theme,
+                              bool& in_block, bool& in_pystr) {
+  Elements row;
+  if (!pfx.empty()) row.push_back(text(pfx));
+  if (ln.empty()) { row.push_back(text(" ")); return hbox(std::move(row)) | bgcolor(theme_panel_bg(theme)); }
+  auto toks = hl_tokenize_line(ln, lang, in_block, in_pystr);
+  for (const auto& tk : toks) {
+    Element e = text(tk.w);
+    switch (tk.k) {
+      case HlKind::Comment: e = e | color(theme_syn_comment(theme)); break;
+      case HlKind::Keyword: e = e | color(theme_syn_keyword(theme)) | bold; break;
+      case HlKind::Str: e = e | color(theme_syn_string(theme)); break;
+      case HlKind::Num: e = e | color(theme_syn_number(theme)); break;
+      case HlKind::Func: e = e | color(theme_syn_function(theme)); break;
+      case HlKind::Type: e = e | color(theme_syn_type(theme)); break;
+      case HlKind::Op: e = e | color(theme_syn_operator(theme)); break;
+      case HlKind::Punct: e = e | color(theme_syn_punct(theme)) | dim; break;
+      case HlKind::DiffAdd: e = e | color(theme_success(theme)); break;
+      case HlKind::DiffDel: e = e | color(theme_error(theme)); break;
+      case HlKind::DiffHunk: e = e | color(theme_md_quote(theme)) | bold; break;
+      case HlKind::Plain:
+      default: e = e | color(theme_md_codeblock(theme)); break;
+    }
+    row.push_back(e);
+  }
+  return hbox(std::move(row)) | bgcolor(theme_panel_bg(theme));
+}
+
+}  // namespace
 
 // ── md4c callbacks (C linkage) ───────────────────────────────────────────────
 extern "C" {
@@ -280,6 +558,11 @@ static int md_enter_block(MD_BLOCKTYPE type, void* detail, void* ud) {
   } else if (type == MD_BLOCK_ADMONITION) {
     auto* d = static_cast<MD_BLOCK_ADMONITION_DETAIL*>(detail);
     b.adm_type = attr_str(d->type);
+  } else if (type == MD_BLOCK_CODE) {
+    auto* d = static_cast<MD_BLOCK_CODE_DETAIL*>(detail);
+    // md4c splits the info string: `lang` is the first word when the fence
+    // carries one (```cpp), otherwise empty for bare/indented blocks.
+    b.code_lang = attr_str(d->lang);
   } else if (type == MD_BLOCK_TABLE) {
     c->in_table = true;
     c->table_grid.clear();
@@ -421,43 +704,63 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
       el = flush_inline(b.inline_items, avail, "", 0, c->theme);
       break;
     case MD_BLOCK_H: {
+      // opencode TUI: markup.heading → markdownHeading+bold for all levels,
+      // markup.heading.1 additionally underlined (h1 rule kept for h1 only).
       auto* d = static_cast<MD_BLOCK_H_DETAIL*>(detail);
-      el = flush_inline(b.inline_items, avail, "", 0, c->theme) | bold;
-      el = el | (d->level <= 2 ? color(accent2(c->theme)) : color(accent(c->theme)));
+      el = flush_inline(b.inline_items, avail, "", 0, c->theme) | bold |
+           color(theme_md_heading(c->theme));
+      if (d->level == 1) el = el | underlined;
       if (d->level <= 2)
-        el = vbox({el, separatorLight() | color(accent(c->theme))});
+        el = vbox({el, separatorLight() | color(theme_md_hr(c->theme))});
       break;
     }
     case MD_BLOCK_CODE: {
+      // opencode web: code blocks get the shiki background; TUI equivalent
+      // is panel_bg with per-theme syntax roles. Long lines fall back to
+      // chunked plain rendering so nothing clips at the right edge.
       Elements lines;
       std::istringstream iss(b.code_text);
       std::string ln;
       int max_code_w = std::max(20, avail - 4);
+      const std::string family = hl_lang_family(b.code_lang);
+      bool in_block = false, in_pystr = false;
+      constexpr size_t kHlMaxLine = 2000;
       while (std::getline(iss, ln)) {
         if (!ln.empty() && ln.back() == '\r') ln.pop_back();
-        if (static_cast<int>(ln.size()) <= max_code_w) {
-          lines.push_back(text("  " + ln) | bgcolor(Color::RGB(0x1E, 0x1E, 0x2E)) |
-                          color(Color::RGB(0xBB, 0xBB, 0xBB)));
-        } else {
-          int start = 0;
-          bool first_chunk = true;
-          while (start < static_cast<int>(ln.size())) {
-            int take = std::min(static_cast<int>(ln.size()) - start, max_code_w);
-            std::string chunk = ln.substr(start, take);
-            std::string pfx = first_chunk ? "  " : "    ↳ ";
-            lines.push_back(text(pfx + chunk) | bgcolor(Color::RGB(0x1E, 0x1E, 0x2E)) |
-                            color(Color::RGB(0xBB, 0xBB, 0xBB)));
-            first_chunk = false;
-            start += take;
+        if (ln.size() > kHlMaxLine || static_cast<int>(ln.size()) > max_code_w) {
+          // Overlong/minified lines: keep old chunked plain behavior.
+          if (static_cast<int>(ln.size()) <= max_code_w) {
+            lines.push_back(text("  " + ln) | bgcolor(theme_panel_bg(c->theme)) |
+                            color(theme_md_codeblock(c->theme)));
+          } else {
+            int start = 0;
+            bool first_chunk = true;
+            while (start < static_cast<int>(ln.size())) {
+              int take = std::min(static_cast<int>(ln.size()) - start, max_code_w);
+              std::string chunk = ln.substr(start, take);
+              std::string pfx = first_chunk ? "  " : "    ↳ ";
+              lines.push_back(text(pfx + chunk) | bgcolor(theme_panel_bg(c->theme)) |
+                              color(theme_md_codeblock(c->theme)));
+              first_chunk = false;
+              start += take;
+            }
           }
+          continue;
         }
+        lines.push_back(hl_render_line("  ", ln, family, c->theme, in_block, in_pystr));
+      }
+      if (!b.code_lang.empty()) {
+        lines.insert(lines.begin(),
+                     text("‹" + b.code_lang + "›") | dim |
+                         color(theme_muted(c->theme)));
       }
       el = vbox(std::move(lines));
       break;
     }
     case MD_BLOCK_QUOTE: {
+      // opencode web: muted text + base rail; TUI theme: markdownBlockQuote.
       Element inner = b.children.empty() ? vbox({}) : vbox(std::move(b.children));
-      el = hbox({text(" │ ") | color(accent2(c->theme)) | dim, inner | dim});
+      el = hbox({text(" │ ") | color(theme_md_quote(c->theme)), inner});
       break;
     }
     case MD_BLOCK_UL:
@@ -474,13 +777,13 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
       break;
     }
     case MD_BLOCK_HR:
-      el = separator();
+      el = separatorLight() | color(theme_md_hr(c->theme));
       break;
     case MD_BLOCK_ADMONITION: {
       Element inner = b.children.empty() ? vbox({}) : vbox(std::move(b.children));
       std::string label = b.adm_type.empty() ? "NOTE" : b.adm_type;
-      el = vbox({text("▌ " + label) | bold | color(accent2(c->theme)),
-                 hbox({text(" │ ") | color(accent(c->theme)) | dim, inner | dim})});
+      el = vbox({text("▌ " + label) | bold | color(theme_md_heading(c->theme)),
+                 hbox({text(" │ ") | color(theme_md_quote(c->theme)), inner})});
       break;
     }
     case MD_BLOCK_TABLE: {
@@ -597,6 +900,7 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
       t.SelectAll().Separator(LIGHT);
       if (!c->table_grid.empty() && !c->table_grid[0].empty()) {
         t.SelectRow(0).Decorate(bold);
+        t.SelectRow(0).DecorateCells(color(theme_md_heading(c->theme)));
       }
       el = std::move(t).Render();
       c->in_table = false;
@@ -633,13 +937,31 @@ static int md_enter_span(MD_SPANTYPE type, void* detail, void* ud) {
       break;
     }
     case MD_SPAN_IMG: {
+      // opencode TUI: markup renders image alt in markdownImage and the src
+      // in markdownImageText. Terminal has no image widget; emit a styled
+      // two-token placeholder instead of inheriting ambient style.
       auto* d = static_cast<MD_SPAN_IMG_DETAIL*>(detail);
       std::string src = attr_str(d->src);
-      IItem it;
-      it.kind = IKind::Text;
-      it.text = " [image: " + src + "] ";
-      it.style = s;
-      if (!c->stack.empty()) c->stack.back().inline_items.push_back(it);
+      if (!c->stack.empty()) {
+        IItem alt;
+        alt.kind = IKind::Text;
+        alt.text = " [image: ";
+        alt.style = MStyle{};
+        alt.style.img = true;
+        c->stack.back().inline_items.push_back(alt);
+        IItem srct;
+        srct.kind = IKind::Text;
+        srct.text = src;
+        srct.style = MStyle{};
+        srct.style.img_text = true;
+        c->stack.back().inline_items.push_back(srct);
+        IItem close;
+        close.kind = IKind::Text;
+        close.text = "] ";
+        close.style = MStyle{};
+        close.style.img = true;
+        c->stack.back().inline_items.push_back(close);
+      }
       return 0;  // image placeholder only; don't persist style
     }
     default: break;
@@ -652,13 +974,15 @@ static int md_leave_span(MD_SPANTYPE type, void*, void* ud) {
   Ctx* c = static_cast<Ctx*>(ud);
   if (type == MD_SPAN_IMG) return 0;
   if (type == MD_SPAN_A && !c->style_stack.empty()) {
+    // opencode TUI scope markup.link.url → markdownLink (underlined); the
+    // label itself already rendered via markdownLinkText in flush_inline.
     std::string href = c->style_stack.back().href;
     if (!href.empty() && !c->stack.empty()) {
       IItem it;
       it.kind = IKind::Text;
       it.text = " (" + href + ")";
       it.style = MStyle{};
-      it.style.dim = true;
+      it.style.url = true;
       c->stack.back().inline_items.push_back(it);
     }
   }

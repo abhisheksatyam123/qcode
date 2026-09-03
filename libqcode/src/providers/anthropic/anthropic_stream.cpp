@@ -44,6 +44,8 @@ void AnthropicStreamImpl::start_stream(const std::string& url,
     }
     stop_requested_ = false;
     stream_complete_ = false;
+    stream_usage_ = Usage{};
+    stream_usage_seen_ = false;
     event_timeout_ = default_event_timeout();
   }
 
@@ -203,7 +205,16 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
     LOG_DEBUG("Processing SSE event type: {}", event_type);
 
     if (event_type == "message_start") {
-      // Start of message - could extract metadata here
+      // message_start.message.usage carries input_tokens (+ cache hits).
+      if (json_event.contains("message") && json_event["message"].contains("usage")) {
+        const auto& usage = json_event["message"]["usage"];
+        stream_usage_.prompt_tokens = usage.value("input_tokens", stream_usage_.prompt_tokens);
+        const int cached = usage.value("cache_read_input_tokens", 0);
+        if (cached > 0) stream_usage_.cached_prompt_tokens = cached;
+        stream_usage_.total_tokens =
+            stream_usage_.prompt_tokens + stream_usage_.completion_tokens;
+        stream_usage_seen_ = true;
+      }
       return;
     } else if (event_type == "content_block_start") {
       // Start of content block
@@ -233,14 +244,34 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
       // End of content block
       return;
     } else if (event_type == "message_delta") {
-      // Message-level delta (could contain stop reason)
+      // message_delta.usage carries output_tokens (+ delta stop reason).
+      if (json_event.contains("usage")) {
+        const auto& usage = json_event["usage"];
+        const int out = usage.value("output_tokens", 0);
+        if (out > 0) stream_usage_.completion_tokens = out;
+        if (usage.contains("output_tokens_details") && usage["output_tokens_details"].is_object()) {
+          const auto& det = usage["output_tokens_details"];
+          const int think = det.value("reasoning_tokens", det.value("thinking_tokens", 0));
+          if (think > 0) stream_usage_.reasoning_completion_tokens = think;
+        }
+        const int think_flat = usage.value("thinking_tokens", 0);
+        if (think_flat > 0) stream_usage_.reasoning_completion_tokens = think_flat;
+        stream_usage_.total_tokens =
+            stream_usage_.prompt_tokens + stream_usage_.completion_tokens;
+        stream_usage_seen_ = true;
+      }
       return;
     } else if (event_type == "message_stop") {
-      // End of message
-      StreamEvent event(kStreamEventTypeFinish, Usage{}, kFinishReasonStop);
+      // End of message: report accumulated usage so thinking/cache badges work.
+      stream_usage_.total_tokens =
+          stream_usage_.prompt_tokens + stream_usage_.completion_tokens;
+      StreamEvent event(kStreamEventTypeFinish, stream_usage_, kFinishReasonStop);
       push_event(event);
 
-      LOG_DEBUG("Enqueued finish event");
+      LOG_DEBUG("Enqueued finish event prompt={} cached={} completion={} thinking={}",
+                stream_usage_.prompt_tokens, stream_usage_.cached_prompt_tokens,
+                stream_usage_.completion_tokens,
+                stream_usage_.reasoning_completion_tokens);
     }
   } catch (const std::exception& e) {
     LOG_ERROR("Failed to parse SSE event: {}", e.what());
@@ -254,9 +285,12 @@ void AnthropicStreamImpl::push_event(const StreamEvent& event) {
 void AnthropicStreamImpl::mark_complete() {
   stream_complete_ = true;
 
-  // Push final finish event if not already done
-  StreamEvent finish_event(kStreamEventTypeFinish);
-  push_event(finish_event);
+  // message_stop already pushed a finish with usage; only synthesize one
+  // when the stream closed without it (avoids a duplicate empty usage).
+  if (!stream_usage_seen_) {
+    StreamEvent finish_event(kStreamEventTypeFinish);
+    push_event(finish_event);
+  }
 }
 
 StreamEvent AnthropicStreamImpl::create_error_event(

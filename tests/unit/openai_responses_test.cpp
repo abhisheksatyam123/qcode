@@ -22,6 +22,58 @@ TEST(OpenAIResponsesTest, BuildsResponsesRequestWithTools) {
   EXPECT_FALSE(request.contains("messages"));
   EXPECT_EQ(request["reasoning"]["effort"], "high");
   EXPECT_EQ(request["tools"][0]["name"], "lookup");
+  ASSERT_EQ(request["input"].size(), 1u);
+  EXPECT_EQ(request["input"][0]["role"], "user");
+  ASSERT_TRUE(request["input"][0]["content"].is_array());
+  EXPECT_EQ(request["input"][0]["content"][0]["type"], "input_text");
+  EXPECT_EQ(request["input"][0]["content"][0]["text"], "hello");
+}
+
+TEST(OpenAIResponsesTest, LowersToolTurnsWithoutNullAssistantContent) {
+  OpenAIRequestBuilder builder(true);
+  GenerateOptions options;
+  options.model = "muse-spark-1.3-contributor-free";
+  options.system = "be brief";
+  options.messages = {
+      Message::user("What is the weather?"),
+      Message::assistant_with_tools(
+          "", {ToolCallContentPart{
+                  "call_1", "lookup", nlohmann::json{{"query", "weather"}}}}),
+      Message::tool_results(
+          {{"call_1", nlohmann::json{{"forecast", "sunny"}}, false}}),
+      Message::assistant("Paris is sunny."),
+      Message::user("thanks"),
+  };
+
+  const auto request = builder.build_request_json(options);
+  ASSERT_TRUE(request.contains("input"));
+  const auto& input = request["input"];
+  ASSERT_EQ(input.size(), 6u);
+
+  EXPECT_EQ(input[0]["role"], "system");
+  EXPECT_EQ(input[0]["content"], "be brief");
+
+  EXPECT_EQ(input[1]["role"], "user");
+  ASSERT_TRUE(input[1]["content"].is_array());
+  EXPECT_EQ(input[1]["content"][0]["type"], "input_text");
+  EXPECT_EQ(input[1]["content"][0]["text"], "What is the weather?");
+
+  EXPECT_EQ(input[2]["type"], "function_call");
+  EXPECT_EQ(input[2]["call_id"], "call_1");
+  EXPECT_EQ(input[2]["name"], "lookup");
+  EXPECT_FALSE(input[2].contains("content"));
+
+  EXPECT_EQ(input[3]["type"], "function_call_output");
+  EXPECT_EQ(input[3]["call_id"], "call_1");
+  EXPECT_TRUE(input[3]["output"].is_string());
+
+  EXPECT_EQ(input[4]["role"], "assistant");
+  ASSERT_TRUE(input[4]["content"].is_array());
+  EXPECT_EQ(input[4]["content"][0]["type"], "output_text");
+  EXPECT_EQ(input[4]["content"][0]["text"], "Paris is sunny.");
+
+  EXPECT_EQ(input[5]["role"], "user");
+  EXPECT_EQ(input[5]["content"][0]["type"], "input_text");
 }
 
 TEST(OpenAIChatCompletionsTest, ExtractsMuseSparkObjectReasoning) {

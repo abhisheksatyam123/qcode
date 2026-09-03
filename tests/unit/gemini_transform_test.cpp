@@ -117,6 +117,8 @@ TEST(GeminiTransformTest, ConvertPreservesToolsCallsAndResults) {
   EXPECT_DOUBLE_EQ(gemini["generationConfig"]["topP"], 0.9);
   EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "high");
+  EXPECT_TRUE(
+      gemini["generationConfig"]["thinkingConfig"]["includeThoughts"].get<bool>());
 }
 
 TEST(GeminiTransformTest, ReasoningObjectEffortMapsToThinkingLevel) {
@@ -125,6 +127,8 @@ TEST(GeminiTransformTest, ReasoningObjectEffortMapsToThinkingLevel) {
   const auto gemini = convert_openai_to_gemini(request);
   EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "medium");
+  EXPECT_TRUE(
+      gemini["generationConfig"]["thinkingConfig"]["includeThoughts"].get<bool>());
 }
 
 TEST(GeminiTransformTest, MaxEffortMapsToHighBudget) {
@@ -135,6 +139,8 @@ TEST(GeminiTransformTest, MaxEffortMapsToHighBudget) {
             "high");
   EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingBudget"],
             24576);
+  EXPECT_TRUE(
+      gemini["generationConfig"]["thinkingConfig"]["includeThoughts"].get<bool>());
 }
 
 // ---- envelope -------------------------------------------------------------
@@ -194,6 +200,21 @@ TEST(GeminiTransformTest, WrapEnvelopeUsesConfiguredProjectAndLegacyAlias) {
       json::object(), "antigravity-gemini-3-flash", "project-1");
   EXPECT_EQ(env["project"], "project-1");
   EXPECT_EQ(env["model"], "gemini-3-flash-agent");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeMapsGemini38FlashEffort) {
+  json gem = parsed(R"({
+    "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}}
+  })");
+  json env = wrap_antigravity_envelope(gem, "gemini-3.8-flash");
+  EXPECT_EQ(env["model"].get<std::string>(), "gemini-3.8-flash-low");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeDefaultsGemini38FlashToMediumSku) {
+  // Bare gemini-3.8-flash 404s on Antigravity. Off/medium thinking must
+  // still send the -medium wire id.
+  json env = wrap_antigravity_envelope(json::object(), "gemini-3.8-flash");
+  EXPECT_EQ(env["model"].get<std::string>(), "gemini-3.8-flash-medium");
 }
 
 // ---- unwrap ---------------------------------------------------------------

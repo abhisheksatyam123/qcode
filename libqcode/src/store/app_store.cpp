@@ -93,6 +93,20 @@ void AppStore::append_assistant_chunk(const std::string& chunk) {
 
 void AppStore::append_reasoning(const std::string& chunk,
                                 const std::string& signature) {
+    // Upstream opencode: strip [REDACTED] markers; drop whitespace-only
+    // chunks so scrollback never gets a blank Thought row.
+    std::string clean = chunk;
+    {
+        const std::string tag = "[REDACTED]";
+        size_t p = 0;
+        while ((p = clean.find(tag, p)) != std::string::npos) clean.erase(p, tag.size());
+    }
+    bool visible = false;
+    for (char c : clean) {
+        if (c != ' ' && c != '\t' && c != '\n' && c != '\r') { visible = true; break; }
+    }
+    if (!visible && signature.empty()) return;
+    const std::string& use = clean;
     // Start a fresh assistant message when the trailing one already carries
     // visible text — keeps per-step thinking blocks ordered like opencode's
     // part renderers instead of appending below earlier prose.
@@ -105,21 +119,21 @@ void AppStore::append_reasoning(const std::string& chunk,
         state_.messages_history->back().role != qcode::kMessageRoleAssistant) {
         if (chunk.empty()) return;
         state_.messages_history->emplace_back(
-            qcode::Message::assistant_with_reasoning("", chunk, signature));
+            qcode::Message::assistant_with_reasoning("", use, signature));
     } else {
         auto& last = state_.messages_history->back();
         bool found = false;
         for (auto& part : last.content) {
             if (auto* rp = std::get_if<qcode::ReasoningContentPart>(&part)) {
-                rp->text += chunk;
+                rp->text += use;
                 if (!signature.empty()) rp->signature = signature;
                 found = true;
                 break;
             }
         }
-        if (!found && !chunk.empty()) {
+        if (!found && !use.empty()) {
             last.content.emplace_back(
-                qcode::ReasoningContentPart{chunk, signature});
+                qcode::ReasoningContentPart{use, signature});
         }
     }
     notify();
@@ -200,17 +214,15 @@ void AppStore::set_status(const std::string& s) {
 }
 
 void AppStore::set_error(const std::string& msg) {
+    // Upstream opencode: error text committed to scrollback verbatim
+    // (formatError order); no retry badge — backend auto-retries.
     LOG_ERROR("Store: set_error msg={}", msg);
     last_error_ = msg;
     status_ = "error";
     if (state_.status) *state_.status = "error";
     if (state_.last_error) *state_.last_error = msg;
     *state_.is_generating = false;
-    if (state_.retry_available && state_.last_user_prompt &&
-        !state_.last_user_prompt->empty()) {
-        *state_.retry_available = true;
-    }
-    add_toast(msg + "  · press r to retry", "error", 8000);
+    add_toast(msg, "error", 8000);
     notify();
 }
 
@@ -531,29 +543,30 @@ void AppStore::wire() {
     subs_.push_back(bus_.subscribe<SessionStatusChanged>([this](const SessionStatusChanged::Payload& p) { set_status(p.status); }));
 
     subs_.push_back(bus_.subscribe<ErrorOccurred>([this](const ErrorOccurred::Payload& p) {
-        // Retry progress is "info": keep the turn running and never dump the
-        // raw provider JSON into the transcript (that wraps vertically and
-        // blanks the screen).
+        // Upstream parity: "info" = retry progress toast, turn keeps running.
         if (p.severity == "info") {
             add_toast(p.message, "info", 3500);
             notify();
             return;
         }
-        // Any error/warning must clear the generating flag. Warnings previously
-        // set status to "warn" and left is_generating stuck true, freezing Esc
-        // and queue drain until a later idle event arrived (or never did).
+        // Abort is near-silent upstream ("Session aborted" notification only,
+        // no scrollback error, no latch).
+        if (p.message == "Generation stopped" || p.message == "Generation stopped." ||
+            p.message.find("aborted") != std::string::npos ||
+            p.message.find("Aborted") != std::string::npos) {
+            LOG_INFO("Store: generation aborted (silent)");
+            set_generating(false);
+            if (status_ == "generating" || status_ == "agent") set_status("idle");
+            else notify();
+            return;
+        }
         const std::string msg = format_user_facing_error(p.message);
         if (p.severity == "warning") {
+            // Upstream: warnings/empty-responses are transient toasts only —
+            // no status latch, no retry badge.
             LOG_WARN("Store: warning message={}", msg);
             set_generating(false);
-            if (state_.last_user_prompt && !state_.last_user_prompt->empty() &&
-                state_.retry_available) {
-                *state_.retry_available = true;
-                add_toast("\u26a0 " + msg + "  · press r to retry",
-                          "warning", 6000);
-            } else {
-                add_toast("\u26a0 " + msg, "warning", 6000);
-            }
+            add_toast(msg, "warning", 6000);
             if (status_ == "generating" || status_ == "agent") {
                 set_status("idle");
             } else {

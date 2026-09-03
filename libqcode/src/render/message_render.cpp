@@ -97,6 +97,18 @@ std::string format_duration(double duration_ms) {
     return buf;
 }
 
+static std::string format_compact_tokens(long long n) {
+    if (n >= 1000000) {
+        char b[32]; std::snprintf(b, sizeof(b), "%.1fM", n / 1000000.0);
+        return b;
+    }
+    if (n >= 10000) {
+        char b[32]; std::snprintf(b, sizeof(b), "%.0fk", n / 1000.0);
+        return b;
+    }
+    return std::to_string(n);
+}
+
 std::string truncate_utf8(std::string text, size_t max_chars) {
     if (text.size() <= max_chars) return text;
     if (max_chars <= 3) return text.substr(0, max_chars);
@@ -116,6 +128,43 @@ std::string json_string(const nlohmann::json& value,
 bool is_bash_tool(const std::string& tool_name) {
     return tool_name == "bash" || tool_name == "shell" ||
            tool_name == "run_command";
+}
+
+// ── Upstream opencode tool text (tool.ts / session-data.ts) ──
+// start:  "running <tool|desc>"            (toolStatus)
+// fail:   "✖ <name> failed: <err>"         (fail/toolError)
+// fallback start: "⚙ <name> [k=v, ...]"   (fallbackStart/info)
+// final:  "<name> completed · <duration>" (fallbackFinal/span)
+static std::string tool_info_kv(const nlohmann::json& args) {
+    if (!args.is_object()) return {};
+    std::string out;
+    for (auto it = args.begin(); it != args.end(); ++it) {
+        const auto& v = it.value();
+        if (!v.is_string() && !v.is_number() && !v.is_boolean()) continue;
+        std::string val = v.is_string() ? v.get<std::string>() : v.dump();
+        if (val.size() > 40) val = val.substr(0, 37) + "...";
+        if (!out.empty()) out += ", ";
+        out += it.key() + "=" + val;
+    }
+    return out.empty() ? std::string{} : "[" + out + "]";
+}
+static std::string tool_start_text(const std::string& display_name,
+                                   const std::string& desc) {
+    if (!desc.empty()) return "running " + desc;
+    if (!display_name.empty()) return "running " + display_name;
+    return "running tool";
+}
+static std::string tool_fail_text(const std::string& display_name,
+                                  const std::string& err) {
+    std::string e = err;
+    // single line, trimmed (upstream toolError().trim())
+    e.erase(0, e.find_first_not_of(" \t\n\r"));
+    e.erase(e.find_last_not_of(" \t\n\r") + 1);
+    std::string nl;
+    for (char c : e) nl += (c == '\n' || c == '\r' ? ' ' : c);
+    if (nl.size() > 160) nl = nl.substr(0, 157) + "...";
+    if (nl.empty()) return "✖ " + display_name + " failed";
+    return "✖ " + display_name + " failed: " + nl;
 }
 
 }  // namespace
@@ -207,7 +256,15 @@ Element ToolBlock(const std::string& icon,
     }
 
     if (is_running || status == "running" || status == "calling") {
-        title_row.push_back(text("⠋") | color(Color::Yellow) | bold);
+        // Upstream running state: animated marker + elapsed (footer frame
+        // repaints ~4fps so this ticks without extra timers).
+        std::string elapsed;
+        if (duration_ms > 0) {
+            const auto t = format_duration(duration_ms);
+            if (!t.empty()) elapsed = " " + t;
+        }
+        title_row.push_back(
+            text("⠋" + elapsed) | color(Color::Yellow) | bold);
     } else if (status == "failed" || status == "error") {
         title_row.push_back(text("✗") | color(error_fg(theme)) | bold);
     } else if (status == "success" || status == "completed" ||
@@ -353,27 +410,25 @@ static std::string extract_shell_command(const qcode::ToolCallContentPart& part)
         }
     }
 
-    for (auto it = args.begin(); it != args.end(); ++it) {
-        if (it.key() == "description" || it.key() == "desc" ||
-            it.key() == "toolAction" || it.key() == "toolSummary") continue;
-        if (it.value().is_string()) {
-            return part.tool_name + " " + it.value().get<std::string>();
-        }
-    }
-    return part.tool_name;
+    const auto kv = tool_info_kv(args);
+    if (!kv.empty()) return "⚙ " + part.tool_name + " " + kv;
+    return "⚙ " + part.tool_name;
 }
 
 static std::string extract_result_output(const qcode::ToolResultContentPart& part) {
+    // Upstream toolError(): prefer trimmed message, never a raw JSON dump.
     if (part.result.is_string()) return part.result.get<std::string>();
-    if (!part.result.is_object()) return part.result.dump(2);
-
+    if (!part.result.is_object()) return part.result.dump();
     auto output = json_string(part.result, {"output", "content", "result",
-                                            "summary", "matches", "error"});
+                                            "summary", "matches", "error", "message"});
     if (!output.empty()) return output;
-    if (part.result.contains("error")) {
-        return part.result["error"].dump(2);
-    }
-    return part.result.dump(2);
+    if (part.result.contains("error") && part.result["error"].is_string())
+        return part.result["error"].get<std::string>();
+    // Last resort: compact single-line summary, not pretty dump.
+    std::string flat = part.result.dump();
+    for (char& c : flat) if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+    if (flat.size() > 300) flat = flat.substr(0, 297) + "...";
+    return flat;
 }
 
 
@@ -382,7 +437,19 @@ static Element render_shell_output(const qcode::ToolCallContentPart& call_part,
                                    const qcode::ToolResultContentPart& result_part,
                                    const std::string& theme,
                                    bool collapsed) {
-    if (collapsed) return emptyElement();
+    if (collapsed && !result_part.is_error) return emptyElement();
+    if (result_part.is_error) {
+        // Upstream failTool: one-line "✖ name failed: err" stays visible
+        // even when collapsed.
+        const auto out = extract_result_output(result_part);
+        Elements err_body;
+        err_body.push_back(text(tool_fail_text(tool_display_name(call_part.tool_name), out)) |
+                           color(error_fg(theme)) | bold);
+        if (!collapsed && !out.empty()) {
+            err_body.push_back(render_truncated_output(out, 8, theme, true));
+        }
+        return vbox(std::move(err_body));
+    }
 
     Elements body;
     if (call_part.arguments.is_object()) {
@@ -427,12 +494,14 @@ static Element render_tool_call(const qcode::ToolCallContentPart& part,
     const auto desc = extract_tool_description(part);
     
     Elements body;
-    body.push_back(text("running…") | dim | color(Color::Yellow));
+    // Upstream startTool text: "running <desc|tool>" + live elapsed in title.
+    body.push_back(text(tool_start_text(tool_display_name(part.tool_name), desc)) |
+                   dim | color(Color::Yellow));
 
     return ToolBlock(tool_icon(part.tool_name),
                       tool_display_name(part.tool_name), desc,
                       vbox(std::move(body)), true,
-                      "calling", accent(theme), 0.0, false, false, false,
+                      "running", accent(theme), 0.0, false, false, false,
                       command, theme, const_cast<ChatState*>(&state), part.id);
 }
 
@@ -456,7 +525,7 @@ static Element render_tool_result(const qcode::ToolResultContentPart& part,
 }
 
 // Opencode-style reasoning header: warning-coloured "+/- Thought" toggle
-// (collapsed by default), live "Thinking" spinner while the model works.
+// (collapsed by default; static while busy — footer owns the spinner).
 static Element render_reasoning(const qcode::ReasoningContentPart& rp,
                                  const std::string& theme,
                                  bool expanded = true,
@@ -472,21 +541,20 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
     };
 
     // Collapsed summary — mirrors opencode hide-mode "+ Thought" (click the
-    // header to expand; markers communicate the toggle).
+    // header to expand; markers communicate the toggle). Always static: the
+    // single animated spinner lives in the footer (single ownership).
     if (!expanded) {
-        Element line;
-        if (busy) {
-            line = hbox({
-                text("   ◐ ") | color(theme_warning(theme)),
-                text("Thinking") | color(theme_warning(theme)),
-            });
-        } else {
-            line = hbox({
-                thought_line("+ "),
-                text(" · click to expand") | dim | color(Color::GrayDark),
-            });
+        (void)busy;
+        // Token estimate (chars/4, same estimator as generation_service) so
+        // the collapsed line carries its cost like upstream usage totals.
+        Elements bits = {thought_line("+ ")};
+        if (!rp.text.empty()) {
+            const long long est = (long long)(rp.text.size() + 3) / 4;
+            bits.push_back(text(" · " + format_compact_tokens(est)) |
+                           dim | color(Color::GrayDark));
         }
-        return line;
+        bits.push_back(text(" · click to expand") | dim | color(Color::GrayDark));
+        return hbox(std::move(bits));
     }
 
     Elements md = render_markdown(rp.text, theme);
@@ -656,45 +724,8 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
         }
     }
 
-    // Opencode-style completion tail "▣ Build · Model" — only on the FINAL
-    // assistant message of the conversation, never per tool-loop step (the
-    // header already carries model/mode info).
-    bool is_last_assistant = false;
-    if (state.messages_history) {
-        for (auto it = state.messages_history->rbegin();
-             it != state.messages_history->rend(); ++it) {
-            if (it->role == kMessageRoleAssistant) {
-                is_last_assistant = (&*it == &msg);
-                break;
-            }
-        }
-    }
-    if (msg.role == kMessageRoleAssistant && is_last_assistant && !turn_busy &&
-        (!parts.empty() || has_text)) {
-        std::string model_label;
-        if (selected_provider >= 0 &&
-            selected_provider < static_cast<int>(providers_list.size()) &&
-            selected_model >= 0 &&
-            selected_model < static_cast<int>(
-                providers_list[selected_provider].models.size())) {
-            model_label =
-                providers_list[selected_provider].models[selected_model].name;
-        }
-        const std::string mode =
-            state.agent_mode && *state.agent_mode == "plan" ? "Plan" : "Build";
-        auto tail = hbox({
-            text("   ▣ ") | color(accent(theme)),
-            text(mode) | color(accent(theme)),
-        });
-        if (!model_label.empty()) {
-            tail = hbox({
-                std::move(tail),
-                text(" · " + model_label) | dim | color(theme_muted(theme)),
-            });
-        }
-        parts.push_back(text(""));
-        parts.push_back(std::move(tail));
-    }
+    // No completion tail: model/mode live in the header + footer (single
+    // owner each). Rendering them per-message duplicates the header.
 
     return vbox(std::move(parts));
 }

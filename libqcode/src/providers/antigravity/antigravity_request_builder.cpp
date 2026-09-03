@@ -33,7 +33,11 @@ httplib::Headers AntigravityRequestBuilder::build_headers(
                     config.auth_header_prefix + config.api_key);
   }
 
-  headers.emplace("User-Agent", "antigravity/1.15.8 linux/amd64");
+  // Old antigravity/<semver> UAs only provision *-tiered Flash ids; the
+  // hub aidev_client UA is what unlocks -low/-medium/-high (3.8 included).
+  headers.emplace(
+      "User-Agent",
+      "antigravity/hub/2.8.0 (aidev_client; os_type=linux; arch=amd64)");
 
   for (const auto& [key, value] : config.extra_headers) {
     headers.emplace(key, value);

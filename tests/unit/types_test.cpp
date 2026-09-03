@@ -433,6 +433,15 @@ TEST(ErrorClassificationTest, PermanentErrorsAreNotRetryable) {
   EXPECT_FALSE(is_error_message_retryable("Invalid request: bad schema"));
 }
 
+TEST(ErrorClassificationTest, AntigravityNotFoundIsPermanent) {
+  const char* body =
+      "{\n  \"error\": {\n    \"code\": 404,\n    \"message\": "
+      "\"Requested entity was not found.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}";
+  EXPECT_TRUE(is_permanent_not_found(404, body));
+  EXPECT_FALSE(is_permanent_not_found(429, body));
+  EXPECT_FALSE(is_permanent_not_found(404, "model temporarily unavailable"));
+}
+
 TEST(ErrorClassificationTest, FormatsZenConsoleJsonToShortLine) {
   const std::string raw =
       "⏳ Retrying attempt 1/6 in 2.5s: {\"error\":{\"type\":\"server_error\","

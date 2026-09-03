@@ -136,8 +136,8 @@ ChatTransport chat_transport_for(const std::string& base_url);
 std::string chat_wire_model_id(ChatTransport transport, std::string model_id);
 
 /// Wire id for OpenCode Zen chat/completions. Strips an `opencode/` prefix
-/// and remaps catalog/display aliases (ox-alpha) to the ids Zen validates
-/// (packages/console/app/src/routes/zen/v1/chat/completions.ts).
+/// and remaps catalog/display aliases (ox-alpha, hy3-free) onto ids the
+/// current Zen `/v1/models` list accepts.
 std::string zen_wire_model_id(std::string model_id);
 
 /// Zen API flavor from OpenCode's zen.mdx endpoint table:
@@ -157,6 +157,10 @@ std::string openrouter_wire_model_id(std::string model_id);
 /// Cursor Agent exposes many effort SKUs (grok-4.6-high, opus-5-thinking-low).
 /// Collapse those to the two family ids the picker should show.
 std::string cursor_family_id(const std::string& model_id);
+
+/// Picker id for a Cursor Agent SKU: known families first, then strip a
+/// trailing effort suffix (-thinking-low/medium/high or -low/medium/high).
+std::string cursor_picker_id(const std::string& model_id);
 
 /// Map family + /variant effort onto the slug AgentService accepts.
 /// Grok: grok-4.6 / grok-4.6-low / grok-4.6-high

@@ -1,4 +1,5 @@
 #include <qcode/session/generation_service.h>
+#include <qcode/session/generation_continue.h>
 #include <qcode/core/config.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
@@ -263,6 +264,8 @@ static void run_tools_generation_bus(
   bool aborted = false;
   bool stuck = false;
   bool auth_retried = false;
+  int auto_continues = 0;
+  const bool plan_mode = (ctx.agent_mode == "plan");
   // Consecutive steps with the same tool calls AND the same results.
   // Same-args retries with changing output (re-read, poll) are allowed.
   int no_progress_repeat = 0;
@@ -299,20 +302,35 @@ static void run_tools_generation_bus(
 
     {
       LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);
-      qcode::GenerateResult step_res = client.generate_text(step_opts);
-      // Abort may have been requested while blocked in generate_text.
-      if (ctx.abort_flag && ctx.abort_flag->load()) {
-        LOG_INFO("run_tools_generation_bus: abort after generate_text step={}",
-                 step);
-        aborted = true;
-        break;
+      // generate_text is a blocking HTTP POST. Without a heartbeat the TUI
+      // sits on "generating" for the full read timeout and looks wedged.
+      auto fut = std::async(std::launch::async, [&client, step_opts]() {
+        return client.generate_text(step_opts);
+      });
+      int waited_sec = 0;
+      while (fut.wait_for(std::chrono::seconds(15)) !=
+             std::future_status::ready) {
+        waited_sec += 15;
+        const bool stopping =
+            ctx.abort_flag && ctx.abort_flag->load();
+        bus.publish<contract::ErrorOccurred>({
+            .session_id = ctx.session_id,
+            .message = stopping
+                           ? "Stopping… waiting for the network call (" +
+                                 std::to_string(waited_sec) + "s)"
+                           : "Still waiting for the model (" +
+                                 std::to_string(waited_sec) + "s)…",
+            .severity = "info",
+        });
       }
+      qcode::GenerateResult step_res = fut.get();
       if (!step_res.is_success()) {
         const std::string err = step_res.error_message();
         LOG_ERROR("run_tools_generation_bus: step={} generate_text failed: finish_reason={} error=\"{}\" provider_metadata_size={}", step, step_res.finishReasonToString(), err, step_res.provider_metadata.value_or("").size());
-        // User pressed Esc (or the retry schedule was cut short) — exit
-        // quietly instead of surfacing a scary error toast.
-        if (ctx.abort_flag && ctx.abort_flag->load()) {
+        // RetryPolicy returns this only when Esc cut the schedule. A hung
+        // socket that later dies is a real error — show it even if Esc
+        // was pressed because the UI looked wedged.
+        if (err.find("Aborted by user") != std::string::npos) {
           LOG_INFO("run_tools_generation_bus: aborted at step={}", step);
           aborted = true;
           break;
@@ -349,6 +367,12 @@ static void run_tools_generation_bus(
         gen_result.provider_metadata = step_res.provider_metadata;
         break;
       }
+      if (ctx.abort_flag && ctx.abort_flag->load()) {
+        LOG_INFO("run_tools_generation_bus: abort after generate_text step={}",
+                 step);
+        aborted = true;
+        break;
+      }
 
       // Thinking tokens from this step: publish as a reasoning event BEFORE
       // the text delta so the TUI renders the thinking block above the
@@ -379,6 +403,18 @@ static void run_tools_generation_bus(
           !step_res.reasoning.empty()) {
         gen_result.usage.reasoning_completion_tokens = std::max(
             1, static_cast<int>(step_res.reasoning.size() / 4));
+      }
+      // Live header: TokenUsageUpdated at loop end is too late for a
+      // 30-step tool run. Zeros keep session totals from double-counting.
+      if (gen_result.usage.reasoning_completion_tokens > 0 ||
+          step_res.usage.cached_prompt_tokens > 0) {
+        bus.publish<TokenUsageUpdated>({
+            .prompt_tokens = 0,
+            .completion_tokens = 0,
+            .total_tokens = 0,
+            .cached_prompt_tokens = step_res.usage.cached_prompt_tokens,
+            .reasoning_tokens = gen_result.usage.reasoning_completion_tokens,
+        });
       }
       gen_result.finish_reason = step_res.finish_reason;
       gen_result.id = step_res.id;
@@ -463,7 +499,6 @@ static void run_tools_generation_bus(
       } else {
         no_progress_repeat = 0;
         last_progress_fp.clear();
-        LOG_DEBUG("run_tools_generation_bus: step={} no tool calls, finishing", step);
         response_messages.push_back(qcode::Message::assistant(step_res.text));
         if (options.on_step_finish) {
           qcode::GenerateStep step_data;
@@ -472,7 +507,21 @@ static void run_tools_generation_bus(
           step_data.usage = step_res.usage;
           options.on_step_finish.value()(step_data);
         }
-        finished = true;
+        if (should_auto_continue_build(plan_mode, auto_continues,
+                                       step_res.text)) {
+          ++auto_continues;
+          LOG_INFO(
+              "run_tools_generation_bus: auto-continue {} after text-only "
+              "stop (text_len={})",
+              auto_continues, step_res.text.size());
+          response_messages.push_back(
+              qcode::Message::user(std::string(kBuildContinueNudge)));
+        } else {
+          LOG_DEBUG(
+              "run_tools_generation_bus: step={} no tool calls, finishing",
+              step);
+          finished = true;
+        }
       }
 
     }
@@ -922,6 +971,9 @@ void run_generation_with_bus(
             "than making large assumptions about intent.\n"
             "</system-reminder>";
         LOG_INFO("ChatBus: agent_mode=plan (read-only)");
+    } else {
+        base_opts.system += std::string(kBuildModeReminder);
+        LOG_INFO("ChatBus: agent_mode=build (auto-continue stalls)");
     }
 
     Model transform_model(resolved_model_id, provider_id);

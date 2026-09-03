@@ -117,7 +117,7 @@ struct ChatState {
     int terminal_height = 40; // Approximate terminal height, updated during render
 
     // Color Theme Option (orange, green, blue, purple, monochrome)
-    std::shared_ptr<std::string> theme = std::make_shared<std::string>("orange");
+    std::shared_ptr<std::string> theme = std::make_shared<std::string>("opencode");
 
     // Active persistent session ID (UUID) + display title
     std::shared_ptr<std::string> session_id = std::make_shared<std::string>();

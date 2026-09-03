@@ -126,6 +126,16 @@ namespace qcode {
          status_code >= 500;    // Server errors (5xx)
 }
 
+// Antigravity (and some Vertex) 404s mean the model/project SKU does not
+// exist. Retrying six times just burns a minute and surfaces "retry limit".
+[[nodiscard]] inline bool is_permanent_not_found(int status_code,
+                                                 std::string_view body) {
+  if (status_code != 404) return false;
+  return body.find("Requested entity was not found") != std::string_view::npos ||
+         body.find("\"status\": \"NOT_FOUND\"") != std::string_view::npos ||
+         body.find("\"status\":\"NOT_FOUND\"") != std::string_view::npos;
+}
+
 /**
  * @brief Check if an error message body contains transient/rate-limit error indicators.
  * @param msg Error message to inspect.

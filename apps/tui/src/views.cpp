@@ -4,13 +4,19 @@
 #include "views_pickers.h"
 #include <qcode/session/session_store.h>
 #include <qcode/core/logger.h>
+#include <qcode/providers/provider_transform.h>
 
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include <climits>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <unordered_map>
 #include <ftxui/screen/string.hpp>
 
 namespace qcode {
@@ -50,14 +56,77 @@ ftxui::Decorator reflect_box(HitBox& box) {
   };
 }
 
+std::string format_workspace_path() {
+    std::error_code ec;
+    auto cwd = std::filesystem::current_path(ec);
+    if (ec) return ".";
+    std::string path = cwd.string();
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && home[0] != '\0') {
+        const std::string home_s{home};
+        if (path.rfind(home_s, 0) == 0) {
+            path.replace(0, home_s.size(), "~");
+        }
+    }
+    return path;
+}
+
+int prompt_input_height(const std::string& prompt_input, int max_lines) {
+    int input_lines = 1;
+    const int term_w = stable_terminal_size().dimx;
+    const int avail = std::max(20, term_w - 7);
+    size_t pos = 0;
+    while (pos <= prompt_input.size()) {
+        size_t nl = prompt_input.find('\n', pos);
+        std::string seg = (nl == std::string::npos)
+            ? prompt_input.substr(pos)
+            : prompt_input.substr(pos, nl - pos);
+        const int w = ftxui::string_width(seg);
+        int segs = (w <= 0) ? 1 : (w + avail - 1) / avail;
+        input_lines += segs - 1;
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    if (input_lines < 1) input_lines = 1;
+    return std::min(input_lines, max_lines);
+}
+
 }  // namespace
 
-// Compact token-count formatter: 1234 -> "1234", 128000 -> "128k",
-// 2'000'000 -> "2M". Used for the always-visible context usage / window.
-static std::string format_tokens(int n) {
-  if (n >= 1'000'000) return std::to_string(n / 1'000'000) + "M";
-  if (n >= 10'000) return std::to_string(n / 1'000) + "k";
-  return std::to_string(n);
+// Upstream opencode formatUsage (session-data.ts): locale-grouped total with
+// optional percent + cost. Total folds input+output+reasoning+cache.
+static std::string format_grouped(long long n) {
+  bool neg = n < 0;
+  if (neg) n = -n;
+  std::string d = std::to_string(n);
+  std::string out;
+  int c = 0;
+  for (int i = (int)d.size() - 1; i >= 0; --i) {
+    out.push_back(d[i]);
+    if (++c == 3 && i > 0) { out.push_back(','); c = 0; }
+  }
+  std::reverse(out.begin(), out.end());
+  return neg ? "-" + out : out;
+}
+static std::string format_usage_upstream(long long total, int window_size,
+                                         double cost, bool have_cost) {
+  if (total <= 0) {
+    if (have_cost && cost > 0) {
+      std::ostringstream os;
+      os << "$" << std::fixed << std::setprecision(4) << cost;
+      return os.str();
+    }
+    return {};
+  }
+  std::string text = format_grouped(total);
+  if (window_size > 0)
+    text += " (" + std::to_string((int)(total * 100 / window_size)) + "%)";
+  if (have_cost && cost > 0) {
+    std::ostringstream os;
+    os << "$" << std::fixed << std::setprecision(4) << cost;
+    text += " · " + os.str();
+  }
+  return text;
 }
 
 // Soft amber used for pending / queued chrome (readable on dark terminals).
@@ -98,13 +167,27 @@ static Element render_queued_prompt(const std::string& prompt_body,
 }
 
 ftxui::Element render_logo() {
-    auto cyan  = Color::RGB(22, 184, 243);
-    auto blue  = Color::RGB(72, 124, 255);
+    // Two-tone 4-row block logo spelling "q-code", using the same
+    // character-cell technique as OpenCode (muted mark + bold wordmark).
+    const auto muted = theme_text_muted();
+    const auto fg = theme_text();
     return vbox({
-        hbox({ text("        ") | color(cyan), text("                         ") | color(blue) }),
-        hbox({ text("█▀▀█    ") | color(cyan), text("  ▀▀▀▀ █▀▀█ █▀▀▄ █▀▀ ") | color(blue) | bold }),
-        hbox({ text("█  █ ▀▀ ") | color(cyan), text("  █    █  █ █  █ ▀▀ ") | color(blue) | bold }),
-        hbox({ text("▀▀▀█▀   ") | color(cyan), text("  ▀▀▀▀ ▀▀▀▀ ▀▀▀  ▀▀▀ ") | color(blue) | bold }),
+        hbox({
+            text("         ") | color(muted),
+            text(" ▄ ") | color(fg) | bold,
+        }),
+        hbox({
+            text("█▀▀█     ") | color(muted),
+            text("█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀") | color(fg) | bold,
+        }),
+        hbox({
+            text("█▄▄█  ▀  ") | color(muted),
+            text("█    █  █ █  █ █▀▀▀") | color(fg) | bold,
+        }),
+        hbox({
+            text("▀▀▀▀     ") | color(muted),
+            text("▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀") | color(fg) | bold,
+        }),
     }) | hcenter;
 }
 
@@ -134,24 +217,27 @@ ftxui::Element render_view(
     int variant_select_idx,
     const std::vector<VariantEntry>& variant_entries,
     const std::string& variant_query,
+    bool show_palette,
+    int palette_select_idx,
+    const std::vector<PaletteCommand>& palette_entries,
+    const std::string& palette_query,
+    bool show_help,
     const ftxui::Component& tab_toggle,
     const std::shared_ptr<int>& /*scroll_line*/,
     const ftxui::Component& input
 ) {
-    std::string theme = state.theme ? *state.theme : "orange";
+    std::string theme = state.theme ? *state.theme : "opencode";
 
-    // ── Header strip: tabs + model badge + token count + status ──
+    // ── Header: identity + model + context (transient status lives in footer) ──
     std::string hdr_model = providers_list[selected_provider].models[selected_model].name;
     const auto& hdr_model_info = providers_list[selected_provider].models[selected_model];
-    // Show the CURRENT context sent for this turn against the model window.
-    // (state.current_context_tokens is the per-request snapshot; state.total_tokens
-    // is the session lifetime total and is shown in the Stats tab instead.)
-    std::string hdr_tokens;
-    int ctx_used = *state.current_context_tokens > 0
-                       ? *state.current_context_tokens
-                       : (*state.last_actual_prompt_tokens > 0
-                              ? *state.last_actual_prompt_tokens
-                              : 0);
+    // Upstream opencode usage: total = ctx snapshot + reasoning + cache
+    // (session-data.ts formatUsage), rendered "12,345 (8%) · $0.0123".
+    int ctx_snapshot = *state.current_context_tokens > 0
+                           ? *state.current_context_tokens
+                           : (*state.last_actual_prompt_tokens > 0
+                                  ? *state.last_actual_prompt_tokens
+                                  : 0);
     int window_size = hdr_model_info.context_window;
     if (window_size <= 0) {
         auto summary = session::get_model_performance_summary(hdr_model_info.id);
@@ -169,132 +255,227 @@ ftxui::Element render_view(
             }
         }
     }
+    const int last_reasoning = state.last_reasoning_tokens ? *state.last_reasoning_tokens : 0;
+    const int last_cache = state.last_cached_prompt_tokens ? *state.last_cached_prompt_tokens : 0;
+    const long long usage_total =
+        (long long)ctx_snapshot + (long long)std::max(0, last_reasoning) + (long long)std::max(0, last_cache);
+    // Session cost estimate for the usage suffix (same rates as Stats tab).
+    double use_in_rate = 3.00, use_out_rate = 15.00;
+    {
+        const std::string& pid =
+            (selected_provider >= 0 && selected_provider < (int)providers_list.size())
+                ? providers_list[selected_provider].id
+                : std::string{};
+        use_in_rate = hdr_model_info.input_cost > 0 ? hdr_model_info.input_cost
+                      : (pid == "openrouter" ? 2.50 : 3.00);
+        use_out_rate = hdr_model_info.output_cost > 0 ? hdr_model_info.output_cost
+                       : (pid == "openrouter" ? 10.00 : 15.00);
+    }
+    const double use_cost =
+        (*state.total_prompt_tokens * use_in_rate + *state.total_completion_tokens * use_out_rate) / 1000000.0;
+    const bool use_have_cost = (*state.total_prompt_tokens + *state.total_completion_tokens) > 0;
+    std::string hdr_tokens = format_usage_upstream(usage_total, window_size, use_cost, use_have_cost);
     int ctx_pct = 0;
     Color ctx_color = Color::Default;
-    if (window_size > 0) {
-      if (ctx_used > 0) {
-        ctx_pct = static_cast<int>(static_cast<long long>(ctx_used) * 100 / window_size);
-        if (ctx_pct > 100) ctx_pct = 100;
-        hdr_tokens = format_tokens(ctx_used) + " / " +
-                     format_tokens(window_size) + " (" +
-                     std::to_string(ctx_pct) + "%)";
-        ctx_color = ctx_pct >= 85   ? Color::Red
-                    : ctx_pct >= 70 ? Color::Yellow
-                                    : accent2(theme);
-      } else {
-        hdr_tokens = format_tokens(window_size) + " tok";
-      }
-    } else {
-      hdr_tokens = format_tokens(ctx_used) + " tok";
+    if (window_size > 0 && usage_total > 0) {
+      ctx_pct = (int)(usage_total * 100 / window_size);
+      if (ctx_pct > 100) ctx_pct = 100;
+      ctx_color = ctx_pct >= 85   ? Color::Red
+                  : ctx_pct >= 70 ? Color::Yellow
+                                  : accent2(theme);
     }
 
-    // Prompt-cache hit + thinking-token badges for the latest turn
-    // (OpenCode Zen / OpenRouter report cached_tokens and reasoning_tokens).
-    std::string hdr_cache;
-    if (state.last_cached_prompt_tokens && *state.last_cached_prompt_tokens > 0) {
-        hdr_cache = "⚡ cache " + format_tokens(*state.last_cached_prompt_tokens);
-    }
-    std::string hdr_reasoning;
-    if (state.last_reasoning_tokens && *state.last_reasoning_tokens > 0) {
-        hdr_reasoning = "🧠 " + format_tokens(*state.last_reasoning_tokens);
-    }
-
-    // Status (compact, no spinner — spinner is rendered in the header below)
+    // Upstream statusline vocabulary (footer.view.tsx statusText + runtime
+    // phases): busy => interrupt labels; else raw backend status verbatim.
+    // No local badges (no "gen...", no warn/error/retry latches).
     Color status_color = accent2(theme);
     std::string hdr_status;
     const bool agent_busy =
         *state.is_generating ||
         (state.status && (*state.status == "generating" ||
                           *state.status == "agent"));
+    const bool abort_armed = agent_busy && state.abort_flag && state.abort_flag->load();
     if (agent_busy) {
-        static const std::array<const char*, 10> sp = {
-            "\u280b", "\u2819", "\u2839", "\u2838", "\u283c",
-            "\u2834", "\u2836", "\u2837", "\u280f", "\u280b"
-        };
-        int frame = *state.generation_frame % sp.size();
-        const bool is_agent =
-            state.status && *state.status == "agent";
-        hdr_status = std::string(sp[frame]) +
-                     (is_agent ? " agent..." : " gen...");
-    } else if (state.status && *state.status == "error") {
-        hdr_status = "\u26a0 error";
-        status_color = Color::RGB(0xCC, 0x33, 0x33);
-    } else if (state.status && *state.status == "warn") {
-        // "warn" reflects an empty model response (see chat_bus.cpp)
-        hdr_status = "\u26a0 empty";
-        status_color = Color::Yellow;
-    } else if (state.retry_available && *state.retry_available) {
-        hdr_status = "r retry";
-        status_color = Color::Yellow;
+        hdr_status = abort_armed ? "again to interrupt" : "interrupt";
+        status_color = abort_armed ? accent(theme) : theme_text(theme);
+    } else if (state.status && !state.status->empty() && *state.status != "idle" &&
+               *state.status != "generating" && *state.status != "agent" &&
+               *state.status != "error" && *state.status != "warn") {
+        hdr_status = *state.status;
+        status_color = theme_text(theme);
     }
 
-    // Prompt queue indicator (hourglass + count)
+    // Upstream queue: plain count hint, shown only when N > 0.
     std::string hdr_queue;
     if (state.queued_prompts && *state.queued_prompts > 0) {
-        hdr_queue = "\u29d6 " + std::to_string(*state.queued_prompts) + " queued";
+        hdr_queue = "queued " + std::to_string(*state.queued_prompts);
     }
 
-    
+    // Session segment: ALWAYS visible (never blank). Custom title wins;
+    // default "Session - <model>" titles collapse to short id so the model
+    // name doesn't duplicate the footer chip.
     std::string hdr_session;
-    if (state.session_title && !state.session_title->empty()) {
-        hdr_session = *state.session_title;
+    {
+        std::string title =
+            (state.session_title && !state.session_title->empty())
+                ? *state.session_title : std::string{};
+        const std::string sess_prefix = "Session - " + hdr_model;
+        bool is_default = (title == sess_prefix) ||
+            (title.rfind("Session - ", 0) == 0 && title.size() > 10 &&
+             hdr_model.find(title.substr(10)) != std::string::npos);
+        if (!title.empty() && !is_default) {
+            hdr_session = title;
+        } else if (state.session_id && state.session_id->size() >= 8) {
+            hdr_session = state.session_id->substr(0, 8);
+        }
         if (hdr_session.size() > 28) {
             hdr_session = hdr_session.substr(0, 27) + "…";
         }
-    } else if (state.session_id && state.session_id->size() >= 8) {
-        hdr_session = state.session_id->substr(0, 8);
+        if (hdr_session.empty() && state.session_id && !state.session_id->empty())
+            hdr_session = state.session_id->substr(0, 8);
+    }
+    // Folder for the header: ~/a/b/c shortened to b/c (last 2 segments,
+    // footer is dropped so everything lives in one designed header).
+    // Folder for the header: the SESSION workspace (not process cwd), so it
+    // matches opencode's per-session directory. Falls back to cwd.
+    std::string hdr_folder;
+    {
+        std::string ws;
+        if (state.session_id && !state.session_id->empty())
+            ws = session::get_session_workspace(*state.session_id);
+        hdr_folder = ws.empty() ? format_workspace_path() : ws;
+        const char* home = std::getenv("HOME");
+        if (home && home[0] && hdr_folder.rfind(home, 0) == 0)
+            hdr_folder.replace(0, std::string(home).size(), "~");
+        std::vector<std::string> segs;
+        std::string cur;
+        for (char c : hdr_folder) {
+            if (c == '/' || c == '\\') {
+                if (!cur.empty()) { segs.push_back(cur); cur.clear(); }
+            } else cur.push_back(c);
+        }
+        if (!cur.empty()) segs.push_back(cur);
+        if (segs.size() >= 2)
+            hdr_folder = segs[segs.size()-2] + "/" + segs.back();
+        else if (!segs.empty())
+            hdr_folder = segs.back();
+        if (hdr_folder.size() > 32) hdr_folder = "…/" + hdr_folder.substr(hdr_folder.size()-31);
     }
 
-    std::string effort_str;
-    if (state.reasoning_mode && *state.reasoning_mode != "off" && !state.reasoning_mode->empty()) {
-        effort_str = "⚡ " + *state.reasoning_mode;
+    std::string variant_label;
+    {
+        std::string rm = state.reasoning_mode ? *state.reasoning_mode : std::string{};
+        if (!rm.empty() && rm != "off") {
+            variant_label = rm;
+        } else if (rm.empty()) {
+            // Auto-thinking (generation defaults empty -> default_variant);
+            // surface it so the header matches what the backend requests.
+            variant_label = qcode::ProviderTransform::default_variant(hdr_model_info);
+            if (variant_label == "off") variant_label.clear();
+        }
+        // Explicit "off" stays empty (thinking disabled).
     }
-    // Agent mode badge (opencode build/plan parity).
     const bool plan_mode =
         state.agent_mode && *state.agent_mode == "plan";
+    const bool is_home =
+        state.tab_selected == 0 && state.messages_history &&
+        state.messages_history->empty();
+    const std::string hdr_provider =
+        (selected_provider >= 0 &&
+         selected_provider < static_cast<int>(providers_list.size()))
+            ? providers_list[selected_provider].name
+            : std::string{};
 
-    auto header = hbox({
-        text(" QCODE ") | bold | bgcolor(accent(theme)) | color(Color::White),
-        text(" "),
-        tab_toggle->Render(),
-        filler(),
-        // Right side: session, model, effort, tokens, status
-        (hdr_session.empty()
-             ? emptyElement()
-             : hbox({text(" " + hdr_session + " ") | dim, separatorLight()})),
-        text(" " + hdr_model + " ") | color(accent2(theme)) | bold,
-        (effort_str.empty()
-             ? emptyElement()
-             : hbox({separatorLight(), text(" " + effort_str + " ") | color(accent(theme)) | bold})),
-        (plan_mode
-             ? hbox({separatorLight(),
-                     text(" ⏸ plan ") | bold | bgcolor(queue_amber()) |
-                         color(Color::Black)})
-             : emptyElement()),
-        separatorLight(),
-        text(" " + hdr_tokens + " ") |
-            (ctx_pct > 0 ? color(ctx_color) : dim),
-        (hdr_cache.empty()
-             ? emptyElement()
-             : hbox({separatorLight(),
-                     text(" " + hdr_cache + " ") | color(accent(theme)) | dim})),
-        (hdr_reasoning.empty()
-             ? emptyElement()
-             : hbox({separatorLight(),
-                     text(" " + hdr_reasoning + " ") | color(theme_warning(theme))})),
-        (ctx_pct >= 70
-             ? hbox({separatorLight(),
-                     text(" /compact? ") | color(Color::Yellow) | dim})
-             : emptyElement()),
-        (hdr_queue.empty() ? emptyElement() : hbox({
-            separatorLight(),
-            text(" " + hdr_queue + " ") | color(queue_amber()) | bold,
-        })),
-        (hdr_status.empty() ? emptyElement() : hbox({
-            separatorLight(),
-            text(" " + hdr_status + " ") | color(status_color) | bold,
-        })),
-    });
+    const bool copy_mode = state.copy_mode && *state.copy_mode;
+    // Upstream statusline order: [spinner] [esc] status-text … queue.
+    // Spinner renders only while busy (blocks style upstream; braille here).
+    // Upstream statusline order: [spinner] status-text … queue.
+    // Spinner renders only while busy (single animated owner).
+    static const std::array<const char*, 10> footer_sp = {
+        "\u280b", "\u2819", "\u2839", "\u2838", "\u283c",
+        "\u2834", "\u2836", "\u2837", "\u280f", "\u280b"
+    };
+    const std::string footer_spin =
+        agent_busy ? footer_sp[*state.generation_frame % footer_sp.size()] : std::string{};
+    // Upstream footer: [spinner] model variant … status queue.
+    // Model + spinner live here only (header keeps folder/session/mode/tabs).
+    Elements footer_bits = {
+        (copy_mode ? text(" COPY ") | bold | color(theme_warning(theme))
+                   : emptyElement()),
+        (agent_busy ? text(" " + footer_spin) | color(accent(theme)) | bold
+                    : emptyElement()),
+        (plan_mode ? text(" Plan") | bold | color(queue_amber())
+                   : text(" Build") | bold | color(accent2(theme))),
+        text(" " + hdr_model) | color(accent(theme)),
+    };
+    if (!variant_label.empty())
+        footer_bits.push_back(text(" " + variant_label) | bold | color(theme_warning(theme)));
+    if (!hdr_status.empty())
+        footer_bits.push_back(text((agent_busy ? " esc " : " ") + hdr_status) | color(status_color));
+    if (!hdr_queue.empty())
+        footer_bits.push_back(text("  " + hdr_queue) | dim | color(theme_text_muted(theme)));
+    footer_bits.push_back(filler());
+    // Key hints merged here (single-line footer): busy state already shows
+    // "esc interrupt" via hdr_status above, so only add idle hints.
+    if (!agent_busy) {
+        footer_bits.push_back(text("tab") | bold | color(theme_text(theme)));
+        footer_bits.push_back(text(" agents  ") | dim | color(theme_text_muted(theme)));
+        footer_bits.push_back(text("ctrl+p") | bold | color(theme_text(theme)));
+        footer_bits.push_back(text(" commands ") | dim | color(theme_text_muted(theme)));
+    }
+    if (is_home)
+        footer_bits.push_back(text("0.1.0 ") | dim | color(theme_text_muted(theme)));
+    auto footer = hbox(std::move(footer_bits));
+
+    Element header = emptyElement();  // built below after prompt_status
+
+    auto make_prompt_box = [&](int input_height) -> Element {
+        // Single-line footer owns ALL status/hints (see footer below).
+        // Prompt box is input only — no second hint line.
+        return vbox({
+            hbox({
+                text(" ❯ ") | color(accent2(theme)) | bold,
+                input->Render() | color(theme_text(theme)) | yframe |
+                    size(HEIGHT, EQUAL, input_height) | flex,
+            }),
+        }) | borderRounded | color(theme_border(theme));
+    };
+
+    // -- Designed single header: 📁 folder · session · Build model (variant) · ctx · tabs --
+    {
+        Elements left;
+        // folder + session always visible (session never blank, never hidden).
+        left.push_back(text("⌂ " + hdr_folder) | bold | color(accent2(theme)));
+        left.push_back(text(" · ") | dim | color(theme_text_muted(theme)));
+        left.push_back(text(hdr_session.empty() ? "session" : hdr_session) |
+                       color(theme_text(theme)));
+        left.push_back(text("  ") | dim);
+        // Mode lives in the footer (upstream statusline order); header keeps
+        // identity + usage + tabs only.
+        Elements ctx;
+        if (!hdr_tokens.empty()) {
+            ctx.push_back(
+                text(" " + hdr_tokens) |
+                (ctx_pct > 0 ? color(ctx_color) : color(theme_text_muted(theme))));
+        }
+        if (ctx_pct >= 70) {
+            ctx.push_back(text("  /compact") | dim | color(Color::Yellow));
+        }
+        Elements row = {
+            hbox(std::move(left)),
+            filler(),
+        };
+        if (!ctx.empty()) {
+            row.push_back(hbox(std::move(ctx)));
+            row.push_back(text("  ") | dim);
+        }
+        row.push_back(tab_toggle->Render());
+        row.push_back(text(" "));
+        header = vbox({
+            hbox(std::move(row)),
+            separatorLight() | color(theme_border(theme)),
+        });
+    }
 
     Element body;
 
@@ -311,7 +492,7 @@ ftxui::Element render_view(
             }
             if (!matches.empty()) {
                 Elements rows;
-                rows.push_back(text(" ⎔ Select Session to Load:") | bold | color(accent2(theme)));
+                rows.push_back(text(" Sessions") | bold | color(accent2(theme)));
                 rows.push_back(separatorLight() | color(accent(theme)));
                 for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
                     bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
@@ -349,7 +530,7 @@ ftxui::Element render_view(
             }
             if (!matches.empty()) {
                 Elements rows;
-                rows.push_back(text(" ⎔ Select Variant:") | bold | color(accent2(theme)));
+                rows.push_back(text(" Variants") | bold | color(accent2(theme)));
                 rows.push_back(separatorLight() | color(accent(theme)));
                 for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
                     bool active = (state.slash_suggestion_mode &&
@@ -376,7 +557,7 @@ ftxui::Element render_view(
             }
             if (!matches.empty()) {
                 Elements rows;
-                rows.push_back(text(" ⎔ Autocomplete Commands:") | bold | color(accent2(theme)));
+                rows.push_back(text(" Commands") | bold | color(accent2(theme)));
                 rows.push_back(separatorLight() | color(accent(theme)));
                 for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
                     bool active = (state.slash_suggestion_mode && state.slash_suggestion_idx == i);
@@ -401,53 +582,20 @@ ftxui::Element render_view(
         bool empty = state.messages_history->empty();
 
         if (empty) {
-            // Home screen
-            int input_lines = std::max(1, (int)std::count(prompt_input.begin(), prompt_input.end(), '\n') + 1);
-            int input_height = std::min(input_lines, 6);
-            auto prompt_bar = hbox({
-                text(" ❯ ") | color(accent2(theme)) | bold,
-                input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
-            }) | borderRounded | color(accent(theme));
-
-            Element prompt_box = prompt_bar;
+            const int input_height = prompt_input_height(prompt_input, 6);
+            const int term_w = stable_terminal_size().dimx;
+            const int prompt_w = std::clamp(term_w - 8, 48, 84);
+            Element prompt_box = make_prompt_box(input_height);
             auto suggestions = build_suggestions_panel();
             if (suggestions) {
-                prompt_box = vbox({
-                    *suggestions,
-                    prompt_box
-                });
+                prompt_box = vbox({*suggestions, prompt_box});
             }
-
-            auto shortcut_badge = [](std::string key, std::string label, const std::string& th) {
-                return hbox({
-                    text(" " + key + " ") | bold | bgcolor(theme_focus_bg(th)) | color(accent2(th)),
-                    text(" " + label + " ") | dim | color(Color::GrayLight),
-                });
-            };
-
-            auto quick_hints = hbox({
-                shortcut_badge("Ctrl+N", "New Chat", theme),
-                text("  "),
-                shortcut_badge("/session", "History", theme),
-                text("  "),
-                shortcut_badge("/model", "Model", theme),
-                text("  "),
-                shortcut_badge("/variant", "Variant", theme),
-                text("  "),
-                shortcut_badge("/theme", "Theme", theme),
-                text("  "),
-                shortcut_badge("Tab", "Files/Stats", theme),
-            }) | hcenter;
 
             body = vbox({
                 filler() | flex,
                 render_logo(),
                 text("") | size(HEIGHT, EQUAL, 1),
-                text("What can I help you build today?") | bold | color(accent2(theme)) | hcenter,
-                text("") | size(HEIGHT, EQUAL, 1),
-                prompt_box | size(WIDTH, EQUAL, 84) | hcenter,
-                text(""),
-                quick_hints,
+                prompt_box | size(WIDTH, EQUAL, prompt_w) | hcenter,
                 filler() | flex,
             }) | flex;
         } else {
@@ -563,8 +711,7 @@ ftxui::Element render_view(
                 queue_cards.push_back(text(""));
                 queue_cards.push_back(hbox({
                     text(" ⏳ QUEUED PROMPTS ") | bold | color(queue_amber()),
-                    text(" (" + std::to_string(queue->size()) + " pending turn" + (queue->size() > 1 ? "s" : "") + ")") | bold | color(Color::White),
-                    text(" · Type /clear-queue to cancel") | dim | color(Color::GrayDark),
+                    text(" · /clear-queue to cancel") | dim | color(Color::GrayDark),
                 }));
                 queue_cards.push_back(text(""));
 
@@ -575,51 +722,8 @@ ftxui::Element render_view(
                 msgs.push_back(vbox(std::move(queue_cards)));
             }
 
-            // Clean input bar: prompt prefix + input; subtle queue hint when busy
-            // Count both explicit newlines AND soft-wrapped lines so the box
-            // grows vertically when a single line exceeds the horizontal width.
-            int input_lines = 1;
-            {
-                const int term_w = stable_terminal_size().dimx;
-                // " ❯ " prefix (3) + borderRounded (2) + scroll/right margin (2).
-                const int avail = std::max(20, term_w - 7);
-                size_t pos = 0;
-                while (pos <= prompt_input.size()) {
-                    size_t nl = prompt_input.find('\n', pos);
-                    std::string seg = (nl == std::string::npos)
-                        ? prompt_input.substr(pos)
-                        : prompt_input.substr(pos, nl - pos);
-                    const int w = ftxui::string_width(seg);
-                    int segs = (w <= 0) ? 1 : (w + avail - 1) / avail;
-                    input_lines += segs - 1;
-                    if (nl == std::string::npos) break;
-                    pos = nl + 1;
-                }
-                if (input_lines < 1) input_lines = 1;
-            }
-            int input_height = std::min(input_lines, 8);
-            Elements prompt_row = {
-                text(" ❯ ") | color(accent2(theme)) | bold,
-                // Dynamically expand input height up to 6 lines as newlines/content grow
-                input->Render() | color(Color::White) | yframe | size(HEIGHT, EQUAL, input_height) | flex,
-            };
-            auto prompt_inner = hbox(std::move(prompt_row));
-            Element prompt_box = prompt_inner | borderRounded | color(accent(theme));
-            if (queue && !queue->empty()) {
-                prompt_box = vbox({
-                    prompt_box,
-                    hbox({
-                        text("  "),
-                        text("\u29d6 " + std::to_string(queue->size()) +
-                             " queued") |
-                            dim | color(queue_amber()),
-                        text("  ·  next runs when this turn finishes") | dim,
-                        filler(),
-                        text("/clear-queue cancels queue") | dim | color(Color::GrayDark),
-                        text("  "),
-                    }),
-                });
-            }
+            const int input_height = prompt_input_height(prompt_input, 8);
+            Element prompt_box = make_prompt_box(input_height);
 
             auto suggestions = build_suggestions_panel();
             if (suggestions) {
@@ -650,7 +754,7 @@ ftxui::Element render_view(
             }
             body = vbox({
                 chat_scroll | vscroll_indicator | focusPosition(0, *state.scroll_line) | yframe | flex,
-                // status removed — shown in header strip instead
+                // prompt box follows directly (status lives in footer)
                 prompt_box,
             }) | flex;
         }
@@ -952,7 +1056,8 @@ ftxui::Element render_view(
 
     auto main_layout = vbox({
         header,
-        body,
+        body | flex,
+        footer,
     }) | flex;
 
     // Overlay popups using dbox (stacked overlay layout) to match fluidity of opencode
@@ -975,13 +1080,31 @@ ftxui::Element render_view(
         });
     }
     if (show_variant_select) {
-        const std::string active =
-            state.reasoning_mode ? *state.reasoning_mode : std::string{};
+        std::string active = state.reasoning_mode ? *state.reasoning_mode : std::string{};
+        if (active.empty()) {
+            active = qcode::ProviderTransform::default_variant(
+                providers_list[selected_provider].models[selected_model]);
+            if (active == "off") active.clear();
+        }
         return dbox({
             main_layout,
             clear_under(build_variant_popup(variant_entries, variant_select_idx,
                                             active, variant_query, theme)) |
                 center
+        });
+    }
+    if (show_palette) {
+        return dbox({
+            main_layout,
+            clear_under(build_palette_popup(palette_entries, palette_select_idx,
+                                            palette_query, theme)) |
+                center
+        });
+    }
+    if (show_help) {
+        return dbox({
+            main_layout,
+            clear_under(build_help_popup(theme)) | center
         });
     }
 

@@ -47,6 +47,10 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
   void push_event(const StreamEvent& event);
   void mark_complete();
 
+  // Accumulated usage across message_start / message_delta events.
+  Usage stream_usage_{};
+  bool stream_usage_seen_ = false;
+
   // Helper functions
   StreamEvent create_error_event(const std::string& message);
   void handle_stream_error(int status_code, const std::string& error_body);

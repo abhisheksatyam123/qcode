@@ -20,7 +20,12 @@ struct HttpConfig {
                           // "https://openrouter.ai/api")
   bool use_ssl = true;
   int connection_timeout_sec = 30;
-  int read_timeout_sec = 120;
+  // Idle-between-reads. Muse Spark has completed real turns in ~90s, so
+  // keep this generous; heartbeats in generation_service cover the UX.
+  int read_timeout_sec = 90;
+  // Hard cap on one POST. Keeps TLS/keepalive sockets from sitting "alive"
+  // for minutes with no complete response (the frozen-TUI case).
+  int max_timeout_sec = 150;
   bool verify_ssl_cert = true;
 
   // Retry configuration

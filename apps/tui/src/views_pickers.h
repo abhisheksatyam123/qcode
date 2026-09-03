@@ -40,5 +40,13 @@ ftxui::Element build_variant_popup(
     const std::string& query,
     const std::string& theme);
 
+ftxui::Element build_palette_popup(
+    const std::vector<PaletteCommand>& entries,
+    int select_idx,
+    const std::string& query,
+    const std::string& theme);
+
+ftxui::Element build_help_popup(const std::string& theme);
+
 }  // namespace tui
 }  // namespace qcode

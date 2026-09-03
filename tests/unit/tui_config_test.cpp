@@ -137,10 +137,11 @@ TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
   };
   EXPECT_TRUE(has_model("big-pickle"));
   EXPECT_TRUE(has_model("mimo-v2.5-free"));
-  EXPECT_TRUE(has_model("hy3-free"));
+  EXPECT_FALSE(has_model("hy3-free"));
   EXPECT_TRUE(has_model("laguna-s-2.1-free"));
   EXPECT_TRUE(has_model("nemotron-3.5-lightning-free"));
   EXPECT_FALSE(has_model("north-mini-code-free"));
+  EXPECT_FALSE(has_model("x-preview-f-free"));
   const auto pickle = std::find_if(
       models.begin(), models.end(), [](const ModelInfo& model) {
         return model.id == "big-pickle";
@@ -157,12 +158,12 @@ TEST(TuiConfigTest, HydratesMissingOpenCodeFreeModels) {
   EXPECT_TRUE(muse->reasoning);
   EXPECT_FALSE(muse->reasoning_efforts.empty());
   EXPECT_EQ(muse->protocol, "responses");
-  const auto ox = std::find_if(models.begin(), models.end(),
-                               [](const ModelInfo& model) {
-                                 return model.id == "x-preview-f-free";
-                               });
-  ASSERT_NE(ox, models.end());
-  EXPECT_EQ(ox->protocol, "chat_completions");
+  const auto laguna = std::find_if(
+      models.begin(), models.end(), [](const ModelInfo& model) {
+        return model.id == "laguna-s-2.1-free";
+      });
+  ASSERT_NE(laguna, models.end());
+  EXPECT_EQ(laguna->protocol, "chat_completions");
   std::filesystem::remove(path);
 }
 
@@ -200,11 +201,124 @@ TEST(TuiConfigTest, HandlesCursorProviderConfigWhenDiscoveryIsUnavailable) {
   };
   EXPECT_TRUE(has_model("grok-4.6"));
   EXPECT_TRUE(has_model("claude-opus-5"));
+  EXPECT_TRUE(has_model("composer-2.5"));
+  EXPECT_TRUE(has_model("gpt-5.6-sol"));
+  EXPECT_TRUE(has_model("gpt-5.6-terra"));
+  EXPECT_TRUE(has_model("claude-fable-5-1"));
   EXPECT_FALSE(has_model("cursor-grok-4.6"));
-  EXPECT_FALSE(has_model("composer-2.5"));
-  ASSERT_EQ(models.size(), 2u);
   EXPECT_THAT(models[0].reasoning_efforts,
               testing::ElementsAre("low", "medium", "high"));
+  std::filesystem::remove(path);
+}
+
+TEST(TuiConfigTest, HydratesAntigravityProviderModels) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    "qcode-antigravity-config-test.json";
+  {
+    std::ofstream output(path);
+    output << R"({
+      "provider": {
+        "antigravity": {
+          "name": "Antigravity"
+        }
+      }
+    })";
+  }
+  ScopedEnv config("OPENCODE_CONFIG", path.string());
+  const auto providers = load_providers_from_config();
+  ASSERT_EQ(providers.size(), 1u);
+  EXPECT_EQ(providers.front().id, "antigravity");
+  EXPECT_EQ(providers.front().protocol, "chat_completions");
+  const auto& models = providers.front().models;
+  const auto has_model = [&models](const std::string& id) {
+    return std::any_of(models.begin(), models.end(),
+                       [&id](const ModelInfo& model) {
+                         return model.id == id;
+                       });
+  };
+  EXPECT_TRUE(has_model("gemini-3.8-flash"));
+  EXPECT_TRUE(has_model("gemini-3.7-flash"));
+  EXPECT_TRUE(has_model("gemini-3.6-flash"));
+  EXPECT_TRUE(has_model("gemini-3.1-pro"));
+  EXPECT_TRUE(has_model("claude-sonnet-4-6"));
+  EXPECT_TRUE(has_model("claude-opus-4-6-thinking"));
+
+  const auto flash = std::find_if(
+      models.begin(), models.end(), [](const ModelInfo& m) {
+        return m.id == "gemini-3.7-flash";
+      });
+  ASSERT_NE(flash, models.end());
+  EXPECT_TRUE(flash->reasoning);
+  std::filesystem::remove(path);
+}
+
+TEST(TuiConfigTest, HydratesOpenRouterLatestFreeModels) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    "qcode-openrouter-latest-free-test.json";
+  {
+    std::ofstream output(path);
+    output << R"({
+      "provider": {
+        "openrouter": {
+          "name": "OpenRouter",
+          "models": {
+            "stealth/ox-alpha": {"name": "Ox Alpha"}
+          }
+        }
+      }
+    })";
+  }
+  ScopedEnv config("OPENCODE_CONFIG", path.string());
+  ScopedEnv key("OPENROUTER_API_KEY", "test-key");
+  const auto providers = load_providers_from_config();
+  ASSERT_EQ(providers.size(), 1u);
+  EXPECT_EQ(providers.front().id, "openrouter");
+  const auto& models = providers.front().models;
+  const auto has_model = [&models](const std::string& id) {
+    return std::any_of(models.begin(), models.end(),
+                       [&id](const ModelInfo& model) {
+                         return model.id == id;
+                       });
+  };
+  EXPECT_TRUE(has_model("stealth/ox-alpha"));
+  EXPECT_TRUE(has_model("meta/muse-spark-1.2"));
+  EXPECT_TRUE(has_model("nvidia/nemotron-3-super-120b-a12b:free"));
+  EXPECT_TRUE(has_model("poolside/laguna-xs-2.1:free"));
+  EXPECT_TRUE(has_model("inclusionai/ling-3.0-flash-fin:free"));
+  EXPECT_TRUE(has_model("minimax/minimax-m3:free"));
+  std::filesystem::remove(path);
+}
+
+TEST(TuiConfigTest, HydratesOpenCodeLatestFreeModels) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    "qcode-opencode-latest-free-test.json";
+  {
+    std::ofstream output(path);
+    output << R"({
+      "provider": {
+        "opencode": {
+          "name": "OpenCode Zen"
+        }
+      }
+    })";
+  }
+  ScopedEnv config("OPENCODE_CONFIG", path.string());
+  const auto providers = load_providers_from_config();
+  ASSERT_EQ(providers.size(), 1u);
+  const auto& models = providers.front().models;
+  const auto has_model = [&models](const std::string& id) {
+    return std::any_of(models.begin(), models.end(),
+                       [&id](const ModelInfo& model) {
+                         return model.id == id;
+                       });
+  };
+  EXPECT_TRUE(has_model("muse-spark-1.3-contributor-free"));
+  EXPECT_TRUE(has_model("muse-spark-1.2-contributor-free"));
+  EXPECT_TRUE(has_model("ling-3.0-flash-fin-free"));
+  EXPECT_TRUE(has_model("deepseek-v4-flash-free"));
+  EXPECT_TRUE(has_model("nemotron-3-ultra-free"));
+  EXPECT_TRUE(has_model("nemotron-3.5-lightning-free"));
+  EXPECT_TRUE(has_model("big-pickle"));
   std::filesystem::remove(path);
 }
 

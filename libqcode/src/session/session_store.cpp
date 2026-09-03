@@ -1311,17 +1311,21 @@ void seed_model_capabilities_if_needed() {
     };
 
     static const SeedCap kDefaults[] = {
-        {"x-preview-f-free", "opencode", "Ox Alpha Free (Unlimited)", "Stealth Reasoning Model (ox-alpha)", 1000000, 131072, 1, 1, "Frontier Reasoning & High Fidelity", "Agentic Code Edits, Reasoning & Tool Calls"},
         {"big-pickle", "opencode", "Big Pickle (Free)", "Community Stealth Model", 200000, 32000, 1, 1, "Experimental High Context", "Large Text Ingestion & Bulk Payload Inspection"},
         {"mimo-v2.5-free", "opencode", "MiMo V2.5 (Free)", "Xiaomi MoE Instruction Model", 200000, 32000, 1, 1, "General Agentic Benchmark", "General Chat & Single-turn Instructions"},
-        {"hy3-free", "opencode", "HY3 (Free)", "OpenCode High-Throughput MoE", 262144, 64000, 1, 1, "Fast General Instructions", "Quick Questions & Instruction Following"},
+        {"muse-spark-1.3-contributor-free", "opencode", "Muse Spark 1.3 (Free)", "Muse Spark Contributor Free", 262144, 65536, 1, 1, "Frontier Reasoning Free Pool", "Agentic Code Edits, Reasoning & Tool Calls"},
+        {"muse-spark-1.2-contributor-free", "opencode", "Muse Spark 1.2 (Free)", "Muse Spark Contributor Free", 262144, 65536, 1, 1, "Frontier Reasoning Free Pool", "Agentic Code Edits, Reasoning & Tool Calls"},
+        {"deepseek-v4-flash-free", "opencode", "DeepSeek V4 Flash (Free)", "DeepSeek V4 Flash Free Pool", 262144, 65536, 1, 1, "Fast Reasoning Free Pool", "Multi-Turn Tools & Code Edits"},
+        {"ling-3.0-flash-fin-free", "opencode", "Ling 3.0 Flash Fin (Free)", "InclusionAI Ling 3.0", 262144, 65536, 1, 1, "Fast Instruction Free Pool", "Quick Questions & Instruction Following"},
         {"laguna-s-2.1-free", "opencode", "Laguna S 2.1 (Free)", "Poolside 118B MoE (8B Active)", 262144, 32768, 1, 1, "70.2% on Terminal-Bench 2.1", "Code Diffs & Precise File Modifications"},
         {"nemotron-3-ultra-free", "opencode", "Nemotron 3 Ultra (Free)", "NVIDIA 550B MoE (55B Active, Mamba-Transformer)", 1000000, 128000, 1, 1, "Frontier Orchestration / 1M Context", "Massive Repository Context (1M) & Deep Reasoning"},
         {"nemotron-3.5-lightning-free", "opencode", "Nemotron 3.5 Lightning (Free)", "NVIDIA High-Speed Reasoning", 262144, 65536, 1, 1, "Ultra-Low Latency Agentic", "Fast Multi-Turn Tools & Real-Time Code Edits"},
 
         {"claude-opus-4-6-thinking", "antigravity", "Claude Opus 4.6 Thinking", "Anthropic Reasoning Model", 200000, 8192, 1, 1, "SWE-bench Verified ~74.5%", "Complex Multi-File Refactoring & Architect Tasks"},
         {"claude-sonnet-4-6", "antigravity", "Claude Sonnet 4.6", "Anthropic Frontier Model", 200000, 8192, 1, 1, "SWE-bench Verified ~72.7%", "Production Agentic Workflows & Coding"},
+        {"gemini-3.8-flash", "antigravity", "Gemini 3.8 Flash", "Google DeepMind Latest Flash", 1000000, 65536, 1, 1, "Latest Flash Agentic", "Adaptive Thinking Levels (Low/Med/High) & Multi-Step Tools"},
         {"gemini-3.7-flash", "antigravity", "Gemini 3.7 Flash", "Google DeepMind Frontier Flash", 1000000, 65536, 1, 1, "Optimized Flash Agentic", "Adaptive Thinking Levels (Low/Med/High) & Multi-Step Tools"},
+        {"gemini-3.6-flash", "antigravity", "Gemini 3.6 Flash", "Google DeepMind Flash", 1000000, 65536, 1, 1, "Fast Flash Agentic", "Adaptive Thinking Levels (Low/Med/High) & Multi-Step Tools"},
         {"gemini-3.1-pro", "antigravity", "Gemini 3.1 Pro", "Google DeepMind Dense/MoE", 2000000, 65536, 1, 1, "Top Tier (>60% SWE-bench)", "2M Context System Architecture & Large Repo Analysis"},
         {"gemini-3-flash", "antigravity", "Gemini 3 Flash", "Google DeepMind High-Efficiency", 1000000, 8192, 1, 1, "Low Latency Agentic", "Fast Command Execution & Lightweight Tool Calls"},
         {"gemini-2.5-flash", "antigravity", "Gemini 2.5 Flash", "Google DeepMind High-Speed", 1000000, 8192, 1, 1, "Efficient Flash Model", "Quick Single-Turn Questions & Standard Chat"},

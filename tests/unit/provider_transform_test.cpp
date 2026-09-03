@@ -34,18 +34,45 @@ static ModelInfo ox_alpha_zen() {
 
 TEST(ProviderTransformTest, ZenWireModelIdAliases) {
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("x-preview-f-free"),
-            "x-preview-f-free");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("ox-alpha"), "x-preview-f-free");
+            "big-pickle");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("ox-alpha"), "big-pickle");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("stealth/ox-alpha"),
-            "x-preview-f-free");
+            "big-pickle");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("hy3-free"),
+            "laguna-s-2.1-free");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("opencode/big-pickle"),
             "big-pickle");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("meta/muse-spark-1.2"),
             "muse-spark-1.2-contributor-free");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.2"),
             "muse-spark-1.2");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("meta/muse-spark-1.3"),
+            "muse-spark-1.3-contributor-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.3"),
+            "muse-spark-1.3");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.3-contributor-free"),
+            "muse-spark-1.3-contributor-free");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("  "), "");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id(""), "");
+}
+
+TEST(ProviderTransformTest, CursorPickerIdCollapsesSkus) {
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("claude-opus-5-thinking-high"),
+            "claude-opus-5");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("claude-opus-5"),
+            "claude-opus-5");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("grok-4.6-high-fast"),
+            "grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("cursor-grok-4.6-xhigh-fast"),
+            "grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("composer-2.5-fast"),
+            "composer-2.5");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("gpt-5.6-terra-medium"),
+            "gpt-5.6-terra");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("claude-fable-5-1-thinking-high"),
+            "claude-fable-5-1");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("gpt-5.6-sol-low"),
+            "gpt-5.6-sol");
 }
 
 TEST(ProviderTransformTest, ZenApiProtocolMatchesOpenCodeDocs) {
@@ -102,7 +129,7 @@ TEST(ProviderProfileTest, PrepareZenAndOpenRouterAndAnthropic) {
   const auto zen_call =
       prepare_provider_call(zen, "opencode", "ox-alpha", "sess-1");
   EXPECT_EQ(zen_call.kind, ProviderKind::kOpenCodeZen);
-  EXPECT_EQ(zen_call.wire_model_id, "x-preview-f-free");
+  EXPECT_EQ(zen_call.wire_model_id, "big-pickle");
   EXPECT_EQ(zen.protocol, "chat_completions");
   EXPECT_EQ(zen.completions_path, "/chat/completions");
   EXPECT_EQ(zen.headers["x-opencode-session"], "sess-1");
@@ -215,6 +242,12 @@ TEST(ProviderTransformTest, CursorFamilyAndWireIds) {
             "claude-opus-5-thinking-high");
   EXPECT_EQ(ProviderTransform::cursor_wire_model_id("claude-opus-5", "off"),
             "claude-opus-5");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("composer-2.5", "high"),
+            "composer-2.5-high");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("gpt-5.6-terra", "medium"),
+            "gpt-5.6-terra-medium");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("claude-fable-5-1", "high"),
+            "claude-fable-5-1-thinking-high");
 }
 
 TEST(ProviderTransformTest, MuseSparkGetsReasoningDefaults) {
@@ -378,7 +411,7 @@ TEST_F(ZenWireFormatTest, RemapsOxAlphaAliasInRequestBody) {
   builder.set_base_url("https://opencode.ai/zen/v1");
   auto opts = GenerateOptions("ox-alpha", "hello");
   const auto body = builder.build_request_json(opts);
-  EXPECT_EQ(body.value("model", ""), "x-preview-f-free");
+  EXPECT_EQ(body.value("model", ""), "big-pickle");
 }
 
 TEST_F(ZenWireFormatTest, EffortLandsOnReasoningEffortField) {
@@ -426,6 +459,54 @@ TEST(OpenRouterWireFormatTest, EffortAndUsageAccounting) {
   EXPECT_FALSE(body.contains("include_reasoning"));
   EXPECT_TRUE(body["usage"].value("include", false));
   EXPECT_EQ(body.value("max_tokens", 0), 8192);  // safe default budget
+}
+
+TEST(ProviderTransformTest, NormalizeMessagesKeepsObjectToolResults) {
+  // Follow-up turns replay bash/file tool results as JSON objects. Passing
+  // those to sanitize_surrogates (std::string) used to throw type_error.302
+  // before any provider request was sent.
+  Messages history;
+  history.push_back(Message::user("move the header"));
+  history.push_back(Message::assistant_with_tools(
+      "", {ToolCallContentPart{
+              "call_1", "bash",
+              nlohmann::json{{"command", "sed -n '1,10p' views.cpp"}}}}));
+  history.push_back(Message::tool_results(
+      {{"call_1",
+        nlohmann::json{{"output", "int main() {}"},
+                       {"metadata", {{"exit", 0}}}},
+        false}}));
+  history.push_back(Message::user("1 MOVE MODEL AND CONTEXT INFO ALL TO TOP HEADER"));
+
+  Model model("muse-spark-1.3-contributor-free", "opencode");
+  Messages normalized;
+  EXPECT_NO_THROW(normalized =
+                      ProviderTransform::normalize_messages(history, model));
+  ASSERT_EQ(normalized.size(), 4u);
+  ASSERT_TRUE(normalized[2].has_tool_results());
+  const auto results = normalized[2].get_tool_results();
+  ASSERT_EQ(results.size(), 1u);
+  EXPECT_TRUE(results[0].result.is_object());
+  EXPECT_EQ(results[0].result.value("output", ""), "int main() {}");
+
+  openai::OpenAIRequestBuilder builder(true);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  GenerateOptions options;
+  options.model = "muse-spark-1.3-contributor-free";
+  options.messages = std::move(normalized);
+  nlohmann::json body;
+  EXPECT_NO_THROW(body = builder.build_request_json(options));
+  ASSERT_TRUE(body.contains("input"));
+  // Tool-only assistant turns must not emit {role:assistant, content:null} —
+  // Zen Responses rejects that as input[n].content type mismatch.
+  for (const auto& item : body["input"]) {
+    if (item.contains("content")) {
+      EXPECT_FALSE(item["content"].is_null());
+    }
+    if (item.value("type", "") == "function_call") {
+      EXPECT_FALSE(item.contains("content"));
+    }
+  }
 }
 
 TEST(OpenRouterWireFormatTest, SkipsInterleavedReasoningReplay) {

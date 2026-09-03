@@ -19,7 +19,8 @@ nlohmann::json convert_openai_to_gemini(const nlohmann::json& openai_req);
 
 /// Wrap a Gemini request in the Antigravity/Vertex envelope
 /// (project / requestId / request / model / userAgent / requestType).
-/// Maps "gemini-3-flash" -> "gemini-3-flash-agent".
+/// Maps "gemini-3-flash" -> "gemini-3-flash-agent" and Gemini 3.6/3.7/3.8
+/// Flash onto effort SKUs (`-low` / `-medium` / `-high`).
 nlohmann::json wrap_antigravity_envelope(const nlohmann::json& gemini_req,
                                          const std::string& model,
                                          const std::string& project_id = "");

@@ -121,7 +121,7 @@ bool handle_slash_command(
     if (cmd == "theme" || cmd == "themes") {
         LOG_DEBUG("Commands: /theme args='{}'", args);
         if (args.empty()) {
-            std::string cur = state.theme ? *state.theme : "orange";
+            std::string cur = state.theme ? *state.theme : "opencode";
             std::ostringstream list;
             list << "Available themes:\n";
             for (const auto& entry : builtin_theme_entries()) {
@@ -468,8 +468,8 @@ bool handle_slash_command(
           << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
           << "  /queue [rm <n>]   - list queued prompts / remove one (/cq clears all)\n"
           << "  /help             - show this help\n"
-          << "Keys: Esc stop · r retry last failed turn · F3 copy mode\n"
-          << "      Click Thought headers to expand · Ctrl-P plan mode\n"
+          << "Keys: Esc stop · Tab agent · Ctrl-P commands · Ctrl-N new session\n"
+          << "      r retry last failed turn · F3 copy mode · Click Thought to expand\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
         append_system_message(state, h.str());
         return true;

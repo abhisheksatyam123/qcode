@@ -180,11 +180,15 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
     effort = openai_req["reasoning"].value("effort", "");
   }
   if (effort == "low" || effort == "medium" || effort == "high") {
-    gen_config["thinkingConfig"] = {{"thinkingLevel", effort}};
+    // includeThoughts is required to get thought text parts back. Without
+    // it Gemini still bills thoughtsTokenCount but returns only signatures.
+    gen_config["thinkingConfig"] = {
+        {"thinkingLevel", effort}, {"includeThoughts", true}};
   } else if (effort == "max") {
     // Gemini thinkingLevel is low|medium|high; max maps to a large budget.
-    gen_config["thinkingConfig"] = {
-        {"thinkingLevel", "high"}, {"thinkingBudget", 24576}};
+    gen_config["thinkingConfig"] = {{"thinkingLevel", "high"},
+                                    {"thinkingBudget", 24576},
+                                    {"includeThoughts", true}};
   }
   gemini_req["generationConfig"] = gen_config;
 
@@ -246,18 +250,41 @@ nlohmann::json wrap_antigravity_envelope_impl(const nlohmann::json& gemini_req,
   if (mapped_model.starts_with(antigravity_prefix)) {
     mapped_model.erase(0, antigravity_prefix.size());
   }
+  const auto thinking_level = [&gemini_req]() -> std::string {
+    if (gemini_req.contains("generationConfig") &&
+        gemini_req["generationConfig"].contains("thinkingConfig")) {
+      return gemini_req["generationConfig"]["thinkingConfig"].value(
+          "thinkingLevel", "");
+    }
+    return {};
+  };
+
+  // Antigravity 404s the unsuffixed Flash ids. Wire SKUs are always
+  // <base>-{low,medium,high} (cortexkit/opencode-antigravity-auth).
+  const auto flash_effort_sku = [&thinking_level](const std::string& base) {
+    const auto level = thinking_level();
+    if (level == "low") return base + "-low";
+    if (level == "high" || level == "max") return base + "-high";
+    return base + "-medium";
+  };
+
   if (mapped_model == "gemini-3-flash") {
     mapped_model = "gemini-3-flash-agent";
-  } else if (mapped_model == "gemini-3.7-flash" || mapped_model == "gemini-3.7-flash-high") {
-    if (gemini_req.contains("generationConfig") &&
-        gemini_req["generationConfig"].contains("thinkingConfig") &&
-        gemini_req["generationConfig"]["thinkingConfig"].value("thinkingLevel", "") == "low") {
-      mapped_model = "gemini-3.6-flash-low";
-    } else {
-      mapped_model = "gemini-3.6-flash-high";
-    }
-  } else if (mapped_model == "gemini-3.7-flash-low") {
-    mapped_model = "gemini-3.6-flash-low";
+  } else if (mapped_model == "gemini-3.8-flash" ||
+             mapped_model == "gemini-3.8-flash-low" ||
+             mapped_model == "gemini-3.8-flash-medium" ||
+             mapped_model == "gemini-3.8-flash-high") {
+    mapped_model = flash_effort_sku("gemini-3.8-flash");
+  } else if (mapped_model == "gemini-3.6-flash" ||
+             mapped_model == "gemini-3.6-flash-low" ||
+             mapped_model == "gemini-3.6-flash-medium" ||
+             mapped_model == "gemini-3.6-flash-high") {
+    mapped_model = flash_effort_sku("gemini-3.6-flash");
+  } else if (mapped_model == "gemini-3.7-flash" ||
+             mapped_model == "gemini-3.7-flash-low" ||
+             mapped_model == "gemini-3.7-flash-medium" ||
+             mapped_model == "gemini-3.7-flash-high") {
+    mapped_model = flash_effort_sku("gemini-3.7-flash");
   } else if (mapped_model == "gemini-3.1-pro" || mapped_model == "gemini-3.1-pro-low" || mapped_model == "gemini-3-pro-high" || mapped_model == "gemini-3-pro-low" || mapped_model == "gemini-3-pro") {
     mapped_model = "gemini-3.1-pro-low";
   }
@@ -306,7 +333,11 @@ nlohmann::json normalize_gemini_response_impl(const nlohmann::json& response) {
         for (const auto& part : parts) {
           if (part.contains("text")) {
             const auto text = part["text"].get<std::string>();
-            if (part.value("thought", false)) {
+            const bool is_thought =
+                part.contains("thought") &&
+                (part["thought"].is_boolean() ? part["thought"].get<bool>()
+                                              : true);
+            if (is_thought) {
               reasoning_content += text;
               nlohmann::json detail{{"type", "text"}, {"text", text}};
               if (part.contains("thoughtSignature")) {

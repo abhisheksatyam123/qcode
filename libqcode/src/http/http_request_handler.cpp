@@ -6,6 +6,7 @@
 #include "providers/opencode_zen_headers.h"
 #include "utils/response_utils.h"
 
+#include <chrono>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
@@ -144,6 +145,10 @@ GenerateResult HttpRequestHandler::execute_single_request(
       return result;
     }
 
+    LOG_WARN("HTTP {} from provider (status={}): {}", protocol, res->status,
+             res->body.size() > 240 ? res->body.substr(0, 240) + "…"
+                                    : res->body);
+
     // For non-200 responses, return error with full body for parsing
     GenerateResult error_result;
     error_result.error = res->body;
@@ -153,6 +158,9 @@ GenerateResult HttpRequestHandler::execute_single_request(
     // some messages contain retryable substrings like "overloaded".
     if (is_context_overflow_error(res->status, res->body)) {
       LOG_WARN("Context overflow detected (status={}), not retrying", res->status);
+      error_result.is_retryable = false;
+    } else if (is_permanent_not_found(res->status, res->body)) {
+      LOG_WARN("Permanent 404 (entity not found), not retrying");
       error_result.is_retryable = false;
     } else {
       error_result.is_retryable =
@@ -232,6 +240,10 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
       httplib::SSLClient cli(config_.host, config_.port != 0 ? config_.port : 443);
       cli.set_connection_timeout(config_.connection_timeout_sec, 0);
       cli.set_read_timeout(config_.read_timeout_sec, 0);
+      if (config_.max_timeout_sec > 0) {
+        cli.set_max_timeout(std::chrono::milliseconds(
+            static_cast<long long>(config_.max_timeout_sec) * 1000));
+      }
       configure_client_tls(cli, config_.verify_ssl_cert);
 
       auto res = cli.Post(full_path, request_headers, body, content_type);
@@ -240,6 +252,10 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
       httplib::Client cli(config_.host, config_.port != 0 ? config_.port : 80);
       cli.set_connection_timeout(config_.connection_timeout_sec, 0);
       cli.set_read_timeout(config_.read_timeout_sec, 0);
+      if (config_.max_timeout_sec > 0) {
+        cli.set_max_timeout(std::chrono::milliseconds(
+            static_cast<long long>(config_.max_timeout_sec) * 1000));
+      }
 
       auto res = cli.Post(full_path, request_headers, body, content_type);
       return handler(res, "HTTP");

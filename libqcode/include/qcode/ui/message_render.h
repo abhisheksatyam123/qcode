@@ -22,7 +22,7 @@ ftxui::Element ToolBlock(const std::string& icon,
                           bool collapsible = true,
                           bool focused = false,
                           const std::string& shell_command = "",
-                          const std::string& theme = "orange",
+                          const std::string& theme = "opencode",
                           ChatState* state = nullptr,
                           const std::string& tool_call_id = "");
 
@@ -43,7 +43,7 @@ ftxui::Element render_message(const qcode::Message& msg,
 // Colored, truncated shell-style stdout/stderr.
 ftxui::Element render_truncated_output(const std::string& output,
                                         int max_lines = 20,
-                                        const std::string& theme = "orange",
+                                        const std::string& theme = "opencode",
                                         bool is_error = false);
 
 } // namespace qcode
