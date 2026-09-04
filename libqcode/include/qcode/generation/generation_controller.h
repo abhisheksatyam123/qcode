@@ -1,9 +1,10 @@
 #pragma once
 
+#include <qcode/config/provider_info.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/jthread.h>
-#include <qcode/ui/chat_state.h>
 #include <qcode/ui/app_store.h>
+#include <qcode/ui/chat_state.h>
 
 #include <atomic>
 #include <memory>
