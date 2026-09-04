@@ -57,7 +57,7 @@ jobs:
       uses: astral-sh/setup-uv@v6
 
     - name: Install dependencies
-      run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy ninja-build openssl libssl-dev clang-18 clang-tools-18
+      run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy ninja-build openssl libssl-dev libcurl4-openssl-dev pkg-config clang-18 clang-tools-18
 
     # Pre-existing: most of the tree is not clang-format clean (also red on
     # main). Do not skip compile/test on that historical debt.
