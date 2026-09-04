@@ -1,8 +1,8 @@
 #include <qcode/ui/commands.h>
 #include <qcode/providers/provider_profile.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/session/session_store.h>
-#include <qcode/core/config.h>
+#include <qcode/config/config.h>
 #include <qcode/core/event.h>
 #include <qcode/ui/themes.h>
 #include <qcode/core/logger.h>
@@ -17,11 +17,12 @@
 #include <ctime>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <span>
 #include <sstream>
 #include <string>
 #include <utility>
-#include <atomic>
 
 namespace qcode {
 
@@ -32,18 +33,19 @@ void append_system_message(ChatState& state, std::string text) {
 }  // namespace
 
 std::vector<ModelEntry> build_model_entries(
-    const std::vector<ProviderInfo>& providers
-) {
+    std::span<const ProviderInfo> providers) {
     std::vector<ModelEntry> entries;
-    for (size_t pi = 0; pi < providers.size(); pi++) {
-        for (size_t mi = 0; mi < providers[pi].models.size(); mi++) {
-            entries.push_back({
-                static_cast<int>(pi),
-                static_cast<int>(mi),
-                providers[pi].name,
-                providers[pi].models[mi].name,
-                providers[pi].models[mi].id,
-                providers[pi].name,
+    for (size_t pi = 0; pi < providers.size(); ++pi) {
+        const auto& provider = providers[pi];
+        for (size_t mi = 0; mi < provider.models.size(); ++mi) {
+            const auto& model = provider.models[mi];
+            entries.emplace_back(ModelEntry{
+                .provider_idx = static_cast<int>(pi),
+                .model_idx = static_cast<int>(mi),
+                .provider_name = provider.name,
+                .model_name = model.name,
+                .model_id = model.id,
+                .category = provider.name,
             });
         }
     }

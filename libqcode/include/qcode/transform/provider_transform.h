@@ -2,13 +2,14 @@
 
 #include <qcode/core/message.h>
 #include <qcode/core/model.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
 #include <qcode/core/tool.h>
 
 #include <functional>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -100,7 +101,7 @@ std::string sdk_key(const std::string& provider_name);
 
 /// True for ids that think even when the catalog omitted reasoning=true
 /// (Muse Spark, Ox Alpha, DeepSeek V4, GPT-5, Grok, Gemini 2.5/3, ...).
-bool is_reasoning_model_id(const std::string& model_id);
+[[nodiscard]] bool is_reasoning_model_id(std::string_view model_id);
 
 /// Mark a catalog/config entry as a reasoner and fill effort levels / field
 /// when they were omitted. Safe to call more than once.
@@ -108,26 +109,29 @@ void apply_reasoning_defaults(ModelInfo& model);
 
 /// Effort levels a model supports. Config-declared reasoning_efforts win;
 /// reasoning=true with no list falls back to low/medium/high.
-std::vector<std::string> reasoning_variants(const ModelInfo& model);
+[[nodiscard]] std::vector<std::string> reasoning_variants(const ModelInfo& model);
 
 /// Configured default effort (`reasoning_default` if advertised, else first
 /// effort). "off" when the model cannot reason.
-std::string default_variant(const ModelInfo& model);
+[[nodiscard]] std::string default_variant(const ModelInfo& model);
 
 /// Map a user-selected effort onto one the model actually advertises.
 /// "off" stays "off". Unknown levels snap to the nearest supported effort.
-std::string clamp_variant(const ModelInfo& model, const std::string& requested);
+[[nodiscard]] std::string clamp_variant(const ModelInfo& model,
+                                        std::string_view requested);
 
 /// True if `requested` is "off" or one of the model's configured efforts.
-bool is_allowed_variant(const ModelInfo& model, const std::string& requested);
+[[nodiscard]] bool is_allowed_variant(const ModelInfo& model,
+                                      std::string_view requested);
 
 /// Next id in [off] + configured efforts. Cycles. Unknown current → first.
-std::string next_variant(const ModelInfo& model, const std::string& current);
+[[nodiscard]] std::string next_variant(const ModelInfo& model,
+                                       std::string_view current);
 
 /// Empty current → model's configured default. "off" stays off. Anything
 /// else is clamped onto the model's advertised efforts.
-std::string resolve_session_variant(const ModelInfo& model,
-                                    const std::string& current);
+[[nodiscard]] std::string resolve_session_variant(const ModelInfo& model,
+                                                  std::string_view current);
 
 // ── Chat transport flavors (mirrors providerID / api.npm dispatch) ──
 

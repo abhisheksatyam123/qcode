@@ -1,5 +1,5 @@
-#include <qcode/core/config.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/config/config.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/ui/commands.h>
 
 #include <algorithm>

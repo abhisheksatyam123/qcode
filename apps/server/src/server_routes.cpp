@@ -4,13 +4,14 @@
 #include <qcode/providers/registry.h>
 #include <filesystem>
 #include <fstream>
-#include <qcode/session/generation_service.h>
+#include <qcode/generation/generation_service.h>
 #include <qcode/providers/authenticated_providers.h>
-#include <qcode/core/config.h>
+#include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
 #include <qcode/session/study_assistant.h>
 #include <qcode/session/study_store.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
+#include <qcode/ui/chat_state.h>
 #include <qcode/session/system_prompt.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/event.h>

@@ -16,17 +16,18 @@
 
 #include <qcode/core/file_logger.h>
 #include <qcode/core/jthread.h>
-#include <qcode/session/generation_service.h>
+#include <qcode/generation/generation_service.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/ui/commands.h>
-#include <qcode/providers/provider_transform.h>
-#include <qcode/core/config.h>
+#include <qcode/transform/provider_transform.h>
+#include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
+#include <qcode/ui/chat_state.h>
 #include <qcode/session/system_prompt.h>
 #include <views.h>
 #include <qcode/ui/app_store.h>
-#include <qcode/session/generation_controller.h>
+#include <qcode/generation/generation_controller.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/event.h>
 #include <qcode/session/token_budget.h>

@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
 #include <qcode/session/study_store.h>
 
 namespace qcode {

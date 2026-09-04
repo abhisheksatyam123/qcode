@@ -4,7 +4,8 @@
 #include <qcode/session/session_store.h>
 #include <qcode/ui/markdown.h>  // render_markdown
 #include <qcode/ui/themes.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
+#include <qcode/ui/chat_state.h>
 #include <qcode/ui/app_store.h>
 #include <ftxui/component/component.hpp>
 #include <ftxui/dom/elements.hpp>

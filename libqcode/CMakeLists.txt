@@ -24,24 +24,28 @@ target_include_directories(qcode-engine PRIVATE
 )
 
 target_sources(qcode-engine PRIVATE
-    # Core & Types
-    src/types/message.cpp
-    src/types/stream_options.cpp
-    src/types/stream_result.cpp
-    src/types/embedding_options.cpp
-    src/types/generate_options.cpp
-    src/utils/random.cpp
-    src/utils/uuid.cpp
-    src/bus/in_process_bus.cpp
-    src/config/config.cpp
-    src/context/token_budget.cpp
+    # core
+    src/core/message.cpp
+    src/core/stream_options.cpp
+    src/core/stream_result.cpp
+    src/core/embedding_options.cpp
+    src/core/generate_options.cpp
+    src/core/random.cpp
+    src/core/uuid.cpp
+    src/core/in_process_bus.cpp
+    src/core/http_request_handler.cpp
+    src/core/ssl_config.cpp
 
-    # Providers
+    # config
+    src/config/config.cpp
+
+    # providers
     src/providers/base_provider_client.cpp
     src/providers/registry.cpp
     src/providers/zen_route.cpp
     src/providers/provider_profile.cpp
     src/providers/authenticated_providers.cpp
+    src/providers/langfuse_tracer.cpp
     src/providers/openai/openai_client.cpp
     src/providers/openai/openai_request_builder.cpp
     src/providers/openai/openai_response_parser.cpp
@@ -64,28 +68,30 @@ target_sources(qcode-engine PRIVATE
     src/providers/cursor/cursor_factory.cpp
     src/providers/cursor/cursor_http2.cpp
     src/providers/cursor/cursor_proto.cpp
+
+    # transform
     src/transform/transform.cpp
     src/transform/gemini_transform.cpp
-    src/langfuse/tracer.cpp
 
-    # Session, Workspace & Tools
-    src/session/session_store.cpp
-    src/study/study_store.cpp
-    src/study/study_assistant.cpp
+    # generation
     src/generation/generation_controller.cpp
     src/generation/generation_service.cpp
+
+    # session
+    src/session/session_store.cpp
+    src/session/study_store.cpp
+    src/session/study_assistant.cpp
+    src/session/system_prompt.cpp
+    src/session/git_workspace.cpp
+    src/session/clipboard.cpp
+    src/session/token_budget.cpp
+
+    # tools
     src/tools/tool_executor.cpp
     src/tools/bash_tool.cpp
     src/tools/task_tool.cpp
     src/tools/multi_step_coordinator.cpp
     src/tools/tool_catalog.cpp
-    src/workspace/git_workspace.cpp
-    src/workspace/clipboard.cpp
-    src/system_prompt/system_prompt.cpp
-
-    # HTTP
-    src/http/http_request_handler.cpp
-    src/http/ssl_config.cpp
 )
 
 # Keep third-party deps as BUILD_INTERFACE so install(EXPORT) does not require
@@ -154,11 +160,11 @@ target_include_directories(qcode-ui PRIVATE
 )
 
 target_sources(qcode-ui PRIVATE
-    src/render/message_render.cpp
-    src/render/markdown.cpp
-    src/render/tool_renderers.cpp
-    src/store/app_store.cpp
-    src/commands/commands.cpp
+    src/ui/message_render.cpp
+    src/ui/markdown.cpp
+    src/ui/tool_renderers.cpp
+    src/ui/app_store.cpp
+    src/ui/commands.cpp
     ${QCODE_REPO_ROOT}/third_party/md4c/md4c.c
 )
 

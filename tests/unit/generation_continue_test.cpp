@@ -1,4 +1,4 @@
-#include <qcode/session/generation_continue.h>
+#include <qcode/generation/generation_continue.h>
 
 #include <gtest/gtest.h>
 

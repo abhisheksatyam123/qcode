@@ -4,7 +4,7 @@
 #include "views_pickers.h"
 #include <qcode/session/session_store.h>
 #include <qcode/core/logger.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 
 #include <array>
 #include <cstdio>

@@ -1,7 +1,7 @@
 #pragma once
 #include <qcode/core/bus_port.h>
 #include <qcode/core/event.h>
-#include <qcode/core/state.h>
+#include <qcode/ui/chat_state.h>
 #include <atomic>
 #include <functional>
 #include <memory>

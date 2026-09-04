@@ -1,7 +1,7 @@
 #pragma once
 
 #include <qcode/core/stream_options.h>
-#include "http/http_request_handler.h"
+#include "core/http_request_handler.h"
 #include "providers/base_provider_client.h"
 #include "providers/cursor/cursor_request_builder.h"
 #include "providers/cursor/cursor_response_parser.h"

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <qcode/core/in_process_bus.h>
-#include <qcode/core/config.h>
-#include <qcode/session/generation_service.h>
+#include <qcode/config/config.h>
+#include <qcode/generation/generation_service.h>
 
 #include <httplib.h>
 

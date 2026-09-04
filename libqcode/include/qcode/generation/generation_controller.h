@@ -2,7 +2,7 @@
 
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/jthread.h>
-#include <qcode/core/state.h>
+#include <qcode/ui/chat_state.h>
 #include <qcode/ui/app_store.h>
 
 #include <atomic>

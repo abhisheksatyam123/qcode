@@ -1,8 +1,9 @@
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/providers/zen_route.h>
 
 #include <algorithm>
 #include <cctype>
+#include <ranges>
 #include <set>
 #include <string>
 #include <string_view>
@@ -13,13 +14,13 @@ namespace ProviderTransform {
 
 // ── Helpers ──
 
-static std::string to_lower(const std::string& s) {
-  std::string out = s;
+static std::string to_lower(std::string_view s) {
+  std::string out(s);
   for (auto& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return out;
 }
 
-static bool contains(const std::string& s, const std::string& sub) {
+static bool contains(std::string_view s, std::string_view sub) {
   return to_lower(s).find(to_lower(sub)) != std::string::npos;
 }
 
@@ -28,8 +29,8 @@ static bool contains(const std::string& s, const std::string& sub) {
 // @ai-sdk/openai-compatible fallback (WIDELY_SUPPORTED_EFFORTS + max for
 // deepseek-v4).
 
-bool is_reasoning_model_id(const std::string& model_id) {
-  const std::string id = to_lower(model_id);
+bool is_reasoning_model_id(std::string_view model_id) {
+  const auto id = to_lower(model_id);
   return contains(id, "muse-spark") || contains(id, "ox-alpha") ||
          contains(id, "x-preview-f-free") || contains(id, "deepseek-v4") ||
          contains(id, "gpt-5") || contains(id, "grok") ||
@@ -59,8 +60,7 @@ std::string default_variant(const ModelInfo& model) {
   const auto efforts = reasoning_variants(model);
   if (!model.reasoning_default.empty()) {
     if (model.reasoning_default == "off") return "off";
-    if (std::find(efforts.begin(), efforts.end(), model.reasoning_default) !=
-        efforts.end()) {
+    if (std::ranges::find(efforts, model.reasoning_default) != efforts.end()) {
       return model.reasoning_default;
     }
   }
@@ -68,12 +68,12 @@ std::string default_variant(const ModelInfo& model) {
   return efforts.front();
 }
 
-std::string clamp_variant(const ModelInfo& model, const std::string& requested) {
+std::string clamp_variant(const ModelInfo& model, std::string_view requested) {
   if (requested.empty() || requested == "off") return "off";
   const auto allowed = reasoning_variants(model);
-  if (allowed.empty()) return requested;
-  if (std::find(allowed.begin(), allowed.end(), requested) != allowed.end()) {
-    return requested;
+  if (allowed.empty()) return std::string{requested};
+  if (std::ranges::find(allowed, requested) != allowed.end()) {
+    return std::string{requested};
   }
   const std::vector<std::string> fallbacks =
       requested == "max" || requested == "xhigh"
@@ -83,7 +83,7 @@ std::string clamp_variant(const ModelInfo& model, const std::string& requested) 
           ? std::vector<std::string>{"minimal", "medium", "high", "max"}
           : std::vector<std::string>{"high", "medium", "max", "xhigh", "low"};
   for (const auto& candidate : fallbacks) {
-    if (std::find(allowed.begin(), allowed.end(), candidate) != allowed.end()) {
+    if (std::ranges::find(allowed, candidate) != allowed.end()) {
       return candidate;
     }
   }
@@ -99,15 +99,15 @@ static std::vector<std::string> variant_cycle(const ModelInfo& model) {
   return ids;
 }
 
-bool is_allowed_variant(const ModelInfo& model, const std::string& requested) {
+bool is_allowed_variant(const ModelInfo& model, std::string_view requested) {
   if (requested == "off") return true;
   const auto allowed = reasoning_variants(model);
-  return std::find(allowed.begin(), allowed.end(), requested) != allowed.end();
+  return std::ranges::find(allowed, requested) != allowed.end();
 }
 
-std::string next_variant(const ModelInfo& model, const std::string& current) {
+std::string next_variant(const ModelInfo& model, std::string_view current) {
   const auto ids = variant_cycle(model);
-  const std::string cur = current.empty() ? "off" : current;
+  const std::string cur = current.empty() ? "off" : std::string{current};
   for (size_t i = 0; i < ids.size(); ++i) {
     if (ids[i] == cur) return ids[(i + 1) % ids.size()];
   }
@@ -115,7 +115,7 @@ std::string next_variant(const ModelInfo& model, const std::string& current) {
 }
 
 std::string resolve_session_variant(const ModelInfo& model,
-                                    const std::string& current) {
+                                    std::string_view current) {
   if (current.empty()) return default_variant(model);
   if (current == "off") return "off";
   return clamp_variant(model, current);

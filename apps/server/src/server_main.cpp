@@ -1,6 +1,6 @@
 #include <qcode/core/file_logger.h>
 #include <qcode/providers/authenticated_providers.h>
-#include <qcode/core/config.h>
+#include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/event.h>

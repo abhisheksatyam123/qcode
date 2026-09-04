@@ -4,7 +4,8 @@
 #include <vector>
 #include <utility>
 
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
+#include <qcode/ui/chat_state.h>
 
 namespace qcode {
 namespace session {

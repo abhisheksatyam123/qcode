@@ -5,7 +5,7 @@
 #include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
 #include <qcode/core/stream_options.h>
-#include "http/http_request_handler.h"
+#include "core/http_request_handler.h"
 
 #include <memory>
 #include <string>

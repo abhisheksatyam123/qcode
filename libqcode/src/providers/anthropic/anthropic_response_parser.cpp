@@ -1,6 +1,6 @@
 #include "anthropic_response_parser.h"
 
-#include "../../utils/response_utils.h"
+#include "core/response_utils.h"
 #include <qcode/core/logger.h>
 
 namespace qcode {

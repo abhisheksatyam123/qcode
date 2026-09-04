@@ -1,11 +1,10 @@
 #pragma once
 
 #include <atomic>
-#include <map>
+#include <climits>
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #include <qcode/core/message.h>
@@ -17,40 +16,9 @@ struct HitBox {
     int x_max = 0;
     int y_min = 0;
     int y_max = 0;
-    bool Contain(int x, int y) const {
+    [[nodiscard]] bool Contain(int x, int y) const {
         return x >= x_min && x <= x_max && y >= y_min && y <= y_max;
     }
-};
-
-// ── Provider/model types ──
-
-struct ModelInfo {
-    std::string name;
-    std::string id;
-    int context_window = 0;   // tokens; 0 => unknown (fallback)
-    double input_cost = 0.0;   // USD per 1M input tokens
-    double output_cost = 0.0;  // USD per 1M output tokens
-    bool reasoning = false;
-    bool tool_call = false;
-    int output_limit = 0;
-    std::string protocol;
-    // From opencode.json: reasoning_efforts / variants.
-    std::vector<std::string> reasoning_efforts;
-    // From opencode.json: reasoning_default / variant.
-    std::string reasoning_default;
-    // From opencode.json: reasoning_field (e.g. "reasoning").
-    std::string reasoning_field;
-};
-
-struct ProviderInfo {
-    std::string name;
-    std::string id;
-    std::string api_url;
-    std::string api_key;
-    std::map<std::string, std::string> headers;
-    std::string protocol = "chat_completions";
-    std::string project_id;
-    std::vector<ModelInfo> models;
 };
 
 // One row in the Files tab list (from `git diff HEAD --numstat` + untracked).
@@ -62,12 +30,12 @@ struct FileChangeEntry {
     bool binary = false;
 };
 
-// ── Shared chat state ──
-
+// Shared chat / TUI session state.
 struct ChatState {
     std::shared_ptr<std::atomic<bool>> is_generating =
         std::make_shared<std::atomic<bool>>(false);
-    std::shared_ptr<qcode::Messages> messages_history = std::make_shared<qcode::Messages>();
+    std::shared_ptr<qcode::Messages> messages_history =
+        std::make_shared<qcode::Messages>();
     std::shared_ptr<int> total_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_completion_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> total_tokens = std::make_shared<int>(0);
@@ -85,8 +53,7 @@ struct ChatState {
     std::shared_ptr<std::vector<HitBox>> file_row_boxes =
         std::make_shared<std::vector<HitBox>>();
     // Hit box for the back button (← Esc) in the file diff detail view.
-    std::shared_ptr<HitBox> files_back_box =
-        std::make_shared<HitBox>();
+    std::shared_ptr<HitBox> files_back_box = std::make_shared<HitBox>();
     std::shared_ptr<int> scroll_line = std::make_shared<int>(INT_MAX);
     std::shared_ptr<bool> auto_scroll = std::make_shared<bool>(true);
     // First message in the bounded render window. The complete history remains
@@ -105,18 +72,20 @@ struct ChatState {
         thinking_header_boxes =
             std::make_shared<std::unordered_map<unsigned long, HitBox>>();
     // Agent mode: "build" (full access) or "plan" (read-only research).
-    std::shared_ptr<std::string> agent_mode = std::make_shared<std::string>("build");
+    std::shared_ptr<std::string> agent_mode =
+        std::make_shared<std::string>("build");
     // Reasoning/thinking level: "off" or a model-configured effort from JSON.
-    std::shared_ptr<std::string> reasoning_mode = std::make_shared<std::string>("off");
-    std::shared_ptr<std::atomic<int>> generation_frame = std::make_shared<std::atomic<int>>(0);
+    std::shared_ptr<std::string> reasoning_mode =
+        std::make_shared<std::string>("off");
+    std::shared_ptr<std::atomic<int>> generation_frame =
+        std::make_shared<std::atomic<int>>(0);
 
     // Tab navigation
-    int tab_selected = 0; // 0 = Chat, 1 = Files, 2 = Stats
-    int selected_file = 0; // Selected index in file_changes
+    int tab_selected = 0;  // 0 = Chat, 1 = Files, 2 = Stats
+    int selected_file = 0;  // Selected index in file_changes
 
-    int terminal_height = 40; // Approximate terminal height, updated during render
+    int terminal_height = 40;  // Approximate terminal height, updated during render
 
-    // Color Theme Option (orange, green, blue, purple, monochrome)
     std::shared_ptr<std::string> theme = std::make_shared<std::string>("opencode");
 
     // Active persistent session ID (UUID) + display title
@@ -136,8 +105,6 @@ struct ChatState {
     std::shared_ptr<double> total_tool_time_ms = std::make_shared<double>(0.0);
 
     // Prompt queue + status mirrors (consumed by the view).
-    // queued_prompt_texts is the live queue body so the chat list can show
-    // pending prompts (Grok-style) without reading AppStore internals.
     std::shared_ptr<int> queued_prompts = std::make_shared<int>(0);
     std::shared_ptr<std::vector<std::string>> queued_prompt_texts =
         std::make_shared<std::vector<std::string>>();
@@ -149,26 +116,20 @@ struct ChatState {
         std::make_shared<std::unordered_map<std::string, bool>>();
 
     // Context estimation calibration: our heuristic estimate vs the API's
-    // actual prompt_tokens from the last generation. Used to correct the
-    // chars÷4 heuristic (which is wrong for JSON-heavy tool results).
+    // actual prompt_tokens from the last generation.
     std::shared_ptr<int> last_actual_prompt_tokens = std::make_shared<int>(0);
     std::shared_ptr<int> last_estimated_tokens = std::make_shared<int>(0);
 
-    // Abort/pause flag for the current generation. Set by Escape; checked by
-    // the backend generation loop. Resets to false on each new spawn.
+    // Abort/pause flag for the current generation.
     std::shared_ptr<std::atomic<bool>> abort_flag =
         std::make_shared<std::atomic<bool>>(false);
 
-    // Context management: how many consecutive generations needed pruning.
-    // Drives auto-compaction when the conversation is persistently too long.
     std::shared_ptr<int> consecutive_prunes = std::make_shared<int>(0);
 
     // Copy mode: when true, mouse tracking is disabled so the terminal
     // emulator can do native text selection (clean copy/paste).
     std::shared_ptr<bool> copy_mode = std::make_shared<bool>(false);
 
-    // Keyboard navigation: ordered list of tool_call_ids in render order,
-    // plus the currently focused index. -1 means no tool block focused.
     std::shared_ptr<std::vector<std::string>> tool_block_order =
         std::make_shared<std::vector<std::string>>();
     std::shared_ptr<int> focused_tool_index = std::make_shared<int>(-1);
@@ -176,4 +137,4 @@ struct ChatState {
         std::make_shared<std::unordered_map<std::string, HitBox>>();
 };
 
-} // namespace qcode
+}  // namespace qcode
