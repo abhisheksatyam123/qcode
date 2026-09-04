@@ -355,19 +355,34 @@ bool handle_slash_command(
         // Trim whitespace
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.front()))) lvl.erase(lvl.begin());
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.back()))) lvl.pop_back();
+        const ModelInfo* model = nullptr;
+        if (selected_provider >= 0 &&
+            selected_provider < static_cast<int>(providers_list.size())) {
+            const auto& models = providers_list[selected_provider].models;
+            if (selected_model >= 0 &&
+                selected_model < static_cast<int>(models.size())) {
+                model = &models[selected_model];
+            }
+        }
+        ModelInfo fallback;
+        const ModelInfo& catalog = model ? *model : fallback;
         if (lvl.empty()) {
             // TUI intercepts bare /variant and opens the picker. Keep a
             // cycle here for non-TUI callers (CLI / server).
-            std::string cur = state.reasoning_mode ? *state.reasoning_mode : "off";
-            if (cur == "off" || cur.empty()) lvl = "low";
-            else if (cur == "low") lvl = "medium";
-            else if (cur == "medium") lvl = "high";
-            else if (cur == "high") lvl = "max";
-            else lvl = "off";
+            const std::string cur =
+                state.reasoning_mode ? *state.reasoning_mode : "off";
+            lvl = ProviderTransform::next_variant(catalog, cur);
         }
-        if (lvl != "off" && lvl != "low" && lvl != "medium" && lvl != "high" && lvl != "max") {
+        if (!ProviderTransform::is_allowed_variant(catalog, lvl)) {
+            std::string allowed = "off";
+            for (const auto& effort :
+                 ProviderTransform::reasoning_variants(catalog)) {
+                if (effort.empty() || effort == "off") continue;
+                allowed += "|";
+                allowed += effort;
+            }
             bus.publish<qcode::contract::ToastRequested>({
-                .message = "Invalid variant '" + lvl + "'. Use off|low|medium|high|max.",
+                .message = "Invalid variant '" + lvl + "'. Use " + allowed + ".",
                 .variant = "warning"
             });
             return true;
@@ -456,7 +471,7 @@ bool handle_slash_command(
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
           << "  /agent [build|plan] - switch agent mode (plan = read-only research)\n"
-          << "  /variant [off|low|medium|high|max] - open variant picker (or set effort)\n"
+          << "  /variant [off|<effort>] - thinking effort from the selected model's config\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
           << "  /new [name] [workspace] - new session (optional title + workspace path)\n"
           << "  /session <id>     - load a persistent session by id\n"

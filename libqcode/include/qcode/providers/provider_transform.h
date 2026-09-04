@@ -106,18 +106,28 @@ bool is_reasoning_model_id(const std::string& model_id);
 /// when they were omitted. Safe to call more than once.
 void apply_reasoning_defaults(ModelInfo& model);
 
-/// Effort levels a model supports. Catalog-declared reasoning_options win;
-/// falls back to upstream's widely-supported set for known families.
+/// Effort levels a model supports. Config-declared reasoning_efforts win;
+/// reasoning=true with no list falls back to low/medium/high.
 std::vector<std::string> reasoning_variants(const ModelInfo& model);
 
-/// Default effort with thinking enabled (upstream turns reasoning on by
-/// default per family: medium for gpt-5.x, high elsewhere). "off" when the
-/// model cannot reason.
+/// Configured default effort (`reasoning_default` if advertised, else first
+/// effort). "off" when the model cannot reason.
 std::string default_variant(const ModelInfo& model);
 
 /// Map a user-selected effort onto one the model actually advertises.
 /// "off" stays "off". Unknown levels snap to the nearest supported effort.
 std::string clamp_variant(const ModelInfo& model, const std::string& requested);
+
+/// True if `requested` is "off" or one of the model's configured efforts.
+bool is_allowed_variant(const ModelInfo& model, const std::string& requested);
+
+/// Next id in [off] + configured efforts. Cycles. Unknown current → first.
+std::string next_variant(const ModelInfo& model, const std::string& current);
+
+/// Empty current → model's configured default. "off" stays off. Anything
+/// else is clamped onto the model's advertised efforts.
+std::string resolve_session_variant(const ModelInfo& model,
+                                    const std::string& current);
 
 // ── Chat transport flavors (mirrors providerID / api.npm dispatch) ──
 

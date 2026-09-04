@@ -90,6 +90,37 @@ std::string clamp_variant(const ModelInfo& model, const std::string& requested) 
   return allowed.front();
 }
 
+static std::vector<std::string> variant_cycle(const ModelInfo& model) {
+  std::vector<std::string> ids{"off"};
+  for (const auto& effort : reasoning_variants(model)) {
+    if (effort.empty() || effort == "off") continue;
+    ids.push_back(effort);
+  }
+  return ids;
+}
+
+bool is_allowed_variant(const ModelInfo& model, const std::string& requested) {
+  if (requested == "off") return true;
+  const auto allowed = reasoning_variants(model);
+  return std::find(allowed.begin(), allowed.end(), requested) != allowed.end();
+}
+
+std::string next_variant(const ModelInfo& model, const std::string& current) {
+  const auto ids = variant_cycle(model);
+  const std::string cur = current.empty() ? "off" : current;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    if (ids[i] == cur) return ids[(i + 1) % ids.size()];
+  }
+  return ids.front();
+}
+
+std::string resolve_session_variant(const ModelInfo& model,
+                                    const std::string& current) {
+  if (current.empty()) return default_variant(model);
+  if (current == "off") return "off";
+  return clamp_variant(model, current);
+}
+
 // ── Chat transport flavors ──
 
 ChatTransport chat_transport_for(const std::string& base_url) {

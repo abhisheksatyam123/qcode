@@ -45,5 +45,7 @@ apps/android/local.properties
 apps/android/app/.cxx/
 **/__pycache__/
 
-# Host-side NDK/Python unpack tree (not shipped in the APK)
-build-android-deps/
+# Legacy sibling build trees (superseded by build/<preset>/, never recreate)
+/build-android-arm64/
+/build-android-arm64-v8a/
+/build-android-deps/

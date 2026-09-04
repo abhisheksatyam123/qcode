@@ -41,12 +41,33 @@ from rich.table import Table
 console = Console()
 
 
-def run_command(cmd: list[str], cwd: Optional[Path] = None, check: bool = True) -> subprocess.CompletedProcess:
+def build_env_for(platform: str) -> dict[str, str]:
+    """Environment for CMake child processes.
+
+    Conda-activated shells export CC/CXX pointing at a cross toolchain
+    (e.g. aarch64-conda-linux-gnu), which breaks native host configures.
+    For host builds, drop cross-contaminating vars so CMake auto-detects
+    the system compiler. Android builds keep the environment (NDK
+    toolchain file sets compilers explicitly).
+    """
+    env = dict(os.environ)
+    if platform == "host":
+        cc, cxx = env.get("CC", ""), env.get("CXX", "")
+        if "conda" in cc or "aarch64" in cc or "arm64" in cc:
+            env.pop("CC", None)
+        if "conda" in cxx or "aarch64" in cxx or "arm64" in cxx:
+            env.pop("CXX", None)
+    return env
+
+
+def run_command(cmd: list[str], cwd: Optional[Path] = None, check: bool = True,
+                env: Optional[dict[str, str]] = None) -> subprocess.CompletedProcess:
     """Run a command and handle errors with rich output."""
     console.print(f"[dim]Running:[/dim] [cyan]{' '.join(cmd)}[/cyan]")
-    
+
     try:
-        result = subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
+        result = subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True,
+                                env=env)
         if result.stdout.strip():
             console.print(f"[dim]{result.stdout.strip()}[/dim]")
         return result
@@ -209,14 +230,52 @@ def build_webui(project_root: Path, build_dir: Path):
     is_flag=True,
     help="Skip WebUI build"
 )
-def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_commands: bool, 
-         jobs: Optional[int], no_tui: bool, no_server: bool, no_cli: bool, no_webui: bool):
+@click.option(
+    "--platform",
+    type=click.Choice(["host", "android"], case_sensitive=False),
+    default="host",
+    help="Target platform. All outputs live under build/<platform>-<arch>-<mode>/ (default: host)"
+)
+@click.option(
+    "--arch",
+    type=str,
+    default=None,
+    help="Target arch (host default: native; android default: arm64-v8a)"
+)
+@click.option(
+    "--preset",
+    "preset_name",
+    type=str,
+    default=None,
+    help="Explicit CMake preset to use (overrides --platform/--arch/--mode mapping)"
+)
+def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_commands: bool,
+         jobs: Optional[int], no_tui: bool, no_server: bool, no_cli: bool, no_webui: bool,
+         platform: str, arch: Optional[str], preset_name: Optional[str]):
     """Build QCode with modern tooling."""
-    
+
     # Get project paths
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
-    build_dir = project_root / "build"
+
+    # Resolve preset + per-platform build dir: build/<preset>/.
+    # Host presets are host-{debug,release}; android is android-arm64-v8a-{debug,release}.
+    # This keeps ONE build/ root instead of sibling build-* trees.
+    platform = platform.lower()
+    mode = mode.lower()
+    if preset_name is None:
+        if platform == "android":
+            arch_norm = (arch or "arm64-v8a").lower()
+            preset_name = f"android-{arch_norm}-{mode}"
+        else:
+            preset_name = f"host-{mode}"
+    build_dir = project_root / "build" / preset_name
+
+    # Android cross builds need the NDK toolchain.
+    ndk_home = os.environ.get("ANDROID_NDK_HOME", "")
+    if preset_name.startswith("android-") and not ndk_home:
+        console.print("[red]Error: ANDROID_NDK_HOME is not set (required for --platform android).[/red]")
+        sys.exit(1)
     
     # Display build configuration
     config_table = Table(title="Build Configuration", show_header=True, header_style="bold blue")
@@ -224,6 +283,7 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     config_table.add_column("Value", style="green")
     
     config_table.add_row("Project root", str(project_root))
+    config_table.add_row("CMake preset", preset_name)
     config_table.add_row("Build directory", str(build_dir))
     config_table.add_row("Build mode", mode.upper())
     config_table.add_row("With tests", "✓" if tests else "✗")
@@ -255,8 +315,8 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
             progress.update(task, completed=True)
         console.print("[green]✓[/green] Build directory cleaned")
     
-    # Create build directory
-    build_dir.mkdir(exist_ok=True)
+    # Create build directory (parents too: fresh clones have no build/ root)
+    build_dir.mkdir(parents=True, exist_ok=True)
     
     # Build WebUI first (if requested)
     if not no_webui and check_node():
@@ -265,7 +325,8 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     elif not no_webui:
         console.print("[yellow]Node.js not found, skipping WebUI build[/yellow]")
     
-    # Configure CMake
+    # Configure CMake (mirrors CMakePresets.json so `cmake --preset <name>`
+    # and this script share the same build/<preset>/ directory).
     cmake_args = [
         "cmake",
         "-B", str(build_dir),
@@ -277,9 +338,23 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
         f"-DQCODE_BUILD_SERVER={'OFF' if no_server else 'ON'}",
         f"-DQCODE_BUILD_CLI={'OFF' if no_cli else 'ON'}",
     ]
+    if preset_name.startswith("android-"):
+        import re as _re
+        _m = _re.match(r"android-(.+)-(debug|release)$", preset_name)
+        _abi = _m.group(1) if _m else "arm64-v8a"
+        cmake_args += [
+            f"-DCMAKE_TOOLCHAIN_FILE={ndk_home}/build/cmake/android.toolchain.cmake",
+            f"-DANDROID_ABI={_abi}",
+            "-DANDROID_PLATFORM=android-24",
+            "-DANDROID_STL=c++_shared",
+            "-DQCODE_BUILD_TUI=OFF",
+            "-DQCODE_BUILD_SERVER=OFF",
+            "-DQCODE_BUILD_CLI=OFF",
+        ]
     
     console.print("[bold blue]Configuring with CMake...[/bold blue]")
-    run_command(cmake_args, cwd=project_root)
+    child_env = build_env_for(platform)
+    run_command(cmake_args, cwd=project_root, env=child_env)
     
     # Build
     build_args = ["cmake", "--build", str(build_dir)]
@@ -289,7 +364,7 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
         build_args.append("--verbose")
     
     console.print("[bold blue]Building...[/bold blue]")
-    run_command(build_args, cwd=project_root)
+    run_command(build_args, cwd=project_root, env=child_env)
     
     # Copy compile_commands.json to project root if requested
     if export_compile_commands:

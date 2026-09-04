@@ -184,6 +184,31 @@ TEST(ProviderTransformTest, NonReasoningDefaultIsOff) {
   EXPECT_EQ(ProviderTransform::default_variant(plain), "off");
 }
 
+TEST(ProviderTransformTest, VariantCycleFollowsConfiguredEfforts) {
+  ModelInfo model;
+  model.reasoning = true;
+  model.reasoning_efforts = {"low", "high"};
+  EXPECT_TRUE(ProviderTransform::is_allowed_variant(model, "off"));
+  EXPECT_TRUE(ProviderTransform::is_allowed_variant(model, "high"));
+  EXPECT_FALSE(ProviderTransform::is_allowed_variant(model, "medium"));
+  EXPECT_FALSE(ProviderTransform::is_allowed_variant(model, "max"));
+  EXPECT_EQ(ProviderTransform::next_variant(model, "off"), "low");
+  EXPECT_EQ(ProviderTransform::next_variant(model, "low"), "high");
+  EXPECT_EQ(ProviderTransform::next_variant(model, "high"), "off");
+  EXPECT_EQ(ProviderTransform::next_variant(model, "medium"), "off");
+}
+
+TEST(ProviderTransformTest, ResolveSessionVariantKeepsOffAndClamps) {
+  ModelInfo model;
+  model.reasoning = true;
+  model.reasoning_efforts = {"low", "high", "max"};
+  model.reasoning_default = "high";
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, ""), "high");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "off"), "off");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "max"), "max");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "medium"), "high");
+}
+
 // ── Effort placement per transport ──
 
 TEST(ProviderTransformTest, ReasoningPlacementPerTransport) {

@@ -20,3 +20,4 @@
 - `third_party/`: External dependencies (e.g. FTXUI, cpp-httplib, nlohmann_json).
 - `examples/`: API use cases and code samples.
 - `cmake/`: CMake helper scripts and toolchain configurations.
+- `build/`: Ignored unified output root (`build/<preset>/` per platform/mode; see `CMakePresets.json` and `docs/building.md`).

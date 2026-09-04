@@ -59,7 +59,7 @@ jobs:
       run: uv run scripts/build.py --mode ${{ matrix.build_type }} --tests --export-compile-commands
 
     - name: Run tests
-      working-directory: build
+      working-directory: build/host-${{ matrix.build_type }}
       run: ctest --build-config ${{ matrix.build_type == 'debug' && 'Debug' || 'Release' }} --output-on-failure --parallel
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

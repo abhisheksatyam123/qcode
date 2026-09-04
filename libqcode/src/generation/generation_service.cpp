@@ -1008,15 +1008,14 @@ void run_generation_with_bus(
     };
     if (rm != "off") {
       std::string effort;
-      if (rm == "low" || rm == "medium" || rm == "high" || rm == "max" ||
-          rm == "xhigh" || rm == "minimal") {
-        effort = resolved_model
-                     ? ProviderTransform::clamp_variant(*resolved_model, rm)
-                     : rm;
-      } else if (rm.empty()) {
+      if (rm.empty()) {
         if (resolved_model && resolved_model->reasoning) {
           effort = ProviderTransform::default_variant(*resolved_model);
         }
+      } else if (resolved_model) {
+        effort = ProviderTransform::clamp_variant(*resolved_model, rm);
+      } else {
+        effort = rm;
       }
       if (!effort.empty() && effort != "off") {
         base_opts.reasoning_effort = effort;

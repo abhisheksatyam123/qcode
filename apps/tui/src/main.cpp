@@ -229,6 +229,48 @@ int main() {
         return &models[selected_model];
     };
 
+    auto persist_session_variant = [&]() {
+        if (!state.session_id || state.session_id->empty() ||
+            !state.reasoning_mode) {
+            return;
+        }
+        qcode::session::set_session_modes(
+            *state.session_id,
+            state.agent_mode ? *state.agent_mode : "build",
+            *state.reasoning_mode);
+    };
+
+    // Empty session column = never chosen. Use the model's JSON default.
+    // A persisted value is clamped onto that model's advertised efforts.
+    auto apply_config_variant_if_unset = [&]() {
+        if (!state.reasoning_mode) return;
+        const auto* model = current_model_info();
+        if (!model) return;
+        std::string saved;
+        if (state.session_id && !state.session_id->empty()) {
+            saved = qcode::session::get_session_modes(*state.session_id).second;
+        }
+        if (saved.empty()) {
+            *state.reasoning_mode =
+                qcode::ProviderTransform::default_variant(*model);
+            persist_session_variant();
+        } else {
+            *state.reasoning_mode =
+                qcode::ProviderTransform::clamp_variant(*model, saved);
+        }
+    };
+
+    auto clamp_variant_to_current_model = [&]() {
+        if (!state.reasoning_mode) return;
+        const auto* model = current_model_info();
+        if (!model) return;
+        *state.reasoning_mode = qcode::ProviderTransform::resolve_session_variant(
+            *model, *state.reasoning_mode);
+        persist_session_variant();
+    };
+
+    apply_config_variant_if_unset();
+
     auto open_variant_picker = [&]() {
         qcode::ModelInfo fallback;
         const auto* model = current_model_info();
@@ -359,6 +401,7 @@ int main() {
         if (state.last_user_prompt) state.last_user_prompt->clear();
         prompt_input.clear();
         session_entries = qcode::session::list_sessions_full();
+        persist_session_variant();
         store.add_toast("Started new session", "success", 2000);
         screen.Post(Event::Custom);
     };
@@ -812,6 +855,7 @@ int main() {
                     selected_provider = entry.provider_idx;
                     selected_model = entry.model_idx;
                     system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
+                    clamp_variant_to_current_model();
                 }
                 show_model_select = false;
                 model_query = "";
@@ -887,6 +931,7 @@ int main() {
                             }
                         }
                     }
+                    apply_config_variant_if_unset();
                     store.add_toast("Switched to: " + picked.title, "info", 1500);
                 }
                 show_session_select = false;
