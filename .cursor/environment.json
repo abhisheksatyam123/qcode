@@ -1,0 +1,18 @@
+{
+  "name": "qcode",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "qcode-server",
+      "command": "./build/host-debug/apps/server/qcode-server --port 9080",
+      "description": "Headless qcode server; serves the Web UI and REST/WS API on http://localhost:9080."
+    }
+  ],
+  "ports": [
+    {
+      "name": "qcode server / Web UI",
+      "port": 9080
+    }
+  ]
+}
