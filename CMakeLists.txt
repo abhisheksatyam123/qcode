@@ -11,13 +11,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Named modules (`import qcode.config`) on host Clang with CMake 3.28+ and
-# clang-scan-deps. Android NDK and GCC keep the header surface.
+# Named modules (`import qcode.config`) on host Clang + Ninja with CMake 3.28+
+# and clang-scan-deps. Android, GCC, and Unix Makefiles keep the header surface.
 find_program(QCODE_CLANG_SCAN_DEPS NAMES clang-scan-deps clang-scan-deps-18)
 if(NOT ANDROID
    AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.28"
    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang"
-   AND QCODE_CLANG_SCAN_DEPS)
+   AND QCODE_CLANG_SCAN_DEPS
+   AND CMAKE_GENERATOR MATCHES "Ninja")
     set(QCODE_CXX_MODULES ON)
     set(CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS "${QCODE_CLANG_SCAN_DEPS}")
 else()

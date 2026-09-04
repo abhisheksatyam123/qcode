@@ -340,6 +340,7 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     # and this script share the same build/<preset>/ directory).
     cmake_args = [
         "cmake",
+        "-G", "Ninja",
         "-B", str(build_dir),
         "-S", str(project_root),
         f"-DCMAKE_BUILD_TYPE={mode.capitalize()}",
