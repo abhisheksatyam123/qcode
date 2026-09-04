@@ -75,7 +75,10 @@ jobs:
 
     - name: Run tests
       working-directory: build/host-${{ matrix.build_type }}
-      run: ctest --build-config ${{ matrix.build_type == 'debug' && 'Debug' || 'Release' }} --output-on-failure --parallel
+      run: |
+        [ -n "${OPENAI_API_KEY:-}" ] || unset OPENAI_API_KEY
+        [ -n "${ANTHROPIC_API_KEY:-}" ] || unset ANTHROPIC_API_KEY
+        ctest --build-config ${{ matrix.build_type == 'debug' && 'Debug' || 'Release' }} --output-on-failure --parallel
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

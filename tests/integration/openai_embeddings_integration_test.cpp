@@ -20,7 +20,7 @@ class OpenAIEmbeddingsIntegrationTest : public AITestFixture {
     AITestFixture::SetUp();
 
     // Check if we should run real API tests
-    const char* api_key = std::getenv("OPENAI_API_KEY");
+    const char* api_key = env_or_null("OPENAI_API_KEY");
 
     if (api_key != nullptr) {
       use_real_api_ = true;
@@ -353,7 +353,7 @@ TEST_F(OpenAIEmbeddingsIntegrationTest, TokenUsageTracking) {
 
 // Network Error Tests
 TEST_F(OpenAIEmbeddingsIntegrationTest, NetworkFailure) {
-  const char* api_key = std::getenv("OPENAI_API_KEY");
+  const char* api_key = env_or_null("OPENAI_API_KEY");
   if (!api_key) {
     GTEST_SKIP() << "No OPENAI_API_KEY environment variable set";
   }
