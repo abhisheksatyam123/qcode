@@ -64,21 +64,19 @@ TEST(CursorProviderTest, SendsStableConversationPrefixForAutomaticCaching) {
             std::string::npos);
 }
 
-TEST(CursorProviderTest, UsesSessionIdAsStableConversationId) {
+TEST(CursorProviderTest, DoesNotReuseSessionIdAsConversationId) {
   GenerateOptions options;
   options.model = "composer-2.5";
   options.session_id = "11111111-2222-3333-4444-555555555555";
   options.messages = {Message::user("ping")};
 
   CursorRequestBuilder builder;
-  const auto a = builder.build_agent_run_request(options);
-  const auto b = builder.build_agent_run_request(options);
-
-  EXPECT_NE(a.find(options.session_id), std::string::npos);
-  EXPECT_NE(b.find(options.session_id), std::string::npos);
+  const auto request = builder.build_agent_run_request(options);
+  // A reused session id poisons the next turn after an idle-end/abort.
+  EXPECT_EQ(request.find(options.session_id), std::string::npos);
 }
 
-TEST(CursorProviderTest, KeepsConversationIdStableForPromptCache) {
+TEST(CursorProviderTest, KeepsPromptPrefixStableForAutomaticCache) {
   GenerateOptions options;
   options.model = "claude-opus-5";
   options.session_id = "cache-session-cursor";
@@ -88,12 +86,10 @@ TEST(CursorProviderTest, KeepsConversationIdStableForPromptCache) {
                       Message::user("second")};
 
   CursorRequestBuilder builder;
-  const auto a = builder.build_agent_run_request(options);
-  const auto b = builder.build_agent_run_request(options);
-  EXPECT_NE(a.find(options.session_id), std::string::npos);
-  EXPECT_NE(b.find(options.session_id), std::string::npos);
-  EXPECT_NE(a.find("claude-opus-5-thinking-high"), std::string::npos);
-  EXPECT_NE(a.find("Stable prefix for Cursor automatic cache."),
+  const auto request = builder.build_agent_run_request(options);
+  EXPECT_EQ(request.find(options.session_id), std::string::npos);
+  EXPECT_NE(request.find("claude-opus-5-thinking-high"), std::string::npos);
+  EXPECT_NE(request.find("Stable prefix for Cursor automatic cache."),
             std::string::npos);
 }
 
@@ -107,9 +103,20 @@ TEST(CursorProviderTest, MapsGrokVariantOntoWireModelSlug) {
   CursorRequestBuilder builder;
   const auto request = builder.build_agent_run_request(options);
 
-  EXPECT_NE(request.find("grok-4.6-high"), std::string::npos);
+  EXPECT_NE(request.find("cursor-grok-4.6-high"), std::string::npos);
   EXPECT_EQ(request.find("Reasoning effort:"), std::string::npos);
   EXPECT_NE(request.find("Be concise."), std::string::npos);
+}
+
+TEST(CursorProviderTest, GrokDefaultEffortMapsOntoMediumSku) {
+  GenerateOptions options;
+  options.model = "cursor-grok-4.6-high";
+  options.messages = {Message::user("hi")};
+
+  CursorRequestBuilder builder;
+  const auto request = builder.build_agent_run_request(options);
+
+  EXPECT_NE(request.find("cursor-grok-4.6-medium"), std::string::npos);
 }
 
 TEST(CursorProviderTest, MapsOpusLowVariantOntoThinkingSlug) {
@@ -173,7 +180,6 @@ TEST(CursorProviderTest, MultiTurnPromptIncludesPriorTurns) {
   CursorRequestBuilder builder;
   const auto request = builder.build_agent_run_request(options);
 
-  EXPECT_NE(request.find(options.session_id), std::string::npos);
   EXPECT_NE(request.find("First question"), std::string::npos);
   EXPECT_NE(request.find("First answer"), std::string::npos);
   EXPECT_NE(request.find("Follow up"), std::string::npos);

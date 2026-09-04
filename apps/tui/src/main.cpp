@@ -391,6 +391,8 @@ int main() {
     };
 
     auto start_new_session = [&]() {
+        generation.prepare_session_switch();
+        store.clear_prompt_queue();
         std::string prov = providers_list[selected_provider].name;
         std::string mod = providers_list[selected_provider].models[selected_model].name;
         std::string new_id = qcode::session::create_new_session(prov, mod);
@@ -511,15 +513,14 @@ int main() {
 
     auto submit = [&] {
         if (prompt_input.empty()) return;
-        if (generation.is_active()) {
-            if (store.has_queued_prompt()) {
-                store.append_to_last_queued_prompt(prompt_input);
-                store.add_toast("Prompt merged into queued message", "info", 1500);
-            } else {
-                store.enqueue_prompt(prompt_input);
-                store.add_toast("Prompt queued", "info", 1500);
-            }
-            LOG_INFO("Main: prompt merged into queue (queue_size={})", store.queue_size());
+        const auto& turn_status = store.status();
+        const bool turn_visible = store.is_generating() ||
+                                  turn_status == "generating" ||
+                                  turn_status == "agent";
+        if (turn_visible) {
+            store.enqueue_prompt(prompt_input);
+            store.add_toast("Prompt queued", "info", 1500);
+            LOG_INFO("Main: prompt queued (queue_size={})", store.queue_size());
             prompt_input = "";
             *state.auto_scroll = true;
             return;
@@ -911,6 +912,7 @@ int main() {
                 if (!filtered_session_entries.empty()) {
                     const auto& picked =
                         filtered_session_entries[session_select_idx];
+                    generation.prepare_session_switch();
                     store.set_session_id(picked.id);
                     sync_session_title(state, picked.title);
                     state.messages_history->clear();

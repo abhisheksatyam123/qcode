@@ -181,5 +181,65 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
   }
 }
 
+TEST(TuiStoreTest, IgnoresStaleSessionEventsAfterSwitch) {
+  const char* old_db_path = std::getenv("QCODE_DB_PATH");
+  setenv("QCODE_DB_PATH", "tui_store_stale_session_test.db", 1);
+  session::init_database();
+
+  bus::BusRuntime bus;
+  contract::register_all_events(bus);
+  AppStore store(bus);
+  store.wire();
+
+  const auto old_id = session::create_new_session("cursor", "cursor-grok-4.6");
+  store.set_session_id(old_id);
+  bus.publish<contract::MessageDelta>({
+      .session_id = old_id,
+      .text = "hello from old",
+      .done = false,
+  });
+  bus.drain();
+  ASSERT_FALSE(store.state().messages_history->empty());
+  EXPECT_EQ(store.state().messages_history->back().get_text(),
+            "hello from old");
+
+  const auto new_id = session::create_new_session("cursor", "cursor-grok-4.6");
+  store.set_session_id(new_id);
+  store.state().messages_history->clear();
+  store.set_status("idle");
+
+  bus.publish<contract::MessageDelta>({
+      .session_id = old_id,
+      .text = " leftover from old turn",
+      .done = false,
+  });
+  bus.publish<contract::SessionStatusChanged>({
+      .session_id = old_id,
+      .status = "agent",
+  });
+  bus.drain();
+
+  EXPECT_TRUE(store.state().messages_history->empty());
+  EXPECT_EQ(store.status(), "idle");
+
+  bus.publish<contract::MessageDelta>({
+      .session_id = new_id,
+      .text = "fresh",
+      .done = false,
+  });
+  bus.drain();
+  ASSERT_FALSE(store.state().messages_history->empty());
+  EXPECT_EQ(store.state().messages_history->back().get_text(), "fresh");
+
+  std::remove("tui_store_stale_session_test.db");
+  std::remove("tui_store_stale_session_test.db-wal");
+  std::remove("tui_store_stale_session_test.db-shm");
+  if (old_db_path) {
+    setenv("QCODE_DB_PATH", old_db_path, 1);
+  } else {
+    unsetenv("QCODE_DB_PATH");
+  }
+}
+
 }  // namespace
 }  // namespace qcode

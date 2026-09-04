@@ -63,13 +63,11 @@ std::string build_conversation_prompt(const GenerateOptions& options) {
   return prompt.str();
 }
 
-// Prefer the TUI/server session id so multi-turn requests share one Cursor
-// conversation id (backend prompt cache + agent continuity across user turns).
-// Fall back to a random id only when the caller has no session.
-std::string stable_conversation_id(const GenerateOptions& options) {
-  if (!options.session_id.empty()) {
-    return options.session_id;
-  }
+// Unique per turn. Reusing the qcode session id after an idle-end or abort
+// leaves Cursor's AgentService waiting on the previous exec/tool loop, so
+// the next "hi" never emits text and the TUI looks frozen. Full history is
+// already sent in the prompt, so a fresh conversation id is safe.
+std::string stable_conversation_id(const GenerateOptions&) {
   return random_id();
 }
 

@@ -69,11 +69,15 @@ void GenerationController::request_abort() {
     }
 }
 
-void GenerationController::force_stop_ui() {
-    // Unstick the UI only — keep any queued prompts so they can still run.
+void GenerationController::prepare_session_switch() {
     request_abort();
     store_.set_generating(false);
     store_.set_status("idle");
+}
+
+void GenerationController::force_stop_ui() {
+    // Unstick the UI only — keep any queued prompts so they can still run.
+    prepare_session_switch();
     if (store_.state().last_user_prompt &&
         !store_.state().last_user_prompt->empty()) {
         store_.mark_retry_available(*store_.state().last_user_prompt);
@@ -166,18 +170,21 @@ void GenerationController::spawn_unlocked(std::string prompt,
     auto providers_copy = std::move(request.providers);
     auto sys_prompt = std::move(request.system_prompt);
     const bool tools_enabled = request.tools_enabled;
+    const std::string spawn_session = store_.session_id();
 
     worker_ = qcode::compat::jthread(
         [bus_ptr, state_ptr, providers_copy = std::move(providers_copy),
          app_running, busy_ptr, store_ptr, sel_prov, sel_mod,
          sys_prompt = std::move(sys_prompt),
-         tools_enabled](qcode::compat::stop_token stop_token) {
+         tools_enabled, spawn_session](qcode::compat::stop_token stop_token) {
             // Clear busy + wake UI when the worker exits (including after Esc
             // force-stop left is_generating already false).
             const auto busy_guard = std::shared_ptr<void>(
-                nullptr, [busy_ptr, store_ptr](void*) {
+                nullptr, [busy_ptr, store_ptr, spawn_session](void*) {
                     busy_ptr->store(false, std::memory_order_release);
-                    store_ptr->set_status("idle");
+                    if (store_ptr->session_id() == spawn_session) {
+                        store_ptr->set_status("idle");
+                    }
                 });
 
             qcode::logger::set_thread_name("llm");
@@ -188,11 +195,11 @@ void GenerationController::spawn_unlocked(std::string prompt,
 
             const auto gen_start = std::chrono::steady_clock::now();
             GenerationContext ctx{
-                .session_id = *state_ptr->session_id,
+                .session_id = spawn_session,
                 .reasoning_mode = *state_ptr->reasoning_mode,
                 .agent_mode = state_ptr->agent_mode ? *state_ptr->agent_mode
                                                     : "build",
-                .workspace = session::get_session_workspace(*state_ptr->session_id),
+                .workspace = session::get_session_workspace(spawn_session),
                 .abort_flag = state_ptr->abort_flag};
             if (state_ptr->abort_flag) {
                 state_ptr->abort_flag->store(false, std::memory_order_release);
@@ -294,7 +301,8 @@ void GenerationController::spawn_unlocked(std::string prompt,
                 "GenerationController: complete duration_ms={} "
                 "queue_remaining={}",
                 duration_ms, store_ptr->queue_size());
-            if (store_ptr->is_generating()) {
+            if (store_ptr->is_generating() &&
+                store_ptr->session_id() == spawn_session) {
                 store_ptr->set_generating(false);
                 store_ptr->set_status("idle");
             }

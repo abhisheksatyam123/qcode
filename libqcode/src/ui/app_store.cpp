@@ -139,6 +139,10 @@ void AppStore::append_reasoning(const std::string& chunk,
     notify();
 }
 
+bool AppStore::is_live_session(const std::string& id) const {
+    return id.empty() || id == session_id();
+}
+
 std::string AppStore::latest_assistant_text() const {
     for (auto message = state_.messages_history->rbegin();
          message != state_.messages_history->rend(); ++message) {
@@ -403,6 +407,7 @@ void AppStore::remove_callback(uint64_t id) {
 void AppStore::wire() {
     using namespace contract;
     subs_.push_back(bus_.subscribe<MessageDelta>([this](const MessageDelta::Payload& p) {
+        if (!is_live_session(p.session_id)) return;
         append_assistant_chunk(p.text);
         if (p.done) {
             set_generating(false);
@@ -411,6 +416,7 @@ void AppStore::wire() {
         }
     }));
     subs_.push_back(bus_.subscribe<ReasoningDelta>([this](const ReasoningDelta::Payload& p) {
+        if (!is_live_session(p.session_id)) return;
         append_reasoning(p.text, p.signature);
     }));
     // ... remaining wire implementation same as before
@@ -507,6 +513,7 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
+        if (!is_live_session(p.session_id)) return;
         // Embed the unique tool_call_id so ToolCallCompleted can pair the result
         // with the exact started entry. Matching by tool_name alone is fragile
         // when multiple calls of the same tool run concurrently.
@@ -524,6 +531,7 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
+        if (!is_live_session(p.session_id)) return;
         state_.messages_history->emplace_back(
             qcode::Message::tool_results(
                 {{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
@@ -540,9 +548,13 @@ void AppStore::wire() {
         notify();
     }));
 
-    subs_.push_back(bus_.subscribe<SessionStatusChanged>([this](const SessionStatusChanged::Payload& p) { set_status(p.status); }));
+    subs_.push_back(bus_.subscribe<SessionStatusChanged>([this](const SessionStatusChanged::Payload& p) {
+        if (!is_live_session(p.session_id)) return;
+        set_status(p.status);
+    }));
 
     subs_.push_back(bus_.subscribe<ErrorOccurred>([this](const ErrorOccurred::Payload& p) {
+        if (!is_live_session(p.session_id)) return;
         // Upstream parity: "info" = retry progress toast, turn keeps running.
         if (p.severity == "info") {
             add_toast(p.message, "info", 3500);

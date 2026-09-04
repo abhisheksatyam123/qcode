@@ -91,17 +91,21 @@ std::string resolve_workspace(const GenerateOptions& options) {
 }
 
 // Cursor often omits turn_ended on short replies. Heartbeats must NOT end the
-// turn (they arrive while the agent is still tool-calling). End only when:
+// turn by themselves (they arrive while the agent is still tool-calling).
+// Exec/tool frames refresh last_activity. End when:
 //   - explicit turn_ended, or
 //   - stream closes, or
-//   - idle: heartbeats keep arriving but no text/exec for kIdleEndTimeout.
-constexpr auto kIdleEndTimeout = std::chrono::seconds(45);
+//   - no text/exec for kIdleEndTimeout (reply already started), or
+//   - no text at all for kNoTextTimeout (next turn hung after a cut-off).
+constexpr auto kIdleEndTimeout = std::chrono::seconds(12);
+constexpr auto kNoTextTimeout = std::chrono::seconds(60);
 
 bool idle_end_on_heartbeat(
     bool has_text,
     std::chrono::steady_clock::time_point last_activity) {
-  if (!has_text) return false;
-  return std::chrono::steady_clock::now() - last_activity >= kIdleEndTimeout;
+  const auto idle = std::chrono::steady_clock::now() - last_activity;
+  if (has_text) return idle >= kIdleEndTimeout;
+  return idle >= kNoTextTimeout;
 }
 
 }  // namespace

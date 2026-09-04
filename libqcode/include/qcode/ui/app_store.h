@@ -98,6 +98,8 @@ private:
     std::atomic<bool> pending_notify_{false};
 
     std::string latest_assistant_text() const;
+    // True when `id` is empty (legacy publishers) or matches the open session.
+    bool is_live_session(const std::string& id) const;
     void remove_callback(uint64_t id);
     // Keep ChatState.queued_prompts / queued_prompt_texts in sync (call with
     // queue_mutex_ held).

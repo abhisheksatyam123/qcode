@@ -192,9 +192,9 @@ TEST(TuiConfigTest, RemapsCursorPickerIdsWithoutAddingFamilies) {
 
   const auto models = config.load().front().models;
   ASSERT_EQ(models.size(), 2u);
-  ASSERT_NE(FindModel(models, "grok-4.6"), nullptr);
+  ASSERT_NE(FindModel(models, "cursor-grok-4.6"), nullptr);
   ASSERT_NE(FindModel(models, "composer-2.5"), nullptr);
-  EXPECT_EQ(FindModel(models, "cursor-grok-4.6"), nullptr);
+  EXPECT_EQ(FindModel(models, "grok-4.6"), nullptr);
 }
 
 TEST(TuiConfigTest, NestedReasoningObjectSetsEffortsAndProtocol) {

@@ -62,6 +62,10 @@ public:
     // Preserves queued prompts (same as request_abort).
     void force_stop_ui();
 
+    // Abort the in-flight turn and idle the UI for a session switch.
+    // Does not join the worker (it may still be blocked in HTTP).
+    void prepare_session_switch();
+
     // Start a turn, or queue the prompt if a worker is still alive.
     void spawn(std::string prompt, GenerationRequest request);
 

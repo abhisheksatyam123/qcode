@@ -155,11 +155,38 @@ TEST(ProviderTransformTest, ClampVariantSnapsUnsupportedEffort) {
 TEST(ProviderTransformTest, CursorFamilyAndWireIds) {
   EXPECT_EQ(ProviderTransform::cursor_picker_id("claude-opus-5-thinking-high"),
             "claude-opus-5");
-  EXPECT_EQ(ProviderTransform::cursor_family_id("grok-4.6-high"), "grok-4.6");
+  // Agent GetUsableModels lists only cursor- prefixed Grok SKUs; the family
+  // keeps the prefix and every effort maps onto a listed slug.
+  EXPECT_EQ(ProviderTransform::cursor_family_id("grok-4.6-high"),
+            "cursor-grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_family_id("cursor-grok-4.6-medium-fast"),
+            "cursor-grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("cursor-grok-4.6-high"),
+            "cursor-grok-4.6");
   EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "medium"),
-            "grok-4.6");
+            "cursor-grok-4.6-medium");
+  EXPECT_EQ(
+      ProviderTransform::cursor_wire_model_id("grok-4.6", std::nullopt),
+      "cursor-grok-4.6-medium");
   EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "high"),
-            "grok-4.6-high");
+            "cursor-grok-4.6-high");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "low"),
+            "cursor-grok-4.6-low");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "max"),
+            "cursor-grok-4.6-xhigh");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("grok-4.6", "off"),
+            "cursor-grok-4.6-medium");
+}
+
+TEST(ProviderTransformTest, GrokIdWithoutReasoningFlagGetsEfforts) {
+  ModelInfo model;
+  model.id = "grok-4.6";
+  model.name = "Cursor Grok 4.6";
+  ProviderTransform::apply_reasoning_defaults(model);
+  EXPECT_TRUE(model.reasoning);
+  EXPECT_THAT(model.reasoning_efforts,
+              testing::ElementsAre("low", "medium", "high"));
+  EXPECT_EQ(ProviderTransform::default_variant(model), "low");
 }
 
 TEST(ProviderTransformTest, DefaultVariantUsesConfiguredValue) {

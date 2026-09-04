@@ -168,8 +168,9 @@ std::string zen_wire_model_id(std::string model_id);
 /// and meta/muse-spark-1.2.
 std::string openrouter_wire_model_id(std::string model_id);
 
-/// Cursor Agent exposes many effort SKUs (grok-4.6-high, opus-5-thinking-low).
-/// Collapse those to the two family ids the picker should show.
+/// Cursor Agent exposes many effort SKUs (cursor-grok-4.6-high,
+/// claude-opus-5-thinking-low). Collapse those to the family ids the picker
+/// should show.
 [[nodiscard]] std::string cursor_family_id(std::string_view model_id);
 
 /// Picker id for a Cursor Agent SKU: known families first, then strip a
@@ -177,7 +178,7 @@ std::string openrouter_wire_model_id(std::string model_id);
 [[nodiscard]] std::string cursor_picker_id(std::string_view model_id);
 
 /// Map family + /variant effort onto the slug AgentService accepts.
-/// Grok: grok-4.6 / grok-4.6-low / grok-4.6-high
+/// Grok: cursor-grok-4.6-{low,medium,high,xhigh} (medium default, max->xhigh)
 /// Opus: claude-opus-5 / claude-opus-5-thinking-{low,high}
 [[nodiscard]] std::string cursor_wire_model_id(
     std::string_view model_id,

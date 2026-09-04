@@ -693,17 +693,9 @@ static void run_stream_generation_bus(qcode::Client& client,
   auto stream = client.stream_text(stream_options);
   LOG_DEBUG("run_stream_generation_bus: streaming model={} system={}", stream_options.model, stream_options.system.size());
 
-  if (stream.has_error()) {
-    LOG_ERROR("ChatBus: stream error: {}", stream.error_message());
-    bus.publish<ErrorOccurred>({
-        .session_id = ctx.session_id,
-        .message = format_user_facing_error(stream.error_message()),
-        .severity = "error"
-    });
-    double latency_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - gen_start_time).count();
-    qcode::session::record_generation_turn(stream_options.model, provider_id, false, false, latency_ms);
-    return;
-  }
+  // Do not call stream.has_error()/error_message() here: those iterate the
+  // whole stream and would discard Cursor/Grok text deltas before the UI
+  // loop below can publish them.
 
   std::string text_buffer;
   size_t text_size = 0;
@@ -775,15 +767,25 @@ static void run_stream_generation_bus(qcode::Client& client,
         }
       }
     } else if (event.is_error()) {
-      LOG_ERROR("run_stream_generation_bus: stream error");
+      const std::string raw =
+          (event.error.has_value() && !event.error->empty())
+              ? *event.error
+              : "Error during streaming";
+      LOG_ERROR("run_stream_generation_bus: stream error: {}", raw);
       flush_text();
       flush_reasoning();
       bus.publish<ErrorOccurred>({
           .session_id = ctx.session_id,
-          .message = "Error during streaming",
+          .message = format_user_facing_error(raw),
           .severity = "error"
       });
-      return;  // do NOT publish a success message / save / go idle after an error
+      double latency_ms = std::chrono::duration<double, std::milli>(
+                              std::chrono::high_resolution_clock::now() -
+                              gen_start_time)
+                              .count();
+      qcode::session::record_generation_turn(stream_options.model, provider_id,
+                                             false, false, latency_ms);
+      return;
     } else if (event.is_finish() && event.usage.has_value()) {
       LOG_DEBUG("run_stream_generation_bus: stream finished text_len={}", text_buffer.size());
       flush_text();
@@ -809,9 +811,20 @@ static void run_stream_generation_bus(qcode::Client& client,
         .message = "Generation stopped",
         .severity = "warning"
     });
+  } else if (text_size == 0 && !has_reasoning) {
+    LOG_WARN(
+        "run_stream_generation_bus: empty response model={} text_len=0",
+        stream_options.model);
+    bus.publish<ErrorOccurred>({
+        .session_id = ctx.session_id,
+        .message = "The model returned an empty response (no text generated).",
+        .severity = "warning"
+    });
   }
-  LOG_DEBUG("run_stream_generation_bus: publishing final MessageDelta text_len={} aborted={}",
-            text_size, aborted);
+  LOG_INFO(
+      "run_stream_generation_bus: complete text_len={} reasoning_chars={} "
+      "aborted={}",
+      text_size, reasoning_chars, aborted);
   bus.publish<MessageDelta>({
       .session_id = ctx.session_id,
       .text = "",

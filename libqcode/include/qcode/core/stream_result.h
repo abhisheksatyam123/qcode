@@ -68,8 +68,10 @@ class StreamResult {
 
   std::string collect_all() const;
 
+  // Consumes remaining events. Do not call before iterating the stream.
   bool has_error() const;
 
+  // Consumes remaining events. Do not call before iterating the stream.
   std::string error_message() const;
 
   bool is_complete() const;

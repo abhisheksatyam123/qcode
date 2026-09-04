@@ -46,6 +46,13 @@ bool is_reasoning_model_id(std::string_view model_id) {
 }
 
 void apply_reasoning_defaults(ModelInfo& model) {
+  // Honor the header contract: ids that think even when the catalog omitted
+  // reasoning=true (Grok, GPT-5, Claude, ...) are marked as reasoners so the
+  // /variant picker and default-effort flow work without explicit config.
+  if (!model.reasoning && (is_reasoning_model_id(model.id) ||
+                            is_reasoning_model_id(model.name))) {
+    model.reasoning = true;
+  }
   if (model.reasoning && model.reasoning_efforts.empty()) {
     model.reasoning_efforts = {"low", "medium", "high"};
   }
@@ -230,7 +237,10 @@ std::string cursor_family_id(std::string_view model_id) {
   const std::string id = to_lower(model_id);
   if (id.find("grok-4.6") != std::string::npos ||
       id.find("grok-4-6") != std::string::npos) {
-    return "grok-4.6";
+    // Live GetUsableModels lists only cursor- prefixed Grok SKUs
+    // (cursor-grok-4.6-{low,medium,high,xhigh}); the bare id 400s with
+    // ERROR_BAD_MODEL_NAME, so the family keeps the required prefix.
+    return "cursor-grok-4.6";
   }
   if (id.find("opus-5") != std::string::npos ||
       id.find("claude-5-opus") != std::string::npos ||
@@ -246,10 +256,10 @@ std::string cursor_picker_id(std::string_view model_id) {
 
   const std::string id = to_lower(model_id);
   static constexpr std::string_view kSuffixes[] = {
-      "-thinking-low", "-thinking-medium", "-thinking-high",
-      "-xhigh-fast",   "-high-fast",       "-medium-fast",    "-low-fast",
-      "-fast",         "-xhigh",           "-high",           "-medium",
-      "-low",
+      "-thinking-low", "-thinking-medium", "-thinking-high", "-thinking-max",
+      "-xhigh-fast",   "-high-fast",       "-medium-fast",   "-low-fast",
+      "-fast",         "-xhigh",           "-high",          "-medium",
+      "-low",          "-max",             "-none",
   };
   for (const auto suffix : kSuffixes) {
     if (id.size() > suffix.size() && id.ends_with(suffix)) {
@@ -278,11 +288,17 @@ std::string cursor_wire_model_id(std::string_view model_id,
   const bool grok = contains(id, "grok");
 
   if (grok) {
-    // Cursor CLI uses modelId grok-4.6 with effort as a parameter. Agent
-    // GetUsableModels lists suffixed SKUs; low/high must be on the slug or
-    // the run sits idle. Medium is the family default (bare id).
-    if (level == "low" || level == "high") return base + "-" + level;
-    return base;
+    // Agent GetUsableModels lists only cursor- prefixed SKUs; every level
+    // (including the default) must be on the slug — the bare id 400s with
+    // ERROR_BAD_MODEL_NAME. Medium is the balanced default; max maps onto
+    // the xhigh SKU the catalog actually lists.
+    if (level.empty()) level = "medium";
+    if (level == "max") level = "xhigh";
+    if (level == "low" || level == "medium" || level == "high" ||
+        level == "xhigh") {
+      return "cursor-grok-4.6-" + level;
+    }
+    return "cursor-grok-4.6-medium";
   }
 
   if (claude) {
