@@ -3,7 +3,9 @@
 #include <qcode/transform/provider_transform.h>
 #include <qcode/session/session_store.h>
 #include <qcode/config/config.h>
+#include <qcode/config/provider_info.h>
 #include <qcode/core/event.h>
+#include <qcode/ui/chat_state.h>
 #include <qcode/ui/themes.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/client.h>

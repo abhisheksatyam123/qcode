@@ -6,7 +6,7 @@
 Public headers and implementations live in the **same named modules**. The CMake dialect is C++20 (`CMAKE_CXX_STANDARD 20`); stay on headers + CMake, not `import` modules (Android NDK still needs the `qcode::compat::jthread` polyfill).
 
 ## Repository Layout
-- `libqcode/`: Core libraries `qcode-engine` (headless) and `qcode-ui` (FTXUI render + commands).
+- `libqcode/`: Core libraries `qcode-engine` (headless) and `qcode-ui` (FTXUI).
   - `include/qcode/<module>/`: public headers
   - `src/<module>/`: matching implementations
 - `apps/`: front-end targets consuming `libqcode`.
@@ -29,14 +29,14 @@ Public headers and implementations live in the **same named modules**. The CMake
 ```
 libqcode/
   include/qcode/          src/
-    core/                   core/          # types, bus, http, uuid, ssl
+    core/                   core/          # message, bus_port, http, uuid, ssl
     config/                 config/        # opencode.json, ProviderInfo, ModelInfo
     providers/              providers/     # openai/anthropic/cursor/antigravity/zen/registry
     transform/              transform/     # wire transforms + reasoning variants
     generation/             generation/    # generation_service / controller / continue
-    session/                session/       # sqlite, study, system prompt, workspace
+    session/                session/       # session_store, study, system_prompt, git_workspace
     tools/                  tools/         # bash/task/catalog/executor
-    ui/                     ui/            # commands, app_store, markdown, render
+    ui/                     ui/            # commands, app_store, markdown, message_render
 ```
 
 Include examples:

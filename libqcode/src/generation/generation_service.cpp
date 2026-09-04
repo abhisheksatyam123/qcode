@@ -834,8 +834,7 @@ static void run_stream_generation_bus(qcode::Client& client,
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Public entry point — matches the client creation pattern
-//  from the original run_llm_generation in chat.cpp
+//  Public entry point — resolve a provider Client, then generate
 // ──────────────────────────────────────────────────────────────
 void run_generation_with_bus(
     const std::string& provider_name,

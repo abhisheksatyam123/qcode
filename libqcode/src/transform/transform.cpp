@@ -123,7 +123,7 @@ std::string resolve_session_variant(const ModelInfo& model,
 
 // ── Chat transport flavors ──
 
-ChatTransport chat_transport_for(const std::string& base_url) {
+ChatTransport chat_transport_for(std::string_view base_url) {
   const std::string url = to_lower(base_url);
   if (url.find("openrouter.ai") != std::string::npos) return ChatTransport::kOpenRouter;
   if (url.find("opencode.ai") != std::string::npos ||
@@ -154,7 +154,7 @@ std::string zen_wire_model_id(std::string model_id) {
 
   const std::string lower = to_lower(model_id);
   static constexpr const char* kPrefix = "opencode/";
-  if (lower.rfind(kPrefix, 0) == 0) {
+  if (lower.starts_with(kPrefix)) {
     model_id = model_id.substr(std::char_traits<char>::length(kPrefix));
   }
 
@@ -186,12 +186,12 @@ std::string zen_wire_model_id(std::string model_id) {
   return model_id;
 }
 
-std::string zen_api_protocol(const std::string& model_id) {
-  return wire_protocol_id(zen_model_route(model_id).protocol);
+std::string zen_api_protocol(std::string_view model_id) {
+  return wire_protocol_id(zen_model_route(std::string{model_id}).protocol);
 }
 
-std::string zen_completions_path(const std::string& model_id) {
-  return zen_model_route(model_id).path;
+std::string zen_completions_path(std::string_view model_id) {
+  return zen_model_route(std::string{model_id}).path;
 }
 
 std::string openrouter_wire_model_id(std::string model_id) {
@@ -220,7 +220,7 @@ std::string chat_wire_model_id(ChatTransport transport, std::string model_id) {
   return trim_copy(std::move(model_id));
 }
 
-std::string cursor_family_id(const std::string& model_id) {
+std::string cursor_family_id(std::string_view model_id) {
   const std::string id = to_lower(model_id);
   if (id.find("grok-4.6") != std::string::npos ||
       id.find("grok-4-6") != std::string::npos) {
@@ -234,7 +234,7 @@ std::string cursor_family_id(const std::string& model_id) {
   return {};
 }
 
-std::string cursor_picker_id(const std::string& model_id) {
+std::string cursor_picker_id(std::string_view model_id) {
   const auto family = cursor_family_id(model_id);
   if (!family.empty()) return family;
 
@@ -246,15 +246,14 @@ std::string cursor_picker_id(const std::string& model_id) {
       "-low",
   };
   for (const auto suffix : kSuffixes) {
-    if (id.size() > suffix.size() &&
-        id.compare(id.size() - suffix.size(), suffix.size(), suffix) == 0) {
-      return model_id.substr(0, model_id.size() - suffix.size());
+    if (id.size() > suffix.size() && id.ends_with(suffix)) {
+      return std::string{model_id.substr(0, model_id.size() - suffix.size())};
     }
   }
-  return model_id;
+  return std::string{model_id};
 }
 
-std::string cursor_wire_model_id(const std::string& model_id,
+std::string cursor_wire_model_id(std::string_view model_id,
                                  const std::optional<std::string>& effort) {
   const std::string family = cursor_family_id(model_id);
   const std::string base = family.empty() ? cursor_picker_id(model_id)
@@ -264,7 +263,7 @@ std::string cursor_wire_model_id(const std::string& model_id,
   if (level == "off") level.clear();
   if (level == "max") level = "high";
 
-  if (base.empty()) return model_id;
+  if (base.empty()) return std::string{model_id};
 
   const std::string id = to_lower(base);
   const bool claude = contains(id, "claude") || contains(id, "opus") ||
@@ -308,7 +307,7 @@ void apply_reasoning_options(nlohmann::json& body,
 }
 
 std::string interleaved_replay_field(ChatTransport transport,
-                                     const std::string& model_id) {
+                                     std::string_view model_id) {
   // OpenCode only injects interleaved.field for openai-compatible, and
   // explicitly skips @openrouter/ai-sdk-provider.
   if (transport == ChatTransport::kOpenRouter) return {};
@@ -563,15 +562,15 @@ JsonValue normalize_schema(const JsonValue& schema, const Model& model) {
 
 // ── Utility ──
 
-bool is_opus_family(const std::string& model_id) {
+bool is_opus_family(std::string_view model_id) {
   const std::string id = to_lower(model_id);
   return id.find("opus-4-6") != std::string::npos ||
          id.find("opus-4.6") != std::string::npos ||
          id == "opus" ||
-         (id.size() >= 5 && id.substr(id.size() - 5) == "/opus");
+         id.ends_with("/opus");
 }
 
-std::string sdk_key(const std::string& provider_name) {
+std::string sdk_key(std::string_view provider_name) {
   static const std::unordered_map<std::string, std::string> KEY_MAP = {
     {"amazon", "bedrock"},
     {"qpilot", "openai"},
@@ -593,7 +592,7 @@ std::string sdk_key(const std::string& provider_name) {
 
   auto it = KEY_MAP.find(to_lower(provider_name));
   if (it != KEY_MAP.end()) return it->second;
-  return provider_name;
+  return std::string{provider_name};
 }
 
 }  // namespace ProviderTransform

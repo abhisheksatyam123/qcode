@@ -14,8 +14,10 @@
 #include <mutex>
 #include <cctype>
 
+#include <qcode/config/provider_info.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/message.h>
+#include <qcode/ui/chat_state.h>
 #include <nlohmann/json.hpp>
 
 namespace qcode {

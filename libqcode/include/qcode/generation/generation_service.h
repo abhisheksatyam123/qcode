@@ -11,9 +11,8 @@
 namespace qcode {
 
 // ── Bus-aware generation entry points ────────────────────────────────
-// These replace the old run_llm_generation / run_stream_generation from chat.h.
-// Instead of taking a ScreenInteractive* and ChatState, they take a BusPort&
-// and emit typed events. The UI subscribes to those events.
+// Callers pass a BusPort& (not ChatState) and receive typed events.
+// The UI subscribes to those events.
 
 /**
  * Minimal context needed by the generation backend.

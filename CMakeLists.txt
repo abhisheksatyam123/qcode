@@ -56,7 +56,7 @@ add_subdirectory(third_party)
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
 
-# FTXUI is required by libqcode render sources (markdown/message/tool UI),
+# FTXUI is required by libqcode src/ui/ (markdown/message/tool UI),
 # not only by the TUI app binary.
 include(FetchContent)
 FetchContent_Declare(ftxui

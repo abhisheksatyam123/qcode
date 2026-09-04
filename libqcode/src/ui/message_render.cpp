@@ -2,10 +2,12 @@
 #include <unordered_set>
 #include <algorithm>
 #include <cstdio>
-#include <qcode/ui/tool_renderers.h>
-#include <qcode/ui/message_render.h>
+#include <qcode/config/provider_info.h>
+#include <qcode/ui/chat_state.h>
 #include <qcode/ui/markdown.h>
+#include <qcode/ui/message_render.h>
 #include <qcode/ui/themes.h>
+#include <qcode/ui/tool_renderers.h>
 #include <nlohmann/json.hpp>
 #include <qcode/core/logger.h>
 #include <ftxui/screen/terminal.hpp>
