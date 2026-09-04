@@ -340,7 +340,6 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     # and this script share the same build/<preset>/ directory).
     cmake_args = [
         "cmake",
-        "-G", "Ninja",
         "-B", str(build_dir),
         "-S", str(project_root),
         f"-DCMAKE_BUILD_TYPE={mode.capitalize()}",
@@ -350,6 +349,8 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
         f"-DQCODE_BUILD_SERVER={'OFF' if no_server else 'ON'}",
         f"-DQCODE_BUILD_CLI={'OFF' if no_cli else 'ON'}",
     ]
+    if shutil.which("ninja"):
+        cmake_args[1:1] = ["-G", "Ninja"]
     if preset_name.startswith("android-"):
         import re as _re
         _m = _re.match(r"android-(.+)-(debug|release)$", preset_name)
