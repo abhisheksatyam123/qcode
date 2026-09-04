@@ -2,7 +2,9 @@
 #include <qcode/providers/zen_route.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <iterator>
 #include <ranges>
 #include <set>
 #include <string>
@@ -16,7 +18,9 @@ namespace ProviderTransform {
 
 static std::string to_lower(std::string_view s) {
   std::string out(s);
-  for (auto& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  std::ranges::transform(out, out.begin(), [](char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  });
   return out;
 }
 
@@ -31,13 +35,14 @@ static bool contains(std::string_view s, std::string_view sub) {
 
 bool is_reasoning_model_id(std::string_view model_id) {
   const auto id = to_lower(model_id);
-  return contains(id, "muse-spark") || contains(id, "ox-alpha") ||
-         contains(id, "x-preview-f-free") || contains(id, "deepseek-v4") ||
-         contains(id, "gpt-5") || contains(id, "grok") ||
-         contains(id, "gemini-3") || contains(id, "gemini-2.5") ||
-         contains(id, "thinking") || contains(id, "kimi-k") ||
-         contains(id, "claude") || contains(id, "composer") ||
-         contains(id, "nemotron") || contains(id, "fable");
+  static constexpr std::array<std::string_view, 14> kNeedles{
+      "muse-spark", "ox-alpha",     "x-preview-f-free", "deepseek-v4",
+      "gpt-5",      "grok",         "gemini-3",         "gemini-2.5",
+      "thinking",   "kimi-k",       "claude",           "composer",
+      "nemotron",   "fable",
+  };
+  return std::ranges::any_of(
+      kNeedles, [&](std::string_view needle) { return id.find(needle) != std::string::npos; });
 }
 
 void apply_reasoning_defaults(ModelInfo& model) {
@@ -92,10 +97,10 @@ std::string clamp_variant(const ModelInfo& model, std::string_view requested) {
 
 static std::vector<std::string> variant_cycle(const ModelInfo& model) {
   std::vector<std::string> ids{"off"};
-  for (const auto& effort : reasoning_variants(model)) {
-    if (effort.empty() || effort == "off") continue;
-    ids.push_back(effort);
-  }
+  std::ranges::copy_if(reasoning_variants(model), std::back_inserter(ids),
+                       [](const std::string& effort) {
+                         return !effort.empty() && effort != "off";
+                       });
   return ids;
 }
 
@@ -108,8 +113,9 @@ bool is_allowed_variant(const ModelInfo& model, std::string_view requested) {
 std::string next_variant(const ModelInfo& model, std::string_view current) {
   const auto ids = variant_cycle(model);
   const std::string cur = current.empty() ? "off" : std::string{current};
-  for (size_t i = 0; i < ids.size(); ++i) {
-    if (ids[i] == cur) return ids[(i + 1) % ids.size()];
+  if (const auto it = std::ranges::find(ids, cur); it != ids.end()) {
+    const auto idx = static_cast<std::size_t>(it - ids.begin());
+    return ids[(idx + 1) % ids.size()];
   }
   return ids.front();
 }

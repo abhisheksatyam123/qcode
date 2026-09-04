@@ -3,7 +3,16 @@
 ## Overview
 `qcode` is a high-performance C++20 LLM workspace and terminal tool matching modern OpenCode/Cursor paradigms.
 
-Public headers and implementations live in the **same named modules**. The CMake dialect is C++20 (`CMAKE_CXX_STANDARD 20`); stay on headers + CMake, not `import` modules (Android NDK still needs the `qcode::compat::jthread` polyfill).
+Public headers and implementations live in the **same named folders**. On host builds with CMake 3.28+, those folders are also C++20 **named modules**:
+
+```cpp
+import qcode.config;
+import qcode.transform;
+import qcode.generation;
+import qcode;  // re-exports the three above
+```
+
+Android NDK still uses headers (`#include <qcode/...>`) and the `qcode::compat::jthread` polyfill. Host named modules require Clang 18+ and `clang-scan-deps` (GCC keeps the header surface). Do not use `import std` (C++23) or `std::format` in this layer.
 
 ## Repository Layout
 - `libqcode/`: Core libraries `qcode-engine` (headless) and `qcode-ui` (FTXUI).
@@ -41,10 +50,10 @@ libqcode/
 
 Include examples:
 
-- `#include <qcode/config/config.h>` — load `~/.config/opencode/opencode.json`
+- `import qcode.config;` or `#include <qcode/config/config.h>` — load `~/.config/opencode/opencode.json`
+- `import qcode.transform;` or `#include <qcode/transform/provider_transform.h>` — effort clamp/cycle, wire options
+- `import qcode.generation;` or `#include <qcode/generation/generation_service.h>` — LLM turn
 - `#include <qcode/config/provider_info.h>` — `ModelInfo` / `ProviderInfo`
-- `#include <qcode/transform/provider_transform.h>` — effort clamp/cycle, wire options
-- `#include <qcode/generation/generation_service.h>` — LLM turn
 - `#include <qcode/ui/chat_state.h>` — TUI `ChatState`
 - `#include <qcode/ui/commands.h>` — slash commands and pickers
 

@@ -37,7 +37,7 @@ using JsonValue = nlohmann::json;
 namespace ProviderTransform {
 
 /// Global max output token cap (mirrors opencode's OUTPUT_TOKEN_MAX = 32000)
-constexpr int OUTPUT_TOKEN_MAX = 32000;
+inline constexpr int OUTPUT_TOKEN_MAX = 32000;
 
 // ── Model-family-specific defaults ──
 

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <qcode/config/provider_info.h>
+#include <qcode/core/concepts.h>
 
 namespace qcode {
 

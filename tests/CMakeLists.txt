@@ -67,6 +67,11 @@ set_target_properties(qcode_tests PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
+if(QCODE_CXX_MODULES)
+    target_sources(qcode_tests PRIVATE unit/cxx_modules_test.cpp)
+    set_target_properties(qcode_tests PROPERTIES CXX_SCAN_FOR_MODULES ON)
+endif()
+
 if(MSVC)
     target_compile_options(qcode_tests PRIVATE /W3)
 else()

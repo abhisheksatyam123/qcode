@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cctype>
+#include <ranges>
 #include <string>
 #include <string_view>
 
@@ -12,11 +14,10 @@ namespace qcode {
 // build mode should nudge the model to keep going.
 
 inline std::string ascii_lower(std::string_view text) {
-  std::string out;
-  out.reserve(text.size());
-  for (unsigned char c : text) {
-    out.push_back(static_cast<char>(std::tolower(c)));
-  }
+  std::string out(text.size(), '\0');
+  std::ranges::transform(text, out.begin(), [](char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  });
   return out;
 }
 
@@ -33,10 +34,9 @@ inline bool looks_like_task_completion(std::string_view text) {
       "changes made",
       "finished.",
   };
-  for (const auto phrase : kDone) {
-    if (lower.find(phrase) != std::string::npos) return true;
-  }
-  return false;
+  return std::ranges::any_of(kDone, [&](std::string_view phrase) {
+    return lower.find(phrase) != std::string::npos;
+  });
 }
 
 inline bool looks_like_task_stall(std::string_view text) {
@@ -59,10 +59,9 @@ inline bool looks_like_task_stall(std::string_view text) {
       "wait -",
       "need your call",
   };
-  for (const auto phrase : kStall) {
-    if (lower.find(phrase) != std::string::npos) return true;
-  }
-  return false;
+  return std::ranges::any_of(kStall, [&](std::string_view phrase) {
+    return lower.find(phrase) != std::string::npos;
+  });
 }
 
 // Returns true when the tool loop should inject a continue nudge instead of

@@ -136,24 +136,35 @@ def build_webui(project_root: Path, build_dir: Path):
             return False
         progress.update(task, completed=True)
 
-    # Vendor marked + js-yaml into standalone IIFE bundles served as
-    # /vendor-marked.min.js and /vendor-jsyaml.min.js (offline-safe).
-    vendor_cmd = [
-        "npx", "esbuild",
-        "--bundle", "--minify",
-        "--format=iife", "--global-name=marked",
-        "--outfile=" + str(webui_src / "src" / "vendor-marked.min.js"),
-        str(webui_src / "node_modules" / "marked" / "lib" / "marked.esm.js"),
-    ]
-    subprocess.run(vendor_cmd, cwd=webui_src, check=True, capture_output=True, text=True)
-    vendor_cmd = [
-        "npx", "esbuild",
-        "--bundle", "--minify",
-        "--format=iife", "--global-name=jsyaml",
-        "--outfile=" + str(webui_src / "src" / "vendor-jsyaml.min.js"),
-        str(webui_src / "node_modules" / "js-yaml" / "dist" / "js-yaml.mjs"),
-    ]
-    subprocess.run(vendor_cmd, cwd=webui_src, check=True, capture_output=True, text=True)
+    # Rebuild vendor IIFE bundles when npm packages are present. The committed
+    # src/vendor-*.min.js files are enough for a C++/server build.
+    marked_esm = webui_src / "node_modules" / "marked" / "lib" / "marked.esm.js"
+    yaml_mjs = webui_src / "node_modules" / "js-yaml" / "dist" / "js-yaml.mjs"
+    if marked_esm.exists() and yaml_mjs.exists():
+        subprocess.run(
+            [
+                "npx", "esbuild",
+                "--bundle", "--minify",
+                "--format=iife", "--global-name=marked",
+                "--outfile=" + str(webui_src / "src" / "vendor-marked.min.js"),
+                str(marked_esm),
+            ],
+            cwd=webui_src, check=True, capture_output=True, text=True,
+        )
+        subprocess.run(
+            [
+                "npx", "esbuild",
+                "--bundle", "--minify",
+                "--format=iife", "--global-name=jsyaml",
+                "--outfile=" + str(webui_src / "src" / "vendor-jsyaml.min.js"),
+                str(yaml_mjs),
+            ],
+            cwd=webui_src, check=True, capture_output=True, text=True,
+        )
+    else:
+        console.print(
+            "[yellow]marked/js-yaml not in node_modules; using committed vendor bundles[/yellow]"
+        )
 
     # Copy to build directory + sync raw src (incl. vendor bundles) next to the server.
     if (webui_src / "dist").exists():

@@ -124,17 +124,32 @@ set_target_properties(qcode-engine PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-target_precompile_headers(qcode-engine PRIVATE
-    <algorithm>
-    <chrono>
-    <functional>
-    <map>
-    <memory>
-    <string>
-    <vector>
-    <nlohmann/json.hpp>
-    <httplib.h>
-)
+if(QCODE_CXX_MODULES)
+    target_sources(qcode-engine PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/modules"
+        FILES
+            "${CMAKE_CURRENT_SOURCE_DIR}/modules/qcode.config.cppm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/modules/qcode.transform.cppm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/modules/qcode.generation.cppm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/modules/qcode.cppm"
+    )
+    set_target_properties(qcode-engine PROPERTIES CXX_SCAN_FOR_MODULES ON)
+    target_compile_definitions(qcode-engine PUBLIC QCODE_HAS_CXX_MODULES=1)
+else()
+    # PCH and C++20 named modules do not mix on GCC/Clang.
+    target_precompile_headers(qcode-engine PRIVATE
+        <algorithm>
+        <chrono>
+        <functional>
+        <map>
+        <memory>
+        <string>
+        <vector>
+        <nlohmann/json.hpp>
+        <httplib.h>
+    )
+endif()
 
 
 if(MSVC)

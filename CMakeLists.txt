@@ -11,9 +11,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Enable ccache if available
+# Named modules (`import qcode.config`) on host Clang with CMake 3.28+ and
+# clang-scan-deps. Android NDK and GCC keep the header surface.
+find_program(QCODE_CLANG_SCAN_DEPS NAMES clang-scan-deps clang-scan-deps-18)
+if(NOT ANDROID
+   AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.28"
+   AND CMAKE_CXX_COMPILER_ID MATCHES "Clang"
+   AND QCODE_CLANG_SCAN_DEPS)
+    set(QCODE_CXX_MODULES ON)
+    set(CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS "${QCODE_CLANG_SCAN_DEPS}")
+else()
+    set(QCODE_CXX_MODULES OFF)
+endif()
+
+# Enable ccache if available. Skip it when scanning C++20 named modules;
+# BMI + ccache is still unreliable on GCC 13 / Clang 18.
 find_program(CCACHE_PROGRAM ccache)
-if(CCACHE_PROGRAM)
+if(CCACHE_PROGRAM AND NOT QCODE_CXX_MODULES)
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
 endif()
@@ -102,6 +116,18 @@ if(QCODE_BUILD_CLI)
     list(APPEND QCODE_INSTALL_TARGETS qcode-cli)
 endif()
 
+if(QCODE_CXX_MODULES)
+    list(REMOVE_ITEM QCODE_INSTALL_TARGETS qcode-engine)
+    install(TARGETS qcode-engine
+        EXPORT qcode-targets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILE_SET CXX_MODULES DESTINATION ${CMAKE_INSTALL_LIBDIR}/cxx/qcode
+    )
+endif()
+
 install(TARGETS ${QCODE_INSTALL_TARGETS}
     EXPORT qcode-targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -145,6 +171,7 @@ message(STATUS "")
 message(STATUS "qcode ${PROJECT_VERSION} Configuration Summary")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "  C++ named modules: ${QCODE_CXX_MODULES}")
 message(STATUS "  Build examples: ${BUILD_EXAMPLES}")
 message(STATUS "  Build tests: ${BUILD_TESTS}")
 message(STATUS "  Build TUI: ${QCODE_BUILD_TUI}")
