@@ -7,10 +7,30 @@ on:
     branches: [ main ]
 
 jobs:
+  webui:
+    name: WebUI
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: npm
+        cache-dependency-path: apps/webui/package-lock.json
+
+    - name: Verify WebUI build
+      working-directory: apps/webui
+      run: |
+        npm ci
+        npm run build
+
   ci:
     name: CI Pipeline
     runs-on: ubuntu-latest
-    
+
     strategy:
       fail-fast: false
       matrix:
@@ -44,17 +64,6 @@ jobs:
     - name: Check code formatting
       continue-on-error: true
       run: uv run scripts/format.py --check
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 20
-
-    - name: Verify WebUI build
-      working-directory: apps/webui
-      run: |
-        npm ci
-        npm run build
-
 
     - uses: lukka/get-cmake@latest
 
