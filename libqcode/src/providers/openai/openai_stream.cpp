@@ -3,9 +3,9 @@
 #include "openai_response_parser.h"
 #include <qcode/core/ssl_config.h>
 #include <qcode/core/logger.h>
-#include "http/http_request_handler.h"
+#include "core/http_request_handler.h"
 #include "providers/opencode_zen_headers.h"
-#include "utils/response_utils.h"
+#include "core/response_utils.h"
 
 #include <chrono>
 #include <cmath>

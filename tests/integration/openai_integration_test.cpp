@@ -21,7 +21,7 @@ class OpenAIIntegrationTest : public AITestFixture {
     AITestFixture::SetUp();
 
     // Check if we should run real API tests
-    const char* api_key = std::getenv("OPENAI_API_KEY");
+    const char* api_key = env_or_null("OPENAI_API_KEY");
 
     if (api_key != nullptr) {
       use_real_api_ = true;
@@ -295,7 +295,7 @@ TEST_F(OpenAIIntegrationTest, CustomBaseUrl) {
   }
 
   // Test that custom base URL can be set (though we'll use OpenAI's URL)
-  const char* api_key = std::getenv("OPENAI_API_KEY");
+  const char* api_key = env_or_null("OPENAI_API_KEY");
   auto custom_client =
       qcode::openai::create_client(api_key, "https://api.openai.com");
 
@@ -370,7 +370,7 @@ TEST_F(OpenAIIntegrationTest, NetworkFailure) {
   }
 
   // Test with localhost on unused port to simulate connection refused quickly
-  const char* api_key = std::getenv("OPENAI_API_KEY");
+  const char* api_key = env_or_null("OPENAI_API_KEY");
   auto failing_client = qcode::openai::create_client(
       api_key, "http://localhost:59999");  // Very unlikely port to be in use
 
@@ -391,7 +391,7 @@ class EnvironmentConfigTest : public ::testing::Test {
  protected:
   void SetUp() override {
     // Save original environment
-    original_api_key_ = std::getenv("OPENAI_API_KEY");
+    original_api_key_ = env_or_null("OPENAI_API_KEY");
     original_base_url_ = std::getenv("OPENAI_BASE_URL");
   }
 
@@ -405,7 +405,7 @@ class EnvironmentConfigTest : public ::testing::Test {
 };
 
 TEST_F(EnvironmentConfigTest, ConfigurationFromEnvironment) {
-  const char* api_key = std::getenv("OPENAI_API_KEY");
+  const char* api_key = env_or_null("OPENAI_API_KEY");
   const char* base_url = std::getenv("OPENAI_BASE_URL");
 
   if (api_key) {
@@ -419,7 +419,7 @@ TEST_F(EnvironmentConfigTest, ConfigurationFromEnvironment) {
 }
 
 TEST_F(EnvironmentConfigTest, DefaultClientCreation) {
-  const char* api_key = std::getenv("OPENAI_API_KEY");
+  const char* api_key = env_or_null("OPENAI_API_KEY");
 
   if (api_key) {
     // Test creating client with default configuration (reads from environment)

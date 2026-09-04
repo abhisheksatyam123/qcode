@@ -1,8 +1,8 @@
 #include "anthropic_request_builder.h"
 
 #include <qcode/core/logger.h>
-#include <qcode/providers/provider_transform.h>
-#include "utils/message_utils.h"
+#include <qcode/transform/provider_transform.h>
+#include "core/message_utils.h"
 
 #include <unordered_set>
 

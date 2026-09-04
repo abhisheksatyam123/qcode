@@ -40,8 +40,7 @@ using ProviderResolver =
 
 // Central registry mapping a provider id to a factory that resolves a Client,
 // performing any provider-specific auth (reading an API-key env var, fetching a
-// token, ...). Replaces the if/else dispatch previously duplicated in
-// chat.cpp / chat_bus.cpp.
+// token, ...).
 class ProviderRegistry {
  public:
   static ProviderRegistry& instance();

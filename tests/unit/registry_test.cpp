@@ -7,7 +7,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <qcode/core/generate_options.h>
-#include <qcode/core/config.h>
+#include <qcode/config/config.h>
 
 namespace qcode {
 namespace providers {

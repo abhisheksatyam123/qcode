@@ -3,7 +3,7 @@
 #include <memory>
 
 #include <qcode/core/bus_port.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
 #include <qcode/core/client.h>
 #include <string>
 #include <vector>
@@ -11,11 +11,8 @@
 namespace qcode {
 
 // ── Bus-aware generation entry points ────────────────────────────────
-// These replace the old run_llm_generation / run_stream_generation from chat.h.
-// Instead of taking a ScreenInteractive* and ChatState, they take a BusPort&
-// and emit typed events. The UI subscribes to those events.
-
-struct ProviderInfo;
+// Callers pass a BusPort& (not ChatState) and receive typed events.
+// The UI subscribes to those events.
 
 /**
  * Minimal context needed by the generation backend.

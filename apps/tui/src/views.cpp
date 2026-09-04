@@ -2,9 +2,11 @@
 #include <views.h>
 #include "file_diff_preview.h"
 #include "views_pickers.h"
-#include <qcode/session/session_store.h>
+#include <qcode/config/provider_info.h>
 #include <qcode/core/logger.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/session/session_store.h>
+#include <qcode/transform/provider_transform.h>
+#include <qcode/ui/chat_state.h>
 
 #include <array>
 #include <cstdio>

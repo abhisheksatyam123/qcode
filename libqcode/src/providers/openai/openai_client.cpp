@@ -2,7 +2,7 @@
 
 #include <qcode/core/logger.h>
 #include <qcode/providers/openai.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/providers/zen_route.h>
 #include "openai_request_builder.h"
 #include "openai_response_parser.h"

@@ -134,7 +134,7 @@ class ToolCallingIntegrationTest
     std::string provider = GetParam();
 
     if (provider == "openai") {
-      const char* api_key = std::getenv("OPENAI_API_KEY");
+      const char* api_key = env_or_null("OPENAI_API_KEY");
       if (api_key) {
         use_real_api_ = true;
         client_ = qcode::openai::create_client(api_key);
@@ -143,7 +143,7 @@ class ToolCallingIntegrationTest
         use_real_api_ = false;
       }
     } else if (provider == "anthropic") {
-      const char* api_key = std::getenv("ANTHROPIC_API_KEY");
+      const char* api_key = env_or_null("ANTHROPIC_API_KEY");
       if (api_key) {
         use_real_api_ = true;
         client_ = qcode::anthropic::create_client(api_key);
@@ -630,7 +630,7 @@ INSTANTIATE_TEST_SUITE_P(
 class OpenAISpecificToolTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const char* api_key = std::getenv("OPENAI_API_KEY");
+    const char* api_key = env_or_null("OPENAI_API_KEY");
     if (api_key) {
       use_real_api_ = true;
       client_ = qcode::openai::create_client(api_key);
@@ -669,7 +669,7 @@ TEST_F(OpenAISpecificToolTest, ToolChoiceNoneSupport) {
 class AnthropicSpecificToolTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const char* api_key = std::getenv("ANTHROPIC_API_KEY");
+    const char* api_key = env_or_null("ANTHROPIC_API_KEY");
     if (api_key) {
       use_real_api_ = true;
       client_ = qcode::anthropic::create_client(api_key);

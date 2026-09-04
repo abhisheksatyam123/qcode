@@ -3,7 +3,7 @@
 // append a second visible copy. Also verifies that enqueued prompts remain
 // in the queue section until execution starts.
 
-#include <qcode/session/generation_controller.h>
+#include <qcode/generation/generation_controller.h>
 #include <qcode/ui/app_store.h>
 
 #include <gtest/gtest.h>

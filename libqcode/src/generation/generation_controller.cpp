@@ -1,7 +1,7 @@
-#include <qcode/session/generation_controller.h>
+#include <qcode/generation/generation_controller.h>
 
 #include <qcode/core/logger.h>
-#include <qcode/session/generation_service.h>
+#include <qcode/generation/generation_service.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/core/event.h>
 #include <qcode/session/session_store.h>

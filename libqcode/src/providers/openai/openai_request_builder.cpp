@@ -9,8 +9,8 @@
 #include <qcode/core/logger.h>
 #include <qcode/core/random.h>
 #include "providers/opencode_zen_headers.h"
-#include "utils/message_utils.h"
-#include <qcode/providers/gemini_transform.h>
+#include "core/message_utils.h"
+#include <qcode/transform/gemini_transform.h>
 
 namespace qcode {
 

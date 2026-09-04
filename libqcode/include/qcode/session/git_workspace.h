@@ -1,6 +1,6 @@
 #pragma once
 
-#include <qcode/core/state.h>
+#include <qcode/ui/chat_state.h>
 
 #include <vector>
 

@@ -8,7 +8,7 @@
 
 #include <qcode/core/generate_options.h>
 #include <qcode/providers/provider_profile.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/providers/zen_route.h>
 #include <qcode/ui/commands.h>
 
@@ -21,13 +21,13 @@ namespace test {
 using ProviderTransform::ChatTransport;
 
 static ModelInfo ox_alpha_zen() {
-  ModelInfo m;
-  m.id = "x-preview-f-free";
-  m.name = "Ox Alpha Free (Unlimited)";
-  m.reasoning = true;
-  m.reasoning_efforts = {"low", "high", "max"};
-  m.reasoning_field = "reasoning_content";
-  return m;
+  return ModelInfo{
+      .name = "Ox Alpha Free (Unlimited)",
+      .id = "x-preview-f-free",
+      .reasoning = true,
+      .reasoning_efforts = {"low", "high", "max"},
+      .reasoning_field = "reasoning_content",
+  };
 }
 
 // ── Transport flavor detection ──
@@ -130,8 +130,7 @@ TEST(ProviderTransformTest, VariantsFromCatalogEfforts) {
 }
 
 TEST(ProviderTransformTest, ReasoningWithoutEffortsGetsGenericLevels) {
-  ModelInfo model;
-  model.reasoning = true;
+  ModelInfo model{.reasoning = true};
   ProviderTransform::apply_reasoning_defaults(model);
   EXPECT_THAT(model.reasoning_efforts,
               testing::ElementsAre("low", "medium", "high"));
@@ -164,24 +163,52 @@ TEST(ProviderTransformTest, CursorFamilyAndWireIds) {
 }
 
 TEST(ProviderTransformTest, DefaultVariantUsesConfiguredValue) {
-  ModelInfo model;
-  model.reasoning = true;
-  model.reasoning_efforts = {"low", "medium", "high"};
-  model.reasoning_default = "medium";
+  const ModelInfo model{
+      .reasoning = true,
+      .reasoning_efforts = {"low", "medium", "high"},
+      .reasoning_default = "medium",
+  };
   EXPECT_EQ(ProviderTransform::default_variant(model), "medium");
 }
 
 TEST(ProviderTransformTest, DefaultVariantFallsBackToFirstEffort) {
-  ModelInfo model;
-  model.reasoning = true;
-  model.reasoning_efforts = {"low", "high", "max"};
+  const ModelInfo model{
+      .reasoning = true,
+      .reasoning_efforts = {"low", "high", "max"},
+  };
   EXPECT_EQ(ProviderTransform::default_variant(model), "low");
 }
 
 TEST(ProviderTransformTest, NonReasoningDefaultIsOff) {
-  ModelInfo plain;
-  plain.reasoning = false;
+  const ModelInfo plain{.reasoning = false};
   EXPECT_EQ(ProviderTransform::default_variant(plain), "off");
+}
+
+TEST(ProviderTransformTest, VariantCycleFollowsConfiguredEfforts) {
+  const ModelInfo model{
+      .reasoning = true,
+      .reasoning_efforts = {"low", "high"},
+  };
+  EXPECT_TRUE(ProviderTransform::is_allowed_variant(model, "off"));
+  EXPECT_TRUE(ProviderTransform::is_allowed_variant(model, "high"));
+  EXPECT_FALSE(ProviderTransform::is_allowed_variant(model, "medium"));
+  EXPECT_FALSE(ProviderTransform::is_allowed_variant(model, "max"));
+  EXPECT_EQ(ProviderTransform::next_variant(model, "off"), "low");
+  EXPECT_EQ(ProviderTransform::next_variant(model, "low"), "high");
+  EXPECT_EQ(ProviderTransform::next_variant(model, "high"), "off");
+  EXPECT_EQ(ProviderTransform::next_variant(model, "medium"), "off");
+}
+
+TEST(ProviderTransformTest, ResolveSessionVariantKeepsOffAndClamps) {
+  const ModelInfo model{
+      .reasoning = true,
+      .reasoning_efforts = {"low", "high", "max"},
+      .reasoning_default = "high",
+  };
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, ""), "high");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "off"), "off");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "max"), "max");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "medium"), "high");
 }
 
 // ── Effort placement per transport ──

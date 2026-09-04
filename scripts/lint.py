@@ -28,20 +28,28 @@ console = Console()
 
 
 def find_compile_commands() -> Optional[Path]:
-    """Find compile_commands.json in build directory or project root."""
+    """Find compile_commands.json under build/<preset>/ or project root."""
     project_dir = Path(__file__).parent.parent
-    build_dir = project_dir / "build"
-    
-    # Check build directory first
-    build_commands = build_dir / "compile_commands.json"
-    if build_commands.exists():
-        return build_commands
-    
+    build_root = project_dir / "build"
+
+    # Prefer newest per-preset compile DB (unified build/<preset>/ layout).
+    if build_root.is_dir():
+        candidates = sorted(
+            build_root.glob("*/compile_commands.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            return candidates[0]
+        legacy = build_root / "compile_commands.json"
+        if legacy.exists():
+            return legacy
+
     # Check project root
     root_commands = project_dir / "compile_commands.json"
     if root_commands.exists():
         return root_commands
-    
+
     return None
 
 
@@ -76,7 +84,7 @@ def find_cpp_files() -> List[Path]:
     """Find all C++ source files in the project."""
     project_dir = Path(__file__).parent.parent
     extensions = {".cc", ".cpp", ".cxx"}
-    exclude_dirs = {"build", "vcpkg_installed", ".cache", ".git", "third_party"}
+    exclude_dirs = {"build", "build-android-arm64", "build-android-arm64-v8a", "build-android-deps", "vcpkg_installed", ".cache", ".git", "third_party"}
     
     files = []
     for ext in extensions:

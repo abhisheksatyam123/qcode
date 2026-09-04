@@ -2,7 +2,7 @@
 
 #include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include "providers/base_provider_client.h"
 
 #include <nlohmann/json.hpp>

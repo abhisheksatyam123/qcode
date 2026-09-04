@@ -1,4 +1,4 @@
-# Unit / integration tests for qcode-core.
+# Unit / integration tests for qcode::ui (and qcode::engine).
 
 add_executable(qcode_tests
     # Unit tests
@@ -66,6 +66,11 @@ set_target_properties(qcode_tests PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
 )
+
+if(QCODE_CXX_MODULES)
+    target_sources(qcode_tests PRIVATE unit/cxx_modules_test.cpp)
+    set_target_properties(qcode_tests PROPERTIES CXX_SCAN_FOR_MODULES ON)
+endif()
 
 if(MSVC)
     target_compile_options(qcode_tests PRIVATE /W3)

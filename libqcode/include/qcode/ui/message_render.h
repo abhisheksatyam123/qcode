@@ -1,7 +1,8 @@
 #pragma once
 #include <ftxui/dom/elements.hpp>
 #include <qcode/core/message.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
+#include <qcode/ui/chat_state.h>
 
 namespace qcode {
 

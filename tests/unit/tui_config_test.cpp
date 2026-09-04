@@ -1,11 +1,18 @@
-#include <qcode/core/config.h>
+#include <qcode/config/config.h>
+#include <qcode/transform/provider_transform.h>
+#include <qcode/ui/commands.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
+
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
@@ -35,7 +42,8 @@ class ScopedConfig {
  public:
   explicit ScopedConfig(std::string_view json)
       : path_(std::filesystem::temp_directory_path() /
-              ("qcode-config-test-" + std::to_string(++seq_) + ".json")),
+              ("qcode-config-test-" + std::to_string(getpid()) + "-" +
+               std::to_string(++seq_) + ".json")),
         env_("OPENCODE_CONFIG", path_.string()) {
     std::ofstream output(path_);
     output << json;
@@ -45,7 +53,7 @@ class ScopedConfig {
   std::vector<ProviderInfo> load() const { return load_providers_from_config(); }
 
  private:
-  static inline int seq_ = 0;
+  static inline std::atomic<int> seq_{0};
   std::filesystem::path path_;
   ScopedEnv env_;
 };
@@ -187,6 +195,153 @@ TEST(TuiConfigTest, RemapsCursorPickerIdsWithoutAddingFamilies) {
   ASSERT_NE(FindModel(models, "grok-4.6"), nullptr);
   ASSERT_NE(FindModel(models, "composer-2.5"), nullptr);
   EXPECT_EQ(FindModel(models, "cursor-grok-4.6"), nullptr);
+}
+
+TEST(TuiConfigTest, NestedReasoningObjectSetsEffortsAndProtocol) {
+  ScopedConfig config(R"({
+      "provider": {
+        "opencode": {
+          "models": {
+            "muse-spark-1.3-contributor-free": {
+              "name": "Muse Spark",
+              "tool_call": true,
+              "protocol": "responses",
+              "reasoning": {
+                "efforts": ["low", "high"],
+                "default": "high",
+                "field": "reasoning"
+              }
+            }
+          }
+        }
+      }
+    })");
+
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  const auto* model = FindModel(providers.front().models,
+                                "muse-spark-1.3-contributor-free");
+  ASSERT_NE(model, nullptr);
+  EXPECT_TRUE(model->reasoning);
+  EXPECT_EQ(model->protocol, "responses");
+  EXPECT_EQ(model->reasoning_field, "reasoning");
+  EXPECT_EQ(model->reasoning_default, "high");
+  ASSERT_EQ(model->reasoning_efforts.size(), 2u);
+  EXPECT_EQ(model->reasoning_efforts[0], "low");
+  EXPECT_EQ(model->reasoning_efforts[1], "high");
+  EXPECT_EQ(ProviderTransform::default_variant(*model), "high");
+
+  const auto entries = build_variant_entries(*model);
+  ASSERT_EQ(entries.size(), 3u);
+  EXPECT_EQ(entries[0].id, "off");
+  EXPECT_EQ(entries[1].id, "low");
+  EXPECT_EQ(entries[2].id, "high");
+}
+
+TEST(TuiConfigTest, PickerVariantsComeFromJsonNotHardcodedCatalog) {
+  ScopedConfig config(R"({
+      "provider": {
+        "openrouter": {
+          "name": "OpenRouter",
+          "models": {
+            "deepseek/deepseek-v4-flash-0731": {
+              "name": "DeepSeek V4 Flash",
+              "reasoning": true,
+              "reasoning_efforts": ["low", "medium", "high", "max"],
+              "reasoning_default": "medium"
+            }
+          }
+        },
+        "antigravity": {
+          "name": "Antigravity",
+          "models": {
+            "gemini-3.8-flash": {
+              "name": "Gemini 3.8 Flash",
+              "reasoning": true,
+              "reasoning_efforts": ["low", "medium", "high"],
+              "reasoning_default": "medium"
+            }
+          }
+        }
+      }
+    })");
+
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 2u);
+  const auto* openrouter = FindProvider(providers, "openrouter");
+  const auto* antigravity = FindProvider(providers, "antigravity");
+  ASSERT_NE(openrouter, nullptr);
+  ASSERT_NE(antigravity, nullptr);
+
+  const auto* deepseek =
+      FindModel(openrouter->models, "deepseek/deepseek-v4-flash-0731");
+  const auto* gemini = FindModel(antigravity->models, "gemini-3.8-flash");
+  ASSERT_NE(deepseek, nullptr);
+  ASSERT_NE(gemini, nullptr);
+  EXPECT_EQ(ProviderTransform::default_variant(*deepseek), "medium");
+  EXPECT_EQ(ProviderTransform::default_variant(*gemini), "medium");
+  EXPECT_TRUE(ProviderTransform::is_allowed_variant(*deepseek, "max"));
+  EXPECT_FALSE(ProviderTransform::is_allowed_variant(*gemini, "max"));
+
+  std::vector<std::string> gemini_ids;
+  for (const auto& entry : build_variant_entries(*gemini)) {
+    gemini_ids.push_back(entry.id);
+  }
+  EXPECT_EQ(gemini_ids, (std::vector<std::string>{"off", "low", "medium", "high"}));
+}
+
+TEST(TuiConfigTest, HomeConfigDrivesProvidersModelsAndEfforts) {
+  const char* home = std::getenv("HOME");
+  if (home == nullptr || *home == '\0') {
+    GTEST_SKIP() << "HOME is unset";
+  }
+  const auto path = std::filesystem::path(home) / ".config/opencode/opencode.json";
+  if (!std::filesystem::exists(path)) {
+    GTEST_SKIP() << "no ~/.config/opencode/opencode.json";
+  }
+  ScopedEnv env("OPENCODE_CONFIG", path.string());
+  const auto providers = load_providers_from_config();
+  ASSERT_FALSE(providers.empty());
+  EXPECT_NE(FindProvider(providers, "opencode"), nullptr);
+  EXPECT_NE(FindProvider(providers, "openrouter"), nullptr);
+  EXPECT_NE(FindProvider(providers, "antigravity"), nullptr);
+
+  const auto* zen = FindProvider(providers, "opencode");
+  ASSERT_NE(zen, nullptr);
+  EXPECT_EQ(FindModel(zen->models, "hy3-free"), nullptr);
+  const auto* muse = FindModel(zen->models, "muse-spark-1.3-contributor-free");
+  if (muse != nullptr) {
+    EXPECT_EQ(muse->protocol, "responses");
+    EXPECT_EQ(muse->reasoning_field, "reasoning");
+    EXPECT_EQ(ProviderTransform::default_variant(*muse), "medium");
+    EXPECT_FALSE(ProviderTransform::is_allowed_variant(*muse, "max"));
+  }
+
+  const auto* antigravity = FindProvider(providers, "antigravity");
+  ASSERT_NE(antigravity, nullptr);
+  const auto* gemini = FindModel(antigravity->models, "gemini-3.8-flash");
+  if (gemini != nullptr) {
+    EXPECT_EQ(ProviderTransform::default_variant(*gemini), "medium");
+    EXPECT_TRUE(ProviderTransform::is_allowed_variant(*gemini, "high"));
+    EXPECT_FALSE(ProviderTransform::is_allowed_variant(*gemini, "max"));
+  }
+
+  const auto* openrouter = FindProvider(providers, "openrouter");
+  ASSERT_NE(openrouter, nullptr);
+  const auto* deepseek =
+      FindModel(openrouter->models, "deepseek/deepseek-v4-flash-0731");
+  if (deepseek != nullptr) {
+    EXPECT_TRUE(ProviderTransform::is_allowed_variant(*deepseek, "max"));
+    EXPECT_EQ(ProviderTransform::default_variant(*deepseek), "medium");
+  }
+
+  for (const auto& provider : providers) {
+    for (const auto& model : provider.models) {
+      if (!model.reasoning) continue;
+      EXPECT_FALSE(ProviderTransform::reasoning_variants(model).empty())
+          << provider.id << "/" << model.id;
+    }
+  }
 }
 
 TEST(TuiConfigTest, AntigravityTokenRefreshHelpers) {

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 
+#include <qcode/config/provider_info.h>
 #include <qcode/core/logger.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/providers/registry.h>

@@ -2,7 +2,7 @@
 
 #include <qcode/providers/antigravity.h>
 #include <qcode/providers/cursor.h>
-#include <qcode/core/config.h>
+#include <qcode/config/config.h>
 #include <qcode/providers/registry.h>
 #include <mutex>
 

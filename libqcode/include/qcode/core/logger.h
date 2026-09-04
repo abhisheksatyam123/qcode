@@ -55,7 +55,7 @@ inline std::tm* portable_localtime(const std::time_t* t, std::tm* tm_buf) {
 #endif
 }
 
-/// Short file-name from full path (e.g. "src/tui/chat.cpp")
+/// Short file-name from full path (e.g. "src/ui/commands.cpp")
 inline std::string_view short_file_name(std::string_view path) {
   auto pos = path.find_last_of("/\\");
   if (pos == std::string_view::npos) return path;

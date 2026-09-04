@@ -1,8 +1,11 @@
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/providers/zen_route.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <iterator>
+#include <ranges>
 #include <set>
 #include <string>
 #include <string_view>
@@ -13,13 +16,15 @@ namespace ProviderTransform {
 
 // ── Helpers ──
 
-static std::string to_lower(const std::string& s) {
-  std::string out = s;
-  for (auto& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+static std::string to_lower(std::string_view s) {
+  std::string out(s);
+  std::ranges::transform(out, out.begin(), [](char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  });
   return out;
 }
 
-static bool contains(const std::string& s, const std::string& sub) {
+static bool contains(std::string_view s, std::string_view sub) {
   return to_lower(s).find(to_lower(sub)) != std::string::npos;
 }
 
@@ -28,15 +33,16 @@ static bool contains(const std::string& s, const std::string& sub) {
 // @ai-sdk/openai-compatible fallback (WIDELY_SUPPORTED_EFFORTS + max for
 // deepseek-v4).
 
-bool is_reasoning_model_id(const std::string& model_id) {
-  const std::string id = to_lower(model_id);
-  return contains(id, "muse-spark") || contains(id, "ox-alpha") ||
-         contains(id, "x-preview-f-free") || contains(id, "deepseek-v4") ||
-         contains(id, "gpt-5") || contains(id, "grok") ||
-         contains(id, "gemini-3") || contains(id, "gemini-2.5") ||
-         contains(id, "thinking") || contains(id, "kimi-k") ||
-         contains(id, "claude") || contains(id, "composer") ||
-         contains(id, "nemotron") || contains(id, "fable");
+bool is_reasoning_model_id(std::string_view model_id) {
+  const auto id = to_lower(model_id);
+  static constexpr std::array<std::string_view, 14> kNeedles{
+      "muse-spark", "ox-alpha",     "x-preview-f-free", "deepseek-v4",
+      "gpt-5",      "grok",         "gemini-3",         "gemini-2.5",
+      "thinking",   "kimi-k",       "claude",           "composer",
+      "nemotron",   "fable",
+  };
+  return std::ranges::any_of(
+      kNeedles, [&](std::string_view needle) { return id.find(needle) != std::string::npos; });
 }
 
 void apply_reasoning_defaults(ModelInfo& model) {
@@ -59,8 +65,7 @@ std::string default_variant(const ModelInfo& model) {
   const auto efforts = reasoning_variants(model);
   if (!model.reasoning_default.empty()) {
     if (model.reasoning_default == "off") return "off";
-    if (std::find(efforts.begin(), efforts.end(), model.reasoning_default) !=
-        efforts.end()) {
+    if (std::ranges::find(efforts, model.reasoning_default) != efforts.end()) {
       return model.reasoning_default;
     }
   }
@@ -68,12 +73,12 @@ std::string default_variant(const ModelInfo& model) {
   return efforts.front();
 }
 
-std::string clamp_variant(const ModelInfo& model, const std::string& requested) {
+std::string clamp_variant(const ModelInfo& model, std::string_view requested) {
   if (requested.empty() || requested == "off") return "off";
   const auto allowed = reasoning_variants(model);
-  if (allowed.empty()) return requested;
-  if (std::find(allowed.begin(), allowed.end(), requested) != allowed.end()) {
-    return requested;
+  if (allowed.empty()) return std::string{requested};
+  if (std::ranges::find(allowed, requested) != allowed.end()) {
+    return std::string{requested};
   }
   const std::vector<std::string> fallbacks =
       requested == "max" || requested == "xhigh"
@@ -83,16 +88,48 @@ std::string clamp_variant(const ModelInfo& model, const std::string& requested) 
           ? std::vector<std::string>{"minimal", "medium", "high", "max"}
           : std::vector<std::string>{"high", "medium", "max", "xhigh", "low"};
   for (const auto& candidate : fallbacks) {
-    if (std::find(allowed.begin(), allowed.end(), candidate) != allowed.end()) {
+    if (std::ranges::find(allowed, candidate) != allowed.end()) {
       return candidate;
     }
   }
   return allowed.front();
 }
 
+static std::vector<std::string> variant_cycle(const ModelInfo& model) {
+  std::vector<std::string> ids{"off"};
+  std::ranges::copy_if(reasoning_variants(model), std::back_inserter(ids),
+                       [](const std::string& effort) {
+                         return !effort.empty() && effort != "off";
+                       });
+  return ids;
+}
+
+bool is_allowed_variant(const ModelInfo& model, std::string_view requested) {
+  if (requested == "off") return true;
+  const auto allowed = reasoning_variants(model);
+  return std::ranges::find(allowed, requested) != allowed.end();
+}
+
+std::string next_variant(const ModelInfo& model, std::string_view current) {
+  const auto ids = variant_cycle(model);
+  const std::string cur = current.empty() ? "off" : std::string{current};
+  if (const auto it = std::ranges::find(ids, cur); it != ids.end()) {
+    const auto idx = static_cast<std::size_t>(it - ids.begin());
+    return ids[(idx + 1) % ids.size()];
+  }
+  return ids.front();
+}
+
+std::string resolve_session_variant(const ModelInfo& model,
+                                    std::string_view current) {
+  if (current.empty()) return default_variant(model);
+  if (current == "off") return "off";
+  return clamp_variant(model, current);
+}
+
 // ── Chat transport flavors ──
 
-ChatTransport chat_transport_for(const std::string& base_url) {
+ChatTransport chat_transport_for(std::string_view base_url) {
   const std::string url = to_lower(base_url);
   if (url.find("openrouter.ai") != std::string::npos) return ChatTransport::kOpenRouter;
   if (url.find("opencode.ai") != std::string::npos ||
@@ -123,7 +160,7 @@ std::string zen_wire_model_id(std::string model_id) {
 
   const std::string lower = to_lower(model_id);
   static constexpr const char* kPrefix = "opencode/";
-  if (lower.rfind(kPrefix, 0) == 0) {
+  if (lower.starts_with(kPrefix)) {
     model_id = model_id.substr(std::char_traits<char>::length(kPrefix));
   }
 
@@ -155,12 +192,12 @@ std::string zen_wire_model_id(std::string model_id) {
   return model_id;
 }
 
-std::string zen_api_protocol(const std::string& model_id) {
-  return wire_protocol_id(zen_model_route(model_id).protocol);
+std::string zen_api_protocol(std::string_view model_id) {
+  return wire_protocol_id(zen_model_route(std::string{model_id}).protocol);
 }
 
-std::string zen_completions_path(const std::string& model_id) {
-  return zen_model_route(model_id).path;
+std::string zen_completions_path(std::string_view model_id) {
+  return zen_model_route(std::string{model_id}).path;
 }
 
 std::string openrouter_wire_model_id(std::string model_id) {
@@ -189,7 +226,7 @@ std::string chat_wire_model_id(ChatTransport transport, std::string model_id) {
   return trim_copy(std::move(model_id));
 }
 
-std::string cursor_family_id(const std::string& model_id) {
+std::string cursor_family_id(std::string_view model_id) {
   const std::string id = to_lower(model_id);
   if (id.find("grok-4.6") != std::string::npos ||
       id.find("grok-4-6") != std::string::npos) {
@@ -203,7 +240,7 @@ std::string cursor_family_id(const std::string& model_id) {
   return {};
 }
 
-std::string cursor_picker_id(const std::string& model_id) {
+std::string cursor_picker_id(std::string_view model_id) {
   const auto family = cursor_family_id(model_id);
   if (!family.empty()) return family;
 
@@ -215,15 +252,14 @@ std::string cursor_picker_id(const std::string& model_id) {
       "-low",
   };
   for (const auto suffix : kSuffixes) {
-    if (id.size() > suffix.size() &&
-        id.compare(id.size() - suffix.size(), suffix.size(), suffix) == 0) {
-      return model_id.substr(0, model_id.size() - suffix.size());
+    if (id.size() > suffix.size() && id.ends_with(suffix)) {
+      return std::string{model_id.substr(0, model_id.size() - suffix.size())};
     }
   }
-  return model_id;
+  return std::string{model_id};
 }
 
-std::string cursor_wire_model_id(const std::string& model_id,
+std::string cursor_wire_model_id(std::string_view model_id,
                                  const std::optional<std::string>& effort) {
   const std::string family = cursor_family_id(model_id);
   const std::string base = family.empty() ? cursor_picker_id(model_id)
@@ -233,7 +269,7 @@ std::string cursor_wire_model_id(const std::string& model_id,
   if (level == "off") level.clear();
   if (level == "max") level = "high";
 
-  if (base.empty()) return model_id;
+  if (base.empty()) return std::string{model_id};
 
   const std::string id = to_lower(base);
   const bool claude = contains(id, "claude") || contains(id, "opus") ||
@@ -277,7 +313,7 @@ void apply_reasoning_options(nlohmann::json& body,
 }
 
 std::string interleaved_replay_field(ChatTransport transport,
-                                     const std::string& model_id) {
+                                     std::string_view model_id) {
   // OpenCode only injects interleaved.field for openai-compatible, and
   // explicitly skips @openrouter/ai-sdk-provider.
   if (transport == ChatTransport::kOpenRouter) return {};
@@ -532,15 +568,15 @@ JsonValue normalize_schema(const JsonValue& schema, const Model& model) {
 
 // ── Utility ──
 
-bool is_opus_family(const std::string& model_id) {
+bool is_opus_family(std::string_view model_id) {
   const std::string id = to_lower(model_id);
   return id.find("opus-4-6") != std::string::npos ||
          id.find("opus-4.6") != std::string::npos ||
          id == "opus" ||
-         (id.size() >= 5 && id.substr(id.size() - 5) == "/opus");
+         id.ends_with("/opus");
 }
 
-std::string sdk_key(const std::string& provider_name) {
+std::string sdk_key(std::string_view provider_name) {
   static const std::unordered_map<std::string, std::string> KEY_MAP = {
     {"amazon", "bedrock"},
     {"qpilot", "openai"},
@@ -562,7 +598,7 @@ std::string sdk_key(const std::string& provider_name) {
 
   auto it = KEY_MAP.find(to_lower(provider_name));
   if (it != KEY_MAP.end()) return it->second;
-  return provider_name;
+  return std::string{provider_name};
 }
 
 }  // namespace ProviderTransform

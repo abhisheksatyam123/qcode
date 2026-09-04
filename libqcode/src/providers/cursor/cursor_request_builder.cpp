@@ -2,7 +2,7 @@
 
 #include "cursor_proto.h"
 
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 
 #include <random>
 #include <sstream>

@@ -1,4 +1,5 @@
 #include <qcode/session/git_workspace.h>
+#include <qcode/ui/chat_state.h>
 
 #include <algorithm>
 #include <array>

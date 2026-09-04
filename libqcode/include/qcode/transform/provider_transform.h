@@ -2,13 +2,14 @@
 
 #include <qcode/core/message.h>
 #include <qcode/core/model.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
 #include <qcode/core/tool.h>
 
 #include <functional>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -36,7 +37,7 @@ using JsonValue = nlohmann::json;
 namespace ProviderTransform {
 
 /// Global max output token cap (mirrors opencode's OUTPUT_TOKEN_MAX = 32000)
-constexpr int OUTPUT_TOKEN_MAX = 32000;
+inline constexpr int OUTPUT_TOKEN_MAX = 32000;
 
 // ── Model-family-specific defaults ──
 
@@ -91,33 +92,46 @@ JsonValue normalize_schema(const JsonValue& schema, const Model& model);
 // ── Utility ──
 
 /// Check if model ID belongs to the Opus family
-bool is_opus_family(const std::string& model_id);
+[[nodiscard]] bool is_opus_family(std::string_view model_id);
 
 /// Extract SDK key from provider name
-std::string sdk_key(const std::string& provider_name);
+[[nodiscard]] std::string sdk_key(std::string_view provider_name);
 
 // ── Reasoning variants (mirrors transform.ts reasoningVariants) ──
 
 /// True for ids that think even when the catalog omitted reasoning=true
 /// (Muse Spark, Ox Alpha, DeepSeek V4, GPT-5, Grok, Gemini 2.5/3, ...).
-bool is_reasoning_model_id(const std::string& model_id);
+[[nodiscard]] bool is_reasoning_model_id(std::string_view model_id);
 
 /// Mark a catalog/config entry as a reasoner and fill effort levels / field
 /// when they were omitted. Safe to call more than once.
 void apply_reasoning_defaults(ModelInfo& model);
 
-/// Effort levels a model supports. Catalog-declared reasoning_options win;
-/// falls back to upstream's widely-supported set for known families.
-std::vector<std::string> reasoning_variants(const ModelInfo& model);
+/// Effort levels a model supports. Config-declared reasoning_efforts win;
+/// reasoning=true with no list falls back to low/medium/high.
+[[nodiscard]] std::vector<std::string> reasoning_variants(const ModelInfo& model);
 
-/// Default effort with thinking enabled (upstream turns reasoning on by
-/// default per family: medium for gpt-5.x, high elsewhere). "off" when the
-/// model cannot reason.
-std::string default_variant(const ModelInfo& model);
+/// Configured default effort (`reasoning_default` if advertised, else first
+/// effort). "off" when the model cannot reason.
+[[nodiscard]] std::string default_variant(const ModelInfo& model);
 
 /// Map a user-selected effort onto one the model actually advertises.
 /// "off" stays "off". Unknown levels snap to the nearest supported effort.
-std::string clamp_variant(const ModelInfo& model, const std::string& requested);
+[[nodiscard]] std::string clamp_variant(const ModelInfo& model,
+                                        std::string_view requested);
+
+/// True if `requested` is "off" or one of the model's configured efforts.
+[[nodiscard]] bool is_allowed_variant(const ModelInfo& model,
+                                      std::string_view requested);
+
+/// Next id in [off] + configured efforts. Cycles. Unknown current → first.
+[[nodiscard]] std::string next_variant(const ModelInfo& model,
+                                       std::string_view current);
+
+/// Empty current → model's configured default. "off" stays off. Anything
+/// else is clamped onto the model's advertised efforts.
+[[nodiscard]] std::string resolve_session_variant(const ModelInfo& model,
+                                                  std::string_view current);
 
 // ── Chat transport flavors (mirrors providerID / api.npm dispatch) ──
 
@@ -128,7 +142,7 @@ enum class ChatTransport {
   kCompatible,    // every other OpenAI-compatible endpoint
 };
 
-ChatTransport chat_transport_for(const std::string& base_url);
+[[nodiscard]] ChatTransport chat_transport_for(std::string_view base_url);
 
 /// Canonical chat/completions id for this transport. Cross-maps the aliases
 /// users pick (ox-alpha, stealth/ox-alpha, x-preview-f-free, Muse Spark
@@ -145,10 +159,10 @@ std::string zen_wire_model_id(std::string model_id);
 /// - messages: Claude, Qwen 3.x
 /// - google: Gemini (`/models/{id}:generateContent`)
 /// - chat_completions: Ox Alpha, DeepSeek, Kimi, GLM, MiniMax, free pool
-std::string zen_api_protocol(const std::string& model_id);
+[[nodiscard]] std::string zen_api_protocol(std::string_view model_id);
 
 /// Path under `https://opencode.ai/zen/v1` for that model.
-std::string zen_completions_path(const std::string& model_id);
+[[nodiscard]] std::string zen_completions_path(std::string_view model_id);
 
 /// Wire id for OpenRouter. Maps Zen free-pool aliases onto stealth/ox-alpha
 /// and meta/muse-spark-1.2.
@@ -156,17 +170,17 @@ std::string openrouter_wire_model_id(std::string model_id);
 
 /// Cursor Agent exposes many effort SKUs (grok-4.6-high, opus-5-thinking-low).
 /// Collapse those to the two family ids the picker should show.
-std::string cursor_family_id(const std::string& model_id);
+[[nodiscard]] std::string cursor_family_id(std::string_view model_id);
 
 /// Picker id for a Cursor Agent SKU: known families first, then strip a
 /// trailing effort suffix (-thinking-low/medium/high or -low/medium/high).
-std::string cursor_picker_id(const std::string& model_id);
+[[nodiscard]] std::string cursor_picker_id(std::string_view model_id);
 
 /// Map family + /variant effort onto the slug AgentService accepts.
 /// Grok: grok-4.6 / grok-4.6-low / grok-4.6-high
 /// Opus: claude-opus-5 / claude-opus-5-thinking-{low,high}
-std::string cursor_wire_model_id(
-    const std::string& model_id,
+[[nodiscard]] std::string cursor_wire_model_id(
+    std::string_view model_id,
     const std::optional<std::string>& effort = std::nullopt);
 
 /// Place reasoning-effort options the way OpenCode's transform.ts does:
@@ -180,8 +194,8 @@ void apply_reasoning_options(nlohmann::json& body,
 /// Assistant-message field used to replay interleaved thinking, matching
 /// OpenCode's `capabilities.interleaved.field` injection. Empty means skip
 /// (OpenRouter — OpenCode does not inject the field for that SDK).
-std::string interleaved_replay_field(ChatTransport transport,
-                                     const std::string& model_id);
+[[nodiscard]] std::string interleaved_replay_field(ChatTransport transport,
+                                                   std::string_view model_id);
 
 /// Streaming/usage body options: stream_options.include_usage always with
 /// streaming; OpenRouter additionally gets usage.include so cached-token

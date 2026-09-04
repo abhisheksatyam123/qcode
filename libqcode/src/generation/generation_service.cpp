@@ -1,6 +1,6 @@
-#include <qcode/session/generation_service.h>
-#include <qcode/session/generation_continue.h>
-#include <qcode/core/config.h>
+#include <qcode/generation/generation_service.h>
+#include <qcode/generation/generation_continue.h>
+#include <qcode/config/config.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
 #include <qcode/tools/tool_executor.h>
@@ -22,7 +22,7 @@
 #include <qcode/core/logger.h>
 #include <qcode/providers/openai.h>
 #include <qcode/providers/provider_profile.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/providers/registry.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <nlohmann/json.hpp>
@@ -834,8 +834,7 @@ static void run_stream_generation_bus(qcode::Client& client,
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Public entry point — matches the client creation pattern
-//  from the original run_llm_generation in chat.cpp
+//  Public entry point — resolve a provider Client, then generate
 // ──────────────────────────────────────────────────────────────
 void run_generation_with_bus(
     const std::string& provider_name,
@@ -1008,15 +1007,14 @@ void run_generation_with_bus(
     };
     if (rm != "off") {
       std::string effort;
-      if (rm == "low" || rm == "medium" || rm == "high" || rm == "max" ||
-          rm == "xhigh" || rm == "minimal") {
-        effort = resolved_model
-                     ? ProviderTransform::clamp_variant(*resolved_model, rm)
-                     : rm;
-      } else if (rm.empty()) {
+      if (rm.empty()) {
         if (resolved_model && resolved_model->reasoning) {
           effort = ProviderTransform::default_variant(*resolved_model);
         }
+      } else if (resolved_model) {
+        effort = ProviderTransform::clamp_variant(*resolved_model, rm);
+      } else {
+        effort = rm;
       }
       if (!effort.empty() && effort != "off") {
         base_opts.reasoning_effort = effort;

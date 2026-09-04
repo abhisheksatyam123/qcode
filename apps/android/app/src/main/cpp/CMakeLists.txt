@@ -16,7 +16,12 @@ set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 # Prefer the Android sysroot for OpenSSL/CURL when present.
-set(ANDROID_DEPS_SYSROOT "${QCODE_ROOT}/build-android-deps/sysroot-arm64-v8a")
+# Host-side NDK sysroot unpack tree lives under the unified build root.
+# Legacy sibling dir (build-android-deps/) is kept as a fallback.
+set(ANDROID_DEPS_SYSROOT "${QCODE_ROOT}/build/android-deps/sysroot-arm64-v8a")
+if(NOT EXISTS "${ANDROID_DEPS_SYSROOT}")
+  set(ANDROID_DEPS_SYSROOT "${QCODE_ROOT}/build-android-deps/sysroot-arm64-v8a")
+endif()
 if(EXISTS "${ANDROID_DEPS_SYSROOT}")
   list(PREPEND CMAKE_PREFIX_PATH "${ANDROID_DEPS_SYSROOT}")
   list(PREPEND CMAKE_FIND_ROOT_PATH "${ANDROID_DEPS_SYSROOT}")

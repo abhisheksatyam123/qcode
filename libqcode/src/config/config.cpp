@@ -1,7 +1,7 @@
-#include <qcode/core/config.h>
+#include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
 #include <qcode/core/ssl_config.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 
 #include <algorithm>
 #include <cctype>

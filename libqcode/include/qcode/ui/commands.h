@@ -1,12 +1,14 @@
 #pragma once
 
+#include <memory>
+#include <span>
 #include <string>
 #include <vector>
-#include <memory>
 
-#include <qcode/core/jthread.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
 #include <qcode/core/bus_port.h>
+#include <qcode/core/jthread.h>
+#include <qcode/ui/chat_state.h>
 
 namespace qcode {
 
@@ -85,12 +87,12 @@ struct VariantEntry {
     std::string description;
 };
 
-std::vector<ModelEntry> build_model_entries(
-    const std::vector<ProviderInfo>& providers
-);
+[[nodiscard]] std::vector<ModelEntry> build_model_entries(
+    std::span<const ProviderInfo> providers);
 
 // Model-specific thinking variants plus "off". Used by the /variant picker.
-std::vector<VariantEntry> build_variant_entries(const ModelInfo& model);
+[[nodiscard]] std::vector<VariantEntry> build_variant_entries(
+    const ModelInfo& model);
 
 // Dispatch a slash command.
 bool handle_slash_command(

@@ -3,7 +3,8 @@
 #include <qcode/ui/commands.h>
 #include <qcode/session/session_store.h>
 #include <qcode/ui/themes.h>
-#include <qcode/core/state.h>
+#include <qcode/config/provider_info.h>
+#include <qcode/ui/chat_state.h>
 #include <ftxui/dom/elements.hpp>
 #include <string>
 #include <vector>

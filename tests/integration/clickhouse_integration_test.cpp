@@ -5,6 +5,8 @@
 #include <qcode/core/generate_options.h>
 #include <qcode/core/tool.h>
 
+#include "../utils/test_fixtures.h"
+
 #include <memory>
 #include <random>
 #include <string>
@@ -220,7 +222,7 @@ class ClickHouseIntegrationTest : public ::testing::TestWithParam<std::string> {
     // Initialize AI client based on provider
     provider_type_ = GetParam();
     if (provider_type_ == "openai") {
-      const char* api_key = std::getenv("OPENAI_API_KEY");
+      const char* api_key = env_or_null("OPENAI_API_KEY");
       if (!api_key) {
         use_real_api_ = false;
         return;
@@ -228,7 +230,7 @@ class ClickHouseIntegrationTest : public ::testing::TestWithParam<std::string> {
       client_ = std::make_shared<Client>(openai::create_client());
       model_ = openai::models::kGpt4o;
     } else if (provider_type_ == "anthropic") {
-      const char* api_key = std::getenv("ANTHROPIC_API_KEY");
+      const char* api_key = env_or_null("ANTHROPIC_API_KEY");
       if (!api_key) {
         use_real_api_ = false;
         return;

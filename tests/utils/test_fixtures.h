@@ -3,6 +3,7 @@
 #include <qcode/core/generate_options.h>
 #include <qcode/core/message.h>
 
+#include <cstdlib>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -10,6 +11,12 @@
 
 namespace qcode {
 namespace test {
+
+/// GitHub Actions injects missing secrets as "". Treat those as unset.
+inline const char* env_or_null(const char* name) {
+  const char* v = std::getenv(name);
+  return (v != nullptr && v[0] != '\0') ? v : nullptr;
+}
 
 // Base test fixture with common setup
 class AITestFixture : public ::testing::Test {

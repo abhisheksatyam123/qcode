@@ -1,9 +1,11 @@
 #include <qcode/ui/commands.h>
 #include <qcode/providers/provider_profile.h>
-#include <qcode/providers/provider_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/session/session_store.h>
-#include <qcode/core/config.h>
+#include <qcode/config/config.h>
+#include <qcode/config/provider_info.h>
 #include <qcode/core/event.h>
+#include <qcode/ui/chat_state.h>
 #include <qcode/ui/themes.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/client.h>
@@ -17,11 +19,12 @@
 #include <ctime>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <span>
 #include <sstream>
 #include <string>
 #include <utility>
-#include <atomic>
 
 namespace qcode {
 
@@ -32,18 +35,19 @@ void append_system_message(ChatState& state, std::string text) {
 }  // namespace
 
 std::vector<ModelEntry> build_model_entries(
-    const std::vector<ProviderInfo>& providers
-) {
+    std::span<const ProviderInfo> providers) {
     std::vector<ModelEntry> entries;
-    for (size_t pi = 0; pi < providers.size(); pi++) {
-        for (size_t mi = 0; mi < providers[pi].models.size(); mi++) {
-            entries.push_back({
-                static_cast<int>(pi),
-                static_cast<int>(mi),
-                providers[pi].name,
-                providers[pi].models[mi].name,
-                providers[pi].models[mi].id,
-                providers[pi].name,
+    for (size_t pi = 0; pi < providers.size(); ++pi) {
+        const auto& provider = providers[pi];
+        for (size_t mi = 0; mi < provider.models.size(); ++mi) {
+            const auto& model = provider.models[mi];
+            entries.emplace_back(ModelEntry{
+                .provider_idx = static_cast<int>(pi),
+                .model_idx = static_cast<int>(mi),
+                .provider_name = provider.name,
+                .model_name = model.name,
+                .model_id = model.id,
+                .category = provider.name,
             });
         }
     }
@@ -355,19 +359,34 @@ bool handle_slash_command(
         // Trim whitespace
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.front()))) lvl.erase(lvl.begin());
         while (!lvl.empty() && std::isspace(static_cast<unsigned char>(lvl.back()))) lvl.pop_back();
+        const ModelInfo* model = nullptr;
+        if (selected_provider >= 0 &&
+            selected_provider < static_cast<int>(providers_list.size())) {
+            const auto& models = providers_list[selected_provider].models;
+            if (selected_model >= 0 &&
+                selected_model < static_cast<int>(models.size())) {
+                model = &models[selected_model];
+            }
+        }
+        ModelInfo fallback;
+        const ModelInfo& catalog = model ? *model : fallback;
         if (lvl.empty()) {
             // TUI intercepts bare /variant and opens the picker. Keep a
             // cycle here for non-TUI callers (CLI / server).
-            std::string cur = state.reasoning_mode ? *state.reasoning_mode : "off";
-            if (cur == "off" || cur.empty()) lvl = "low";
-            else if (cur == "low") lvl = "medium";
-            else if (cur == "medium") lvl = "high";
-            else if (cur == "high") lvl = "max";
-            else lvl = "off";
+            const std::string cur =
+                state.reasoning_mode ? *state.reasoning_mode : "off";
+            lvl = ProviderTransform::next_variant(catalog, cur);
         }
-        if (lvl != "off" && lvl != "low" && lvl != "medium" && lvl != "high" && lvl != "max") {
+        if (!ProviderTransform::is_allowed_variant(catalog, lvl)) {
+            std::string allowed = "off";
+            for (const auto& effort :
+                 ProviderTransform::reasoning_variants(catalog)) {
+                if (effort.empty() || effort == "off") continue;
+                allowed += "|";
+                allowed += effort;
+            }
             bus.publish<qcode::contract::ToastRequested>({
-                .message = "Invalid variant '" + lvl + "'. Use off|low|medium|high|max.",
+                .message = "Invalid variant '" + lvl + "'. Use " + allowed + ".",
                 .variant = "warning"
             });
             return true;
@@ -456,7 +475,7 @@ bool handle_slash_command(
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
           << "  /agent [build|plan] - switch agent mode (plan = read-only research)\n"
-          << "  /variant [off|low|medium|high|max] - open variant picker (or set effort)\n"
+          << "  /variant [off|<effort>] - thinking effort from the selected model's config\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
           << "  /new [name] [workspace] - new session (optional title + workspace path)\n"
           << "  /session <id>     - load a persistent session by id\n"

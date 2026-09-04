@@ -1,6 +1,6 @@
 #include "antigravity_request_builder.h"
 
-#include <qcode/providers/gemini_transform.h>
+#include <qcode/transform/gemini_transform.h>
 #include <qcode/core/logger.h>
 #include "providers/openai/openai_request_builder.h"
 
