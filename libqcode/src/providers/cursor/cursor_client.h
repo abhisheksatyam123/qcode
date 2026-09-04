@@ -3,6 +3,7 @@
 #include <qcode/core/stream_options.h>
 #include "core/http_request_handler.h"
 #include "providers/base_provider_client.h"
+#include "providers/cursor/cursor_kv.h"
 #include "providers/cursor/cursor_request_builder.h"
 #include "providers/cursor/cursor_response_parser.h"
 
@@ -49,6 +50,7 @@ class CursorClient : public providers::BaseProviderClient {
   std::unique_ptr<http::HttpRequestHandler> aiserver_handler_;
   std::unique_ptr<http::HttpRequestHandler> agent_handler_;
   CursorRequestBuilder* cursor_request_builder_ = nullptr;
+  CursorKv kv_;
 };
 
 }  // namespace cursor

@@ -1,13 +1,16 @@
 #include "cursor_client.h"
 
 #include <qcode/core/logger.h>
+#include "providers/cursor/cursor_exec.h"
 #include "providers/cursor/cursor_http2.h"
+#include "providers/cursor/cursor_kv.h"
 #include "providers/cursor/cursor_proto.h"
 #include "providers/cursor/cursor_stream.h"
 
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <mutex>
 #include <random>
@@ -23,7 +26,7 @@ constexpr const char* kAgentModelsPath =
     "/agent.v1.AgentService/GetUsableModels";
 constexpr const char* kBidiAppendPath = "/aiserver.v1.BidiService/BidiAppend";
 constexpr const char* kAgentPath = "/agent.v1.AgentService/RunSSE";
-constexpr const char* kClientVersion = "cli-2026.07.09-a3815c0";
+constexpr const char* kClientVersion = "cli-2026.09.02-c22c1a3";
 constexpr const char* kDefaultAgentBase =
     "https://agentn.global.api5.cursor.sh";
 constexpr const char* kDefaultAiserverBase = "https://api2.cursor.sh";
@@ -92,20 +95,94 @@ std::string resolve_workspace(const GenerateOptions& options) {
 
 // Cursor often omits turn_ended on short replies. Heartbeats must NOT end the
 // turn by themselves (they arrive while the agent is still tool-calling).
-// Exec/tool frames refresh last_activity. End when:
+// Exec replies refresh last_activity. After a native exec the model often
+// thinks for tens of seconds, so idle-end is longer once tools have run.
+// End when:
 //   - explicit turn_ended, or
 //   - stream closes, or
-//   - no text/exec for kIdleEndTimeout (reply already started), or
+//   - no text/exec for the idle window, or
 //   - no text at all for kNoTextTimeout (next turn hung after a cut-off).
 constexpr auto kIdleEndTimeout = std::chrono::seconds(12);
+constexpr auto kIdleAfterExecTimeout = std::chrono::seconds(180);
 constexpr auto kNoTextTimeout = std::chrono::seconds(60);
 
 bool idle_end_on_heartbeat(
     bool has_text,
+    bool saw_exec,
     std::chrono::steady_clock::time_point last_activity) {
   const auto idle = std::chrono::steady_clock::now() - last_activity;
+  if (saw_exec) return idle >= kIdleAfterExecTimeout;
   if (has_text) return idle >= kIdleEndTimeout;
   return idle >= kNoTextTimeout;
+}
+
+std::string describe_frame(const std::string& payload) {
+  std::string out;
+  for (const auto& f : proto::parse_fields(payload)) {
+    if (!out.empty()) out += ",";
+    out += std::to_string(f.num);
+    if (f.num == 1 && f.wire == 2) {
+      out += "{";
+      bool first = true;
+      for (const auto& u : proto::parse_fields(f.bytes)) {
+        if (!first) out += ",";
+        first = false;
+        out += std::to_string(u.num);
+      }
+      out += "}";
+    }
+  }
+  return out;
+}
+
+template <typename Append>
+bool answer_exec(Append&& bidi_append,
+                 CursorRequestBuilder* builder,
+                 const AgentStreamEvent& ev,
+                 const std::string& workspace,
+                 std::shared_ptr<std::atomic<bool>> abort_flag,
+                 std::atomic<bool>& context_replied,
+                 const std::function<void(const CursorExecReply&)>& on_reply) {
+  if (ev.kind == AgentStreamEvent::Kind::kRequestContext) {
+    if (context_replied.exchange(true)) return true;
+    const auto reply =
+        builder->build_request_context_reply(ev.exec_id, ev.exec_id_str, workspace);
+    if (!bidi_append(reply)) return false;
+    LOG_INFO("Cursor exec stream_close id={}", ev.exec_id);
+    return bidi_append(CursorExec::stream_close_message(ev.exec_id));
+  }
+  if (ev.kind != AgentStreamEvent::Kind::kExec) return true;
+  const auto req = CursorExec::from_event(ev);
+  // Field 14 is a stream: AgentService waits for start before the command
+  // ends. Sending start only after bash returns left the server hung.
+  if (req.args_field == 14) {
+    if (!bidi_append(CursorExec::shell_stream_start_message(req))) {
+      return false;
+    }
+  }
+  const auto reply = CursorExec::handle(req, workspace, abort_flag);
+  if (on_reply) on_reply(reply);
+  if (reply.client_messages.empty()) {
+    LOG_ERROR("Cursor exec field={} produced no reply", ev.exec_field);
+    return false;
+  }
+  for (const auto& msg : reply.client_messages) {
+    if (!bidi_append(msg)) return false;
+  }
+  // Official client closes every exec stream. Unary results are accepted
+  // without this; shell_stream stays open forever unless we send it.
+  LOG_INFO("Cursor exec stream_close id={} field={}", req.id, req.args_field);
+  return bidi_append(CursorExec::stream_close_message(req.id));
+}
+
+template <typename Append>
+bool answer_kv(Append&& bidi_append, CursorKv& kv, const AgentStreamEvent& ev) {
+  const auto reply = kv.handle(ev.kv_message);
+  if (reply.empty()) {
+    LOG_ERROR("Cursor kv produced no reply");
+    return true;
+  }
+  return bidi_append(reply);
 }
 
 }  // namespace
@@ -200,6 +277,7 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
     std::string stream_error;
     std::atomic<bool> turn_ended{false};
     std::atomic<bool> context_replied{false};
+    std::atomic<bool> saw_exec{false};
     auto last_activity = std::chrono::steady_clock::now();
     ConnectFrameBuffer frame_buf;
 
@@ -240,7 +318,7 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
                   // Keepalives arrive during tool loops — never treat the first
                   // post-text heartbeat as end-of-turn. Only finish on idle.
                   if (idle_end_on_heartbeat(!collected_text.empty(),
-                                            last_activity)) {
+                                            saw_exec.load(), last_activity)) {
                     LOG_INFO(
                         "Cursor generate_text: idle end after heartbeat "
                         "(text_len={})",
@@ -266,26 +344,38 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
                   // replies interleave token_delta between text_delta chunks.
                   last_activity = std::chrono::steady_clock::now();
                   break;
-                case Kind::kRequestContext: {
+                case Kind::kRequestContext:
+                case Kind::kExec: {
                   last_activity = std::chrono::steady_clock::now();
-                  if (context_replied.exchange(true)) break;
-                  const auto reply =
-                      cursor_request_builder_->build_request_context_reply(
-                          ev.exec_id, ev.exec_id_str,
-                          resolve_workspace(options));
-                  if (!bidi_append(reply)) {
-                    stream_error = "Cursor request_context BidiAppend failed";
+                  if (ev.kind == Kind::kExec) saw_exec = true;
+                  if (!answer_exec(bidi_append, cursor_request_builder_, ev,
+                                   resolve_workspace(options),
+                                   options.abort_flag, context_replied,
+                                   nullptr)) {
+                    stream_error = ev.kind == Kind::kRequestContext
+                                       ? "Cursor request_context BidiAppend failed"
+                                       : "Cursor exec BidiAppend failed";
                     return false;
                   }
+                  last_activity = std::chrono::steady_clock::now();
+                  break;
+                }
+                case Kind::kKv: {
+                  last_activity = std::chrono::steady_clock::now();
+                  if (!answer_kv(bidi_append, kv_, ev)) {
+                    stream_error = "Cursor kv BidiAppend failed";
+                    return false;
+                  }
+                  last_activity = std::chrono::steady_clock::now();
                   break;
                 }
                 case Kind::kError:
                   stream_error = ev.error;
                   return false;
                 case Kind::kOther:
-                  // Exec/tool frames while the native agent is working —
-                  // keep the stream open and refresh activity.
                   last_activity = std::chrono::steady_clock::now();
+                  LOG_INFO("Cursor generate_text other frame={}",
+                           describe_frame(payload));
                   break;
               }
             }
@@ -358,7 +448,8 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                  access_token = access_token_, 
                  agent_base_url = agent_base_url_, 
                  aiserver_base_url = aiserver_base_url_,
-                 builder = cursor_request_builder_]() {
+                 builder = cursor_request_builder_,
+                 kv = &kv_]() {
     qcode::logger::set_thread_name("cursor-stream");
     try {
       const std::string request_id = random_id();
@@ -373,6 +464,7 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
       std::string stream_error;
       std::atomic<bool> turn_ended{false};
       std::atomic<bool> context_replied{false};
+      std::atomic<bool> saw_exec{false};
       auto last_activity = std::chrono::steady_clock::now();
       ConnectFrameBuffer frame_buf;
 
@@ -386,6 +478,7 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
         return h;
       };
 
+      auto aiserver_h = make_handler(aiserver_base_url, 30);
       auto bidi_append = [&](const std::string& client_message) -> bool {
         std::lock_guard<std::mutex> lock(append_mu);
         const uint64_t seq = append_seqno.fetch_add(1);
@@ -397,8 +490,6 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
 
         auto append_headers = build_connect_headers(access_token);
         append_headers.emplace("x-request-id", request_id);
-        
-        auto aiserver_h = make_handler(aiserver_base_url, 30);
         auto append_res = aiserver_h->post(
             kBidiAppendPath, append_headers, bidi_append_body,
             "application/proto");
@@ -407,7 +498,8 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                     append_res.error_message());
           return false;
         }
-        LOG_DEBUG("Cursor BidiAppend ok request_id={} seq={}", request_id, seq);
+        LOG_INFO("Cursor BidiAppend ok seq={} bytes={}", seq,
+                 client_message.size());
         return true;
       };
 
@@ -428,7 +520,7 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                     // Do not abort on the first post-text keepalive — Cursor
                     // keeps heartbeating while the native agent uses tools.
                     if (idle_end_on_heartbeat(!collected_text.empty(),
-                                              last_activity)) {
+                                              saw_exec.load(), last_activity)) {
                       LOG_INFO(
                           "Cursor stream_text: idle end after heartbeat "
                           "(text_len={})",
@@ -461,17 +553,42 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                   case Kind::kPostTextTokenDelta:
                     last_activity = std::chrono::steady_clock::now();
                     break;
-                  case Kind::kRequestContext: {
+                  case Kind::kRequestContext:
+                  case Kind::kExec: {
                     last_activity = std::chrono::steady_clock::now();
-                    if (context_replied.exchange(true)) break;
-                    const auto reply =
-                        builder->build_request_context_reply(
-                            ev.exec_id, ev.exec_id_str,
-                            resolve_workspace(options));
-                    if (!bidi_append(reply)) {
-                      stream_error = "Cursor request_context BidiAppend failed";
+                    if (ev.kind == Kind::kExec) saw_exec = true;
+                    if (!answer_exec(
+                            bidi_append, builder, ev,
+                            resolve_workspace(options), options.abort_flag,
+                            context_replied,
+                            [&](const CursorExecReply& reply) {
+                              if (reply.tool_name == "hook" ||
+                                  reply.tool_name == "allowlist" ||
+                                  reply.tool_name == "mcp_state") {
+                                return;
+                              }
+                              impl_ptr->push_event(StreamEvent::tool_call(
+                                  reply.tool_call_id, reply.tool_name,
+                                  reply.arguments.dump()));
+                              impl_ptr->push_event(StreamEvent::tool_result(
+                                  reply.tool_call_id, reply.tool_name,
+                                  reply.result.dump(), reply.is_error));
+                            })) {
+                      stream_error = ev.kind == Kind::kRequestContext
+                                         ? "Cursor request_context BidiAppend failed"
+                                         : "Cursor exec BidiAppend failed";
                       return false;
                     }
+                    last_activity = std::chrono::steady_clock::now();
+                    break;
+                  }
+                  case Kind::kKv: {
+                    last_activity = std::chrono::steady_clock::now();
+                    if (!answer_kv(bidi_append, *kv, ev)) {
+                      stream_error = "Cursor kv BidiAppend failed";
+                      return false;
+                    }
+                    last_activity = std::chrono::steady_clock::now();
                     break;
                   }
                   case Kind::kError:
@@ -479,6 +596,8 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                     return false;
                   case Kind::kOther:
                     last_activity = std::chrono::steady_clock::now();
+                    LOG_INFO("Cursor stream_text other frame={}",
+                             describe_frame(payload));
                     break;
                 }
               }

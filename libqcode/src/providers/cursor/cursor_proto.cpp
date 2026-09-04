@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <utility>
 
 namespace qcode {
 namespace cursor {
@@ -31,6 +32,83 @@ std::string varint_field(uint32_t field_number, uint64_t value) {
   std::string out = encode_varint(tag);
   out += encode_varint(value);
   return out;
+}
+
+std::vector<Field> parse_fields(const std::string& data) {
+  std::vector<Field> out;
+  size_t off = 0;
+  const size_t n = data.size();
+  while (off < n) {
+    uint64_t tag = 0;
+    uint64_t mult = 1;
+    while (off < n) {
+      const auto b = static_cast<uint8_t>(data[off++]);
+      tag += static_cast<uint64_t>(b & 0x7F) * mult;
+      mult *= 128;
+      if (!(b & 0x80)) break;
+    }
+    if (off > n) break;
+    Field f;
+    f.num = static_cast<uint32_t>(tag / 8);
+    f.wire = static_cast<uint32_t>(tag & 0x7);
+    if (f.wire == 0) {
+      uint64_t v = 0;
+      mult = 1;
+      while (off < n) {
+        const auto b = static_cast<uint8_t>(data[off++]);
+        v += static_cast<uint64_t>(b & 0x7F) * mult;
+        mult *= 128;
+        if (!(b & 0x80)) break;
+      }
+      f.varint = v;
+    } else if (f.wire == 1) {
+      if (off + 8 > n) break;
+      f.bytes = data.substr(off, 8);
+      off += 8;
+    } else if (f.wire == 5) {
+      if (off + 4 > n) break;
+      f.bytes = data.substr(off, 4);
+      off += 4;
+    } else if (f.wire == 2) {
+      uint64_t len = 0;
+      mult = 1;
+      while (off < n) {
+        const auto b = static_cast<uint8_t>(data[off++]);
+        len += static_cast<uint64_t>(b & 0x7F) * mult;
+        mult *= 128;
+        if (!(b & 0x80)) break;
+      }
+      if (off + len > n) break;
+      f.bytes = data.substr(off, static_cast<size_t>(len));
+      off += static_cast<size_t>(len);
+    } else {
+      break;
+    }
+    out.push_back(std::move(f));
+  }
+  return out;
+}
+
+std::string field_string(const std::vector<Field>& fields, uint32_t field_number) {
+  for (const auto& f : fields) {
+    if (f.num == field_number && f.wire == 2) return f.bytes;
+  }
+  return {};
+}
+
+uint64_t field_varint(const std::vector<Field>& fields, uint32_t field_number,
+                      uint64_t fallback) {
+  for (const auto& f : fields) {
+    if (f.num == field_number && f.wire == 0) return f.varint;
+  }
+  return fallback;
+}
+
+bool has_field(const std::vector<Field>& fields, uint32_t field_number) {
+  for (const auto& f : fields) {
+    if (f.num == field_number) return true;
+  }
+  return false;
 }
 
 std::string envelope(const std::string& payload) {

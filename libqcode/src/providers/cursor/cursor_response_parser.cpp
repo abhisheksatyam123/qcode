@@ -11,66 +11,8 @@ namespace qcode {
 namespace cursor {
 
 namespace {
-struct Field {
-  uint32_t num = 0;
-  uint32_t wire = 0;
-  std::string bytes;
-  uint64_t varint = 0;
-};
-
-std::vector<Field> parse_fields(const std::string& d) {
-  std::vector<Field> out;
-  size_t off = 0;
-  const size_t n = d.size();
-  while (off < n) {
-    uint64_t tag = 0, mult = 1;
-    while (off < n) {
-      uint8_t b = static_cast<uint8_t>(d[off++]);
-      tag += static_cast<uint64_t>(b & 0x7F) * mult;
-      mult *= 128;
-      if (!(b & 0x80)) break;
-    }
-    if (off > n) break;
-    Field f;
-    f.num = static_cast<uint32_t>(tag / 8);
-    f.wire = static_cast<uint32_t>(tag & 0x7);
-    if (f.wire == 0) {
-      uint64_t v = 0;
-      mult = 1;
-      while (off < n) {
-        uint8_t b = static_cast<uint8_t>(d[off++]);
-        v += static_cast<uint64_t>(b & 0x7F) * mult;
-        mult *= 128;
-        if (!(b & 0x80)) break;
-      }
-      f.varint = v;
-    } else if (f.wire == 1) {
-      if (off + 8 > n) break;
-      f.bytes = d.substr(off, 8);
-      off += 8;
-    } else if (f.wire == 5) {
-      if (off + 4 > n) break;
-      f.bytes = d.substr(off, 4);
-      off += 4;
-    } else if (f.wire == 2) {
-      uint64_t len = 0;
-      mult = 1;
-      while (off < n) {
-        uint8_t b = static_cast<uint8_t>(d[off++]);
-        len += static_cast<uint64_t>(b & 0x7F) * mult;
-        mult *= 128;
-        if (!(b & 0x80)) break;
-      }
-      if (off + len > n) break;
-      f.bytes = d.substr(off, static_cast<size_t>(len));
-      off += static_cast<size_t>(len);
-    } else {
-      break;
-    }
-    out.push_back(f);
-  }
-  return out;
-}
+using proto::Field;
+using proto::parse_fields;
 
 uint32_t read_be32(const std::string& s, size_t off) {
   return (static_cast<uint32_t>(static_cast<unsigned char>(s[off])) << 24) |
@@ -227,23 +169,39 @@ AgentStreamEvent CursorResponseParser::classify_agent_payload(
       return ev;
     }
     if (f.num == 2 && f.wire == 2) {  // exec_server_message
-      bool is_request_context = false;
       for (const auto& exec : parse_fields(f.bytes)) {
         if (exec.num == 1 && exec.wire == 0) {
           ev.exec_id = static_cast<uint32_t>(exec.varint);
-        }
-        if (exec.num == 15 && exec.wire == 2) {
+        } else if (exec.num == 15 && exec.wire == 2) {
           ev.exec_id_str = exec.bytes;
-        }
-        if (exec.num == 10 && exec.wire == 2) {
-          is_request_context = true;
+        } else if (exec.wire == 2 && exec.num != 19) {
+          // oneof message — skip span_context (19)
+          ev.exec_field = exec.num;
+          ev.exec_args = exec.bytes;
         }
       }
-      if (is_request_context) {
+      if (ev.exec_field == 10) {
         ev.kind = AgentStreamEvent::Kind::kRequestContext;
         return ev;
       }
+      if (ev.exec_field != 0) {
+        ev.kind = AgentStreamEvent::Kind::kExec;
+        if (ev.exec_field == 27) {
+          for (const auto& hook_args : parse_fields(ev.exec_args)) {
+            if (hook_args.num != 1 || hook_args.wire != 2) continue;
+            for (const auto& req : parse_fields(hook_args.bytes)) {
+              if (req.wire == 2) ev.hook_request_field = req.num;
+            }
+          }
+        }
+        return ev;
+      }
       ev.kind = AgentStreamEvent::Kind::kOther;
+      return ev;
+    }
+    if (f.num == 4 && f.wire == 2) {  // kv_server_message
+      ev.kind = AgentStreamEvent::Kind::kKv;
+      ev.kv_message = f.bytes;
       return ev;
     }
   }

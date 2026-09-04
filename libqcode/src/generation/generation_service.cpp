@@ -766,6 +766,39 @@ static void run_stream_generation_bus(qcode::Client& client,
           last_reasoning_flush = now;
         }
       }
+    } else if (event.is_tool_call()) {
+      flush_text();
+      nlohmann::json args = nlohmann::json::object();
+      if (!event.tool_payload.empty()) {
+        try {
+          args = nlohmann::json::parse(event.tool_payload);
+        } catch (...) {
+          args = event.tool_payload;
+        }
+      }
+      bus.publish<ToolCallStarted>({
+          .session_id = ctx.session_id,
+          .tool_call_id = event.tool_call_id,
+          .tool_name = event.tool_name,
+          .arguments = std::move(args),
+      });
+    } else if (event.is_tool_result()) {
+      nlohmann::json result = nlohmann::json::object();
+      if (!event.tool_payload.empty()) {
+        try {
+          result = nlohmann::json::parse(event.tool_payload);
+        } catch (...) {
+          result = event.tool_payload;
+        }
+      }
+      bus.publish<ToolCallCompleted>({
+          .session_id = ctx.session_id,
+          .tool_call_id = event.tool_call_id,
+          .tool_name = event.tool_name,
+          .result = std::move(result),
+          .is_error = event.tool_is_error,
+          .duration_ms = 0.0,
+      });
     } else if (event.is_error()) {
       const std::string raw =
           (event.error.has_value() && !event.error->empty())

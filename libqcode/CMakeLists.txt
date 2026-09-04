@@ -68,6 +68,8 @@ target_sources(qcode-engine PRIVATE
     src/providers/cursor/cursor_factory.cpp
     src/providers/cursor/cursor_http2.cpp
     src/providers/cursor/cursor_proto.cpp
+    src/providers/cursor/cursor_exec.cpp
+    src/providers/cursor/cursor_kv.cpp
 
     # transform
     src/transform/transform.cpp

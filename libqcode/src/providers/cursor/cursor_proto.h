@@ -13,6 +13,23 @@ namespace qcode {
 namespace cursor {
 namespace proto {
 
+struct Field {
+  uint32_t num = 0;
+  uint32_t wire = 0;
+  std::string bytes;
+  uint64_t varint = 0;
+};
+
+// Decode a protobuf message into tag-ordered fields. Best-effort: stops on
+// an unknown wire type rather than throwing.
+std::vector<Field> parse_fields(const std::string& data);
+
+// First string (wire 2) or varint on `field_number`, if present.
+std::string field_string(const std::vector<Field>& fields, uint32_t field_number);
+uint64_t field_varint(const std::vector<Field>& fields, uint32_t field_number,
+                      uint64_t fallback = 0);
+bool has_field(const std::vector<Field>& fields, uint32_t field_number);
+
 // Base-128 varint (little-endian groups of 7 bits).
 std::string encode_varint(uint64_t value);
 
