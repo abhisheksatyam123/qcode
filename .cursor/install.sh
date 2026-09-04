@@ -46,9 +46,13 @@ git submodule update --init --recursive
 
 # --- Default provider config (only created if missing) ---------------------
 # The TUI/server refuse to start without at least one provider. This template
-# reads keys from the OPENAI_API_KEY / ANTHROPIC_API_KEY environment variables
-# (add them as Cloud Agent secrets to enable live model calls); the server
-# still starts and serves the Web UI without them.
+# covers the providers qcode knows about (openai, anthropic, opencode,
+# openrouter, antigravity) so the standard ~/.config/opencode/opencode.json is
+# complete — the tui_config HomeConfigDrivesProvidersModelsAndEfforts test
+# expects those provider ids whenever a home config exists. Keys are read from
+# the matching *_API_KEY environment variables (add them as Cloud Agent secrets
+# to enable live model calls); the server still starts and serves the Web UI
+# without them.
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 CONFIG_FILE="$CONFIG_DIR/opencode.json"
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -85,6 +89,27 @@ if [ ! -f "$CONFIG_FILE" ]; then
           "limit": {"context": 200000, "output": 8192}
         }
       }
+    },
+    "opencode": {
+      "name": "OpenCode Zen",
+      "options": {
+        "apiKey": "{env:OPENCODE_API_KEY}"
+      },
+      "models": {}
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "options": {
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      },
+      "models": {}
+    },
+    "antigravity": {
+      "name": "Antigravity",
+      "options": {
+        "apiKey": "{env:ANTIGRAVITY_API_KEY}"
+      },
+      "models": {}
     }
   }
 }
