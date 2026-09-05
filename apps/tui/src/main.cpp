@@ -34,6 +34,7 @@
 #include <qcode/core/identity.h>
 #include <qcode/session/git_workspace.h>
 #include "picker_helpers.h"
+#include "tui_overlays.h"
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -170,37 +171,12 @@ int main() {
     qcode::update_modified_files(state);
 
     // ── Popups state ──
-    bool show_model_select = false;
-    int model_select_idx = 0;
-    std::string model_query = "";
-    auto model_entries = qcode::build_model_entries(providers_list);
-
-    bool show_session_select = false;
-    int session_select_idx = 0;
-    std::string session_query = "";
-    std::vector<qcode::session::SessionInfo> session_entries =
-        qcode::session::list_sessions_full();
-
-    bool show_theme_select = false;
-    int theme_select_idx = 0;
-    std::string theme_query = "";
-    std::vector<qcode::ThemeEntry> theme_entries =
-        qcode::builtin_theme_entries();
-
-    bool show_variant_select = false;
-    int variant_select_idx = 0;
-    std::string variant_query = "";
-    std::vector<qcode::VariantEntry> variant_entries;
-
-    bool show_palette = false;
-    int palette_select_idx = 0;
-    std::string palette_query = "";
-    const auto palette_commands = qcode::builtin_palette_commands();
-    bool show_help = false;
-
-    bool show_slash = false;
-    int slash_idx = 0;
-    auto slash_commands = qcode::builtin_slash_commands();
+    qcode::tui::TuiOverlayState overlays;
+    overlays.model_entries = qcode::build_model_entries(providers_list);
+    overlays.session_entries = qcode::session::list_sessions_full();
+    overlays.theme_entries = qcode::builtin_theme_entries();
+    overlays.palette_commands = qcode::builtin_palette_commands();
+    overlays.slash_commands = qcode::builtin_slash_commands();
 
     // ── TUI Components ──
     std::vector<std::string> tab_values = {"Chat", "Files", "Stats"};
@@ -278,22 +254,22 @@ int main() {
     auto open_variant_picker = [&]() {
         qcode::ModelInfo fallback;
         const auto* model = current_model_info();
-        variant_entries = qcode::build_variant_entries(model ? *model : fallback);
-        variant_query = "";
-        variant_select_idx = 0;
+        overlays.variant_entries = qcode::build_variant_entries(model ? *model : fallback);
+        overlays.variant_query = "";
+        overlays.variant_select_idx = 0;
         const std::string cur =
             state.reasoning_mode ? *state.reasoning_mode : std::string{};
         const std::string highlight =
             cur.empty() && model
                 ? qcode::ProviderTransform::default_variant(*model)
                 : cur;
-        for (int i = 0; i < static_cast<int>(variant_entries.size()); ++i) {
-            if (variant_entries[i].id == highlight) {
-                variant_select_idx = i;
+        for (int i = 0; i < static_cast<int>(overlays.variant_entries.size()); ++i) {
+            if (overlays.variant_entries[i].id == highlight) {
+                overlays.variant_select_idx = i;
                 break;
             }
         }
-        show_variant_select = true;
+        overlays.show_variant_select = true;
         state.slash_suggestion_mode = false;
         state.slash_suggestion_idx = 0;
         prompt_input.clear();
@@ -378,25 +354,11 @@ int main() {
     };
 
     auto any_overlay = [&]() -> bool {
-        return show_model_select || show_session_select || show_theme_select ||
-               show_variant_select || show_palette || show_help ||
-               state.slash_suggestion_mode;
+        return overlays.any(state);
     };
 
     auto close_overlays = [&]() {
-        show_model_select = false;
-        model_query = "";
-        show_session_select = false;
-        session_query = "";
-        show_theme_select = false;
-        theme_query = "";
-        show_variant_select = false;
-        variant_query = "";
-        show_palette = false;
-        palette_query = "";
-        show_help = false;
-        state.slash_suggestion_mode = false;
-        state.slash_suggestion_idx = 0;
+        overlays.close_all(state);
     };
 
     auto toggle_agent_mode = [&]() {
@@ -426,7 +388,7 @@ int main() {
         if (state.retry_available) *state.retry_available = false;
         if (state.last_user_prompt) state.last_user_prompt->clear();
         prompt_input.clear();
-        session_entries = qcode::session::list_sessions_full();
+        overlays.session_entries = qcode::session::list_sessions_full();
         persist_session_variant();
         store.add_toast("Started new session", "success", 2000);
         screen.Post(Event::Custom);
@@ -434,13 +396,14 @@ int main() {
 
     auto open_model_picker = [&]() {
         close_overlays();
-        show_model_select = true;
-        model_select_idx = 0;
-        model_query = "";
-        for (int i = 0; i < static_cast<int>(model_entries.size()); i++) {
-            if (model_entries[i].provider_idx == selected_provider &&
-                model_entries[i].model_idx == selected_model) {
-                model_select_idx = i;
+        overlays.model_entries = qcode::build_model_entries(providers_list);
+        overlays.show_model_select = true;
+        overlays.model_select_idx = 0;
+        overlays.model_query = "";
+        for (int i = 0; i < static_cast<int>(overlays.model_entries.size()); i++) {
+            if (overlays.model_entries[i].provider_idx == selected_provider &&
+                overlays.model_entries[i].model_idx == selected_model) {
+                overlays.model_select_idx = i;
                 break;
             }
         }
@@ -448,33 +411,33 @@ int main() {
 
     auto open_session_picker = [&]() {
         close_overlays();
-        session_entries = qcode::session::list_sessions_full();
-        if (session_entries.empty()) {
+        overlays.session_entries = qcode::session::list_sessions_full();
+        if (overlays.session_entries.empty()) {
             store.append_chat_message("System", "No saved sessions found.");
             return;
         }
-        show_session_select = true;
-        session_query = "";
-        session_select_idx = index_of_session(session_entries, store.session_id());
+        overlays.show_session_select = true;
+        overlays.session_query = "";
+        overlays.session_select_idx = index_of_session(overlays.session_entries, store.session_id());
     };
 
     auto open_theme_picker = [&]() {
         close_overlays();
-        show_theme_select = true;
-        theme_select_idx = 0;
-        theme_query = "";
+        overlays.show_theme_select = true;
+        overlays.theme_select_idx = 0;
+        overlays.theme_query = "";
         std::string cur = state.theme ? *state.theme : "opencode";
-        for (int i = 0; i < static_cast<int>(theme_entries.size()); i++) {
-            if (theme_entries[i].name == cur) {
-                theme_select_idx = i;
+        for (int i = 0; i < static_cast<int>(overlays.theme_entries.size()); i++) {
+            if (overlays.theme_entries[i].name == cur) {
+                overlays.theme_select_idx = i;
                 break;
             }
         }
     };
 
     auto execute_palette_command = [&](const qcode::PaletteCommand& cmd) {
-        show_palette = false;
-        palette_query = "";
+        overlays.show_palette = false;
+        overlays.palette_query = "";
         if (cmd.id == "session_new") {
             start_new_session();
         } else if (cmd.id == "session_list") {
@@ -528,7 +491,7 @@ int main() {
                             "info", *state.copy_mode ? 4000 : 1500);
             screen.Post(Event::Custom);
         } else if (cmd.id == "help") {
-            show_help = true;
+            overlays.show_help = true;
         } else if (cmd.id == "exit") {
             screen.Exit();
         }
@@ -632,45 +595,19 @@ int main() {
 
             if (cmd == "session" || cmd == "list") {
                 prompt_input = "";
-                session_entries = qcode::session::list_sessions_full();
-                if (!session_entries.empty()) {
-                    show_session_select = true;
-                    session_query = "";
-                    session_select_idx =
-                        index_of_session(session_entries, store.session_id());
-                } else {
-                    store.append_chat_message("System", "No saved sessions found.");
-                }
+                open_session_picker();
                 return;
             }
 
             if (cmd == "theme" || cmd == "themes") {
                 prompt_input = "";
-                show_theme_select = true;
-                theme_select_idx = 0;
-                theme_query = "";
-                std::string cur = state.theme ? *state.theme : "opencode";
-                for (int i = 0; i < static_cast<int>(theme_entries.size()); i++) {
-                    if (theme_entries[i].name == cur) {
-                        theme_select_idx = i;
-                        break;
-                    }
-                }
+                open_theme_picker();
                 return;
             }
 
             if (cmd == "model" || cmd == "models") {
                 prompt_input = "";
-                show_model_select = true;
-                model_select_idx = 0;
-                model_query = "";
-                for (int i = 0; i < static_cast<int>(model_entries.size()); i++) {
-                    if (model_entries[i].provider_idx == selected_provider &&
-                        model_entries[i].model_idx == selected_model) {
-                        model_select_idx = i;
-                        break;
-                    }
-                }
+                open_model_picker();
                 return;
             }
 
@@ -683,7 +620,7 @@ int main() {
             if (cmd == "help" || cmd == "?") {
                 prompt_input = "";
                 close_overlays();
-                show_help = true;
+                overlays.show_help = true;
                 return;
             }
 
@@ -705,368 +642,79 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     //  4. Event handlers (keyboard, mouse, etc.)
     // ═══════════════════════════════════════════════════════════
-    auto handle_variant_list_keys = [&](Event e) -> bool {
-        if (!show_variant_select) return false;
-        std::vector<qcode::VariantEntry> filtered;
-        for (const auto& entry : variant_entries) {
-            if (matches_query(entry.id, variant_query) ||
-                matches_query(entry.title, variant_query) ||
-                matches_query(entry.description, variant_query)) {
-                filtered.push_back(entry);
-            }
-        }
-        if (!filtered.empty()) {
-            variant_select_idx = std::clamp(
-                variant_select_idx, 0, static_cast<int>(filtered.size()) - 1);
-        } else {
-            variant_select_idx = 0;
-        }
-        const bool down = e == Event::ArrowDown || e == Event::Character('j');
-        const bool up = e == Event::ArrowUp || e == Event::Character('k');
-        if (down && !filtered.empty()) {
-            variant_select_idx = std::min(
-                variant_select_idx + 1,
-                static_cast<int>(filtered.size()) - 1);
-            return true;
-        }
-        if (up && !filtered.empty()) {
-            variant_select_idx = std::max(variant_select_idx - 1, 0);
-            return true;
-        }
-        if (e == Event::Return) {
-            if (!filtered.empty() && variant_select_idx >= 0 &&
-                variant_select_idx < static_cast<int>(filtered.size())) {
-                apply_variant(filtered[variant_select_idx].id);
-            }
-            show_variant_select = false;
-            variant_query = "";
-            return true;
-        }
-        if (e == Event::Escape) {
-            show_variant_select = false;
-            variant_query = "";
-            return true;
-        }
-        if (e == Event::Backspace || e == Event::Special("\x7f")) {
-            if (!variant_query.empty()) {
-                variant_query.pop_back();
-                variant_select_idx = 0;
-            }
-            return true;
-        }
-        if (e.is_character() && e != Event::Character('j') &&
-            e != Event::Character('k')) {
-            variant_query += e.character();
-            variant_select_idx = 0;
-            return true;
-        }
-        return true;
-    };
-
     input |= CatchEvent([&](Event e) {
         // ── Command palette (Ctrl-P) ──
-        if (e == Event::Special(std::string(1, '\x10'))) {
-            if (show_palette) {
-                show_palette = false;
-                palette_query = "";
+        if (e == Event::Special(std::string(1, ''))) {
+            if (overlays.show_palette) {
+                overlays.show_palette = false;
+                overlays.palette_query = "";
             } else {
                 close_overlays();
-                show_palette = true;
-                palette_query = "";
-                palette_select_idx = 0;
+                overlays.show_palette = true;
+                overlays.palette_query = "";
+                overlays.palette_select_idx = 0;
                 input->TakeFocus();
             }
             return true;
         }
 
-        if (show_help) {
+        if (overlays.show_help) {
             if (e == Event::Escape || e == Event::Return) {
-                show_help = false;
+                overlays.show_help = false;
                 return true;
             }
             return true;
         }
 
-        if (show_palette) {
-            if (e == Event::Escape) {
-                show_palette = false;
-                palette_query = "";
-                return true;
-            }
+        if (qcode::tui::handle_palette_keys(e, overlays, [&](const qcode::PaletteCommand& cmd) {
+            execute_palette_command(cmd);
+        })) return true;
 
-            std::vector<qcode::PaletteCommand> filtered;
-            for (const auto& entry : palette_commands) {
-                if (matches_query(entry.title, palette_query) ||
-                    matches_query(entry.id, palette_query) ||
-                    matches_query(entry.description, palette_query) ||
-                    matches_query(entry.category, palette_query) ||
-                    matches_query(entry.shortcut, palette_query)) {
-                    filtered.push_back(entry);
-                }
-            }
-            if (!filtered.empty()) {
-                palette_select_idx = std::clamp(
-                    palette_select_idx, 0,
-                    static_cast<int>(filtered.size()) - 1);
-            } else {
-                palette_select_idx = 0;
-            }
+        if (qcode::tui::handle_model_select_keys(e, overlays, [&](const qcode::ModelEntry& entry) {
+            selected_provider = entry.provider_idx;
+            selected_model = entry.model_idx;
+            system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
+            clamp_variant_to_current_model();
+        })) return true;
 
-            if (e == Event::ArrowDown) {
-                if (!filtered.empty()) {
-                    palette_select_idx = std::min(
-                        palette_select_idx + 1,
-                        static_cast<int>(filtered.size()) - 1);
-                }
-                return true;
-            }
-            if (e == Event::ArrowUp) {
-                if (!filtered.empty()) {
-                    palette_select_idx = std::max(palette_select_idx - 1, 0);
-                }
-                return true;
-            }
-            if (e == Event::Return) {
-                if (!filtered.empty() && palette_select_idx >= 0 &&
-                    palette_select_idx < static_cast<int>(filtered.size())) {
-                    execute_palette_command(filtered[palette_select_idx]);
-                } else {
-                    show_palette = false;
-                    palette_query = "";
-                }
-                return true;
-            }
-            if (e == Event::Backspace || e == Event::Special("\x7f")) {
-                if (!palette_query.empty()) {
-                    palette_query.pop_back();
-                    palette_select_idx = 0;
-                }
-                return true;
-            }
-            if (e.is_character()) {
-                palette_query += e.character();
-                palette_select_idx = 0;
-                return true;
-            }
-            return true;
-        }
+        if (qcode::tui::handle_session_select_keys(e, overlays,
+            [&](const qcode::session::SessionInfo& picked) {
+                generation.prepare_session_switch();
+                store.set_session_id(picked.id);
+                sync_session_title(state, picked.title);
+                state.messages_history->clear();
+                qcode::session::reload_session_history(picked.id, state);
+                if (state.retry_available) *state.retry_available = false;
 
-        // ── Model select popup ──
-        if (show_model_select) {
-            if (e == Event::Escape) {
-                show_model_select = false;
-                model_query = "";
-                return true;
-            }
-
-            std::vector<qcode::ModelEntry> filtered_model_entries;
-            for (const auto& entry : model_entries) {
-                if (matches_query(entry.model_name, model_query) ||
-                    matches_query(entry.model_id, model_query) ||
-                    matches_query(entry.category, model_query)) {
-                    filtered_model_entries.push_back(entry);
-                }
-            }
-
-            if (!filtered_model_entries.empty()) {
-                model_select_idx = std::clamp(model_select_idx, 0, static_cast<int>(filtered_model_entries.size()) - 1);
-            } else {
-                model_select_idx = 0;
-            }
-
-            if (e == Event::ArrowDown) {
-                if (!filtered_model_entries.empty()) {
-                    model_select_idx = std::min(model_select_idx + 1, (int)filtered_model_entries.size() - 1);
-                }
-                return true;
-            }
-            if (e == Event::ArrowUp) {
-                if (!filtered_model_entries.empty()) {
-                    model_select_idx = std::max(model_select_idx - 1, 0);
-                }
-                return true;
-            }
-            if (e == Event::Return) {
-                if (!filtered_model_entries.empty() && model_select_idx >= 0 && model_select_idx < static_cast<int>(filtered_model_entries.size())) {
-                    auto& entry = filtered_model_entries[model_select_idx];
-                    selected_provider = entry.provider_idx;
-                    selected_model = entry.model_idx;
-                    system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
-                    clamp_variant_to_current_model();
-                }
-                show_model_select = false;
-                model_query = "";
-                return true;
-            }
-
-            if (e == Event::Backspace || e == Event::Special("\x7f")) {
-                if (!model_query.empty()) {
-                    model_query.pop_back();
-                    model_select_idx = 0;
-                }
-                return true;
-            }
-            if (e.is_character()) {
-                model_query += e.character();
-                model_select_idx = 0;
-                return true;
-            }
-            return true;
-        }
-
-        // ── Session select popup ──
-        if (show_session_select) {
-            if (e == Event::Escape) {
-                show_session_select = false;
-                session_query = "";
-                return true;
-            }
-
-            std::vector<qcode::session::SessionInfo> filtered_session_entries;
-            for (const auto& entry : session_entries) {
-                if (matches_query(entry.title, session_query) ||
-                    matches_query(entry.id, session_query) ||
-                    matches_query(entry.workspace, session_query)) {
-                    filtered_session_entries.push_back(entry);
-                }
-            }
-
-            if (e == Event::ArrowDown) {
-                if (!filtered_session_entries.empty()) {
-                    session_select_idx = std::min(session_select_idx + 1, (int)filtered_session_entries.size() - 1);
-                }
-                return true;
-            }
-            if (e == Event::ArrowUp) {
-                if (!filtered_session_entries.empty()) {
-                    session_select_idx = std::max(session_select_idx - 1, 0);
-                }
-                return true;
-            }
-            if (e == Event::Return) {
-                if (!filtered_session_entries.empty()) {
-                    const auto& picked =
-                        filtered_session_entries[session_select_idx];
-                    generation.prepare_session_switch();
-                    store.set_session_id(picked.id);
-                    sync_session_title(state, picked.title);
-                    state.messages_history->clear();
-                    qcode::session::reload_session_history(picked.id, state);
-                    if (state.retry_available) *state.retry_available = false;
-
-                    // Restore provider and model from the loaded session
-                    if (!picked.provider.empty() && !picked.model.empty()) {
-                        for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
-                            if (providers_list[i].name == picked.provider || providers_list[i].id == picked.provider) {
-                                for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
-                                    if (providers_list[i].models[j].name == picked.model || providers_list[i].models[j].id == picked.model) {
-                                        selected_provider = i;
-                                        selected_model = j;
-                                        break;
-                                    }
+                if (!picked.provider.empty() && !picked.model.empty()) {
+                    for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
+                        if (providers_list[i].name == picked.provider || providers_list[i].id == picked.provider) {
+                            for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
+                                if (providers_list[i].models[j].name == picked.model || providers_list[i].models[j].id == picked.model) {
+                                    selected_provider = i;
+                                    selected_model = j;
+                                    break;
                                 }
-                                break;
                             }
+                            break;
                         }
                     }
-                    apply_config_variant_if_unset();
-                    store.add_toast("Switched to: " + picked.title, "info", 1500);
                 }
-                show_session_select = false;
-                session_query = "";
-                return true;
-            }
+                apply_config_variant_if_unset();
+                store.add_toast("Switched to: " + picked.title, "info", 1500);
+            },
+            [&](const std::string& sid) {
+                qcode::session::delete_session(sid);
+            })) return true;
 
-            if (e == Event::Special(std::string(1, '\x04'))) { // Ctrl-D
-                if (!filtered_session_entries.empty()) {
-                    std::string sid = filtered_session_entries[session_select_idx].id;
-                    qcode::session::delete_session(sid);
-                    session_entries = qcode::session::list_sessions_full();
-                    filtered_session_entries.clear();
-                    for (const auto& entry : session_entries) {
-                        if (matches_query(entry.title, session_query) ||
-                            matches_query(entry.id, session_query) ||
-                            matches_query(entry.workspace, session_query)) {
-                            filtered_session_entries.push_back(entry);
-                        }
-                    }
-                    session_select_idx = std::max(0, std::min(session_select_idx, (int)filtered_session_entries.size() - 1));
-                }
-                return true;
-            }
-            if (e == Event::Backspace || e == Event::Special("\x7f")) {
-                if (!session_query.empty()) {
-                    session_query.pop_back();
-                    session_select_idx = 0;
-                }
-                return true;
-            }
-            if (e.is_character()) {
-                session_query += e.character();
-                session_select_idx = 0;
-                return true;
-            }
-            return true;
-        }
+        if (qcode::tui::handle_theme_select_keys(e, overlays, [&](const std::string& new_theme) {
+            if (state.theme) *state.theme = new_theme;
+            store.append_chat_message("System", "Theme changed to: " + new_theme);
+        })) return true;
 
-        // ── Theme select popup ──
-        if (show_theme_select) {
-            if (e == Event::Escape) {
-                show_theme_select = false;
-                theme_query = "";
-                return true;
-            }
-
-            std::vector<qcode::ThemeEntry> filtered_theme_entries;
-            for (const auto& entry : theme_entries) {
-                if (matches_query(entry.name, theme_query) ||
-                    matches_query(entry.description, theme_query)) {
-                    filtered_theme_entries.push_back(entry);
-                }
-            }
-
-            if (e == Event::ArrowDown) {
-                if (!filtered_theme_entries.empty()) {
-                    theme_select_idx = std::min(theme_select_idx + 1, (int)filtered_theme_entries.size() - 1);
-                }
-                return true;
-            }
-            if (e == Event::ArrowUp) {
-                if (!filtered_theme_entries.empty()) {
-                    theme_select_idx = std::max(theme_select_idx - 1, 0);
-                }
-                return true;
-            }
-            if (e == Event::Return) {
-                if (!filtered_theme_entries.empty()) {
-                    std::string new_theme = filtered_theme_entries[theme_select_idx].name;
-                    if (state.theme) {
-                        *state.theme = new_theme;
-                    }
-                    store.append_chat_message("System", "Theme changed to: " + new_theme);
-                }
-                show_theme_select = false;
-                theme_query = "";
-                return true;
-            }
-
-            if (e == Event::Backspace || e == Event::Special("\x7f")) {
-                if (!theme_query.empty()) {
-                    theme_query.pop_back();
-                    theme_select_idx = 0;
-                }
-                return true;
-            }
-            if (e.is_character()) {
-                theme_query += e.character();
-                theme_select_idx = 0;
-                return true;
-            }
-            return true;
-        }
-
-        // ── Variant select popup ──
-        if (handle_variant_list_keys(e)) return true;
+        if (qcode::tui::handle_variant_select_keys(e, overlays, [&](const std::string& vid) {
+            apply_variant(vid);
+        })) return true;
 
         // ── /variant <effort> inline list ──
         if (prompt_input.size() >= 9 && prompt_input.rfind("/variant ", 0) == 0) {
@@ -1116,7 +764,7 @@ int main() {
         if (!prompt_input.empty() && prompt_input[0] == '/') {
             std::string partial = prompt_input.substr(1);
             std::vector<qcode::SlashCommand> command_matches;
-            for (const auto& cmd : slash_commands) {
+            for (const auto& cmd : overlays.slash_commands) {
                 if (cmd.name.find(partial) != std::string::npos) {
                     command_matches.push_back(cmd);
                 }
@@ -1154,39 +802,13 @@ int main() {
                         state.slash_suggestion_idx = 0;
 
                         if (cmd_name == "session" || cmd_name == "list") {
-                            session_entries = qcode::session::list_sessions_full();
-                            if (!session_entries.empty()) {
-                                show_session_select = true;
-                                session_query = "";
-                                session_select_idx = index_of_session(
-                                    session_entries, store.session_id());
-                            } else {
-                                store.append_chat_message("System", "No saved sessions found.");
-                            }
+                            open_session_picker();
                         } else if (cmd_name == "model") {
-                            show_model_select = true;
-                            model_select_idx = 0;
-                            model_query = "";
-                            for (int i = 0; i < static_cast<int>(model_entries.size()); i++) {
-                                if (model_entries[i].provider_idx == selected_provider &&
-                                    model_entries[i].model_idx == selected_model) {
-                                    model_select_idx = i;
-                                    break;
-                                }
-                            }
+                            open_model_picker();
                         } else if (cmd_name == "retry") {
                             trigger_retry();
                         } else if (cmd_name == "theme") {
-                            show_theme_select = true;
-                            theme_select_idx = 0;
-                            theme_query = "";
-                            std::string cur = state.theme ? *state.theme : "opencode";
-                            for (int i = 0; i < static_cast<int>(theme_entries.size()); i++) {
-                                if (theme_entries[i].name == cur) {
-                                    theme_select_idx = i;
-                                    break;
-                                }
-                            }
+                            open_theme_picker();
                         } else if (cmd_name == "variant") {
                             open_variant_picker();
                         } else {
@@ -1256,7 +878,7 @@ int main() {
     });
 
     main_container |= CatchEvent([&](Event e) {
-        if (handle_variant_list_keys(e)) return true;
+        if (qcode::tui::handle_variant_select_keys(e, overlays, [&](const std::string& vid) { apply_variant(vid); })) return true;
         // Toggle visibility of reasoning/thinking blocks (Ctrl-T or F2)
         if (e == Event::Special(std::string(1, '\x14')) || e == Event::F2) {
             *state.show_thinking = !*state.show_thinking;
@@ -1267,14 +889,14 @@ int main() {
         }
         // Command palette (Ctrl-P)
         if (e == Event::Special(std::string(1, '\x10'))) {
-            if (show_palette) {
-                show_palette = false;
-                palette_query = "";
+            if (overlays.show_palette) {
+                overlays.show_palette = false;
+                overlays.palette_query = "";
             } else {
                 close_overlays();
-                show_palette = true;
-                palette_query = "";
-                palette_select_idx = 0;
+                overlays.show_palette = true;
+                overlays.palette_query = "";
+                overlays.palette_select_idx = 0;
                 input->TakeFocus();
             }
             return true;
@@ -1300,21 +922,8 @@ int main() {
         }
         // ── Global Escape: close popups, clear queue, abort, clear input ──
         if (e == Event::Escape) {
-            if (show_model_select) { show_model_select = false; model_query = ""; return true; }
-            if (show_session_select) { show_session_select = false; session_query = ""; return true; }
-            if (show_theme_select) { show_theme_select = false; theme_query = ""; return true; }
-            if (show_variant_select) {
-                show_variant_select = false;
-                variant_query = "";
-                return true;
-            }
-            if (show_palette) {
-                show_palette = false;
-                palette_query = "";
-                return true;
-            }
-            if (show_help) {
-                show_help = false;
+            if (overlays.any(state)) {
+                overlays.close_all(state);
                 return true;
             }
             if (state.slash_suggestion_mode) {
@@ -1671,66 +1280,23 @@ int main() {
         
         // Status rendered inline in header strip
         
-        // ── Filter models dynamically for display ──
-        std::vector<qcode::ModelEntry> filtered_model_entries;
-        for (const auto& e : model_entries) {
-            if (matches_query(e.model_name, model_query) ||
-                matches_query(e.model_id, model_query) ||
-                matches_query(e.category, model_query)) {
-                filtered_model_entries.push_back(e);
-            }
-        }
-
-        // ── Filter sessions dynamically for display ──
-        std::vector<qcode::session::SessionInfo> filtered_session_entries;
-        for (const auto& e : session_entries) {
-            if (matches_query(e.title, session_query) ||
-                matches_query(e.id, session_query) ||
-                matches_query(e.workspace, session_query)) {
-                filtered_session_entries.push_back(e);
-            }
-        }
-
-        // ── Filter themes dynamically for display ──
-        std::vector<qcode::ThemeEntry> filtered_theme_entries;
-        for (const auto& e : theme_entries) {
-            if (matches_query(e.name, theme_query) ||
-                matches_query(e.description, theme_query)) {
-                filtered_theme_entries.push_back(e);
-            }
-        }
-
-        std::vector<qcode::VariantEntry> filtered_variant_entries;
-        for (const auto& e : variant_entries) {
-            if (matches_query(e.id, variant_query) ||
-                matches_query(e.title, variant_query) ||
-                matches_query(e.description, variant_query)) {
-                filtered_variant_entries.push_back(e);
-            }
-        }
-
-        std::vector<qcode::PaletteCommand> filtered_palette_entries;
-        for (const auto& e : palette_commands) {
-            if (matches_query(e.title, palette_query) ||
-                matches_query(e.id, palette_query) ||
-                matches_query(e.description, palette_query) ||
-                matches_query(e.category, palette_query) ||
-                matches_query(e.shortcut, palette_query)) {
-                filtered_palette_entries.push_back(e);
-            }
-        }
+        auto filtered_model_entries = qcode::tui::filter_models(overlays.model_entries, overlays.model_query);
+        auto filtered_session_entries = qcode::tui::filter_sessions(overlays.session_entries, overlays.session_query);
+        auto filtered_theme_entries = qcode::tui::filter_themes(overlays.theme_entries, overlays.theme_query);
+        auto filtered_variant_entries = qcode::tui::filter_variants(overlays.variant_entries, overlays.variant_query);
+        auto filtered_palette_entries = qcode::tui::filter_palette(overlays.palette_commands, overlays.palette_query);
 
         auto main_view = qcode::tui::render_view(
             state, providers_list, selected_provider, selected_model,
             enable_tools, prompt_input,
-            show_slash, slash_idx, slash_commands,
-            show_model_select, model_select_idx, filtered_model_entries, model_query,
-            show_session_select, session_select_idx, filtered_session_entries, session_query,
-            show_theme_select, theme_select_idx, filtered_theme_entries, theme_query,
-            show_variant_select, variant_select_idx, filtered_variant_entries,
-            variant_query,
-            show_palette, palette_select_idx, filtered_palette_entries, palette_query,
-            show_help,
+            overlays.show_slash, overlays.slash_idx, overlays.slash_commands,
+            overlays.show_model_select, overlays.model_select_idx, filtered_model_entries, overlays.model_query,
+            overlays.show_session_select, overlays.session_select_idx, filtered_session_entries, overlays.session_query,
+            overlays.show_theme_select, overlays.theme_select_idx, filtered_theme_entries, overlays.theme_query,
+            overlays.show_variant_select, overlays.variant_select_idx, filtered_variant_entries,
+            overlays.variant_query,
+            overlays.show_palette, overlays.palette_select_idx, filtered_palette_entries, overlays.palette_query,
+            overlays.show_help,
             tab_toggle, state.scroll_line, input);
 
         auto layout = main_view;

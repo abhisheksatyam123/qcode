@@ -3,6 +3,7 @@
 
 add_executable(qcode-tui
     src/main.cpp
+    src/tui_overlays.cpp
     src/views.cpp
     src/views_pickers.cpp
     src/views_toast.cpp
