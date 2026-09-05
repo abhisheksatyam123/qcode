@@ -5,6 +5,11 @@ set(QCODE_WEBUI_SRC "${CMAKE_SOURCE_DIR}/apps/webui/src")
 add_executable(qcode-server
     src/server_main.cpp
     src/server_routes.cpp
+    src/routes/route_system.cpp
+    src/routes/route_session.cpp
+    src/routes/route_terminal.cpp
+    src/routes/route_fs.cpp
+    src/routes/route_study.cpp
     src/json_codec.cpp
     src/http_utils.cpp
     src/workspace_fs.cpp

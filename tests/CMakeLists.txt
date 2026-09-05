@@ -29,6 +29,10 @@ add_executable(qcode_tests
     unit/dedupe_user_prompt_test.cpp
     unit/task_tool_test.cpp
     unit/generation_continue_test.cpp
+    unit/bus_json_codec_test.cpp
+    unit/study_store_test.cpp
+    unit/git_workspace_test.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/json_codec.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp
@@ -61,6 +65,7 @@ target_include_directories(qcode_tests
         ${CMAKE_SOURCE_DIR}/third_party/httplib-header-only
         ${CMAKE_SOURCE_DIR}/libqcode/src
         ${CMAKE_SOURCE_DIR}/libqcode/include
+        ${CMAKE_SOURCE_DIR}/apps/server/include
 )
 
 set_target_properties(qcode_tests PROPERTIES
