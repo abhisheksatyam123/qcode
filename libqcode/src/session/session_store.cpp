@@ -277,7 +277,6 @@ void init_database() {
     }
 
     LOG_INFO("SQLite: database opened successfully at {}", get_db_path());
-    // shared db handle
 }
 
 std::string create_new_session(const std::string& provider, const std::string& model,
@@ -330,7 +329,6 @@ std::string create_new_session(const std::string& provider, const std::string& m
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
     return final_id;
 }
 
@@ -361,7 +359,6 @@ std::string get_last_active_session() {
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
     return uuid;
 }
 
@@ -622,7 +619,6 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
     return history;
 }
 
@@ -679,8 +675,7 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
     if (sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
         LOG_ERROR("SQLite: failed to begin transaction: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
-        // shared db handle
-        return;
+            return;
     }
 
     const char* delete_sql = "DELETE FROM messages WHERE session_id = ?;";
@@ -785,7 +780,6 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
         sqlite3_free(err_msg);
     }
 
-    // shared db handle
 }
 
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
@@ -809,7 +803,6 @@ std::vector<std::pair<std::string, std::string>> load_session_messages(const std
         }
         sqlite3_finalize(stmt);
     }
-    // shared db handle
     return out;
 }
 
@@ -843,7 +836,6 @@ std::vector<std::pair<std::string, std::string>> list_sessions() {
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
     return sessions;
 }
 
@@ -888,7 +880,6 @@ std::vector<SessionInfo> list_sessions_full() {
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
     return sessions;
 }
 
@@ -909,7 +900,6 @@ std::string get_session_workspace(const std::string& session_id) {
         }
         sqlite3_finalize(stmt);
     }
-    // shared db handle
     return result;
 }
 
@@ -930,7 +920,6 @@ std::string get_session_title(const std::string& session_id) {
         }
         sqlite3_finalize(stmt);
     }
-    // shared db handle
     return result;
 }
 
@@ -1019,7 +1008,6 @@ SessionStats get_session_stats(const std::string& session_id,
         }
     }
 
-    // shared db handle
 
     // Tool calls / tool time are reconstructed from persisted messages rows,
     // so add any live counters from the in-flight generation on top.
@@ -1059,7 +1047,6 @@ void persist_session_token_stats(const std::string& session_id,
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
-    // shared db handle
 }
 
 void rename_session(const std::string& session_id, const std::string& new_title) {
@@ -1083,7 +1070,6 @@ void rename_session(const std::string& session_id, const std::string& new_title)
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
 }
 
 void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model) {
@@ -1108,7 +1094,6 @@ void set_session_provider_model(const std::string& session_id, const std::string
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
 }
 
 std::pair<std::string, std::string> get_session_modes(const std::string& session_id) {
@@ -1160,7 +1145,6 @@ void set_session_modes(const std::string& session_id,
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
 }
 
 void delete_session(const std::string& session_id) {
@@ -1186,11 +1170,7 @@ void delete_session(const std::string& session_id) {
         sqlite3_finalize(stmt);
     }
 
-    // shared db handle
 }
-
-
-
 
 
 } // namespace session

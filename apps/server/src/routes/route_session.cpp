@@ -1,37 +1,22 @@
 #include "routes_internal.h"
 #include "session_runtime.h"
-#include "bus_json_codec.h"
 #include "http_utils.h"
-#include "workspace_fs.h"
 
-#include <qcode/core/file_logger.h>
 #include <qcode/core/in_process_bus.h>
-#include <qcode/core/event.h>
-#include <qcode/core/uuid.h>
-#include <qcode/config/config.h>
+#include <qcode/core/logger.h>
 #include <qcode/config/provider_info.h>
 #include <qcode/generation/generation_service.h>
-#include <qcode/providers/authenticated_providers.h>
-#include <qcode/providers/registry.h>
 #include <qcode/session/session_store.h>
 #include <qcode/session/system_prompt.h>
 
 #include <nlohmann/json.hpp>
 
-#include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <filesystem>
-#include <fstream>
 #include <memory>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
-
-namespace fs = std::filesystem;
 
 using namespace qcode::contract;
 

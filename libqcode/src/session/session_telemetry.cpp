@@ -86,7 +86,6 @@ void record_generation_turn(const std::string& model_id, const std::string& prov
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
-    // shared db handle
 }
 
 void record_user_feedback(const std::string& model_id, bool is_positive) {
@@ -111,7 +110,6 @@ void record_user_feedback(const std::string& model_id, bool is_positive) {
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
-    // shared db handle
 }
 
 ModelPerformanceSummary get_model_performance_summary(const std::string& model_id, const std::string& provider) {
@@ -164,7 +162,6 @@ ModelPerformanceSummary get_model_performance_summary(const std::string& model_i
         }
         sqlite3_finalize(stmt);
     }
-    // shared db handle
     return summary;
 }
 
@@ -214,7 +211,6 @@ std::vector<ModelPerformanceSummary> list_all_model_performance_summaries() {
         }
         sqlite3_finalize(stmt);
     }
-    // shared db handle
     return result;
 }
 

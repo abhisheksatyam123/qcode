@@ -4,7 +4,6 @@
 
 #include <qcode/config/config.h>
 #include <qcode/config/provider_info.h>
-#include <qcode/core/message.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/providers/registry.h>
 #include <qcode/session/session_store.h>

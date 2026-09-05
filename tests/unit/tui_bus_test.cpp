@@ -108,7 +108,10 @@ TEST(TuiBusTest, RewakesWhenDrainBatchLimitLeavesEvents) {
 
 #include <qcode/ui/app_store.h>
 #include <qcode/session/session_store.h>
+#include <chrono>
+#include <filesystem>
 #include <cstdlib>
+#include <unistd.h>
 #include <cstdio>
 
 namespace qcode {
@@ -117,7 +120,13 @@ namespace {
 TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
   // Use a temporary database for the test
   const char* old_db_path = std::getenv("QCODE_DB_PATH");
-  setenv("QCODE_DB_PATH", "tui_store_test_temp.db", 1);
+  const std::string db_path = std::string("/tmp/qcode_tui_bus_test/test_") +
+      std::to_string(::getpid()) + "_" +
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+      ".db";
+  std::error_code ec;
+  std::filesystem::create_directories("/tmp/qcode_tui_bus_test", ec);
+  setenv("QCODE_DB_PATH", db_path.c_str(), 1);
   
   // Initialize database
   session::init_database();
@@ -171,9 +180,9 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
   EXPECT_EQ(messages.size(), before_info);
 
   // Clean up
-  std::remove("tui_store_test_temp.db");
-  std::remove("tui_store_test_temp.db-wal");
-  std::remove("tui_store_test_temp.db-shm");
+  std::filesystem::remove(db_path, ec);
+  std::filesystem::remove(db_path + "-wal", ec);
+  std::filesystem::remove(db_path + "-shm", ec);
   if (old_db_path) {
     setenv("QCODE_DB_PATH", old_db_path, 1);
   } else {
@@ -183,7 +192,13 @@ TEST(TuiStoreTest, FormatsErrorWithoutDuplicatePrefix) {
 
 TEST(TuiStoreTest, IgnoresStaleSessionEventsAfterSwitch) {
   const char* old_db_path = std::getenv("QCODE_DB_PATH");
-  setenv("QCODE_DB_PATH", "tui_store_stale_session_test.db", 1);
+  const std::string db_path = std::string("/tmp/qcode_tui_bus_test/stale_") +
+      std::to_string(::getpid()) + "_" +
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+      ".db";
+  std::error_code ec;
+  std::filesystem::create_directories("/tmp/qcode_tui_bus_test", ec);
+  setenv("QCODE_DB_PATH", db_path.c_str(), 1);
   session::init_database();
 
   bus::BusRuntime bus;
@@ -231,9 +246,9 @@ TEST(TuiStoreTest, IgnoresStaleSessionEventsAfterSwitch) {
   ASSERT_FALSE(store.state().messages_history->empty());
   EXPECT_EQ(store.state().messages_history->back().get_text(), "fresh");
 
-  std::remove("tui_store_stale_session_test.db");
-  std::remove("tui_store_stale_session_test.db-wal");
-  std::remove("tui_store_stale_session_test.db-shm");
+  std::filesystem::remove(db_path, ec);
+  std::filesystem::remove(db_path + "-wal", ec);
+  std::filesystem::remove(db_path + "-shm", ec);
   if (old_db_path) {
     setenv("QCODE_DB_PATH", old_db_path, 1);
   } else {

@@ -8,7 +8,9 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <chrono>
 #include <filesystem>
+#include <unistd.h>
 #include <fstream>
 #include <string>
 
@@ -22,7 +24,10 @@ protected:
     void SetUp() override {
         std::error_code ec;
         std::filesystem::create_directories("/tmp/qcode_modes_test", ec);
-        db_path_ = "/tmp/qcode_modes_test/test.db";
+        db_path_ = "/tmp/qcode_modes_test/test_" +
+                   std::to_string(::getpid()) + "_" +
+                   std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                   ".db";
         std::filesystem::remove(db_path_, ec);
         std::filesystem::remove(db_path_ + "-wal", ec);
         std::filesystem::remove(db_path_ + "-shm", ec);
