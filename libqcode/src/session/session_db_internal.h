@@ -81,6 +81,15 @@ public:
         return DbLock{std::move(lock), db_};
     }
 
+    void reset() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (db_) {
+            sqlite3_close(db_);
+            db_ = nullptr;
+        }
+        current_path_.clear();
+    }
+
     sqlite3* peek() const { return db_; }
 
 private:

@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <random>
 #include <signal.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -90,12 +91,21 @@ void destroy_terminal(const std::string& id) {
     }
 }
 
-
 std::shared_ptr<TerminalSession> find_terminal(const std::string& id) {
     std::lock_guard<std::mutex> lock(g_terminal_mutex);
     auto it = g_terminals.find(id);
     if (it == g_terminals.end()) return nullptr;
     return it->second;
+}
+
+bool resize_terminal(const std::string& id, int cols, int rows) {
+    if (cols <= 0 || rows <= 0) return false;
+    auto ts = find_terminal(id);
+    if (!ts || ts->master_fd < 0 || !ts->alive) return false;
+    struct winsize ws{};
+    ws.ws_col = static_cast<unsigned short>(cols);
+    ws.ws_row = static_cast<unsigned short>(rows);
+    return ioctl(ts->master_fd, TIOCSWINSZ, &ws) == 0;
 }
 
 }  // namespace server

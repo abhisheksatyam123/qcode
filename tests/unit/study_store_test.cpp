@@ -1,3 +1,4 @@
+#include "session/session_db_internal.h"
 #include <gtest/gtest.h>
 #include <qcode/session/study_store.h>
 #include <qcode/session/session_store.h>
@@ -28,6 +29,7 @@ protected:
     }
 
     void TearDown() override {
+        qcode::session::SharedDbHandle::instance().reset();
         std::error_code ec;
         std::filesystem::remove(db_path_, ec);
         std::filesystem::remove(db_path_ + "-wal", ec);

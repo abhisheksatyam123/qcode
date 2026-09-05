@@ -52,6 +52,7 @@ Absolute paths and workspace escapes are rejected. Read payload is capped at 2 M
 | POST | `/terminal/create` |
 | DELETE | `/terminal/:id` |
 | POST | `/terminal/:id/input` |
+| POST | `/terminal/:id/resize` |
 | GET | `/terminal/:id/stream` |
 
 ## Study

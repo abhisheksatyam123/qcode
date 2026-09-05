@@ -40,6 +40,17 @@ add_executable(qcode_tests
     unit/commands_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/workspace_fs.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/http_utils.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/terminal_pty.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/server_routes.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_system.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_session.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_session_ops.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/session_runtime.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_terminal.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_fs.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_study.cpp
+    unit/server_routes_test.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp
@@ -73,6 +84,7 @@ target_include_directories(qcode_tests
         ${CMAKE_SOURCE_DIR}/libqcode/src
         ${CMAKE_SOURCE_DIR}/libqcode/include
         ${CMAKE_SOURCE_DIR}/apps/server/include
+        ${CMAKE_SOURCE_DIR}/apps/server/src
 )
 
 set_target_properties(qcode_tests PROPERTIES
@@ -103,6 +115,8 @@ target_compile_definitions(qcode_tests PRIVATE
     CPPHTTPLIB_OPENSSL_SUPPORT=1
     CPPHTTPLIB_BROTLI_SUPPORT=1
     CPPHTTPLIB_THREAD_POOL_COUNT=8
+    QCODE_SERVER_WEBUI_DIR="${CMAKE_SOURCE_DIR}/apps/webui/src"
+    QCODE_VERSION="${PROJECT_VERSION}" 
 )
 
 include(GoogleTest)

@@ -20,6 +20,7 @@ struct TerminalSession {
 std::shared_ptr<TerminalSession> create_terminal(const std::string& workspace);
 void destroy_terminal(const std::string& id);
 std::shared_ptr<TerminalSession> find_terminal(const std::string& id);
+bool resize_terminal(const std::string& id, int cols, int rows);
 
 }  // namespace server
 }  // namespace qcode

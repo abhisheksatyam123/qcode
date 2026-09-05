@@ -24,6 +24,11 @@ void register_terminal_routes(httplib::Server& svr) {
             res.set_content(R"({"error":"failed to create terminal"})", "application/json");
             return;
         }
+        int cols = body.value("cols", 80);
+        int rows = body.value("rows", 24);
+        if (cols > 0 && rows > 0) {
+            resize_terminal(ts->id, cols, rows);
+        }
         res.set_content(nlohmann::json({{"id", ts->id}, {"workspace", workspace}}).dump(), "application/json");
     });
 
@@ -46,6 +51,21 @@ void register_terminal_routes(httplib::Server& svr) {
         if (!ts) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
         if (ts->master_fd >= 0 && ts->alive) {
             (void)write(ts->master_fd, data.c_str(), data.size());
+        }
+        res.set_content(R"({"ok":true})", "application/json");
+    });
+
+    // ── Terminal: resize ──
+    svr.Post("/terminal/([a-f0-9]+)/resize", [](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); } catch (...) {
+            res.status = 400; res.set_content(R"({"error":"invalid JSON"})", "application/json"); return;
+        }
+        int cols = body.value("cols", 80);
+        int rows = body.value("rows", 24);
+        if (!resize_terminal(id, cols, rows)) {
+            res.status = 404; res.set_content(R"({"error":"terminal not found or resize failed"})", "application/json"); return;
         }
         res.set_content(R"({"ok":true})", "application/json");
     });

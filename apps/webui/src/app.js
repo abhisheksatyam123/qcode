@@ -77,11 +77,9 @@ const providerSelect = document.getElementById('provider-select');
 const modelSelect = document.getElementById('model-select');
 const reasoningSelect = document.getElementById('reasoning-select');
 const modalOverlay = document.getElementById('modal-overlay');
-const statusBar = document.getElementById('status-bar');
 const statusSession = document.getElementById('header-session-title');
 const statusWorkspace = document.getElementById('header-session-workspace');
 const newSessionBtn = document.getElementById('new-session-btn');
-const toggleTerminalBtn = document.getElementById('toggle-terminal-btn');
 const terminalPanel = document.getElementById('terminal-panel');
 const terminalContainer = document.getElementById('terminal-container');
 const terminalCloseBtn = document.getElementById('terminal-close-btn');
@@ -212,6 +210,18 @@ async function handleHashChange() {
 
 // ── Init ──
 async function init() {
+  try {
+    const verRes = await fetch("/api/version");
+    if (verRes.ok) {
+      const verData = await verRes.json();
+      const sub = document.getElementById("brand-sub");
+      if (sub && verData.version) {
+        sub.textContent = "v" + verData.version;
+        sub.title = (verData.name || "qcode-server") + " v" + verData.version;
+      }
+    }
+  } catch (_) {}
+
   await loadProviders();
   setupEventListeners();
   updateStatusBar();
@@ -367,15 +377,7 @@ function setupEventListeners() {
     newSessionBtn.addEventListener('click', showNewSessionModal);
   }
   
-  // Tab '+' button listener
-  const newTabBtn = document.getElementById('new-tab-btn');
-  if (newTabBtn) {
-    newTabBtn.addEventListener('click', showNewSessionModal);
-  }
 
-  if (toggleTerminalBtn) {
-    toggleTerminalBtn.addEventListener('click', toggleTerminal);
-  }
   if (terminalCloseBtn) {
     terminalCloseBtn.addEventListener('click', closeTerminal);
   }
@@ -573,6 +575,7 @@ function setupEventListeners() {
   window.addEventListener('online', updateConnectionStatus);
   window.addEventListener('offline', updateConnectionStatus);
   updateConnectionStatus();
+  setInterval(updateConnectionStatus, 30000);
 }
 
 // ── Status Bar ──
@@ -581,12 +584,21 @@ function updateStatusBar() {
   statusWorkspace.textContent = state.sessionWorkspace ? SVG_ICONS.folder + ' ' + state.sessionWorkspace : '';
 }
 
-function updateConnectionStatus() {
+async function updateConnectionStatus() {
   const status = document.getElementById('connection-status');
   if (!status) return;
-  const online = navigator.onLine;
+  let online = navigator.onLine;
+  if (online) {
+    try {
+      const res = await fetch('/api/health');
+      online = res.ok;
+    } catch (_) {
+      online = false;
+    }
+  }
   status.classList.toggle('offline', !online);
-  status.querySelector('.connection-label').textContent = online ? 'Connected' : 'Offline';
+  const label = status.querySelector('.connection-label');
+  if (label) label.textContent = online ? 'Connected' : 'Offline';
 }
 
 // ═══════════════════════════════════════════════════════════════════
