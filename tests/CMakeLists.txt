@@ -1,4 +1,4 @@
-# Unit / integration tests for qcode::ui (and qcode::engine).
+# Unit / integration tests. Link qcode::ui because markdown/TUI tests need FTXUI.
 
 add_executable(qcode_tests
     # Unit tests

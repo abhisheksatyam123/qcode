@@ -277,7 +277,6 @@ std::string cursor_wire_model_id(std::string_view model_id,
 
   std::string level = effort.value_or("");
   if (level == "off") level.clear();
-  if (level == "max") level = "high";
 
   if (base.empty()) return std::string{model_id};
 
@@ -300,6 +299,9 @@ std::string cursor_wire_model_id(std::string_view model_id,
     }
     return "cursor-grok-4.6-medium";
   }
+
+  // Families without an xhigh SKU fold picker "max" onto high.
+  if (level == "max") level = "high";
 
   if (claude) {
     if (level == "low" || level == "high") {

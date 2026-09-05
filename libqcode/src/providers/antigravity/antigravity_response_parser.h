@@ -1,6 +1,6 @@
 #pragma once
 
-#include "providers/base_provider_client.h"
+#include "providers/internal/base_provider_client.h"
 
 namespace qcode {
 namespace antigravity {

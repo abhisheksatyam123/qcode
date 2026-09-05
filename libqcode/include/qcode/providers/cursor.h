@@ -2,7 +2,7 @@
 
 #ifndef QCODE_HAS_CURSOR
 #error \
-    "Cursor component not available. Link with qcode::cursor or qcode::sdk to use Cursor functionality."
+    "Cursor component not available. Link qcode::engine (defines QCODE_HAS_CURSOR)."
 #endif
 
 #include <qcode/core/client.h>

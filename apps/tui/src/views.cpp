@@ -420,6 +420,10 @@ ftxui::Element render_view(
     // Key hints merged here (single-line footer): busy state already shows
     // "esc interrupt" via hdr_status above, so only add idle hints.
     if (!agent_busy) {
+        if (state.retry_available && *state.retry_available) {
+            footer_bits.push_back(text("r") | bold | color(queue_amber()));
+            footer_bits.push_back(text(" retry  ") | dim | color(theme_text_muted(theme)));
+        }
         footer_bits.push_back(text("tab") | bold | color(theme_text(theme)));
         footer_bits.push_back(text(" agents  ") | dim | color(theme_text_muted(theme)));
         footer_bits.push_back(text("ctrl+p") | bold | color(theme_text(theme)));

@@ -4,6 +4,7 @@
 #include <qcode/session/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
 #include <qcode/tools/tool_executor.h>
+#include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/session/session_store.h>
 #include <qcode/core/event.h>
 #include <qcode/core/errors.h>
@@ -105,44 +106,21 @@ static JsonValue run_subagent_turn(qcode::Client& client,
     opts.max_steps = kSubagentMaxSteps;
     opts.workspace = workspace;
     opts.abort_flag = abort_flag;
+    opts.messages.push_back(Message::user(prompt));
 
-    Messages convo;
-    convo.push_back(Message::user(prompt));
+    // Delegate multi-turn subagent execution to the unified MultiStepCoordinator
+    qcode::GenerateResult res =
+        MultiStepCoordinator::execute_multi_step(opts, [&client](const GenerateOptions& step_opts) {
+          return client.generate_text(step_opts);
+        });
 
-    std::string final_text;
-    for (int step = 0; step < kSubagentMaxSteps; ++step) {
-      if (abort_flag && abort_flag->load()) {
-        out["error"] = "subagent aborted";
-        return out;
-      }
-      opts.messages = convo;
-      qcode::GenerateResult res = client.generate_text(opts);
-      if (!res.is_success()) {
-        out["error"] = !res.error_message().empty() ? res.error_message()
-                                                    : "subagent generation failed";
-        return out;
-      }
-      if (!res.has_tool_calls()) {
-        final_text += res.text;
-        break;
-      }
-
-      std::vector<ToolCallContentPart> tool_parts;
-      for (const auto& call : res.tool_calls) {
-        tool_parts.emplace_back(call.id, call.tool_name, call.arguments,
-                                call.thought_signature);
-      }
-      convo.push_back(Message::assistant_with_tools(res.text, tool_parts));
-
-      std::vector<ToolResult> executed =
-          qcode::ToolExecutor::execute_tools_with_options(res.tool_calls, opts);
-      std::vector<ToolResultContentPart> parts;
-      for (const auto& r : executed) {
-        parts.emplace_back(r.tool_call_id, r.result, !r.is_success());
-      }
-      convo.push_back(Message::tool_results(parts));
-      final_text = res.text;
+    if (!res.is_success()) {
+      out["error"] = !res.error_message().empty() ? res.error_message()
+                                                  : "subagent generation failed";
+      return out;
     }
+
+    std::string final_text = res.text;
     if (final_text.empty()) final_text = "(subagent finished without output)";
     out["output"] = final_text;
   } catch (const std::exception& e) {
@@ -1078,11 +1056,12 @@ void run_generation_with_bus(
     }
 
     // ── Dispatch ──
-    // Cursor AgentService owns its own autonomous tool loop server-side.
-    // Wrapping it in qcode's local tool loop is useless (no tool_calls returned)
-    // and can truncate multi-step agent turns. Always stream Cursor.
-    const bool cursor_native_agent = (provider_id == "cursor");
-    if (enable_tools && !cursor_native_agent) {
+    // ServerSideDuplex providers (e.g. Cursor AgentService) own their autonomous tool loop.
+    // Wrapping them in qcode's local tool loop is useless (no tool_calls returned)
+    // and can truncate multi-step agent turns. Always stream ServerSideDuplex providers.
+    const bool is_server_duplex_agent =
+        (client.tool_execution_model() == ToolExecutionModel::ServerSideDuplex);
+    if (enable_tools && !is_server_duplex_agent) {
       // Plan mode drops the task subagent (delegation implies execution).
       qcode::ToolSet tools =
           ToolCatalog::build_definitions(ToolConfig{true, false});
@@ -1129,8 +1108,8 @@ void run_generation_with_bus(
       run_tools_generation_bus(client, std::move(base_opts), bus, ctx,
                                refresh_client, provider_id);
     } else {
-      if (cursor_native_agent) {
-        LOG_INFO("ChatBus: Cursor native agent stream (session_id={})",
+      if (is_server_duplex_agent) {
+        LOG_INFO("ChatBus: ServerSideDuplex native agent stream (session_id={})",
                  ctx.session_id);
         bus.publish<SessionStatusChanged>({
             .session_id = ctx.session_id,

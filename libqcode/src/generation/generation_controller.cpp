@@ -90,18 +90,18 @@ void GenerationController::force_stop_ui() {
 
 void GenerationController::spawn(std::string prompt, GenerationRequest request) {
     if (is_busy()) {
-        // Nudge the lingering worker to exit; keep any already-queued prompts.
-        request_abort();
         store_.enqueue_prompt(std::move(prompt));
-        store_.add_toast("Waiting for previous turn to stop…", "warning", 2000);
-        LOG_INFO("GenerationController: spawn deferred — worker busy");
+        const auto n = store_.queue_size();
+        store_.add_toast("Prompt queued #" + std::to_string(n), "info", 1500);
+        LOG_INFO("GenerationController: spawn deferred — queued (size={})", n);
         return;
     }
     spawn_unlocked(std::move(prompt), std::move(request));
 }
 
 void GenerationController::maybe_start_queued(GenerationRequest request) {
-    if (store_.is_generating() || is_busy() || !store_.has_queued_prompt()) {
+    if (store_.is_generating() || is_busy() || store_.status() == "error" ||
+        !store_.has_queued_prompt()) {
         return;
     }
     auto next = store_.dequeue_prompt();
@@ -119,6 +119,9 @@ void GenerationController::spawn_unlocked(std::string prompt,
     if (worker_.joinable()) {
         // Safe: busy_ is false, so the previous worker has finished.
         worker_.join();
+    }
+    if (store_.state().abort_flag) {
+        store_.state().abort_flag->store(false, std::memory_order_release);
     }
 
     const auto& providers = request.providers;
@@ -180,10 +183,14 @@ void GenerationController::spawn_unlocked(std::string prompt,
             // Clear busy + wake UI when the worker exits (including after Esc
             // force-stop left is_generating already false).
             const auto busy_guard = std::shared_ptr<void>(
-                nullptr, [busy_ptr, store_ptr, spawn_session](void*) {
+                nullptr, [busy_ptr, store_ptr, spawn_session, bus_ptr](void*) {
                     busy_ptr->store(false, std::memory_order_release);
-                    if (store_ptr->session_id() == spawn_session) {
+                    if (store_ptr->session_id() == spawn_session &&
+                        store_ptr->status() != "error") {
                         store_ptr->set_status("idle");
+                    }
+                    if (bus_ptr) {
+                        bus_ptr->wake();
                     }
                 });
 
@@ -304,7 +311,9 @@ void GenerationController::spawn_unlocked(std::string prompt,
             if (store_ptr->is_generating() &&
                 store_ptr->session_id() == spawn_session) {
                 store_ptr->set_generating(false);
-                store_ptr->set_status("idle");
+                if (store_ptr->status() != "error") {
+                    store_ptr->set_status("idle");
+                }
             }
         });
 }

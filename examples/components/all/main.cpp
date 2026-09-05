@@ -64,7 +64,7 @@ int main() {
   std::cout << "\n";
   std::cout << "This example demonstrates using all components together.\n";
   std::cout
-      << "Both OpenAI and Anthropic should be available when linking qcode::sdk\n";
+      << "OpenAI and Anthropic are available when linking qcode::engine\n";
 
   return 0;
 }

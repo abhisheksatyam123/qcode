@@ -3,7 +3,7 @@
 #include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
 #include "core/http_request_handler.h"
-#include "providers/base_provider_client.h"
+#include "providers/internal/base_provider_client.h"
 
 #include <nlohmann/json.hpp>
 #include <string>

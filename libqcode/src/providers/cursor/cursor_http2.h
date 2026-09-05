@@ -33,13 +33,17 @@ Http2PostResult http2_post(
 
 // Streaming variant: on_chunk is invoked for each received body chunk.
 // Return false from on_chunk to abort the transfer early (e.g. after turn_ended).
+// timeout_sec 0 means no total-time cap (agent turns regularly exceed 5 min).
+// should_abort is polled from curl's progress callback so Esc/queue can stop
+// a silent RunSSE that never delivers a chunk.
 Http2PostResult http2_post_stream(
     const std::string& url,
     const std::vector<std::pair<std::string, std::string>>& headers,
     const std::string& body,
     const std::string& content_type,
     const std::function<bool(std::string_view chunk)>& on_chunk,
-    int timeout_sec = 120);
+    int timeout_sec = 0,
+    std::function<bool()> should_abort = nullptr);
 
 // Reuses one curl easy handle so TLS/HTTP2 connections stay warm across
 // BidiAppend calls (a new handshake per KV ack was ~1.2s).

@@ -2,7 +2,7 @@
 
 #ifndef QCODE_HAS_ANTHROPIC
 #error \
-    "Anthropic component not available. Link with qcode::anthropic or qcode::sdk to use Anthropic functionality."
+    "Anthropic component not available. Link qcode::engine (defines QCODE_HAS_ANTHROPIC)."
 #endif
 
 #include <qcode/core/client.h>

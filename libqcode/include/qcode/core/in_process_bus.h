@@ -33,6 +33,9 @@ public:
     // The callback runs outside the queue lock and may safely wake a UI loop.
     void set_wake_callback(Callback callback);
 
+    // Explicitly trigger the wake callback (e.g. to notify UI loop on background worker idle)
+    void wake();
+
     // Drain observers are useful for batching work derived from many events.
     Subscription on_drain_complete(Callback callback);
     bool is_draining() const noexcept {

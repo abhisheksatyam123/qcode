@@ -3,81 +3,17 @@
 #include <algorithm>
 #include <functional>
 #include <optional>
-#include <unordered_set>
 #include <vector>
 
 #include <qcode/core/logger.h>
 #include <qcode/core/random.h>
-#include "providers/opencode_zen_headers.h"
+#include "providers/internal/opencode_zen_headers.h"
 #include "core/message_utils.h"
 #include <qcode/transform/gemini_transform.h>
+#include "openai_cache.h"
+#include "openai_responses.h"
 
 namespace qcode {
-
-namespace {
-
-const nlohmann::json kEphemeralCache = {{"type", "ephemeral"}};
-
-bool is_claude_cache_model(const std::string& model) {
-  return model.find("claude") != std::string::npos ||
-         model.find("anthropic") != std::string::npos;
-}
-
-bool is_opencode_gpt5_cache_model(const std::string& model) {
-  return model.find("gpt-5") != std::string::npos &&
-         model.find("gpt-5-chat") == std::string::npos;
-}
-
-void mark_message_cache_control(nlohmann::json& message) {
-  if (!message.is_object() || !message.contains("content")) {
-    return;
-  }
-  auto& content = message["content"];
-  if (content.is_null()) {
-    return;
-  }
-  if (content.is_string()) {
-    content = nlohmann::json::array({nlohmann::json{
-        {"type", "text"},
-        {"text", content.get<std::string>()},
-        {"cache_control", kEphemeralCache},
-    }});
-    return;
-  }
-  if (content.is_array() && !content.empty() && content.back().is_object()) {
-    content.back()["cache_control"] = kEphemeralCache;
-  }
-}
-
-// OpenCode ProviderTransform.applyCaching: first 2 system + last 2 non-system.
-void apply_opencode_message_caching(nlohmann::json& messages) {
-  if (!messages.is_array() || messages.empty()) {
-    return;
-  }
-  std::vector<std::size_t> system_idx;
-  std::vector<std::size_t> other_idx;
-  for (std::size_t i = 0; i < messages.size(); ++i) {
-    if (messages[i].value("role", "") == "system") {
-      system_idx.push_back(i);
-    } else {
-      other_idx.push_back(i);
-    }
-  }
-  std::unordered_set<std::size_t> mark;
-  for (std::size_t i = 0; i < system_idx.size() && i < 2; ++i) {
-    mark.insert(system_idx[i]);
-  }
-  const auto other_n = other_idx.size();
-  for (std::size_t n = 0; n < other_n && n < 2; ++n) {
-    mark.insert(other_idx[other_n - 1 - n]);
-  }
-  for (const auto i : mark) {
-    mark_message_cache_control(messages[i]);
-  }
-}
-
-}  // namespace
-
 namespace openai {
 
 nlohmann::json OpenAIRequestBuilder::build_request_json(
@@ -368,120 +304,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
   if (!use_responses_) return request;
 
-  const auto json_string_or_dump = [](const nlohmann::json& value,
-                                      const std::string& fallback) {
-    if (value.is_string()) return value.get<std::string>();
-    if (value.is_null() || value.is_discarded()) return fallback;
-    return value.dump();
-  };
-
-  // OpenCode openai-responses.ts: user = [{input_text}], assistant =
-  // [{output_text}]. A bare string or null is rejected as
-  // `input[n].content` "did not match any supported type".
-  const auto responses_content =
-      [](const std::string& role,
-         const nlohmann::json& content) -> std::optional<nlohmann::json> {
-    const char* part_type =
-        role == "assistant" ? "output_text" : "input_text";
-    if (content.is_null()) return std::nullopt;
-    if (content.is_string()) {
-      const auto text = content.get<std::string>();
-      if (text.empty()) return std::nullopt;
-      // OpenCode keeps system as a plain string (joinText).
-      if (role == "system") return std::optional<nlohmann::json>{content};
-      return nlohmann::json::array({{{"type", part_type}, {"text", text}}});
-    }
-    if (content.is_array()) {
-      nlohmann::json parts = nlohmann::json::array();
-      for (const auto& part : content) {
-        if (part.is_string()) {
-          const auto text = part.get<std::string>();
-          if (!text.empty()) {
-            parts.push_back({{"type", part_type}, {"text", text}});
-          }
-          continue;
-        }
-        if (!part.is_object()) continue;
-        std::string text;
-        if (part.contains("text") && part["text"].is_string()) {
-          text = part["text"].get<std::string>();
-        } else if (part.contains("content") && part["content"].is_string()) {
-          text = part["content"].get<std::string>();
-        }
-        if (text.empty()) continue;
-        const auto type = part.value("type", "");
-        if (type == "input_text" || type == "output_text") {
-          parts.push_back({{"type", type}, {"text", text}});
-        } else {
-          parts.push_back({{"type", part_type}, {"text", text}});
-        }
-      }
-      if (parts.empty()) return std::nullopt;
-      return parts;
-    }
-    return nlohmann::json::array(
-        {{{"type", part_type}, {"text", content.dump()}}});
-  };
-
-  nlohmann::json responses{{"model", request["model"]},
-                           {"input", nlohmann::json::array()}};
-  for (const auto& message : request["messages"]) {
-    const auto role = message.value("role", "");
-    if (role == "tool") {
-      responses["input"].push_back(
-          {{"type", "function_call_output"},
-           {"call_id", message.value("tool_call_id", "")},
-           {"output", message.contains("content")
-                          ? json_string_or_dump(message["content"], "")
-                          : ""}});
-      continue;
-    }
-    if (message.contains("content")) {
-      if (auto parts = responses_content(role, message["content"])) {
-        responses["input"].push_back(
-            {{"role", role}, {"content", std::move(*parts)}});
-      }
-    }
-    if (message.contains("tool_calls")) {
-      for (const auto& call : message["tool_calls"]) {
-        const auto& function = call.contains("function")
-                                   ? call["function"]
-                                   : nlohmann::json::object();
-        const auto arguments = function.contains("arguments")
-                                   ? json_string_or_dump(function["arguments"],
-                                                         "{}")
-                                   : "{}";
-        responses["input"].push_back(
-            {{"type", "function_call"},
-             {"call_id", call.value("id", "")},
-             {"name", function.value("name", "")},
-             {"arguments", arguments}});
-      }
-    }
-  }
-  if (request.contains("max_completion_tokens")) {
-    responses["max_output_tokens"] = request["max_completion_tokens"];
-  }
-  if (request.contains("temperature")) {
-    responses["temperature"] = request["temperature"];
-  }
-  if (request.contains("top_p")) responses["top_p"] = request["top_p"];
-  if (request.contains("reasoning_effort")) {
-    responses["reasoning"] = {{"effort", request["reasoning_effort"]}};
-  }
-  if (request.contains("tools")) {
-    responses["tools"] = nlohmann::json::array();
-    for (const auto& tool : request["tools"]) {
-      const auto& function = tool["function"];
-      responses["tools"].push_back(
-          {{"type", "function"},
-           {"name", function.value("name", "")},
-           {"description", function.value("description", "")},
-           {"parameters", function.value("parameters",
-                                          nlohmann::json::object())}});
-    }
-  }
-  return responses;
+  return to_responses_request(request);
 }
 
 nlohmann::json OpenAIRequestBuilder::build_request_json(
@@ -561,6 +384,20 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
   }
 
   return headers;
+}
+
+
+nlohmann::json OpenAIRequestBuilder::build_stream_request_json(
+    const StreamOptions& options) {
+  auto request_json = build_request_json(options);
+  if (wire_protocol_ != "google") {
+    request_json["stream"] = true;
+    ProviderTransform::apply_stream_options(
+        request_json,
+        ProviderTransform::chat_transport_for(base_url_),
+        /*stream=*/true);
+  }
+  return request_json;
 }
 
 }  // namespace openai

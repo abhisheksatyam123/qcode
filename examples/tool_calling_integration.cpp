@@ -8,7 +8,7 @@
  * Usage:
  *   export OPENAI_API_KEY=your_key_here
  *   export ANTHROPIC_API_KEY=your_key_here
- *   ./tool_calling_integration
+ *   ./test_tool_integration
  */
 
 #include <iostream>

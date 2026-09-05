@@ -79,6 +79,15 @@ void BusRuntime::set_wake_callback(Callback callback) {
     wake_callback_ = std::move(callback);
 }
 
+void BusRuntime::wake() {
+    Callback wake;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        wake = wake_callback_;
+    }
+    if (wake) wake();
+}
+
 Subscription BusRuntime::on_drain_complete(Callback callback) {
     const auto id =
         next_drain_callback_id_.fetch_add(1, std::memory_order_relaxed);

@@ -3,6 +3,7 @@
 #include <qcode/core/logger.h>
 
 #include <curl/curl.h>
+#include <functional>
 #include <memory>
 
 namespace qcode {
@@ -18,12 +19,21 @@ size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
 struct StreamWriteCtx {
   std::string* body = nullptr;
   const std::function<bool(std::string_view)>* on_chunk = nullptr;
+  std::function<bool()> should_abort;
   bool abort = false;
 };
+
+bool abort_requested(const StreamWriteCtx* ctx) {
+  return ctx != nullptr && ctx->should_abort && ctx->should_abort();
+}
 
 size_t stream_write_callback(char* ptr, size_t size, size_t nmemb,
                              void* userdata) {
   auto* ctx = static_cast<StreamWriteCtx*>(userdata);
+  if (abort_requested(ctx)) {
+    ctx->abort = true;
+    return 0;
+  }
   const size_t n = size * nmemb;
   if (ctx->body != nullptr) {
     ctx->body->append(ptr, n);
@@ -35,6 +45,16 @@ size_t stream_write_callback(char* ptr, size_t size, size_t nmemb,
     }
   }
   return n;
+}
+
+int stream_xferinfo(void* userdata, curl_off_t, curl_off_t, curl_off_t,
+                    curl_off_t) {
+  auto* ctx = static_cast<StreamWriteCtx*>(userdata);
+  if (abort_requested(ctx)) {
+    ctx->abort = true;
+    return 1;
+  }
+  return 0;
 }
 
 struct CurlGlobal {
@@ -60,7 +80,10 @@ void configure_post(
                    static_cast<curl_off_t>(body.size()));
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_fn);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, write_data);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(timeout_sec));
+  // 0 = no total-time cap. RunSSE stays open for the whole agent turn;
+  // a 300s CURLOPT_TIMEOUT aborted live builds at exactly 5 minutes.
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,
+                   timeout_sec > 0 ? static_cast<long>(timeout_sec) : 0L);
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
   curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
@@ -88,7 +111,7 @@ void finish_post(CURL* curl, Http2PostResult& result, const std::string& url) {
   if (code == CURLE_OK) {
     LOG_DEBUG("Cursor HTTP/2 POST status={} body_size={} url={}", result.status,
               result.body.size(), url);
-  } else if (code == CURLE_WRITE_ERROR) {
+  } else if (code == CURLE_WRITE_ERROR || code == CURLE_ABORTED_BY_CALLBACK) {
     result.aborted = true;
     LOG_DEBUG("Cursor HTTP/2 POST aborted by callback status={} body_size={}",
               result.status, result.body.size());
@@ -143,13 +166,30 @@ Http2PostResult http2_post_stream(
     const std::string& body,
     const std::string& content_type,
     const std::function<bool(std::string_view chunk)>& on_chunk,
-    int timeout_sec) {
+    int timeout_sec,
+    std::function<bool()> should_abort) {
   Http2PostResult result;
   StreamWriteCtx ctx;
   ctx.body = &result.body;
   ctx.on_chunk = &on_chunk;
-  perform_post(result, url, headers, body, content_type, stream_write_callback,
-               &ctx, timeout_sec);
+  ctx.should_abort = std::move(should_abort);
+  ensure_curl();
+
+  CURL* curl = curl_easy_init();
+  if (curl == nullptr) {
+    result.error = "curl_easy_init failed";
+    return result;
+  }
+
+  auto* header_list = make_header_list(headers, content_type);
+  configure_post(curl, url, header_list, body, stream_write_callback, &ctx,
+                 timeout_sec);
+  curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+  curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, stream_xferinfo);
+  curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
+  finish_post(curl, result, url);
+  curl_slist_free_all(header_list);
+  curl_easy_cleanup(curl);
   if (ctx.abort) {
     result.aborted = true;
   }

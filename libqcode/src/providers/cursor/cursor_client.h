@@ -2,7 +2,7 @@
 
 #include <qcode/core/stream_options.h>
 #include "core/http_request_handler.h"
-#include "providers/base_provider_client.h"
+#include "providers/internal/base_provider_client.h"
 #include "providers/cursor/cursor_kv.h"
 #include "providers/cursor/cursor_request_builder.h"
 #include "providers/cursor/cursor_response_parser.h"
@@ -39,6 +39,9 @@ class CursorClient : public providers::BaseProviderClient {
   bool supports_model(const std::string& model_name) const override;
   std::string config_info() const override;
   std::string default_model() const override;
+  ToolExecutionModel tool_execution_model() const override {
+    return ToolExecutionModel::ServerSideDuplex;
+  }
 
  private:
   httplib::Headers build_headers(const std::string& token, bool agent) const;

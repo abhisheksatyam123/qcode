@@ -12,6 +12,14 @@
 #include <qcode/providers/anthropic.h>
 #endif
 
+#ifdef QCODE_HAS_CURSOR
+#include <qcode/providers/cursor.h>
+#endif
+
+#ifdef QCODE_HAS_ANTIGRAVITY
+#include <qcode/providers/antigravity.h>
+#endif
+
 // Type definitions
 #include <qcode/core/client.h>
 #include <qcode/core/enums.h>

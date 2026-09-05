@@ -83,14 +83,17 @@ int main() {
 
     qcode::GenerationController generation(store, bus, app_running);
 
-    // ── Spinner: advance frame periodically ──
-    std::thread spinner_thread([&store, app_running]() {
+    // ── Spinner: advance frame periodically + queue watchdog ──
+    std::thread spinner_thread([&store, &generation, app_running, &screen]() {
         qcode::logger::set_thread_name("spinner");
         while (app_running->load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             const auto& st = store.status();
             if (store.is_generating() || st == "generating" || st == "agent") {
                 store.advance_frame();
+            } else if (store.has_queued_prompt() && !generation.is_busy() && st != "error") {
+                // Fail-safe watchdog: wake the UI to process pending queued prompts.
+                screen.Post(Event::Custom);
             }
         }
     });
@@ -340,15 +343,35 @@ int main() {
         }
         std::string retry_prompt = get_last_user_prompt();
         if (retry_prompt.empty()) {
+            store.add_toast("No prompt to retry", "info", 1500);
             return false;
         }
+
+        // Clean trailing artifacts from failed/interrupted turn:
+        // Find the last User message matching retry_prompt and drop any
+        // trailing System error messages, partial assistant text, or aborted tool calls.
+        if (state.messages_history && !state.messages_history->empty()) {
+            auto& hist = *state.messages_history;
+            for (int i = static_cast<int>(hist.size()) - 1; i >= 0; --i) {
+                if (hist[i].role == qcode::kMessageRoleUser && !hist[i].has_tool_results()) {
+                    if (hist[i].get_text() == retry_prompt) {
+                        hist.erase(hist.begin() + i + 1, hist.end());
+                        break;
+                    }
+                }
+            }
+            if (state.session_id && !state.session_id->empty()) {
+                qcode::session::overwrite_session_history(*state.session_id, hist);
+            }
+        }
+
         if (state.last_user_prompt) *state.last_user_prompt = retry_prompt;
         auto req = make_generation_request();
-        // spawn_unlocked applies should_append_user_message so retries of an
-        // open turn reuse the existing User row instead of duplicating it.
+        // Preserved user prompt in history: do not append a duplicate
+        req.append_user_message = false;
         store.clear_retry();
         store.clear_error();
-        store.add_toast("Retrying last prompt…", "info", 1500);
+        store.add_toast("Retrying: " + (retry_prompt.size() > 30 ? retry_prompt.substr(0, 27) + "…" : retry_prompt), "info", 1500);
         generation.spawn(retry_prompt, std::move(req));
         screen.Post(Event::Custom);
         return true;
@@ -519,10 +542,16 @@ int main() {
                                   turn_status == "agent";
         if (turn_visible) {
             store.enqueue_prompt(prompt_input);
-            store.add_toast("Prompt queued", "info", 1500);
-            LOG_INFO("Main: prompt queued (queue_size={})", store.queue_size());
+            const auto n = store.queue_size();
+            store.add_toast(
+                generation.is_busy() && !store.is_generating()
+                    ? "Queued — waiting for previous turn to finish"
+                    : "Queued · #" + std::to_string(n),
+                "info", 1500);
+            LOG_INFO("Main: prompt queued (queue_size={})", n);
             prompt_input = "";
             *state.auto_scroll = true;
+            screen.Post(Event::Custom);
             return;
         }
 
@@ -537,6 +566,12 @@ int main() {
             cmd.erase(std::find_if(cmd.rbegin(), cmd.rend(), [](unsigned char ch) {
                 return !std::isspace(ch);
             }).base(), cmd.end());
+
+            if (cmd == "retry") {
+                prompt_input = "";
+                trigger_retry();
+                return;
+            }
 
             if (cmd == "clear-queue" || cmd == "clearqueue" || cmd == "cq") {
                 prompt_input = "";

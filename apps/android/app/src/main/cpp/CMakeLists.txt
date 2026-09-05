@@ -70,7 +70,7 @@ target_compile_definitions(qcode_jni PRIVATE
 find_library(ANDROID_LOG_LIB log)
 
 target_link_libraries(qcode_jni PRIVATE
-    qcode-core
+    qcode::engine
     ${ANDROID_LOG_LIB}
     android
 )

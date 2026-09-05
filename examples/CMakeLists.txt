@@ -2,7 +2,7 @@
 
 function(add_qcode_example name source_file)
     add_executable(${name} ${source_file})
-    target_link_libraries(${name} PRIVATE qcode-core)
+    target_link_libraries(${name} PRIVATE qcode::engine)
 
     set_target_properties(${name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
@@ -14,13 +14,13 @@ add_qcode_example(streaming_chat streaming_chat.cpp)
 add_qcode_example(multi_provider multi_provider.cpp)
 add_qcode_example(error_handling error_handling.cpp)
 add_qcode_example(retry_config_example retry_config_example.cpp)
-add_qcode_example(test_openai test_openai.cpp)
-add_qcode_example(test_anthropic test_anthropic.cpp)
+add_qcode_example(openai_example openai_example.cpp)
+add_qcode_example(anthropic_example anthropic_example.cpp)
 add_qcode_example(openrouter_example openrouter_example.cpp)
 add_qcode_example(tool_calling_basic tool_calling_basic.cpp)
 add_qcode_example(tool_calling_multistep tool_calling_multistep.cpp)
 add_qcode_example(tool_calling_async tool_calling_async.cpp)
-add_qcode_example(test_tool_integration test_tool_integration.cpp)
+add_qcode_example(tool_calling_integration tool_calling_integration.cpp)
 add_qcode_example(embeddings_example embeddings_example.cpp)
 add_qcode_example(langfuse_tracing langfuse_tracing.cpp)
 

@@ -2,7 +2,7 @@
 
 #ifndef QCODE_HAS_ANTIGRAVITY
 #error \
-    "Antigravity component not available. Link with qcode::antigravity or qcode::sdk to use Antigravity functionality."
+    "Antigravity component not available. Link qcode::engine (defines QCODE_HAS_ANTIGRAVITY)."
 #endif
 
 #include <qcode/core/retry_policy.h>

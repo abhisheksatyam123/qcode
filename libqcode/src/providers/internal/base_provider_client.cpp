@@ -1,8 +1,6 @@
-#include "base_provider_client.h"
+#include "providers/internal/base_provider_client.h"
 
 #include <qcode/core/logger.h>
-#include <qcode/tools/multi_step_coordinator.h>
-#include <qcode/tools/tool_executor.h>
 
 namespace qcode {
 namespace providers {
@@ -39,20 +37,9 @@ GenerateResult BaseProviderClient::generate_text(
       options.model, options.prompt.length(), options.tools.size(),
       options.max_steps);
 
-  // Check if multi-step tool calling is enabled
-  if (options.has_tools() && options.is_multi_step()) {
-    LOG_DEBUG("Using multi-step tool calling with {} tools",
-                          options.tools.size());
-
-    // Use MultiStepCoordinator for complex workflows
-    return MultiStepCoordinator::execute_multi_step(
-        options, [this](const GenerateOptions& step_options) {
-          return this->generate_text_single_step(step_options);
-        });
-  } else {
-    // Single step generation
-    return generate_text_single_step(options);
-  }
+  // Direct single-turn execution: BaseProviderClient is a wire client.
+  // Multi-step agent loops are driven exclusively by the orchestration layer.
+  return generate_text_single_step(options);
 }
 
 GenerateResult BaseProviderClient::generate_text_single_step(

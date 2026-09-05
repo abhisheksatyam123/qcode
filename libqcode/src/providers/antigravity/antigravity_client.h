@@ -2,7 +2,7 @@
 
 #include <qcode/core/retry_policy.h>
 #include <qcode/core/stream_options.h>
-#include "providers/base_provider_client.h"
+#include "providers/internal/base_provider_client.h"
 
 #include <string>
 #include <vector>

@@ -38,6 +38,11 @@ class RequestBuilder {
   virtual void set_base_url(const std::string&) {}
   virtual void set_wire_protocol(const std::string&) {}
   virtual nlohmann::json build_request_json(const GenerateOptions& options) = 0;
+  virtual nlohmann::json build_stream_request_json(const StreamOptions& options) {
+    auto j = build_request_json(options);
+    j["stream"] = true;
+    return j;
+  }
   virtual nlohmann::json build_request_json(
       const EmbeddingOptions& options) = 0;
   virtual httplib::Headers build_headers(const ProviderConfig& config) = 0;

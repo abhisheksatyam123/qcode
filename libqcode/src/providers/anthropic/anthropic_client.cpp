@@ -70,23 +70,15 @@ StreamResult AnthropicClient::stream_text(const StreamOptions& options) {
       "Starting text streaming - model: {}, prompt length: {}", options.model,
       options.prompt.length());
 
-  // Build request with stream: true
-  auto request_json = request_builder_->build_request_json(options);
-  request_json["stream"] = true;
-  LOG_DEBUG("Stream request JSON built with stream=true");
-
-  // Create headers
+  auto request_json = request_builder_->build_stream_request_json(options);
   auto headers = request_builder_->build_headers(config_);
   headers.emplace("Accept", "text/event-stream");
 
-  // Create stream implementation
   auto impl = std::make_unique<AnthropicStreamImpl>();
   impl->start_stream(config_.base_url + config_.completions_endpoint_path,
                      headers, request_json);
 
   LOG_INFO("Text streaming started - model: {}", options.model);
-
-  // Return StreamResult with implementation
   return StreamResult(std::move(impl));
 }
 

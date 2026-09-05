@@ -19,17 +19,20 @@ Android NDK still uses headers (`#include <qcode/...>`) and the `qcode::compat::
   - `include/qcode/<module>/`: public headers
   - `src/<module>/`: matching implementations
 - `apps/`: front-end targets consuming `libqcode`.
-  - `apps/tui`: FTXUI terminal UI (`qcode-tui`)
-  - `apps/server`: HTTP / WebSocket API (`qcode-server`)
-  - `apps/webui`: Vite / JavaScript web client
-  - `apps/cli`: lightweight CLI (`qcode-cli`)
-  - `apps/android`: JNI wrapper
+  - `apps/tui`: FTXUI terminal UI (`qcode-tui`) — root CMake when `QCODE_BUILD_TUI`
+  - `apps/server`: HTTP / WebSocket API (`qcode-server`) — `QCODE_BUILD_SERVER`
+  - `apps/cli`: lightweight CLI (`qcode-cli`) — `QCODE_BUILD_CLI`
+  - `apps/webui`: Vite / JavaScript client; not a CMake target; copied next to `qcode-server`
+  - `apps/android`: Gradle/JNI wrapper; not `add_subdirectory` from root CMake
 - `docs/`: architecture and build guides
 - `tests/`: Google Test suite (`unit/`, `integration/`, `utils/`)
-- `third_party/`: FTXUI, cpp-httplib, nlohmann_json, sqlite, ...
-- `examples/`: API samples
-- `cmake/`: helper scripts and toolchains
+- `third_party/`: vendored httplib, nlohmann_json, sqlite, googletest, zlib, brotli, … (FTXUI is fetched via CMake FetchContent, not this tree)
+- `examples/`: API samples (link `qcode::engine`)
+- `scripts/`: `build.py`, `format.py`, `lint.py`, plus Android Python fetch and a model-capabilities helper
+- `cmake/`: `find_package` install config template (`qcode-config.cmake.in`)
 - `build/`: ignored output root (`build/<preset>/`; see `CMakePresets.json` and `docs/building.md`)
+- `test-services/`: optional ClickHouse docker-compose for `BUILD_CLICKHOUSE_TESTS`
+
 
 ## `libqcode` modules
 

@@ -17,11 +17,13 @@ _deps/
 *.log
 qcode-server.log
 
-# Editor / LSP
+# Editor / LSP / local agent dirs
 .clangd
 .cache/
 .idea/
 .vscode/
+.cursor/
+.grok/
 *.swp
 *~
 

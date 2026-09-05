@@ -2,7 +2,7 @@
 
 #ifndef QCODE_HAS_OPENAI
 #error \
-    "OpenAI component not available. Link with qcode::openai or qcode::sdk to use OpenAI functionality."
+    "OpenAI component not available. Link qcode::engine (defines QCODE_HAS_OPENAI)."
 #endif
 
 #include <qcode/core/retry_policy.h>

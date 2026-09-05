@@ -135,31 +135,17 @@ StreamResult OpenAIClient::stream_text(const StreamOptions& options) {
       "Starting text streaming - model: {}, prompt length: {}", options.model,
       options.prompt.length());
 
-  auto request_json = request_builder_->build_request_json(options);
-  const auto google = wire_protocol_ == "google";
-  if (!google) {
-    request_json["stream"] = true;
-    // Upstream openai-chat always asks for usage accounting while streaming
-    // (cached/reasoning token details ride along in the final chunk).
-    ProviderTransform::apply_stream_options(
-        request_json,
-        ProviderTransform::chat_transport_for(config_.base_url),
-        /*stream=*/true);
-  }
-  LOG_DEBUG("Stream request JSON built protocol={}", wire_protocol_);
-
+  auto request_json = request_builder_->build_stream_request_json(options);
   auto headers = request_builder_->build_headers(config_);
   headers.emplace("Accept", "text/event-stream");
 
   const auto protocol =
-      google ? StreamProtocol::kGeminiEnvelope : StreamProtocol::kOpenAI;
+      (wire_protocol_ == "google") ? StreamProtocol::kGeminiEnvelope : StreamProtocol::kOpenAI;
   auto impl = std::make_unique<OpenAIStreamImpl>(protocol);
   const auto stream_path = zen_stream_path(config_.completions_endpoint_path);
   impl->start_stream(config_.base_url + stream_path, headers, request_json);
 
   LOG_INFO("Text streaming started - model: {}", options.model);
-
-  // Return StreamResult with implementation
   return StreamResult(std::move(impl));
 }
 

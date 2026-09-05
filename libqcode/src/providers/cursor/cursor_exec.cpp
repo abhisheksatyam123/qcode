@@ -98,7 +98,7 @@ JsonValue run_bash(const std::string& command,
   JsonValue args;
   args["command"] = command;
   args["workdir"] = cwd.empty() ? workspace : cwd;
-  args["timeout"] = timeout_ms > 0 ? timeout_ms : 120000;
+  args["timeout"] = timeout_ms > 0 ? timeout_ms : 900000;
   args["description"] = "cursor exec";
   ToolExecutionContext ctx;
   ctx.workspace = workspace;
@@ -164,9 +164,12 @@ CursorExecReply handle_shell(const CursorExecRequest& req,
   const auto command = proto::field_string(fields, 1);
   auto cwd = proto::field_string(fields, 2);
   if (cwd.empty()) cwd = workspace;
-  int timeout_ms = static_cast<int>(proto::field_varint(fields, 3, 120000));
-  if (timeout_ms <= 0) timeout_ms = 120000;
-  if (timeout_ms < 1000) timeout_ms *= 1000;  // seconds -> ms
+  // Builds (cmake/ninja) routinely exceed 2 minutes. A 120s default used to
+  // SIGTERM them (exit 15) and then curl killed RunSSE at 300s.
+  constexpr int kDefaultShellTimeoutMs = 15 * 60 * 1000;
+  int timeout_ms = static_cast<int>(proto::field_varint(fields, 3, 0));
+  if (timeout_ms > 0 && timeout_ms < 1000) timeout_ms *= 1000;
+  if (timeout_ms < kDefaultShellTimeoutMs) timeout_ms = kDefaultShellTimeoutMs;
   const auto tool_call_id = proto::field_string(fields, 4);
   const auto description = proto::field_string(fields, 15);
 
@@ -247,7 +250,7 @@ CursorExecReply handle_pi_bash(const CursorExecRequest& req,
   reply.tool_name = "bash";
   reply.tool_call_id = req.exec_id;
   reply.arguments["command"] = command;
-  const auto bash = run_bash(command, workspace, 120000, workspace, abort_flag);
+  const auto bash = run_bash(command, workspace, 900000, workspace, abort_flag);
   const auto output = bash_output(bash);
   reply.result["output"] = output;
   reply.is_error = bash_failed(bash);

@@ -3,7 +3,7 @@
 #include <qcode/core/ssl_config.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/retry_policy.h>
-#include "providers/opencode_zen_headers.h"
+#include "providers/internal/opencode_zen_headers.h"
 #include "core/response_utils.h"
 
 #include <chrono>

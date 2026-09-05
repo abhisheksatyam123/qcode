@@ -39,8 +39,9 @@ target_sources(qcode-engine PRIVATE
     # config
     src/config/config.cpp
 
-    # providers
-    src/providers/base_provider_client.cpp
+    # providers/internal — private shared client (not in include/)
+    src/providers/internal/base_provider_client.cpp
+    # providers — public module impl (mirrors include/qcode/providers)
     src/providers/registry.cpp
     src/providers/zen_route.cpp
     src/providers/provider_profile.cpp
@@ -50,6 +51,9 @@ target_sources(qcode-engine PRIVATE
     src/providers/openai/openai_request_builder.cpp
     src/providers/openai/openai_response_parser.cpp
     src/providers/openai/openai_stream.cpp
+    src/providers/openai/openai_sse.cpp
+    src/providers/openai/openai_cache.cpp
+    src/providers/openai/openai_responses.cpp
     src/providers/openai/openai_factory.cpp
     src/providers/anthropic/anthropic_client.cpp
     src/providers/anthropic/anthropic_request_builder.cpp
@@ -62,6 +66,7 @@ target_sources(qcode-engine PRIVATE
     src/providers/antigravity/antigravity_stream.cpp
     src/providers/antigravity/antigravity_factory.cpp
     src/providers/cursor/cursor_client.cpp
+    src/providers/cursor/cursor_agent_session.cpp
     src/providers/cursor/cursor_request_builder.cpp
     src/providers/cursor/cursor_response_parser.cpp
     src/providers/cursor/cursor_stream.cpp
@@ -73,7 +78,7 @@ target_sources(qcode-engine PRIVATE
     src/providers/cursor/cursor_kv.cpp
 
     # transform
-    src/transform/transform.cpp
+    src/transform/provider_transform.cpp
     src/transform/gemini_transform.cpp
 
     # generation

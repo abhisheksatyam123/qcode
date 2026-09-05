@@ -1,6 +1,6 @@
 #pragma once
 
-/// Langfuse tracing for ai-sdk-cpp.
+/// Langfuse tracing for qcode.
 ///
 /// Records traces, generations, and tool spans for `qcode::Client::generate_text`
 /// calls and POSTs them to Langfuse's `/api/public/ingestion` endpoint.

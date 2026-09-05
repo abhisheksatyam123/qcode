@@ -2,7 +2,7 @@
 
 #ifndef QCODE_HAS_REGISTRY
 #error \
-    "Provider registry not available. Link with qcode::registry or qcode::sdk to use provider dispatch."
+    "Provider registry not available. Link qcode::engine (defines QCODE_HAS_REGISTRY)."
 #endif
 
 #include <qcode/core/client.h>

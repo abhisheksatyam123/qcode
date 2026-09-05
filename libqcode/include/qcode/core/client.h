@@ -11,6 +11,11 @@
 
 namespace qcode {
 
+enum class ToolExecutionModel {
+  ClientSide,       // Standard HTTP models: model requests tool calls, client executes locally
+  ServerSideDuplex  // Duplex stream agents (e.g. Cursor AgentService): tools execute on bidi channel
+};
+
 class Client {
  public:
   virtual ~Client() = default;
@@ -79,6 +84,13 @@ class Client {
       return pimpl_->default_model();
     }
     return "";
+  }
+
+  virtual ToolExecutionModel tool_execution_model() const {
+    if (pimpl_) {
+      return pimpl_->tool_execution_model();
+    }
+    return ToolExecutionModel::ClientSide;
   }
 
  private:

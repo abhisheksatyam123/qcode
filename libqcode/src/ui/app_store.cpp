@@ -209,6 +209,9 @@ void AppStore::set_session_title(const std::string& title) {
 
 void AppStore::set_status(const std::string& s) {
     LOG_DEBUG("Store: set_status s={}", s);
+    if (status_ == "error" && s == "idle") {
+        return;
+    }
     status_ = s;
     if (state_.status) *state_.status = s;
     if (s == "idle" || s == "error") {
@@ -411,6 +414,7 @@ void AppStore::wire() {
         append_assistant_chunk(p.text);
         if (p.done) {
             set_generating(false);
+            clear_retry();
             const auto final_text = latest_assistant_text();
             qcode::session::save_message(p.session_id, "Assistant", final_text);
         }
@@ -568,16 +572,20 @@ void AppStore::wire() {
             p.message.find("Aborted") != std::string::npos) {
             LOG_INFO("Store: generation aborted (silent)");
             set_generating(false);
+            if (state_.last_user_prompt && !state_.last_user_prompt->empty()) {
+                mark_retry_available(*state_.last_user_prompt);
+            }
             if (status_ == "generating" || status_ == "agent") set_status("idle");
             else notify();
             return;
         }
         const std::string msg = format_user_facing_error(p.message);
         if (p.severity == "warning") {
-            // Upstream: warnings/empty-responses are transient toasts only —
-            // no status latch, no retry badge.
             LOG_WARN("Store: warning message={}", msg);
             set_generating(false);
+            if (state_.last_user_prompt && !state_.last_user_prompt->empty()) {
+                mark_retry_available(*state_.last_user_prompt);
+            }
             add_toast(msg, "warning", 6000);
             if (status_ == "generating" || status_ == "agent") {
                 set_status("idle");
@@ -586,6 +594,9 @@ void AppStore::wire() {
             }
         } else {
             set_error(msg);
+            if (state_.last_user_prompt && !state_.last_user_prompt->empty()) {
+                mark_retry_available(*state_.last_user_prompt);
+            }
             std::string chat = msg;
             if (!chat.starts_with("Error:") && !chat.starts_with("Exception:")) {
                 chat = "Error: " + chat;

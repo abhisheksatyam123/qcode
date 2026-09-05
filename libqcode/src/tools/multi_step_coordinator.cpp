@@ -65,6 +65,12 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
       break;
     }
 
+    // Execute tool calls if the model requested tools and they haven't been executed yet
+    if (step_result.has_tool_calls() && step_result.tool_results.empty() && initial_options.has_tools()) {
+      step_result.tool_results =
+          ToolExecutor::execute_tools_with_options(step_result.tool_calls, initial_options);
+    }
+
     // Record the per-step view exposed via `final_result.steps` and the
     // `on_step_finish` callback.
     GenerateStep generate_step;
