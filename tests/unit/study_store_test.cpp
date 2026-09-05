@@ -2,22 +2,24 @@
 #include <qcode/session/study_store.h>
 #include <qcode/session/session_store.h>
 
-#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <unistd.h>
 #include <string>
 
 namespace qcode {
 namespace study {
 namespace {
 
-static std::atomic<int> s_db_counter{0};
-
 class StudyStoreTest : public ::testing::Test {
 protected:
     void SetUp() override {
         std::error_code ec;
         std::filesystem::create_directories("/tmp/qcode_study_test", ec);
-        db_path_ = "/tmp/qcode_study_test/test_" + std::to_string(++s_db_counter) + ".db";
+        db_path_ = "/tmp/qcode_study_test/test_" +
+                   std::to_string(::getpid()) + "_" +
+                   std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                   ".db";
         std::filesystem::remove(db_path_, ec);
         std::filesystem::remove(db_path_ + "-wal", ec);
         std::filesystem::remove(db_path_ + "-shm", ec);

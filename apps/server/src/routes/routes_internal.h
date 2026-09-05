@@ -19,6 +19,10 @@ void register_session_routes(
     std::shared_ptr<std::vector<qcode::ProviderInfo>> providers,
     const ServerSetupOptions& options);
 
+void register_session_ops_routes(
+    httplib::Server& svr,
+    std::shared_ptr<std::vector<qcode::ProviderInfo>> providers);
+
 void register_terminal_routes(
     httplib::Server& svr);
 

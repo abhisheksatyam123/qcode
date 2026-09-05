@@ -1,6 +1,10 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "host-debug",
@@ -71,26 +75,80 @@
         "QCODE_BUILD_SERVER": "OFF",
         "QCODE_BUILD_CLI": "OFF"
       }
+    },
+    {
+      "name": "host-debug-asan",
+      "displayName": "Host Debug + ASan/UBSan",
+      "description": "Native Debug with Address and Undefined Behavior sanitizers. Output: build/host-debug-asan/.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host-debug-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "BUILD_TESTS": "ON",
+        "BUILD_EXAMPLES": "OFF",
+        "QCODE_BUILD_TUI": "ON",
+        "QCODE_BUILD_SERVER": "ON",
+        "QCODE_BUILD_CLI": "ON",
+        "QCODE_ENABLE_SANITIZERS": "ON"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "host-debug", "configurePreset": "host-debug" },
-    { "name": "host-release", "configurePreset": "host-release" },
-    { "name": "android-arm64-v8a-debug", "configurePreset": "android-arm64-v8a-debug" },
-    { "name": "android-arm64-v8a-release", "configurePreset": "android-arm64-v8a-release" }
+    {
+      "name": "host-debug",
+      "configurePreset": "host-debug"
+    },
+    {
+      "name": "host-release",
+      "configurePreset": "host-release"
+    },
+    {
+      "name": "android-arm64-v8a-debug",
+      "configurePreset": "android-arm64-v8a-debug"
+    },
+    {
+      "name": "android-arm64-v8a-release",
+      "configurePreset": "android-arm64-v8a-release"
+    },
+    {
+      "name": "host-debug-asan",
+      "configurePreset": "host-debug-asan"
+    }
   ],
   "testPresets": [
     {
       "name": "host-debug",
       "configurePreset": "host-debug",
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      }
     },
     {
       "name": "host-release",
       "configurePreset": "host-release",
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      }
+    },
+    {
+      "name": "host-debug-asan",
+      "configurePreset": "host-debug-asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      }
     }
   ]
 }

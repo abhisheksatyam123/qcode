@@ -33,6 +33,14 @@ void register_system_routes(
         res.set_content(R"({"status":"ok"})", "application/json");
     });
 
+    svr.Get("/api/version", [](const httplib::Request&, httplib::Response& res) {
+#ifndef QCODE_VERSION
+#define QCODE_VERSION "0.1.0"
+#endif
+        nlohmann::json j = {{"name", "qcode-server"}, {"version", QCODE_VERSION}};
+        res.set_content(j.dump(), "application/json");
+    });
+
     // Provider list
     svr.Get("/providers", [providers_list](const httplib::Request&, httplib::Response& res) {
         nlohmann::json j = nlohmann::json::array();

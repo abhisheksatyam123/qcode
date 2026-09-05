@@ -82,3 +82,32 @@ jobs:
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  asan:
+    name: ASan/UBSan
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y ninja-build openssl libssl-dev libcurl4-openssl-dev pkg-config clang-18 clang-tools-18
+
+    - uses: lukka/get-cmake@latest
+
+    - name: Configure and build with sanitizers
+      env:
+        CC: clang-18
+        CXX: clang++-18
+      run: |
+        cmake --preset host-debug-asan
+        cmake --build --preset host-debug-asan --parallel --target qcode_tests
+
+    - name: Run tests
+      working-directory: build/host-debug-asan
+      run: ctest --output-on-failure --parallel

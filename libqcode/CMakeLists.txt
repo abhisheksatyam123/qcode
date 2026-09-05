@@ -86,6 +86,7 @@ target_sources(qcode-engine PRIVATE
 
     # session
     src/session/session_store.cpp
+    src/session/session_telemetry.cpp
     src/session/study_store.cpp
     src/session/study_assistant.cpp
     src/session/system_prompt.cpp

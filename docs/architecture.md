@@ -24,7 +24,7 @@ Android NDK still uses headers (`#include <qcode/...>`) and the `qcode::compat::
   - `apps/cli`: lightweight CLI (`qcode-cli`) — `QCODE_BUILD_CLI`
   - `apps/webui`: Vite / JavaScript client; not a CMake target; copied next to `qcode-server`
   - `apps/android`: Gradle/JNI wrapper; not `add_subdirectory` from root CMake
-- `docs/`: architecture and build guides
+- `docs/`: architecture, build guides, and [server HTTP API](server-api.md)
 - `tests/`: Google Test suite (`unit/`, `integration/`, `utils/`)
 - `third_party/`: vendored httplib, nlohmann_json, sqlite, googletest, zlib, brotli, … (FTXUI is fetched via CMake FetchContent, not this tree)
 - `examples/`: API samples (link `qcode::engine`)

@@ -14,6 +14,7 @@ All CMake outputs live under `build/<preset>/`. Never create sibling
 | Preset | Directory | Use |
 |---|---|---|
 | `host-debug` | `build/host-debug/` | default dev loop |
+| `host-debug-asan` | `build/host-debug-asan/` | Debug + ASan/UBSan |
 | `host-release` | `build/host-release/` | local release / CI |
 | `android-arm64-v8a-debug` | `build/android-arm64-v8a-debug/` | NDK cross, debug |
 | `android-arm64-v8a-release` | `build/android-arm64-v8a-release/` | NDK cross, release |

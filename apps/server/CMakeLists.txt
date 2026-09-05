@@ -7,6 +7,8 @@ add_executable(qcode-server
     src/server_routes.cpp
     src/routes/route_system.cpp
     src/routes/route_session.cpp
+    src/routes/route_session_ops.cpp
+    src/routes/session_runtime.cpp
     src/routes/route_terminal.cpp
     src/routes/route_fs.cpp
     src/routes/route_study.cpp
@@ -23,6 +25,7 @@ target_include_directories(qcode-server PRIVATE
 
 target_compile_definitions(qcode-server PRIVATE
     QCODE_SERVER_WEBUI_DIR="${QCODE_WEBUI_SRC}"
+    QCODE_VERSION="${PROJECT_VERSION}"
 )
 
 # Headless server links qcode::engine (no FTXUI dependency)

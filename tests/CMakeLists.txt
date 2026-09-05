@@ -32,7 +32,14 @@ add_executable(qcode_tests
     unit/bus_json_codec_test.cpp
     unit/study_store_test.cpp
     unit/git_workspace_test.cpp
+    unit/session_store_test.cpp
+    unit/token_budget_test.cpp
+    unit/tool_catalog_test.cpp
+    unit/workspace_fs_test.cpp
+    unit/study_assistant_test.cpp
+    unit/commands_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/json_codec.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/workspace_fs.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp
