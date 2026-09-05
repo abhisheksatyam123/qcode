@@ -49,13 +49,13 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
   ss << "### Core Tool Contract\n\n";
   ss << "This base prompt is the only system-prompt location for tool-use policy.\n\n";
   ss << "The main purpose of this section is to define the purpose of tool calls "
-        "and how to use them. You have two sets of tools available:\n\n";
-  ss << "1. **Bash tool** - works as a Swiss Army knife; it can execute anything "
-        "in the shell and read the output. Prefer relative paths under the "
-        "session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` "
-        "or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n";
-  ss << "2. **Task tool** - used to delegate tasks to other agents.\n\n";
-  ss << "Here is the schema of both:\n\n";
+        "and how to use them. The only exposed tool is **bash**.\n\n";
+  ss << "**Bash** is the Swiss Army knife: run any shell command and read the "
+        "output. Prefer relative paths under the session workspace (on Android: "
+        "app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / "
+        "`$TMPDIR` for temporary files). Do not expect read/write/grep/ls/"
+        "task tools; do those jobs with bash.\n\n";
+  ss << "Here is the schema:\n\n";
   ss << "```\n";
 
   for (const auto& d : descriptors()) {

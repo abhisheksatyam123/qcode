@@ -1,6 +1,7 @@
 #include "cursor_client.h"
 
 #include <qcode/core/logger.h>
+#include "providers/cursor/cursor_bidi.h"
 #include "providers/cursor/cursor_exec.h"
 #include "providers/cursor/cursor_http2.h"
 #include "providers/cursor/cursor_kv.h"
@@ -12,7 +13,6 @@
 #include <filesystem>
 #include <functional>
 #include <future>
-#include <mutex>
 #include <random>
 #include <stdexcept>
 #include <thread>
@@ -24,7 +24,6 @@ namespace {
 constexpr const char* kAiserverPath = "/aiserver.v1.AiService/GetUsableModels";
 constexpr const char* kAgentModelsPath =
     "/agent.v1.AgentService/GetUsableModels";
-constexpr const char* kBidiAppendPath = "/aiserver.v1.BidiService/BidiAppend";
 constexpr const char* kAgentPath = "/agent.v1.AgentService/RunSSE";
 constexpr const char* kClientVersion = "cli-2026.09.02-c22c1a3";
 constexpr const char* kDefaultAgentBase =
@@ -93,18 +92,13 @@ std::string resolve_workspace(const GenerateOptions& options) {
   return default_workspace_path();
 }
 
-// Cursor often omits turn_ended on short replies. Heartbeats must NOT end the
-// turn by themselves (they arrive while the agent is still tool-calling).
-// Exec replies refresh last_activity. After a native exec the model often
-// thinks for tens of seconds, so idle-end is longer once tools have run.
-// End when:
-//   - explicit turn_ended, or
-//   - stream closes, or
-//   - no text/exec for the idle window, or
-//   - no text at all for kNoTextTimeout (next turn hung after a cut-off).
+// Cursor often omits turn_ended on short replies. Heartbeats mean the
+// connection is alive — they must not end a turn that has not produced
+// text or tools yet (Grok can think for minutes before the first frame).
+// After text, a short idle of only heartbeats is treated as end-of-turn.
+// After a native exec the model often thinks longer, so that window is 180s.
 constexpr auto kIdleEndTimeout = std::chrono::seconds(12);
 constexpr auto kIdleAfterExecTimeout = std::chrono::seconds(180);
-constexpr auto kNoTextTimeout = std::chrono::seconds(60);
 
 bool idle_end_on_heartbeat(
     bool has_text,
@@ -113,7 +107,7 @@ bool idle_end_on_heartbeat(
   const auto idle = std::chrono::steady_clock::now() - last_activity;
   if (saw_exec) return idle >= kIdleAfterExecTimeout;
   if (has_text) return idle >= kIdleEndTimeout;
-  return idle >= kNoTextTimeout;
+  return false;
 }
 
 std::string describe_frame(const std::string& payload) {
@@ -270,8 +264,6 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
     const std::string run_sse_url = agent_base_url_ + kAgentPath;
     auto headers = cursor_headers(access_token_, request_id);
 
-    std::atomic<uint64_t> append_seqno{0};
-    std::mutex append_mu;
     std::string collected_text;
     std::string collected_reasoning;
     std::string stream_error;
@@ -281,27 +273,13 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
     auto last_activity = std::chrono::steady_clock::now();
     ConnectFrameBuffer frame_buf;
 
+    CursorBidi bidi(aiserver_base_url_, access_token_, request_id,
+                    kClientVersion);
     auto bidi_append = [&](const std::string& client_message) -> bool {
-      std::lock_guard<std::mutex> lock(append_mu);
-      const uint64_t seq = append_seqno.fetch_add(1);
-      const std::string bidi_request_id = proto::bytes_field(1, request_id);
-      const std::string bidi_append_body =
-          proto::bytes_field(2, bidi_request_id) +
-          proto::varint_field(3, seq) +
-          proto::bytes_field(4, client_message);
-
-      auto append_headers = build_headers(access_token_, false);
-      append_headers.emplace("x-request-id", request_id);
-      auto append_res = aiserver_handler_->post(
-          kBidiAppendPath, append_headers, bidi_append_body,
-          "application/proto");
-      if (!append_res.is_success()) {
-        LOG_ERROR("Cursor BidiAppend failed seq={}: {}", seq,
-                  append_res.error_message());
-        return false;
-      }
-      LOG_DEBUG("Cursor BidiAppend ok request_id={} seq={}", request_id, seq);
-      return true;
+      return bidi.append(client_message, /*wait=*/true);
+    };
+    auto bidi_append_kv = [&](const std::string& client_message) -> bool {
+      return bidi.append(client_message, /*wait=*/false);
     };
 
     // Open RunSSE first, then append the run request (cursor-agent ordering).
@@ -362,7 +340,7 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
                 }
                 case Kind::kKv: {
                   last_activity = std::chrono::steady_clock::now();
-                  if (!answer_kv(bidi_append, kv_, ev)) {
+                  if (!answer_kv(bidi_append_kv, kv_, ev)) {
                     stream_error = "Cursor kv BidiAppend failed";
                     return false;
                   }
@@ -395,6 +373,7 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
     }
 
     auto http = stream_future.get();
+    (void)bidi.flush();
     if (!stream_error.empty()) {
       return GenerateResult(stream_error);
     }
@@ -458,8 +437,6 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
       const std::string run_sse_url = agent_base_url + kAgentPath;
       auto headers = cursor_headers(access_token, request_id);
 
-      std::atomic<uint64_t> append_seqno{0};
-      std::mutex append_mu;
       std::string collected_text;
       std::string stream_error;
       std::atomic<bool> turn_ended{false};
@@ -468,39 +445,13 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
       auto last_activity = std::chrono::steady_clock::now();
       ConnectFrameBuffer frame_buf;
 
-      auto build_connect_headers = [](const std::string& token) {
-        httplib::Headers h;
-        h.emplace("Authorization", "Bearer " + token);
-        h.emplace("connect-protocol-version", "1");
-        h.emplace("x-cursor-client-type", "cli");
-        h.emplace("x-cursor-client-version", kClientVersion);
-        h.emplace("x-ghost-mode", "false");
-        return h;
-      };
-
-      auto aiserver_h = make_handler(aiserver_base_url, 30);
+      CursorBidi bidi(aiserver_base_url, access_token, request_id,
+                      kClientVersion);
       auto bidi_append = [&](const std::string& client_message) -> bool {
-        std::lock_guard<std::mutex> lock(append_mu);
-        const uint64_t seq = append_seqno.fetch_add(1);
-        const std::string bidi_request_id = proto::bytes_field(1, request_id);
-        const std::string bidi_append_body =
-            proto::bytes_field(2, bidi_request_id) +
-            proto::varint_field(3, seq) +
-            proto::bytes_field(4, client_message);
-
-        auto append_headers = build_connect_headers(access_token);
-        append_headers.emplace("x-request-id", request_id);
-        auto append_res = aiserver_h->post(
-            kBidiAppendPath, append_headers, bidi_append_body,
-            "application/proto");
-        if (!append_res.is_success()) {
-          LOG_ERROR("Cursor BidiAppend failed seq={}: {}", seq,
-                    append_res.error_message());
-          return false;
-        }
-        LOG_INFO("Cursor BidiAppend ok seq={} bytes={}", seq,
-                 client_message.size());
-        return true;
+        return bidi.append(client_message, /*wait=*/true);
+      };
+      auto bidi_append_kv = [&](const std::string& client_message) -> bool {
+        return bidi.append(client_message, /*wait=*/false);
       };
 
       // Open RunSSE stream first, then append the run request
@@ -562,11 +513,9 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                             resolve_workspace(options), options.abort_flag,
                             context_replied,
                             [&](const CursorExecReply& reply) {
-                              if (reply.tool_name == "hook" ||
-                                  reply.tool_name == "allowlist" ||
-                                  reply.tool_name == "mcp_state") {
-                                return;
-                              }
+                              // Cursor AgentService still proposes read/grep/write.
+                              // We reject those locally; only surface bash.
+                              if (reply.tool_name != "bash") return;
                               impl_ptr->push_event(StreamEvent::tool_call(
                                   reply.tool_call_id, reply.tool_name,
                                   reply.arguments.dump()));
@@ -584,7 +533,7 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                   }
                   case Kind::kKv: {
                     last_activity = std::chrono::steady_clock::now();
-                    if (!answer_kv(bidi_append, *kv, ev)) {
+                    if (!answer_kv(bidi_append_kv, *kv, ev)) {
                       stream_error = "Cursor kv BidiAppend failed";
                       return false;
                     }
@@ -624,6 +573,7 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
       }
 
       auto http = stream_future.get();
+      (void)bidi.flush();
       if (impl_ptr->is_stopped()) {
         return;
       }

@@ -101,7 +101,7 @@ int main() {
     //  2. Provider & Config setup
     // ═══════════════════════════════════════════════════════════
     std::string prompt_input;
-    qcode::ToolConfig tool_cfg{true, true};
+    qcode::ToolConfig tool_cfg{true, false};
     std::string system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
     bool enable_tools = true;
 

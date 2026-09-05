@@ -20,8 +20,7 @@ struct ToolDescriptor {
 
 struct ToolConfig {
   bool enable_bash{true};
-  bool enable_task{true};
-  // Reserved for future tools
+  bool enable_task{false};
 };
 
 // ── Agent tool catalog (prompt + ToolSet) ──

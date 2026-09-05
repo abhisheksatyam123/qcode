@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -39,6 +40,27 @@ Http2PostResult http2_post_stream(
     const std::string& content_type,
     const std::function<bool(std::string_view chunk)>& on_chunk,
     int timeout_sec = 120);
+
+// Reuses one curl easy handle so TLS/HTTP2 connections stay warm across
+// BidiAppend calls (a new handshake per KV ack was ~1.2s).
+class Http2Client {
+ public:
+  Http2Client();
+  ~Http2Client();
+  Http2Client(const Http2Client&) = delete;
+  Http2Client& operator=(const Http2Client&) = delete;
+
+  Http2PostResult post(
+      const std::string& url,
+      const std::vector<std::pair<std::string, std::string>>& headers,
+      const std::string& body,
+      const std::string& content_type,
+      int timeout_sec = 30);
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace cursor
 }  // namespace qcode

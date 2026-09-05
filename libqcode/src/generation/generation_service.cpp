@@ -1085,7 +1085,7 @@ void run_generation_with_bus(
     if (enable_tools && !cursor_native_agent) {
       // Plan mode drops the task subagent (delegation implies execution).
       qcode::ToolSet tools =
-          ToolCatalog::build_definitions(ToolConfig{true, !plan_mode});
+          ToolCatalog::build_definitions(ToolConfig{true, false});
       base_opts.tools = std::move(tools);
       // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
       constexpr int kMaxToolSteps = 100000;

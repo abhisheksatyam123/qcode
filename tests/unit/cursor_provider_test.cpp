@@ -1,4 +1,5 @@
 #include <qcode/core/generate_options.h>
+#include "providers/cursor/cursor_bidi.h"
 #include "providers/cursor/cursor_exec.h"
 #include "providers/cursor/cursor_kv.h"
 #include "providers/cursor/cursor_proto.h"
@@ -7,7 +8,6 @@
 
 #include <gtest/gtest.h>
 
-#include <filesystem>
 #include <string>
 
 namespace qcode {
@@ -230,33 +230,27 @@ TEST(CursorProviderTest, ClassifiesRequestContextExec) {
   EXPECT_EQ(ev.exec_id, 1u);
 }
 
-TEST(CursorProviderTest, ExecWriteAndReadRoundTrip) {
-  const auto root = std::filesystem::temp_directory_path() /
-                    "qcode-cursor-exec-test";
-  std::filesystem::create_directories(root);
-  const auto path = (root / "note.txt").string();
-
+TEST(CursorProviderTest, ExecNonShellToolsAreRejected) {
   CursorExecRequest write_req;
   write_req.id = 4;
   write_req.exec_id = "w1";
   write_req.args_field = 3;
-  write_req.args = proto::bytes_field(1, path) + proto::bytes_field(2, "hello\n");
-  const auto write = CursorExec::handle(write_req, root.string());
-  EXPECT_FALSE(write.is_error);
-  ASSERT_FALSE(write.client_messages.empty());
+  write_req.args = proto::bytes_field(1, "note.txt") + proto::bytes_field(2, "x");
+  const auto write = CursorExec::handle(write_req, "/tmp");
+  EXPECT_TRUE(write.is_error);
   EXPECT_EQ(write.tool_name, "write");
+  ASSERT_TRUE(write.result.contains("error"));
+  EXPECT_NE(write.result["error"].get<std::string>().find("only bash"),
+            std::string::npos);
+  ASSERT_FALSE(write.client_messages.empty());
 
   CursorExecRequest read_req;
   read_req.id = 5;
   read_req.exec_id = "r1";
   read_req.args_field = 7;
-  read_req.args = proto::bytes_field(1, path);
-  const auto read = CursorExec::handle(read_req, root.string());
-  EXPECT_FALSE(read.is_error);
-  EXPECT_EQ(read.result["output"].get<std::string>().find("hello"), 0u);
-  ASSERT_FALSE(read.client_messages.empty());
-  // Result oneof must be set (field 1 success) so AgentService continues.
-  EXPECT_NE(read.client_messages.front().find("hello"), std::string::npos);
+  const auto read = CursorExec::handle(read_req, "/tmp");
+  EXPECT_TRUE(read.is_error);
+  EXPECT_EQ(read.tool_name, "read");
 }
 
 TEST(CursorProviderTest, ExecHookReplySetsMatchingCase) {
@@ -444,6 +438,27 @@ TEST(CursorProviderTest, MultiTurnPromptIncludesPriorTurns) {
   EXPECT_NE(request.find("First question"), std::string::npos);
   EXPECT_NE(request.find("First answer"), std::string::npos);
   EXPECT_NE(request.find("Follow up"), std::string::npos);
+}
+
+TEST(CursorProviderTest, BidiSessionShutsDownWithoutWork) {
+  CursorBidi bidi("https://example.invalid", "token", "req", "cli-test");
+  EXPECT_TRUE(bidi.is_ok());
+  EXPECT_TRUE(bidi.flush());
+}
+
+TEST(CursorProviderTest, ExecGrepIsDisabled) {
+  CursorExecRequest req;
+  req.id = 2;
+  req.exec_id = "grep-empty";
+  req.args_field = 5;
+  req.args = proto::bytes_field(1, "CursorExec") +
+             proto::bytes_field(2, "/tmp");
+  const auto reply = CursorExec::handle(req, "/tmp");
+  EXPECT_TRUE(reply.is_error);
+  EXPECT_EQ(reply.tool_name, "grep");
+  ASSERT_TRUE(reply.result.contains("error"));
+  EXPECT_NE(reply.result["error"].get<std::string>().find("only bash"),
+            std::string::npos);
 }
 
 }  // namespace

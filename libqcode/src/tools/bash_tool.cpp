@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -450,7 +451,7 @@ static void trim_incomplete_utf8_suffix(std::string& text) {
 }
 
 std::string BashTool::run_shell(const std::string& command,
-                                const std::string& cwd, int /*timeout_ms*/,
+                                const std::string& cwd, int timeout_ms,
                                 std::optional<int> max_chars,
                                 std::optional<int> max_lines, int& exit_code,
                                 std::shared_ptr<std::atomic<bool>> abort_flag) {
@@ -516,6 +517,9 @@ std::string BashTool::run_shell(const std::string& command,
   std::optional<size_t> truncate_index;
   std::optional<size_t> line_boundary;
   bool is_aborted = false;
+  bool timed_out = false;
+  constexpr size_t kMaxSpoolBytes = 8 * 1024 * 1024;
+  const auto started = std::chrono::steady_clock::now();
 
   fd_set read_fds;
   struct timeval timeout_tv;
@@ -523,6 +527,12 @@ std::string BashTool::run_shell(const std::string& command,
   while (true) {
     if (abort_flag && abort_flag->load()) {
       is_aborted = true;
+      break;
+    }
+    if (timeout_ms > 0 &&
+        std::chrono::steady_clock::now() - started >=
+            std::chrono::milliseconds(timeout_ms)) {
+      timed_out = true;
       break;
     }
 
@@ -536,8 +546,12 @@ std::string BashTool::run_shell(const std::string& command,
       if (FD_ISSET(fd, &read_fds)) {
         ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
         if (bytes_read > 0) {
-          if (output_file.is_open()) {
-            output_file.write(buffer.data(), bytes_read);
+          if (output_file.is_open() && total_size < kMaxSpoolBytes) {
+            const auto room = kMaxSpoolBytes - total_size;
+            output_file.write(
+                buffer.data(),
+                static_cast<std::streamsize>(
+                    std::min(room, static_cast<size_t>(bytes_read))));
           }
 
           auto chunk_inline_size = static_cast<size_t>(bytes_read);
@@ -594,7 +608,7 @@ std::string BashTool::run_shell(const std::string& command,
 
   close(fd);
 
-  if (is_aborted) {
+  if (is_aborted || timed_out) {
     // Kill the whole process group
     kill(-pid, SIGTERM);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -611,6 +625,10 @@ std::string BashTool::run_shell(const std::string& command,
 
   if (is_aborted) {
     return inline_output + "\n\n[Tool execution aborted]";
+  }
+  if (timed_out) {
+    return inline_output + "\n\n[Tool execution timed out after " +
+           std::to_string(timeout_ms) + "ms]";
   }
 
   if (!truncate_index.has_value()) {
