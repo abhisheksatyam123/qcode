@@ -11,11 +11,10 @@
 #include <qcode/session/study_assistant.h>
 #include <qcode/session/study_store.h>
 #include <qcode/config/provider_info.h>
-#include <qcode/ui/chat_state.h>
 #include <qcode/session/system_prompt.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/event.h>
-#include <qcode/ui/bus_json_codec.h>
+#include "bus_json_codec.h"
 #include <qcode/core/uuid.h>
 
 #include "http_utils.h"

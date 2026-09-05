@@ -63,7 +63,6 @@ target_sources(qcode-engine PRIVATE
     src/providers/antigravity/antigravity_client.cpp
     src/providers/antigravity/antigravity_request_builder.cpp
     src/providers/antigravity/antigravity_response_parser.cpp
-    src/providers/antigravity/antigravity_stream.cpp
     src/providers/antigravity/antigravity_factory.cpp
     src/providers/cursor/cursor_client.cpp
     src/providers/cursor/cursor_agent_session.cpp

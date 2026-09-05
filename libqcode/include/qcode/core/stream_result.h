@@ -1,6 +1,6 @@
 #pragma once
 
-#include "stream_event.h"
+#include <qcode/core/stream_event.h>
 
 #include <cstddef>
 #include <functional>

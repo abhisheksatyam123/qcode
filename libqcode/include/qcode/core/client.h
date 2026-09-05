@@ -1,9 +1,9 @@
 #pragma once
 
-#include "embedding_options.h"
-#include "generate_options.h"
-#include "stream_options.h"
-#include "stream_result.h"
+#include <qcode/core/embedding_options.h>
+#include <qcode/core/generate_options.h>
+#include <qcode/core/stream_options.h>
+#include <qcode/core/stream_result.h>
 
 #include <memory>
 #include <string>

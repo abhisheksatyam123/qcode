@@ -1,7 +1,7 @@
 #pragma once
 
-#include "enums.h"
-#include "usage.h"
+#include <qcode/core/enums.h>
+#include <qcode/core/usage.h>
 
 #include <optional>
 #include <string>

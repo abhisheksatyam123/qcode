@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bus_port.h"
+#include <qcode/core/bus_port.h>
 #include <atomic>
 #include <cstdint>
 #include <deque>

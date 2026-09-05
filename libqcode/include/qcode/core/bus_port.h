@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bus_envelope.h"
+#include <qcode/core/bus_envelope.h>
 #include <memory>
 #include <typeindex>
 #include <typeinfo>

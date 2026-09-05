@@ -1,6 +1,6 @@
 #pragma once
 
-#include "enums.h"
+#include <qcode/core/enums.h>
 
 #include <string>
 #include <variant>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "generate_options.h"
+#include <qcode/core/generate_options.h>
 
 #include <functional>
 #include <string>

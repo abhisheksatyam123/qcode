@@ -1,8 +1,8 @@
 #pragma once
 
-#include "enums.h"
-#include "message.h"
-#include "usage.h"
+#include <qcode/core/enums.h>
+#include <qcode/core/message.h>
+#include <qcode/core/usage.h>
 
 #include <atomic>
 #include <functional>

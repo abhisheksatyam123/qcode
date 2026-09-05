@@ -1,10 +1,10 @@
 #pragma once
 
-#include "enums.h"
-#include "message.h"
-#include "model.h"
-#include "tool.h"
-#include "usage.h"
+#include <qcode/core/enums.h>
+#include <qcode/core/message.h>
+#include <qcode/core/model.h>
+#include <qcode/core/tool.h>
+#include <qcode/core/usage.h>
 #include <qcode/core/retry_policy.h>
 
 #include <atomic>
