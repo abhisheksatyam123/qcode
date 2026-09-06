@@ -94,7 +94,8 @@ inline constexpr std::string_view kOrchestratorReminder =
     "You have full authority to plan, inspect, build, and verify. "
     "You can execute tasks directly using bash, or invoke subagents via the task tool to work on tasks in parallel. "
     "When facing broad investigations, complex refactors, multi-file searches, or parallel verification steps, "
-    "spawn subagents (mode: explore | implement | verify) with available providers and models to run concurrently. "
+    "spawn subagents (mode: explore | implement | verify) with `model: \"provider:model_id\"` "
+    "so any lead can delegate to any catalog model. "
     "Monitor their status, collect their results, and synthesize their outputs to complete the user's objective.\n"
     "</system-reminder>";
 

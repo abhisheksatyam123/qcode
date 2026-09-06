@@ -27,17 +27,12 @@ std::vector<ToolDescriptor> ToolCatalog::descriptors() {
     {
       "task",
       "Delegate bounded work to subagents (spawn, result, kill, pause, resume, resurrect).",
-      R"(task.spawn = { op?: "spawn", description?: string, subagent_type?: string,
-    prompt: string, task?: string, mode?: "explore"|"implement"|"verify",
-    objective?: string, scope?: string[], out_of_scope?: string[],
-    filesystem_policy?: "bash-only", output_format?: "structured-summary",
-    can_edit?: boolean, allowed_paths?: string[], forbidden_paths?: string[],
-    budget?: { max_files?: number, max_output_chars?: number, timeout_ms?: number },
-    model?: string, models?: string[], task_id?: string,
-    background?: boolean, run_in_background?: boolean }
+      R"(task.spawn = { op?: "spawn", prompt: string, provider?: string, model?: string,
+    background?: boolean, description?: string, mode?: "explore"|"implement"|"verify" }
+    // model can be specified as "provider:model" (colon), e.g. openrouter:deepseek/foo or provider + model
 task.result = { op: "result", background_task_id: string, timeout_ms?: number }
-task.lifecycle/model = { op: "kill"|"pause"|"resume"|"resurrect"|"model",
-    task_id?: string, pid?: string, reason?: string, model?: string })",
+task.list = { op: "list" }
+task.kill = { op: "kill", background_task_id: string, reason?: string })",
       true
     },
   };

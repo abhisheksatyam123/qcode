@@ -375,7 +375,7 @@ TEST(TuiConfigTest, FormatProviderCatalogForPrompt) {
   EXPECT_THAT(catalog_md, testing::HasSubstr("[reasoning]"));
   EXPECT_THAT(catalog_md, testing::HasSubstr("**antigravity** (Antigravity)"));
   EXPECT_THAT(catalog_md, testing::HasSubstr("`gemini-3.8-flash`"));
-  EXPECT_THAT(catalog_md, testing::HasSubstr("model: \"<provider>/<model_id>\""));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("model: \"<provider>:<model_id>\""));
 }
 
 TEST(TuiConfigTest, FiltersOutUnsupportedProviders) {

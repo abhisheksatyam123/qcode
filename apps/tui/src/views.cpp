@@ -4,6 +4,7 @@
 #include "views_pickers.h"
 #include <qcode/config/provider_info.h>
 #include <qcode/core/logger.h>
+#include <qcode/tools/task_tool.h>
 #include <qcode/session/session_store.h>
 #include <qcode/transform/provider_transform.h>
 #include <qcode/ui/chat_state.h>
@@ -967,7 +968,7 @@ ftxui::Element render_view(
         }
     }
     // ── Tab 2: Stats ──
-    else {
+    else if (state.tab_selected == 2) {
         std::string prov_name = "Unknown";
         std::string mod_name = "Unknown";
         std::string prov_id = "";
@@ -1058,6 +1059,119 @@ ftxui::Element render_view(
             }),
             text("")
         }) | borderRounded | color(accent(theme)) | size(WIDTH, LESS_THAN, 80) | hcenter | flex;
+    }
+    // ── Tab 3: Sessions & Subagents ──
+    else {
+        auto all_sessions = session::list_sessions_full();
+        auto subagent_data = TaskTool::list_tasks();
+        if (state.session_row_boxes) state.session_row_boxes->clear();
+
+        Elements content_rows;
+
+        // Header
+        content_rows.push_back(hbox(
+            text(" SESSIONS & SUBAGENTS ") | bold | color(accent2(theme)),
+            filler(),
+            text("↑↓ select   Enter continue/switch   r refresh") | dim
+        ));
+        content_rows.push_back(separatorLight() | color(accent(theme)));
+
+        // 1. Subagent Tasks Section
+        bool has_subagents = subagent_data.contains("metadata") &&
+                             subagent_data["metadata"].contains("tasks") &&
+                             !subagent_data["metadata"]["tasks"].empty();
+        if (has_subagents) {
+            const auto& tasks = subagent_data["metadata"]["tasks"];
+            content_rows.push_back(hbox(
+                text("▶ PARALLEL SUBAGENTS (" + std::to_string(tasks.size()) + ")") | bold | color(Color::CyanLight)
+            ));
+            for (const auto& t : tasks) {
+                std::string bg_id = t.value("background_task_id", "");
+                std::string status = t.value("status", "");
+                std::string agent_type = t.value("agent", "general");
+                std::string mode_str = t.value("mode", "explore");
+                std::string model_str = t.value("model", "");
+                std::string desc = t.value("description", "");
+
+                Color status_col = Color::Default;
+                if (status == "running") status_col = Color::Yellow;
+                else if (status == "done") status_col = Color::Green;
+                else if (status == "error" || status == "killed") status_col = Color::Red;
+
+                content_rows.push_back(hbox(
+                    text("  " + bg_id) | dim,
+                    text(" [" + status + "] ") | bold | color(status_col),
+                    text("(" + agent_type + " · " + mode_str + ") ") | color(accent(theme)),
+                    text(!model_str.empty() ? ("{" + model_str + "} ") : "") | dim,
+                    text(desc) | bold
+                ));
+            }
+            content_rows.push_back(text(""));
+        }
+
+        // 2. Saved Sessions Section (continue / switch)
+        content_rows.push_back(hbox(
+            text("▶ SAVED SESSIONS (" + std::to_string(all_sessions.size()) + ")") | bold | color(accent2(theme)),
+            filler(),
+            text("Press Enter to continue session") | dim
+        ));
+
+        if (all_sessions.empty()) {
+            content_rows.push_back(text("  (no saved sessions)") | dim);
+        } else {
+            if (state.session_row_boxes) {
+                state.session_row_boxes->resize(all_sessions.size());
+            }
+
+            for (size_t i = 0; i < all_sessions.size(); ++i) {
+                const auto& s = all_sessions[i];
+                const bool is_current = (state.session_id && s.id == *state.session_id);
+                const bool is_active_cursor = (static_cast<int>(i) == state.selected_session_item);
+                std::string marker = is_active_cursor ? "▶ " : (is_current ? "● " : "  ");
+
+                std::string count_str = s.message_count > 0 ? (std::to_string(s.message_count) + " msgs") : "new";
+                std::string time_str = format_relative_time(s.last_active_at);
+
+                Element row = hbox(
+                    text(marker) | color(is_active_cursor ? accent2(theme) : (is_current ? accent(theme) : Color::Default)),
+                    text(s.title.empty() ? "(untitled)" : s.title) | (is_active_cursor ? bold : nothing) |
+                        color(is_active_cursor ? Color::White : (is_current ? accent2(theme) : Color::GrayLight)),
+                    text(!s.model.empty() ? (" [" + s.model + "]") : "") | dim | color(Color::CyanLight),
+                    text(!s.workspace.empty() ? (" " + s.workspace) : "") | dim | color(Color::GrayDark),
+                    filler(),
+                    text(" " + count_str + " ") | dim | color(Color::GrayLight),
+                    text(!time_str.empty() ? ("· " + time_str + " ") : " ") | dim | color(accent2(theme)),
+                    text(is_current ? "[active] " : "  ") | color(Color::Green) | bold
+                );
+
+                if (is_active_cursor) {
+                    row = std::move(row) | bgcolor(bg_popup());
+                } else if (is_current) {
+                    row = std::move(row) | color(accent2(theme));
+                }
+
+                if (state.session_row_boxes) {
+                    row = std::move(row) | reflect_box((*state.session_row_boxes)[i]);
+                }
+                content_rows.push_back(std::move(row));
+            }
+        }
+
+        Element session_scroll = vbox(std::move(content_rows));
+        session_scroll->ComputeRequirement();
+        {
+            const int content_height = std::max(0, session_scroll->requirement().min_y);
+            const int target = std::min(
+                content_height - 1,
+                std::max(0, state.selected_session_item + 4));
+            *state.scroll_line = std::clamp(target, 0, std::max(0, content_height - 1));
+            *state.auto_scroll = false;
+        }
+
+        body = vbox({
+            session_scroll | vscroll_indicator |
+                focusPosition(0, *state.scroll_line) | yframe | flex,
+        }) | flex;
     }
 
     auto main_layout = vbox({

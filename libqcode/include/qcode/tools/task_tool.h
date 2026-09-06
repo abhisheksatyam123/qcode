@@ -73,10 +73,13 @@ inline JsonValue spawn_parameters() {
     }}
   };
 
-  // Model
-  p["model"] = JsonValue{{"type", "string"}, {"description", "Optional explicit model override."}};
+  // Destination (any configured provider → any of its models)
+  p["provider"] = JsonValue{{"type", "string"},
+    {"description", "Catalog provider id (openrouter, opencode, cursor, antigravity). Combined with model."}};
+  p["model"] = JsonValue{{"type", "string"},
+    {"description", "Model id, or provider:model (colon). Prefer colon because model ids often contain slashes."}};
   p["models"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}},
-                            {"description", "Optional provider/model fallback candidates."}};
+                            {"description", "Fallback list of provider:model (or model id) candidates."}};
   p["task_id"] = JsonValue{{"type", "string"}, {"description", "Resume a previous task by id."}};
 
   // Background
@@ -122,15 +125,14 @@ inline JsonValue lifecycle_or_model_parameters() {
 class TaskTool {
  public:
   static constexpr const char* kDescription =
-      "Delegate bounded work to a subagent. Default op is spawn. "
-      "Provide a prompt (or task/objective). Optional: subagent_type "
-      "(default general), mode (explore|implement|verify), background, "
-      "model. Collect with op=result and background_task_id. "
-      "Cancel with op=kill.";
+      "Delegate tasks to a subagent. Main fields: prompt (or task), provider, model (or provider:model), "
+      "and background (true for parallel concurrent execution). Retrieve background results with "
+      "op=result and background_task_id. List tasks with op=list.";
 
   static JsonValue execute(const JsonValue& args, const ToolExecutionContext& context);
   static Tool definition();
   static void clear_background_tasks();
+  static JsonValue list_tasks();
 
  private:
   static JsonValue exec_spawn(const JsonValue& args, const ToolExecutionContext& context);

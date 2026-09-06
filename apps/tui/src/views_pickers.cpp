@@ -214,7 +214,7 @@ ftxui::Element build_model_popup(
     return hbox({ left_box, separatorLight(), right_box }) | borderRounded | bgcolor(bg_popup()) | color(accent(theme)) | hcenter;
 }
 
-static std::string format_relative_time(long long ts) {
+std::string format_relative_time(long long ts) {
     if (ts <= 0) return "";
     auto now = std::chrono::system_clock::now();
     long long now_sec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();

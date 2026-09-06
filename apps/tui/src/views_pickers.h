@@ -20,6 +20,8 @@ ftxui::Element build_model_popup(
     const std::string& query,
     const std::string& theme);
 
+std::string format_relative_time(long long ts);
+
 ftxui::Element build_session_popup(
     const std::vector<session::SessionInfo>& entries,
     int select_idx,

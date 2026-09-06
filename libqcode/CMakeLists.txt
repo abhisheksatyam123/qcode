@@ -98,6 +98,7 @@ target_sources(qcode-engine PRIVATE
     src/tools/tool_executor.cpp
     src/tools/bash_tool.cpp
     src/tools/task_tool.cpp
+    src/tools/task_target.cpp
     src/tools/multi_step_coordinator.cpp
     src/tools/tool_catalog.cpp
 )

@@ -3,6 +3,7 @@
 #include <qcode/config/config.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
+#include <qcode/tools/task_target.h>
 #include <qcode/tools/tool_executor.h>
 #include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/session/session_store.h>
@@ -134,99 +135,20 @@ static JsonValue run_subagent_turn_multi(
   std::string description = args.value("description", "");
   std::string objective = args.value("objective", "");
 
-  std::vector<std::string> candidates;
-  if (args.contains("model") && args["model"].is_string() && !args["model"].get<std::string>().empty()) {
-    candidates.push_back(args["model"].get<std::string>());
-  }
-  if (args.contains("models") && args["models"].is_array()) {
-    for (const auto& m : args["models"]) {
-      if (m.is_string() && !m.get<std::string>().empty()) {
-        candidates.push_back(m.get<std::string>());
-      }
-    }
-  }
-
-  const ProviderInfo* target_provider = nullptr;
-  std::string target_model_id;
-  const ModelInfo* target_model_info = nullptr;
-
-  auto matches_model = [](const ModelInfo& m, std::string_view query) -> bool {
-    if (m.id == query || m.name == query) return true;
-    if (ProviderTransform::cursor_picker_id(query) == m.id) return true;
-    if (ProviderTransform::cursor_picker_id(m.id) == query) return true;
-    return false;
-  };
-
+  SubagentTarget target;
   if (providers) {
-    for (const auto& candidate : candidates) {
-      auto slash = candidate.find('/');
-      if (slash != std::string::npos) {
-        std::string prov_prefix = candidate.substr(0, slash);
-        std::string mod_suffix = candidate.substr(slash + 1);
-        for (const auto& p : *providers) {
-          if (p.id == prov_prefix || p.name == prov_prefix) {
-            target_provider = &p;
-            target_model_id = mod_suffix;
-            for (const auto& m : p.models) {
-              if (matches_model(m, mod_suffix)) {
-                target_model_info = &m;
-                target_model_id = m.id;
-                break;
-              }
-            }
-            break;
-          }
-        }
-        if (target_provider) break;
-      }
-
-      for (const auto& p : *providers) {
-        for (const auto& m : p.models) {
-          if (matches_model(m, candidate)) {
-            target_provider = &p;
-            target_model_id = m.id;
-            target_model_info = &m;
-            break;
-          }
-        }
-        if (target_provider) break;
-      }
-      if (target_provider) break;
-
-      for (const auto& p : *providers) {
-        if (p.id == candidate || p.name == candidate) {
-          target_provider = &p;
-          target_model_id = p.models.empty() ? default_model_id : p.models.front().id;
-          if (!p.models.empty()) target_model_info = &p.models.front();
-          break;
-        }
-      }
-      if (target_provider) break;
-    }
-
-    if (!target_provider) {
-      for (const auto& p : *providers) {
-        if (p.id == default_provider_id || p.name == default_provider_id) {
-          target_provider = &p;
-          target_model_id = default_model_id;
-          for (const auto& m : p.models) {
-            if (matches_model(m, default_model_id)) {
-              target_model_info = &m;
-              target_model_id = m.id;
-              break;
-            }
-          }
-          break;
-        }
-      }
-    }
-
-    if (!target_provider && !providers->empty()) {
-      target_provider = &(*providers)[0];
-      target_model_id = target_provider->models.empty() ? default_model_id : target_provider->models.front().id;
-      if (!target_provider->models.empty()) target_model_info = &target_provider->models.front();
-    }
+    target = resolve_subagent_target(args, *providers, default_provider_id,
+                                     default_model_id);
+  } else {
+    target.error = "No available AI provider configured for subagent";
   }
+  if (!target.error.empty() && !target.provider) {
+    return JsonValue{{"error", target.error}};
+  }
+
+  const ProviderInfo* target_provider = target.provider;
+  std::string target_model_id = target.model_id;
+  const ModelInfo* target_model_info = target.model_info;
 
   if (!target_provider) {
     return JsonValue{{"error", "No available AI provider configured for subagent"}};

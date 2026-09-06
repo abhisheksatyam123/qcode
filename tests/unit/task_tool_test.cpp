@@ -302,6 +302,8 @@ TEST_F(TaskToolTest, DefinitionAdvertisesCallableSchema) {
   const auto& props = tool.parameters_schema["properties"];
   EXPECT_TRUE(props.contains("task"));
   EXPECT_TRUE(props.contains("prompt"));
+  EXPECT_TRUE(props.contains("provider"));
+  EXPECT_TRUE(props.contains("model"));
   EXPECT_TRUE(props.contains("scope"));
   EXPECT_TRUE(props.contains("background_task_id"));
 }

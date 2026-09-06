@@ -566,8 +566,9 @@ std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& 
     std::ostringstream ss;
     ss << "### Available Providers & Models (from opencode.json)\n\n"
        << "You have access to the following configured providers and models. "
-       << "When delegating subtasks with `task` (`op: \"spawn\"`), you can assign distinct models "
-       << "in parallel using `model: \"<provider>/<model_id>\"` or `model: \"<model_id>\"`:\n\n";
+       << "When delegating subtasks with `task` (`op: \"spawn\"`), assign any catalog model "
+       << "using `model: \"<provider>:<model_id>\"` (colon — model ids may contain slashes), "
+       << "`provider` + `model`, or a bare `model_id`:\n\n";
 
     for (const auto& provider : providers) {
         if (provider.models.empty()) continue;

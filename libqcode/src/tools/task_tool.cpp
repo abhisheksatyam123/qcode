@@ -1,4 +1,5 @@
 #include <qcode/tools/task_tool.h>
+#include <qcode/tools/task_target.h>
 
 #include <algorithm>
 #include <chrono>
@@ -323,6 +324,10 @@ void TaskTool::clear_background_tasks() {
   SubagentRegistry::instance().clear();
 }
 
+JsonValue TaskTool::list_tasks() {
+  return SubagentRegistry::instance().list();
+}
+
 static JsonValue normalize_spawn_args(JsonValue args) {
   std::string mode = args.value("mode", "");
   std::string subagent_type = args.value("subagent_type", args.value("agent", ""));
@@ -350,6 +355,21 @@ static JsonValue normalize_spawn_args(JsonValue args) {
   if (prompt_text.empty()) prompt_text = args.value("objective", "");
   if (prompt_text.empty()) prompt_text = args.value("description", "");
   if (!prompt_text.empty()) args["prompt"] = prompt_text;
+
+  std::string model = args.value("model", "");
+  std::string provider = args.value("provider", "");
+  if (provider.empty() && !model.empty() && !is_inherit_model_id(model)) {
+    const auto colon = model.find(':');
+    if (colon != std::string::npos && colon > 0 && colon + 1 < model.size()) {
+      const std::string prefix = model.substr(0, colon);
+      // Without the catalog, only split provider:model when the prefix is a
+      // simple id (no '/'). OpenRouter model ids use ':' (e.g. name:free).
+      if (prefix.find('/') == std::string::npos) {
+        args["provider"] = prefix;
+        args["model"] = model.substr(colon + 1);
+      }
+    }
+  }
 
   if (mode == "implement") {
     if (!args.contains("can_edit")) args["can_edit"] = true;
@@ -398,6 +418,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
   metadata["description"] = description;
   metadata["mode"] = mode;
 
+  if (args.contains("provider")) metadata["provider"] = args["provider"];
   if (args.contains("model")) metadata["model"] = args["model"];
   if (args.contains("models")) metadata["model_candidates"] = args["models"];
 
@@ -425,6 +446,12 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
     if (context.subagent_runner) {
       JsonValue sub = context.subagent_runner(args, context.abort_flag);
       if (sub.is_object() && sub.contains("error")) {
+        if (sub["error"].is_string() && sub["error"].get<std::string>().empty()) {
+          sub["error"] = "subagent failed";
+        } else if (!sub["error"].is_string()) {
+          sub["error"] = sub["error"].is_null() ? "subagent failed"
+                                                : sub["error"].dump();
+        }
         return sub;
       }
       output_text =

@@ -73,6 +73,7 @@ inline std::vector<PaletteCommand> builtin_palette_commands() {
         {"thinking_toggle",    "Toggle Thinking Trace",    "Show or hide reasoning blocks",       "View",        "Ctrl+T / F2"},
         {"files_open",         "Changed Files",            "View git diff and changed files",     "View",        "Alt+2"},
         {"stats_open",         "Session Stats",            "Token usage, cost, and tool stats",   "View",        "Alt+3"},
+        {"sessions_open",      "Sessions & Subagents",     "List sessions, continue, and subagents", "View", "Alt+4"},
         {"theme_select",       "Switch Theme",             "Change color theme",                  "Appearance",  "/theme"},
         {"copy_mode_toggle",   "Toggle Copy Mode",         "Enable terminal mouse text selection","View",        "F3"},
         {"help",               "Help & Shortcuts",         "Show help and keyboard shortcuts",    "General",     "/help"},

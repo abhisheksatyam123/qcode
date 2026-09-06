@@ -81,8 +81,11 @@ struct ChatState {
         std::make_shared<std::atomic<int>>(0);
 
     // Tab navigation
-    int tab_selected = 0;  // 0 = Chat, 1 = Files, 2 = Stats
+    int tab_selected = 0;  // 0 = Chat, 1 = Files, 2 = Stats, 3 = Sessions
     int selected_file = 0;  // Selected index in file_changes
+    int selected_session_item = 0;  // Selected index in Sessions/Subagents tab
+    std::shared_ptr<std::vector<HitBox>> session_row_boxes =
+        std::make_shared<std::vector<HitBox>>();
 
     int terminal_height = 40;  // Approximate terminal height, updated during render
 

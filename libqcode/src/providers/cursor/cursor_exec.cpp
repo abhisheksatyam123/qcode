@@ -9,7 +9,9 @@
 #include <qcode/tools/task_tool.h>
 
 #include <chrono>
+#include <cstdint>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 namespace qcode {
@@ -296,31 +298,189 @@ CursorExecReply handle_mcp_state(const CursorExecRequest& req) {
 
 bool looks_like_task_args(const JsonValue& args) {
   if (!args.is_object()) return false;
+  const std::string op = args.value("op", "");
+  if (op == "spawn" || op == "result" || op == "kill" || op == "pause" ||
+      op == "resume" || op == "resurrect" || op == "model" || op == "status" ||
+      op == "list") {
+    return true;
+  }
   return args.contains("prompt") || args.contains("task") ||
          args.contains("subagent_type") || args.contains("objective") ||
-         args.value("op", "") == "spawn" || args.value("op", "") == "result" ||
-         args.value("op", "") == "kill" || args.value("op", "") == "list";
+         args.contains("agent") || args.contains("background_task_id") ||
+         args.contains("run_in_background") ||
+         (args.contains("description") && args.contains("prompt"));
+}
+
+bool is_printable_text(const std::string& s) {
+  if (s.empty()) return false;
+  size_t printable = 0;
+  for (unsigned char c : s) {
+    if (c == '\t' || c == '\n' || c == '\r' || (c >= 32 && c < 127)) {
+      ++printable;
+    }
+  }
+  return printable * 10 >= s.size() * 8;
+}
+
+bool looks_like_json_object(const std::string& s) {
+  size_t i = 0;
+  while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' ||
+                          s[i] == '\r')) {
+    ++i;
+  }
+  return i < s.size() && s[i] == '{';
+}
+
+JsonValue try_parse_json_object(const std::string& s) {
+  if (!looks_like_json_object(s)) return JsonValue();
+  try {
+    auto parsed = JsonValue::parse(s);
+    if (parsed.is_object()) return parsed;
+  } catch (...) {
+  }
+  return JsonValue();
+}
+
+JsonValue flatten_proto_args(const std::string& data, int depth = 0) {
+  JsonValue out = JsonValue::object();
+  if (depth > 4 || data.empty()) return out;
+  const auto fields = proto::parse_fields(data);
+  if (fields.empty()) return out;
+  for (const auto& f : fields) {
+    const std::string key = std::to_string(f.num);
+    if (f.wire == 2) {
+      JsonValue nested = try_parse_json_object(f.bytes);
+      if (!nested.is_null() && nested.is_object()) {
+        for (auto it = nested.begin(); it != nested.end(); ++it) {
+          if (!out.contains(it.key())) out[it.key()] = it.value();
+        }
+        continue;
+      }
+      JsonValue inner = flatten_proto_args(f.bytes, depth + 1);
+      if (!inner.empty()) {
+        for (auto it = inner.begin(); it != inner.end(); ++it) {
+          if (!out.contains(it.key())) out[it.key()] = it.value();
+        }
+        if (is_printable_text(f.bytes) && !out.contains(key)) {
+          out[key] = f.bytes;
+        }
+        continue;
+      }
+      if (is_printable_text(f.bytes)) out[key] = f.bytes;
+    } else if (f.wire == 0) {
+      out[key] = f.varint;
+    }
+  }
+  return out;
+}
+
+void promote_task_fields(JsonValue& args) {
+  if (!args.is_object()) return;
+  auto take = [&](const char* num, const char* named) {
+    if (args.contains(named)) return;
+    if (args.contains(num) && args[num].is_string() &&
+        !args[num].get<std::string>().empty()) {
+      args[named] = args[num];
+    }
+  };
+  // Native TaskArgs typically follow the tool property order: description,
+  // prompt, subagent_type, model. MCP field 1 is the tool name, field 2 args.
+  take("1", "description");
+  take("2", "prompt");
+  take("3", "subagent_type");
+  take("4", "model");
+  if ((!args.contains("prompt") || args.value("prompt", "").empty()) &&
+      args.contains("description") && args["description"].is_string()) {
+    args["prompt"] = args["description"];
+  }
+  if (args.contains("4") && args["4"].is_number_unsigned() &&
+      args["4"].get<uint64_t>() > 0 && !args.contains("run_in_background")) {
+    args["run_in_background"] = true;
+  }
 }
 
 JsonValue parse_task_args_from_exec(const CursorExecRequest& req) {
-  try {
-    auto parsed = JsonValue::parse(req.args);
-    if (looks_like_task_args(parsed)) return parsed;
-  } catch (...) {
-  }
+  JsonValue parsed = try_parse_json_object(req.args);
+  if (!parsed.is_null() && looks_like_task_args(parsed)) return parsed;
 
   const auto fields = proto::parse_fields(req.args);
-  for (const auto& f : fields) {
-    if (f.wire != 2 || f.bytes.empty()) continue;
-    if (f.bytes.front() == '{') {
-      try {
-        auto parsed = JsonValue::parse(f.bytes);
-        if (looks_like_task_args(parsed)) return parsed;
-      } catch (...) {
+  std::string mcp_name = proto::field_string(fields, 1);
+  std::string mcp_args = proto::field_string(fields, 2);
+  if (!mcp_args.empty()) {
+    JsonValue from_mcp = try_parse_json_object(mcp_args);
+    if (from_mcp.is_null()) {
+      from_mcp = flatten_proto_args(mcp_args);
+      promote_task_fields(from_mcp);
+    }
+    const bool named_task = mcp_name == "task" || mcp_name == "Task";
+    if (!from_mcp.is_null() && from_mcp.is_object() &&
+        (named_task || looks_like_task_args(from_mcp))) {
+      if (named_task && !looks_like_task_args(from_mcp) &&
+          from_mcp.contains("1")) {
+        promote_task_fields(from_mcp);
       }
+      if (named_task || looks_like_task_args(from_mcp)) return from_mcp;
     }
   }
+
+  for (const auto& f : fields) {
+    if (f.wire != 2 || f.bytes.empty()) continue;
+    JsonValue nested = try_parse_json_object(f.bytes);
+    if (!nested.is_null() && looks_like_task_args(nested)) return nested;
+  }
+
+  JsonValue flat = flatten_proto_args(req.args);
+  promote_task_fields(flat);
+  if (looks_like_task_args(flat)) return flat;
   return JsonValue();
+}
+
+bool maybe_task_exec_field(uint32_t args_field) {
+  switch (args_field) {
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 14:
+    case 20:
+    case 27:
+    case 29:
+    case 36:
+    case 41:
+    case 42:
+    case 43:
+    case 45:
+    case 46:
+    case 47:
+    case 48:
+    case 49:
+    case 50:
+    case 51:
+    case 52:
+      return false;
+    default:
+      return true;  // MCP (11) and unknown Task oneofs
+  }
+}
+
+std::string task_error_message(const JsonValue& result) {
+  if (result.contains("error")) {
+    if (result["error"].is_string()) {
+      const std::string msg = result["error"].get<std::string>();
+      if (!msg.empty()) return msg;
+    } else if (!result["error"].is_null()) {
+      return result["error"].dump();
+    }
+  }
+  if (result.contains("output") && result["output"].is_string()) {
+    const std::string out = result["output"].get<std::string>();
+    if (!out.empty()) return out;
+  }
+  return "task failed";
 }
 
 CursorExecReply handle_task(const CursorExecRequest& req,
@@ -338,9 +498,10 @@ CursorExecReply handle_task(const CursorExecRequest& req,
   ctx.abort_flag = abort_flag;
   if (options) ctx.subagent_runner = options->subagent_runner;
 
-  LOG_INFO("Cursor exec task op={} desc={}",
-           args.value("op", "spawn"),
-           args.value("description", args.value("prompt", "")).substr(0, 120));
+  const std::string label = args.value(
+      "description", args.value("prompt", args.value("task", "")));
+  LOG_INFO("Cursor exec task op={} desc={}", args.value("op", "spawn"),
+           label.size() > 120 ? label.substr(0, 120) : label);
   const auto started = std::chrono::steady_clock::now();
   auto result = TaskTool::execute(args, ctx);
   const auto elapsed_ms = static_cast<int>(
@@ -352,11 +513,11 @@ CursorExecReply handle_task(const CursorExecRequest& req,
   const std::string output =
       result.contains("output") && result["output"].is_string()
           ? result["output"].get<std::string>()
-          : result.dump();
+          : (reply.is_error ? task_error_message(result) : result.dump());
   const uint32_t result_field = result_field_for(req.args_field);
   if (reply.is_error) {
     return finish(std::move(reply), req, result_field,
-                  oneof_error(result.value("error", output)), elapsed_ms);
+                  oneof_error(task_error_message(result)), elapsed_ms);
   }
   return finish(std::move(reply), req, result_field,
                 oneof_success(proto::bytes_field(1, output)), elapsed_ms);
@@ -436,18 +597,19 @@ CursorExecReply CursorExec::handle(
     const std::string& workspace,
     std::shared_ptr<std::atomic<bool>> abort_flag,
     const GenerateOptions* options) {
+  try {
   LOG_INFO("Cursor exec: field={} id={} exec_id={}", request.args_field,
            request.id, request.exec_id);
-  if (request.args_field == 11 ||
-      (request.args_field != 2 && request.args_field != 14 &&
-       request.args_field != 46 && request.args_field != 52 &&
-       request.args_field != 27 && request.args_field != 36 &&
-       request.args_field != 41 && request.args_field != 42 &&
-       request.args_field != 43)) {
+  if (maybe_task_exec_field(request.args_field)) {
     auto task_args = parse_task_args_from_exec(request);
     if (!task_args.is_null() && looks_like_task_args(task_args)) {
       return handle_task(request, workspace, abort_flag, options,
                          std::move(task_args));
+    }
+    if (request.args_field == 11) {
+      const auto fields = proto::parse_fields(request.args);
+      const std::string mcp_name = proto::field_string(fields, 1);
+      LOG_WARN("Cursor exec MCP tool '{}' was not a task payload", mcp_name);
     }
   }
   switch (request.args_field) {
@@ -485,6 +647,10 @@ CursorExecReply CursorExec::handle(
     default:
       return unsupported(request, "unsupported cursor exec field " +
                                       std::to_string(request.args_field));
+  }
+  } catch (const std::exception& e) {
+    LOG_ERROR("Cursor exec field={} threw: {}", request.args_field, e.what());
+    return unsupported(request, std::string("cursor exec failed: ") + e.what());
   }
 }
 

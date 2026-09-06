@@ -533,6 +533,102 @@ TEST(CursorProviderTest, ExecMcpCanInvokeTaskTool) {
   ASSERT_FALSE(reply.client_messages.empty());
 }
 
+TEST(CursorProviderTest, ExecMcpProtobufTaskArgsInvokeRunner) {
+  bool called = false;
+  GenerateOptions options;
+  options.subagent_runner = [&](const nlohmann::json& args,
+                                std::shared_ptr<std::atomic<bool>>) {
+    called = true;
+    EXPECT_EQ(args.value("prompt", ""), "summarize README");
+    EXPECT_EQ(args.value("description", ""), "readme");
+    EXPECT_EQ(args.value("subagent_type", ""), "explore");
+    return nlohmann::json{{"output", "ok proto"}};
+  };
+
+  const std::string task_args = proto::bytes_field(1, "readme") +
+                                proto::bytes_field(2, "summarize README") +
+                                proto::bytes_field(3, "explore");
+  CursorExecRequest req;
+  req.id = 10;
+  req.exec_id = "task-proto";
+  req.args_field = 11;
+  req.args = proto::bytes_field(1, "task") + proto::bytes_field(2, task_args);
+
+  const auto reply = CursorExec::handle(req, "/tmp", nullptr, &options);
+  EXPECT_TRUE(called);
+  EXPECT_FALSE(reply.is_error);
+  EXPECT_EQ(reply.tool_name, "task");
+  EXPECT_NE(reply.result.value("output", "").find("ok proto"),
+            std::string::npos);
+}
+
+TEST(CursorProviderTest, ExecUnknownFieldProtobufTaskDoesNotReturnEmptyError) {
+  bool called = false;
+  GenerateOptions options;
+  options.subagent_runner = [&](const nlohmann::json& args,
+                                std::shared_ptr<std::atomic<bool>>) {
+    called = true;
+    EXPECT_EQ(args.value("prompt", ""), "list cmake targets");
+    return nlohmann::json{{"output", "libqcode"}};
+  };
+
+  CursorExecRequest req;
+  req.id = 11;
+  req.exec_id = "task-unknown";
+  req.args_field = 16;  // not a mapped bash/file tool
+  req.args = proto::bytes_field(1, "cmake") +
+             proto::bytes_field(2, "list cmake targets") +
+             proto::bytes_field(3, "explore");
+
+  const auto reply = CursorExec::handle(req, "/tmp", nullptr, &options);
+  EXPECT_TRUE(called);
+  EXPECT_FALSE(reply.is_error);
+  EXPECT_EQ(reply.tool_name, "task");
+  EXPECT_NE(reply.result.value("output", "").find("libqcode"),
+            std::string::npos);
+}
+
+TEST(CursorProviderTest, ExecTaskEmptyRunnerErrorIsNonEmpty) {
+  GenerateOptions options;
+  options.subagent_runner = [&](const nlohmann::json&,
+                                std::shared_ptr<std::atomic<bool>>) {
+    return nlohmann::json{{"error", ""}};
+  };
+
+  CursorExecRequest req;
+  req.id = 12;
+  req.exec_id = "task-empty-err";
+  req.args_field = 11;
+  req.args = proto::bytes_field(1, "task") +
+             proto::bytes_field(2, R"({"prompt":"ping"})");
+
+  const auto reply = CursorExec::handle(req, "/tmp", nullptr, &options);
+  EXPECT_TRUE(reply.is_error);
+  ASSERT_TRUE(reply.result.contains("error"));
+  EXPECT_FALSE(reply.result.value("error", "").empty());
+}
+
+TEST(CursorProviderTest, ExecWriteIsNotStolenAsTask) {
+  bool called = false;
+  GenerateOptions options;
+  options.subagent_runner = [&](const nlohmann::json&,
+                                std::shared_ptr<std::atomic<bool>>) {
+    called = true;
+    return nlohmann::json{{"output", "should not run"}};
+  };
+
+  CursorExecRequest req;
+  req.id = 4;
+  req.exec_id = "w-task";
+  req.args_field = 3;
+  req.args = proto::bytes_field(1, "note.txt") +
+             proto::bytes_field(2, "file body that looks like a prompt");
+  const auto reply = CursorExec::handle(req, "/tmp", nullptr, &options);
+  EXPECT_FALSE(called);
+  EXPECT_TRUE(reply.is_error);
+  EXPECT_EQ(reply.tool_name, "write");
+}
+
 }  // namespace
 }  // namespace cursor
 }  // namespace qcode
