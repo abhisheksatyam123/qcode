@@ -2,6 +2,7 @@
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/transform/provider_transform.h>
 #include <qcode/core/generate_options.h>
+#include "providers/cursor/cursor_agent_session.h"
 #include "providers/cursor/cursor_bidi.h"
 #include "providers/cursor/cursor_exec.h"
 #include "providers/cursor/cursor_kv.h"
@@ -11,6 +12,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <string>
 
 namespace qcode {
@@ -416,6 +420,21 @@ TEST(CursorProviderTest, ExecAllowlistIsTrue) {
   EXPECT_TRUE(saw);
 }
 
+TEST(CursorProviderTest, ThinkingPauseDoesNotIdleEndAfterTwelveSeconds) {
+  const auto now = std::chrono::steady_clock::now();
+  // Grok 4.6 regularly thinks 30–90s between visible tokens. The old 12s
+  // heartbeat idle-end cut those turns short.
+  EXPECT_FALSE(idle_end_on_heartbeat(
+      /*has_text=*/true, /*saw_exec=*/false, now - std::chrono::seconds(12),
+      now));
+  EXPECT_FALSE(idle_end_on_heartbeat(
+      /*has_text=*/true, /*saw_exec=*/false, now - std::chrono::seconds(179),
+      now));
+  EXPECT_TRUE(idle_end_on_heartbeat(
+      /*has_text=*/true, /*saw_exec=*/false, now - std::chrono::seconds(180),
+      now));
+}
+
 TEST(CursorProviderTest, ConnectHeartbeatIsNotTurnEnded) {
   // Connect keepalive: field 1 = "j\0" (0a 02 6a 00). Must stay heartbeat so
   // the client can keep the native agent tool loop open across keepalives.
@@ -486,6 +505,32 @@ TEST(CursorProviderTest, ExecGrepIsDisabled) {
   ASSERT_TRUE(reply.result.contains("error"));
   EXPECT_NE(reply.result["error"].get<std::string>().find("only bash"),
             std::string::npos);
+}
+
+TEST(CursorProviderTest, ExecMcpCanInvokeTaskTool) {
+  bool called = false;
+  GenerateOptions options;
+  options.subagent_runner = [&](const nlohmann::json& args,
+                                std::shared_ptr<std::atomic<bool>>) {
+    called = true;
+    EXPECT_EQ(args.value("prompt", ""), "find TODOs");
+    return nlohmann::json{{"output", "found none"}};
+  };
+
+  CursorExecRequest req;
+  req.id = 9;
+  req.exec_id = "task-1";
+  req.args_field = 11;
+  req.args = proto::bytes_field(1, "task") +
+             proto::bytes_field(2, R"({"prompt":"find TODOs","description":"scan"})");
+
+  const auto reply = CursorExec::handle(req, "/tmp", nullptr, &options);
+  EXPECT_TRUE(called);
+  EXPECT_FALSE(reply.is_error);
+  EXPECT_EQ(reply.tool_name, "task");
+  EXPECT_NE(reply.result.value("output", "").find("found none"),
+            std::string::npos);
+  ASSERT_FALSE(reply.client_messages.empty());
 }
 
 }  // namespace

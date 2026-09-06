@@ -15,8 +15,10 @@
 #include <cstdlib>
 #include <functional>
 #include <future>
+#include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <qcode/core/client.h>
@@ -87,15 +89,45 @@ static JsonValue run_subagent_turn_multi(
     const std::string& default_model_id,
     const std::string& workspace,
     std::shared_ptr<std::atomic<bool>> main_abort_flag,
+    std::shared_ptr<std::atomic<bool>> task_abort_flag,
     const JsonValue& args) {
   std::string prompt_text = args.value("prompt", args.value("task", args.value("objective", "")));
+  if (prompt_text.empty()) {
+    prompt_text = args.value("description", "");
+  }
   if (prompt_text.empty()) {
     return JsonValue{{"error", "task prompt is required"}};
   }
 
-  if (main_abort_flag && main_abort_flag->load()) {
+  auto aborted = [&]() {
+    return (main_abort_flag && main_abort_flag->load()) ||
+           (task_abort_flag && task_abort_flag->load());
+  };
+  if (aborted()) {
     return JsonValue{{"error", "Subagent cancelled due to abort flag"}};
   }
+
+  auto combined_abort = std::make_shared<std::atomic<bool>>(false);
+  auto stop_watch = std::make_shared<std::atomic<bool>>(false);
+  std::thread abort_watch([main_abort_flag, task_abort_flag, combined_abort,
+                           stop_watch]() {
+    while (!stop_watch->load()) {
+      if ((main_abort_flag && main_abort_flag->load()) ||
+          (task_abort_flag && task_abort_flag->load())) {
+        combined_abort->store(true);
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    }
+  });
+  struct JoinWatch {
+    std::shared_ptr<std::atomic<bool>> stop;
+    std::thread& th;
+    ~JoinWatch() {
+      stop->store(true);
+      if (th.joinable()) th.join();
+    }
+  } join_watch{stop_watch, abort_watch};
 
   std::string subagent_type = args.value("subagent_type", "general");
   std::string mode = args.value("mode", "explore");
@@ -285,7 +317,7 @@ static JsonValue run_subagent_turn_multi(
     sub_opts.tools = ToolCatalog::build_definitions(ToolConfig::subagent());
     sub_opts.max_steps = max_steps;
     sub_opts.workspace = workspace;
-    sub_opts.abort_flag = main_abort_flag;
+    sub_opts.abort_flag = combined_abort;
     sub_opts.messages.push_back(Message::user(prompt_text));
 
     qcode::GenerateResult res = MultiStepCoordinator::execute_multi_step(
@@ -293,6 +325,10 @@ static JsonValue run_subagent_turn_multi(
           return subagent_client.generate_text(step_opts);
         });
 
+    if (aborted()) {
+      out["error"] = "Subagent cancelled due to abort flag";
+      return out;
+    }
     if (!res.is_success()) {
       out["error"] = !res.error_message().empty() ? res.error_message()
                                                   : "subagent generation failed";
@@ -320,8 +356,11 @@ static void run_tools_generation_bus(
     const std::string& provider_id = "") {
   auto assistant_text    = std::make_shared<std::string>();
   auto assistant_msg_idx = std::make_shared<int>(-1);
-  auto tool_starts       = std::make_shared<
-      std::map<std::string, std::chrono::steady_clock::time_point>>();
+  struct InFlightTool {
+    std::chrono::steady_clock::time_point started;
+    std::string tool_name;
+  };
+  auto tool_starts = std::make_shared<std::map<std::string, InFlightTool>>();
   auto callback_mutex    = std::make_shared<std::mutex>();
   auto step_counter      = std::make_shared<std::atomic<int>>(0);
   int  max_steps         = options.max_steps;
@@ -353,7 +392,7 @@ static void run_tools_generation_bus(
         std::lock_guard<std::mutex> lock(*callback_mutex);
         LOG_DEBUG("generation_service: on_tool_call_start tool={} step={}/{}", call.tool_name, (int)*step_counter, max_steps);
         auto now = std::chrono::steady_clock::now();
-        (*tool_starts)[call.id] = now;
+        (*tool_starts)[call.id] = InFlightTool{now, call.tool_name};
         (*step_counter)++;
 
         bus.publish<ToolCallStarted>({
@@ -373,7 +412,10 @@ static void run_tools_generation_bus(
         {
           auto start_it_tmp = tool_starts->find(res.tool_call_id);
           if (start_it_tmp != tool_starts->end()) {
-            double d = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_it_tmp->second).count();
+            double d = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now() -
+                           start_it_tmp->second.started)
+                           .count();
             LOG_DEBUG("generation_service: on_tool_call_finish tool={} success={} duration={:.1f}s", res.tool_name, res.is_success(), d);
           } else {
             LOG_DEBUG("generation_service: on_tool_call_finish tool={} success={} duration=unknown", res.tool_name, res.is_success());
@@ -382,7 +424,8 @@ static void run_tools_generation_bus(
         auto start_it = tool_starts->find(res.tool_call_id);
         if (start_it != tool_starts->end()) {
           duration_s = std::chrono::duration<double>(
-              std::chrono::steady_clock::now() - start_it->second).count();
+              std::chrono::steady_clock::now() - start_it->second.started).count();
+          tool_starts->erase(start_it);
         }
 
         if (*assistant_text == "  \u23f3 Working...") {
@@ -401,6 +444,25 @@ static void run_tools_generation_bus(
             .duration_ms = duration_s * 1000.0
         });
       };
+
+  auto flush_inflight_tools = [&bus, &ctx, tool_starts, callback_mutex]() {
+    std::lock_guard<std::mutex> lock(*callback_mutex);
+    for (const auto& [id, info] : *tool_starts) {
+      const double duration_ms =
+          std::chrono::duration<double, std::milli>(
+              std::chrono::steady_clock::now() - info.started)
+              .count();
+      bus.publish<ToolCallCompleted>({
+          .session_id = ctx.session_id,
+          .tool_call_id = id,
+          .tool_name = info.tool_name,
+          .result = {{"error", "Tool execution aborted"}},
+          .is_error = true,
+          .duration_ms = duration_ms,
+      });
+    }
+    tool_starts->clear();
+  };
 
   // ── Multi-step generation loop ──
   qcode::GenerateResult gen_result;
@@ -705,6 +767,7 @@ static void run_tools_generation_bus(
   gen_result.response_messages = response_messages;
 
   if (aborted) {
+    flush_inflight_tools();
     bus.publish<ErrorOccurred>({
         .session_id = ctx.session_id,
         .message = "Generation stopped",
@@ -907,6 +970,13 @@ static void run_stream_generation_bus(qcode::Client& client,
     if (ctx.abort_flag && ctx.abort_flag->load()) {
       LOG_INFO("run_stream_generation_bus: abort requested");
       aborted = true;
+      stream.stop();
+      break;
+    }
+    if (ctx.has_queued_work && ctx.has_queued_work()) {
+      LOG_INFO(
+          "run_stream_generation_bus: queued prompt pending; ending turn "
+          "so it can start");
       stream.stop();
       break;
     }
@@ -1224,6 +1294,7 @@ void run_generation_with_bus(
     base_opts.workspace = ctx.workspace;
     base_opts.session_id = ctx.session_id;
     base_opts.abort_flag = ctx.abort_flag;
+    base_opts.has_queued_work = ctx.has_queued_work;
 
     // ── Extended thinking / reasoning ──
     // Empty /variant = auto default for every reasoning model. Explicit "off"
@@ -1267,15 +1338,15 @@ void run_generation_with_bus(
     // ServerSideDuplex providers (e.g. Cursor AgentService) own their autonomous tool loop.
     // Wrapping them in qcode's local tool loop is useless (no tool_calls returned)
     // and can truncate multi-step agent turns. Always stream ServerSideDuplex providers.
+    // Still attach bash+task definitions and the subagent runner so Cursor exec
+    // can invoke `task` the same way the local tool loop does.
     const bool is_server_duplex_agent =
         (client.tool_execution_model() == ToolExecutionModel::ServerSideDuplex);
-    if (enable_tools && !is_server_duplex_agent) {
-      // Orchestrator has full tool suite: both bash and task subagent tools enabled (unless plan mode).
+    if (enable_tools) {
       const bool enable_task_tool = !plan_mode;
       qcode::ToolSet tools =
           ToolCatalog::build_definitions(enable_task_tool ? ToolConfig::orchestrator() : ToolConfig::subagent());
       base_opts.tools = std::move(tools);
-      // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
       constexpr int kMaxToolSteps = 100000;
       base_opts.max_steps = kMaxToolSteps;
 
@@ -1287,11 +1358,14 @@ void run_generation_with_bus(
 
       base_opts.subagent_runner =
           [providers_ptr, current_prov_id, current_model_id, current_workspace, main_abort](
-              const JsonValue& args) -> JsonValue {
+              const JsonValue& args,
+              std::shared_ptr<std::atomic<bool>> task_abort) -> JsonValue {
             return run_subagent_turn_multi(
                 providers_ptr, current_prov_id, current_model_id,
-                current_workspace, main_abort, args);
+                current_workspace, main_abort, std::move(task_abort), args);
           };
+    }
+    if (enable_tools && !is_server_duplex_agent) {
       auto refresh_client = [&](qcode::Client& out_client) -> bool {
         // Re-read Antigravity OAuth (force refresh on 401).
         if (provider_id.find("antigravity") != std::string::npos ||

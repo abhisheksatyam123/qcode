@@ -457,6 +457,75 @@ TEST(ProviderTransformTest, NormalizeMessagesKeepsObjectToolResults) {
   }
 }
 
+TEST(ProviderTransformTest, ClosesUnpairedToolCallsBeforeUserFollowUp) {
+  // TUI restart after ToolCallStarted (no ToolCallCompleted) leaves a
+  // function_call in history. The next user prompt must not replay that
+  // call without an output — OpenAI/Zen 400s with
+  // "No tool output found for function call".
+  Messages history;
+  history.push_back(Message::user("run the e2e"));
+  history.push_back(Message::assistant_with_tools(
+      "", {ToolCallContentPart{
+              "call_66c59743-f973-4882-87a9-5df240a0a701", "bash",
+              nlohmann::json{{"command", "echo e2e"},
+                             {"description", "Extend wait and rerun full E2E"},
+                             {"timeout", 240000}}}}));
+  history.push_back(Message::user("I want you to keep working"));
+
+  Model model("muse-spark-1.3-contributor-free", "opencode");
+  const auto normalized =
+      ProviderTransform::normalize_messages(history, model);
+  ASSERT_EQ(normalized.size(), 4u);
+  ASSERT_TRUE(normalized[1].has_tool_calls());
+  ASSERT_TRUE(normalized[2].has_tool_results());
+  const auto results = normalized[2].get_tool_results();
+  ASSERT_EQ(results.size(), 1u);
+  EXPECT_EQ(results[0].tool_call_id,
+            "call_66c59743-f973-4882-87a9-5df240a0a701");
+  EXPECT_TRUE(results[0].is_error);
+  EXPECT_EQ(normalized[3].get_text(), "I want you to keep working");
+
+  openai::OpenAIRequestBuilder builder(true);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  GenerateOptions options;
+  options.model = "muse-spark-1.3-contributor-free";
+  options.messages = normalized;
+  const auto body = builder.build_request_json(options);
+  ASSERT_TRUE(body.contains("input"));
+  bool saw_call = false;
+  bool saw_output = false;
+  for (const auto& item : body["input"]) {
+    if (item.value("type", "") == "function_call" &&
+        item.value("call_id", "") ==
+            "call_66c59743-f973-4882-87a9-5df240a0a701") {
+      saw_call = true;
+    }
+    if (item.value("type", "") == "function_call_output" &&
+        item.value("call_id", "") ==
+            "call_66c59743-f973-4882-87a9-5df240a0a701") {
+      saw_output = true;
+    }
+  }
+  EXPECT_TRUE(saw_call);
+  EXPECT_TRUE(saw_output);
+}
+
+TEST(ProviderTransformTest, CloseUnpairedIsIdempotentWhenAlreadyPaired) {
+  Messages history;
+  history.push_back(Message::user("hi"));
+  history.push_back(Message::assistant_with_tools(
+      "", {ToolCallContentPart{"call_1", "bash",
+                               nlohmann::json{{"command", "true"}}}}));
+  history.push_back(Message::tool_results(
+      {{"call_1", nlohmann::json{{"output", "ok"}}, false}}));
+
+  const auto once = ProviderTransform::close_unpaired_tool_calls(history);
+  const auto twice = ProviderTransform::close_unpaired_tool_calls(once);
+  ASSERT_EQ(once.size(), 3u);
+  ASSERT_EQ(twice.size(), 3u);
+  EXPECT_TRUE(twice[2].has_tool_results());
+}
+
 TEST(OpenRouterWireFormatTest, SkipsInterleavedReasoningReplay) {
   openai::OpenAIRequestBuilder builder(false);
   builder.set_base_url("https://openrouter.ai/api/v1");

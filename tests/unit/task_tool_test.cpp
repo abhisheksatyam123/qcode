@@ -5,9 +5,10 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <chrono>
-#include <thread>
 #include <atomic>
+#include <chrono>
+#include <memory>
+#include <thread>
 
 #include <qcode/core/tool.h>
 #include <qcode/tools/task_tool.h>
@@ -32,7 +33,8 @@ TEST_F(TaskToolTest, UsesInjectedRunnerAndReturnsRealOutput) {
 
   ToolExecutionContext context;
   context.subagent_runner =
-      [&called](const JsonValue& args) -> JsonValue {
+      [&called](const JsonValue& args,
+                std::shared_ptr<std::atomic<bool>>) -> JsonValue {
     called = true;
     EXPECT_EQ(args.value("subagent_type", ""), "general");
     EXPECT_EQ(args.value("prompt", ""), "find all TODOs");
@@ -56,7 +58,8 @@ TEST_F(TaskToolTest, UsesInjectedRunnerAndReturnsRealOutput) {
 
 TEST_F(TaskToolTest, PropagatesRunnerErrors) {
   ToolExecutionContext context;
-  context.subagent_runner = [](const JsonValue&) -> JsonValue {
+  context.subagent_runner = [](const JsonValue&,
+                               std::shared_ptr<std::atomic<bool>>) -> JsonValue {
     return JsonValue{{"error", "subagent aborted"}};
   };
 
@@ -89,7 +92,8 @@ TEST_F(TaskToolTest, SpawnsParallelBackgroundSubagents) {
   std::atomic<int> max_parallel{0};
 
   ToolExecutionContext context;
-  context.subagent_runner = [&](const JsonValue& args) -> JsonValue {
+  context.subagent_runner = [&](const JsonValue& args,
+                               std::shared_ptr<std::atomic<bool>>) -> JsonValue {
     int current = ++running_count;
     int prev_max = max_parallel.load();
     while (current > prev_max && !max_parallel.compare_exchange_weak(prev_max, current)) {}
@@ -152,7 +156,8 @@ TEST_F(TaskToolTest, SpawnsParallelBackgroundSubagents) {
 
 TEST_F(TaskToolTest, NonblockingPollAndTimeoutAwait) {
   ToolExecutionContext context;
-  context.subagent_runner = [](const JsonValue&) -> JsonValue {
+  context.subagent_runner = [](const JsonValue&,
+                               std::shared_ptr<std::atomic<bool>>) -> JsonValue {
     std::this_thread::sleep_for(std::chrono::milliseconds(80));
     return JsonValue{{"output", "delayed result"}};
   };
@@ -188,8 +193,15 @@ TEST_F(TaskToolTest, NonblockingPollAndTimeoutAwait) {
 
 TEST_F(TaskToolTest, KillLifecycleCancelsTask) {
   ToolExecutionContext context;
-  context.subagent_runner = [](const JsonValue&) -> JsonValue {
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  context.subagent_runner =
+      [](const JsonValue&,
+         std::shared_ptr<std::atomic<bool>> abort) -> JsonValue {
+    for (int i = 0; i < 50; ++i) {
+      if (abort && abort->load()) {
+        return JsonValue{{"error", "cancelled"}};
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     return JsonValue{{"output", "should not finish"}};
   };
 
@@ -224,7 +236,8 @@ TEST_F(TaskToolTest, KillLifecycleCancelsTask) {
 
 TEST_F(TaskToolTest, ListsRegisteredSubagents) {
   ToolExecutionContext context;
-  context.subagent_runner = [](const JsonValue&) -> JsonValue {
+  context.subagent_runner = [](const JsonValue&,
+                               std::shared_ptr<std::atomic<bool>>) -> JsonValue {
     return JsonValue{{"output", "quick done"}};
   };
 
@@ -244,6 +257,53 @@ TEST_F(TaskToolTest, ListsRegisteredSubagents) {
   ASSERT_TRUE(list_res["metadata"].contains("tasks"));
   EXPECT_GE(list_res["metadata"]["tasks"].size(), 1u);
   EXPECT_THAT(list_res.value("output", ""), testing::HasSubstr("listable task"));
+}
+
+TEST_F(TaskToolTest, DefaultsTypeAndAcceptsPromptAliases) {
+  JsonValue seen;
+  ToolExecutionContext context;
+  context.subagent_runner = [&](const JsonValue& args,
+                                std::shared_ptr<std::atomic<bool>>) -> JsonValue {
+    seen = args;
+    return JsonValue{{"output", "ok"}};
+  };
+
+  const JsonValue out = TaskTool::execute(
+      JsonValue{{"task", "scan the repo"}, {"description", "repo scan"}},
+      context);
+
+  EXPECT_EQ(seen.value("subagent_type", ""), "general");
+  EXPECT_EQ(seen.value("prompt", ""), "scan the repo");
+  EXPECT_EQ(seen.value("mode", ""), "explore");
+  EXPECT_EQ(out["metadata"].value("real_subagent", false), true);
+  EXPECT_THAT(out.value("output", ""), testing::HasSubstr("ok"));
+}
+
+TEST_F(TaskToolTest, UsesModeAsSubagentTypeWhenOmitted) {
+  JsonValue seen;
+  ToolExecutionContext context;
+  context.subagent_runner = [&](const JsonValue& args,
+                                std::shared_ptr<std::atomic<bool>>) -> JsonValue {
+    seen = args;
+    return JsonValue{{"output", "explored"}};
+  };
+
+  TaskTool::execute(
+      JsonValue{{"prompt", "look around"}, {"mode", "explore"}},
+      context);
+  EXPECT_EQ(seen.value("subagent_type", ""), "explore");
+}
+
+TEST_F(TaskToolTest, DefinitionAdvertisesCallableSchema) {
+  Tool tool = TaskTool::definition();
+  EXPECT_EQ(tool.name, "task");
+  EXPECT_THAT(tool.description, testing::HasSubstr("subagent"));
+  ASSERT_TRUE(tool.parameters_schema.contains("properties"));
+  const auto& props = tool.parameters_schema["properties"];
+  EXPECT_TRUE(props.contains("task"));
+  EXPECT_TRUE(props.contains("prompt"));
+  EXPECT_TRUE(props.contains("scope"));
+  EXPECT_TRUE(props.contains("background_task_id"));
 }
 
 }  // namespace test

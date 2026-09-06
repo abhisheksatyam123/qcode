@@ -135,3 +135,22 @@ if(BUILD_CLICKHOUSE_TESTS)
         ClickHouse::Client
     )
 endif()
+
+# qcode-tui must not hang when invoked without a TTY (help / unknown / no args).
+if(TARGET qcode-tui)
+    add_test(NAME TuiHelpExits COMMAND qcode-tui --help)
+    set_tests_properties(TuiHelpExits PROPERTIES
+        TIMEOUT 5
+        PASS_REGULAR_EXPRESSION "Usage:"
+    )
+    add_test(NAME TuiUnknownArgExits COMMAND qcode-tui --not-a-flag)
+    set_tests_properties(TuiUnknownArgExits PROPERTIES
+        TIMEOUT 5
+        WILL_FAIL TRUE
+    )
+    add_test(NAME TuiNoTtyExits COMMAND qcode-tui)
+    set_tests_properties(TuiNoTtyExits PROPERTIES
+        TIMEOUT 5
+        WILL_FAIL TRUE
+    )
+endif()

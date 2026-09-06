@@ -55,8 +55,14 @@ std::optional<int> top_k(const Model& model);
 /// Normalize messages for a specific provider/model:
 /// - Removes unsupported content parts (audio, video, etc. if unsupported)
 /// - Flattens tool_call_id sequences
+/// - Closes unpaired tool calls (see close_unpaired_tool_calls)
 /// - Applies provider-specific adjustments
 Messages normalize_messages(const Messages& messages, const Model& model);
+
+/// Insert synthetic error tool results immediately after assistant tool_calls
+/// that have no matching result. OpenAI/Claude 400 when a function_call is
+/// replayed without an output — common after a TUI restart or abort mid-tool.
+Messages close_unpaired_tool_calls(const Messages& messages);
 
 // ── Provider options ──
 

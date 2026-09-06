@@ -33,7 +33,9 @@ inline JsonValue spawn_parameters() {
 
   // Common spawn fields
   p["description"] = JsonValue{{"type", "string"}, {"description", "Short label for the subagent task."}};
-  p["subagent_type"] = JsonValue{{"type", "string"}, {"description", "Type of subagent to delegate to."}};
+  p["subagent_type"] = JsonValue{{"type", "string"},
+    {"description", "Type of subagent to delegate to. Defaults to mode, or general."}};
+  p["agent"] = JsonValue{{"type", "string"}, {"description", "Alias for subagent_type."}};
   p["prompt"] = JsonValue{{"type", "string"}, {"description", "Plain-language task for the subagent."}};
   p["task"] = JsonValue{{"type", "string"}, {"description", "Preferred alias for prompt."}};
 
@@ -119,6 +121,13 @@ inline JsonValue lifecycle_or_model_parameters() {
 
 class TaskTool {
  public:
+  static constexpr const char* kDescription =
+      "Delegate bounded work to a subagent. Default op is spawn. "
+      "Provide a prompt (or task/objective). Optional: subagent_type "
+      "(default general), mode (explore|implement|verify), background, "
+      "model. Collect with op=result and background_task_id. "
+      "Cancel with op=kill.";
+
   static JsonValue execute(const JsonValue& args, const ToolExecutionContext& context);
   static Tool definition();
   static void clear_background_tasks();

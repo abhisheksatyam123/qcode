@@ -7,6 +7,7 @@
 #include <qcode/ui/chat_state.h>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -83,6 +84,9 @@ private:
     std::shared_ptr<std::atomic<bool>> app_running_;
     std::shared_ptr<std::atomic<bool>> busy_;
     qcode::compat::jthread worker_;
+    // After Esc, wait before auto-starting a queued prompt so "Esc again to
+    // force" cannot abort the next Grok/Cursor turn that just spawned.
+    std::chrono::steady_clock::time_point queue_resume_at_{};
 };
 
 }  // namespace qcode

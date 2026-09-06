@@ -9,8 +9,10 @@
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 #include <climits>
 
@@ -46,7 +48,33 @@ using qcode::tui::matches_query;
 using qcode::tui::sync_session_title;
 using qcode::tui::index_of_session;
 
-int main() {
+static void print_tui_usage(const char* argv0) {
+    std::cout
+        << "Usage: " << argv0 << " [options]\n"
+        << "Options:\n"
+        << "  --help, -h        Show this help and exit\n"
+        << "\n"
+        << "Interactive terminal UI. Requires a TTY on stdin and stdout.\n"
+        << "For non-interactive prompts, use qcode-cli.\n";
+}
+
+int main(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            print_tui_usage(argv[0]);
+            return 0;
+        }
+        std::cerr << "Unknown option: " << arg << "\n\n";
+        print_tui_usage(argv[0]);
+        return 2;
+    }
+    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+        std::cerr << "qcode-tui requires an interactive terminal (TTY).\n"
+                  << "Use --help for usage, or qcode-cli for non-interactive prompts.\n";
+        return 1;
+    }
+
     // Rotate oversized logs so a prior debug flood cannot keep filling the disk.
     {
         namespace fs = std::filesystem;
@@ -1292,4 +1320,5 @@ int main() {
     }
     if (spinner_thread.joinable()) spinner_thread.join();
     LOG_DEBUG("Main: exit complete");
+    return 0;
 }

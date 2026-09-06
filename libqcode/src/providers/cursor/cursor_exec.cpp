@@ -2,9 +2,11 @@
 
 #include "cursor_proto.h"
 
+#include <qcode/core/generate_options.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/tool.h>
 #include <qcode/tools/bash_tool.h>
+#include <qcode/tools/task_tool.h>
 
 #include <chrono>
 #include <sstream>
@@ -292,6 +294,74 @@ CursorExecReply handle_mcp_state(const CursorExecRequest& req) {
   return finish(std::move(reply), req, 36, oneof_success(std::string{}));
 }
 
+bool looks_like_task_args(const JsonValue& args) {
+  if (!args.is_object()) return false;
+  return args.contains("prompt") || args.contains("task") ||
+         args.contains("subagent_type") || args.contains("objective") ||
+         args.value("op", "") == "spawn" || args.value("op", "") == "result" ||
+         args.value("op", "") == "kill" || args.value("op", "") == "list";
+}
+
+JsonValue parse_task_args_from_exec(const CursorExecRequest& req) {
+  try {
+    auto parsed = JsonValue::parse(req.args);
+    if (looks_like_task_args(parsed)) return parsed;
+  } catch (...) {
+  }
+
+  const auto fields = proto::parse_fields(req.args);
+  for (const auto& f : fields) {
+    if (f.wire != 2 || f.bytes.empty()) continue;
+    if (f.bytes.front() == '{') {
+      try {
+        auto parsed = JsonValue::parse(f.bytes);
+        if (looks_like_task_args(parsed)) return parsed;
+      } catch (...) {
+      }
+    }
+  }
+  return JsonValue();
+}
+
+CursorExecReply handle_task(const CursorExecRequest& req,
+                            const std::string& workspace,
+                            std::shared_ptr<std::atomic<bool>> abort_flag,
+                            const GenerateOptions* options,
+                            JsonValue args) {
+  CursorExecReply reply;
+  reply.tool_name = "task";
+  reply.tool_call_id = req.exec_id.empty() ? std::to_string(req.id) : req.exec_id;
+  reply.arguments = args;
+
+  ToolExecutionContext ctx;
+  ctx.workspace = workspace;
+  ctx.abort_flag = abort_flag;
+  if (options) ctx.subagent_runner = options->subagent_runner;
+
+  LOG_INFO("Cursor exec task op={} desc={}",
+           args.value("op", "spawn"),
+           args.value("description", args.value("prompt", "")).substr(0, 120));
+  const auto started = std::chrono::steady_clock::now();
+  auto result = TaskTool::execute(args, ctx);
+  const auto elapsed_ms = static_cast<int>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - started)
+          .count());
+  reply.result = result;
+  reply.is_error = result.is_object() && result.contains("error");
+  const std::string output =
+      result.contains("output") && result["output"].is_string()
+          ? result["output"].get<std::string>()
+          : result.dump();
+  const uint32_t result_field = result_field_for(req.args_field);
+  if (reply.is_error) {
+    return finish(std::move(reply), req, result_field,
+                  oneof_error(result.value("error", output)), elapsed_ms);
+  }
+  return finish(std::move(reply), req, result_field,
+                oneof_success(proto::bytes_field(1, output)), elapsed_ms);
+}
+
 }  // namespace
 
 std::string CursorExec::shell_stream_start_message(
@@ -364,9 +434,22 @@ const char* CursorExec::tool_name_for_field(uint32_t args_field) {
 CursorExecReply CursorExec::handle(
     const CursorExecRequest& request,
     const std::string& workspace,
-    std::shared_ptr<std::atomic<bool>> abort_flag) {
+    std::shared_ptr<std::atomic<bool>> abort_flag,
+    const GenerateOptions* options) {
   LOG_INFO("Cursor exec: field={} id={} exec_id={}", request.args_field,
            request.id, request.exec_id);
+  if (request.args_field == 11 ||
+      (request.args_field != 2 && request.args_field != 14 &&
+       request.args_field != 46 && request.args_field != 52 &&
+       request.args_field != 27 && request.args_field != 36 &&
+       request.args_field != 41 && request.args_field != 42 &&
+       request.args_field != 43)) {
+    auto task_args = parse_task_args_from_exec(request);
+    if (!task_args.is_null() && looks_like_task_args(task_args)) {
+      return handle_task(request, workspace, abort_flag, options,
+                         std::move(task_args));
+    }
+  }
   switch (request.args_field) {
     case 2:
     case 52:

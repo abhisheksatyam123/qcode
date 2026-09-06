@@ -1,4 +1,5 @@
 #include <qcode/transform/provider_transform.h>
+#include <qcode/core/logger.h>
 #include <qcode/providers/zen_route.h>
 
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace qcode {
 namespace ProviderTransform {
@@ -490,7 +492,48 @@ Messages normalize_messages(const Messages& messages, const Model& model) {
     }
   }
 
-  return result;
+  return close_unpaired_tool_calls(result);
+}
+
+Messages close_unpaired_tool_calls(const Messages& messages) {
+  std::unordered_set<std::string> result_ids;
+  for (const auto& msg : messages) {
+    for (const auto& result : msg.get_tool_results()) {
+      if (!result.tool_call_id.empty()) {
+        result_ids.insert(result.tool_call_id);
+      }
+    }
+  }
+
+  Messages out;
+  out.reserve(messages.size() + 4);
+  std::size_t closed = 0;
+  for (const auto& msg : messages) {
+    out.push_back(msg);
+    if (!msg.has_tool_calls()) continue;
+
+    std::vector<ToolResultContentPart> missing;
+    for (const auto& call : msg.get_tool_calls()) {
+      if (call.id.empty() || result_ids.contains(call.id)) continue;
+      missing.emplace_back(
+          call.id,
+          JsonValue{{"error",
+                     "Tool call interrupted before a result was recorded."}},
+          true);
+      result_ids.insert(call.id);
+    }
+    if (missing.empty()) continue;
+    closed += missing.size();
+    out.push_back(Message::tool_results(missing));
+  }
+
+  if (closed > 0) {
+    LOG_WARN(
+        "close_unpaired_tool_calls: synthesized {} tool result(s) for "
+        "interrupted function calls",
+        closed);
+  }
+  return out;
 }
 
 // ── Provider options ──

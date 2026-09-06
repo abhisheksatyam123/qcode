@@ -39,8 +39,13 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     // compaction / DB reload) are not sent — Claude rejects those with 400.
     std::unordered_set<std::string> seen_tool_call_ids;
 
+    // Close unpaired tool calls (TUI restart / abort mid-tool) so Responses
+    // does not 400 with "No tool output found for function call".
+    const auto messages =
+        ProviderTransform::close_unpaired_tool_calls(options.messages);
+
     // Use provided messages
-    for (const auto& msg : options.messages) {
+    for (const auto& msg : messages) {
       nlohmann::json message;
 
       // Handle different content types

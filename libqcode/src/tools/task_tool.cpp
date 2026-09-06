@@ -323,28 +323,63 @@ void TaskTool::clear_background_tasks() {
   SubagentRegistry::instance().clear();
 }
 
-JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext& context) {
-  (void)context;
-
-  std::string subagent_type = args.value("subagent_type", "");
+static JsonValue normalize_spawn_args(JsonValue args) {
+  std::string mode = args.value("mode", "");
+  std::string subagent_type = args.value("subagent_type", args.value("agent", ""));
   if (subagent_type.empty()) {
-    JsonValue err;
-    err["error"] = "subagent_type is required";
-    return err;
+    if (mode == "explore" || mode == "implement" || mode == "verify") {
+      subagent_type = mode;
+    } else {
+      subagent_type = "general";
+    }
+  }
+  args["subagent_type"] = subagent_type;
+
+  if (mode.empty()) {
+    if (subagent_type == "explore" || subagent_type == "implement" ||
+        subagent_type == "verify") {
+      mode = subagent_type;
+    } else {
+      mode = "explore";
+    }
+    args["mode"] = mode;
   }
 
+  std::string prompt_text = args.value("prompt", "");
+  if (prompt_text.empty()) prompt_text = args.value("task", "");
+  if (prompt_text.empty()) prompt_text = args.value("objective", "");
+  if (prompt_text.empty()) prompt_text = args.value("description", "");
+  if (!prompt_text.empty()) args["prompt"] = prompt_text;
+
+  if (mode == "implement") {
+    if (!args.contains("can_edit")) args["can_edit"] = true;
+    if (!args.contains("allowed_paths") || args["allowed_paths"].empty()) {
+      args["allowed_paths"] = JsonValue::array({"."});
+    }
+  }
+  return args;
+}
+
+JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionContext& context) {
+  JsonValue args = normalize_spawn_args(raw_args);
+
+  std::string subagent_type = args.value("subagent_type", "general");
   std::string description = args.value("description", "");
-  std::string prompt_text = args.value("prompt", args.value("task", ""));
+  std::string prompt_text = args.value("prompt", "");
+  if (prompt_text.empty()) {
+    JsonValue err;
+    err["error"] =
+        "task prompt is required (prompt, task, objective, or description)";
+    return err;
+  }
 
   std::string session_id = generate_session_id();
   bool is_background = args.value("background", args.value("run_in_background", false));
 
-  // Parse delegation parameters
   std::string mode = args.value("mode", "explore");
   std::string objective = args.value("objective", "");
   bool can_edit = args.value("can_edit", false);
 
-  // Validate implement mode requirements
   if (mode == "implement" && !can_edit) {
     JsonValue err;
     err["error"] = "can_edit=true is required for implement-mode subagents";
@@ -388,7 +423,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
     std::string output_text;
     bool ran = false;
     if (context.subagent_runner) {
-      JsonValue sub = context.subagent_runner(args);
+      JsonValue sub = context.subagent_runner(args, context.abort_flag);
       if (sub.is_object() && sub.contains("error")) {
         return sub;
       }
@@ -425,8 +460,11 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
   if (context.subagent_runner) {
     auto runner = context.subagent_runner;
     auto sub_abort = std::make_shared<std::atomic<bool>>(false);
-    auto fut = std::async(std::launch::async, [runner, args]() -> JsonValue {
-      return runner(args);
+    auto fut = std::async(std::launch::async, [runner, args, sub_abort]() -> JsonValue {
+      if (sub_abort && sub_abort->load()) {
+        return JsonValue{{"error", "Subagent cancelled"}};
+      }
+      return runner(args, sub_abort);
     });
     SubagentRegistry::instance().register_task(
         bg_id, session_id, description, subagent_type, mode, chosen_model, sub_abort, std::move(fut));
@@ -516,48 +554,27 @@ JsonValue TaskTool::execute(const JsonValue& args, const ToolExecutionContext& c
 }
 
 Tool TaskTool::definition() {
-  // Create combined schema that accepts all task operations
-  JsonValue schema;
-  schema["type"] = "object";
-  schema["properties"] = JsonValue::object();
+  JsonValue schema = TaskToolSchema::spawn_parameters();
   auto& props = schema["properties"];
-
-  props["op"] = JsonValue{{"type", "string"},
-    {"enum", {"spawn", "result", "kill", "pause", "resume", "resurrect", "model", "status", "list"}},
-    {"description", "Task operation."}};
-  props["description"] = JsonValue{{"type", "string"}};
-  props["subagent_type"] = JsonValue{{"type", "string"}};
-  props["prompt"] = JsonValue{{"type", "string"}};
-  props["mode"] = JsonValue{{"type", "string"}, {"enum", {"explore", "implement", "verify"}}};
-  props["objective"] = JsonValue{{"type", "string"}};
-  props["can_edit"] = JsonValue{{"type", "boolean"}};
-  props["allowed_paths"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}}};
-  props["forbidden_paths"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}}};
-  props["background"] = JsonValue{{"type", "boolean"}};
-  props["run_in_background"] = JsonValue{{"type", "boolean"}};
-  props["background_task_id"] = JsonValue{{"type", "string"}};
-  props["timeout_ms"] = JsonValue{{"type", "integer"}, {"minimum", 0}};
-  props["task_id"] = JsonValue{{"type", "string"}};
+  props["op"]["enum"] = {"spawn", "result", "kill", "pause", "resume",
+                         "resurrect", "model", "status", "list"};
+  props["background_task_id"] = JsonValue{
+      {"type", "string"},
+      {"description", "Background task id for result/kill."}};
+  props["timeout_ms"] = JsonValue{{"type", "integer"},
+                                  {"minimum", 0},
+                                  {"description", "How long to wait for result."}};
   props["pid"] = JsonValue{{"type", "string"}};
   props["reason"] = JsonValue{{"type", "string"}};
-  props["model"] = JsonValue{{"type", "string"}};
-  props["models"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}}};
-  props["budget"] = JsonValue{
-    {"type", "object"},
-    {"properties", JsonValue{
-      {"max_files", JsonValue{{"type", "integer"}}},
-      {"max_output_chars", JsonValue{{"type", "integer"}}},
-      {"timeout_ms", JsonValue{{"type", "integer"}}}
-    }}
-  };
 
-  return Tool(
-    "task",
-    schema,
-    [](const JsonValue& args, const ToolExecutionContext& context) -> JsonValue {
-      return TaskTool::execute(args, context);
-    }
-  );
+  Tool tool(
+      TaskTool::kDescription,
+      schema,
+      [](const JsonValue& args, const ToolExecutionContext& context) -> JsonValue {
+        return TaskTool::execute(args, context);
+      });
+  tool.name = "task";
+  return tool;
 }
 
 }  // namespace qcode

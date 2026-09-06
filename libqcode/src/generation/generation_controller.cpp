@@ -5,6 +5,7 @@
 #include <qcode/session/token_budget.h>
 #include <qcode/core/event.h>
 #include <qcode/session/session_store.h>
+#include <qcode/transform/provider_transform.h>
 
 #include <algorithm>
 #include <chrono>
@@ -67,6 +68,10 @@ void GenerationController::request_abort() {
     if (worker_.joinable()) {
         worker_.request_stop();
     }
+    // Hold auto-start so a second Esc ("force stop") cannot land on a
+    // queued Grok/Cursor turn that spawned the instant this one died.
+    queue_resume_at_ = std::chrono::steady_clock::now() +
+                       std::chrono::milliseconds(2000);
 }
 
 void GenerationController::prepare_session_switch() {
@@ -102,6 +107,9 @@ void GenerationController::spawn(std::string prompt, GenerationRequest request) 
 void GenerationController::maybe_start_queued(GenerationRequest request) {
     if (store_.is_generating() || is_busy() || store_.status() == "error" ||
         !store_.has_queued_prompt()) {
+        return;
+    }
+    if (std::chrono::steady_clock::now() < queue_resume_at_) {
         return;
     }
     auto next = store_.dequeue_prompt();
@@ -155,6 +163,24 @@ void GenerationController::spawn_unlocked(std::string prompt,
     if (request.append_user_message) {
         store_.append_chat_message("User", prompt);
         session::save_message(store_.session_id(), "User", prompt);
+    }
+    // A TUI restart or Esc mid-tool persists ToolCallStarted without a
+    // matching ToolResult. Providers 400 ("No tool output found for
+    // function call") if we replay that pair. Close them on the UI thread
+    // so the worker snapshot, the scrollback, and the session DB agree.
+    if (auto& hist_ptr = store_.state().messages_history; hist_ptr) {
+        auto repaired =
+            ProviderTransform::close_unpaired_tool_calls(*hist_ptr);
+        if (repaired.size() != hist_ptr->size()) {
+            LOG_WARN(
+                "GenerationController: closed {} unpaired tool call(s) "
+                "left by an interrupted turn",
+                repaired.size() - hist_ptr->size());
+            hist_ptr =
+                std::make_shared<qcode::Messages>(std::move(repaired));
+            session::overwrite_session_history(store_.session_id(),
+                                               *hist_ptr);
+        }
     }
     LOG_INFO(
         "GenerationController: spawn prompt_len={} queue_remaining={} "

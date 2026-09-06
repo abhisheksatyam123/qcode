@@ -23,6 +23,10 @@ TEST(ToolCatalogTest, OrchestratorAndSubagentToolSets) {
     EXPECT_EQ(orch_tools.size(), 2u);
     EXPECT_TRUE(orch_tools.count("bash"));
     EXPECT_TRUE(orch_tools.count("task"));
+    EXPECT_NE(orch_tools.at("task").description.find("subagent"),
+              std::string::npos);
+    EXPECT_TRUE(orch_tools.at("task").parameters_schema["properties"].contains(
+        "task"));
 
     // Subagent has exactly 1 tool: bash
     auto sub_tools = ToolCatalog::build_definitions(ToolConfig::subagent());

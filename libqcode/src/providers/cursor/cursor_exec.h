@@ -11,6 +11,9 @@
 #include <nlohmann/json.hpp>
 
 namespace qcode {
+
+struct GenerateOptions;
+
 namespace cursor {
 
 // One native AgentService exec the client must answer over BidiAppend.
@@ -42,7 +45,8 @@ class CursorExec {
   static CursorExecReply handle(
       const CursorExecRequest& request,
       const std::string& workspace,
-      std::shared_ptr<std::atomic<bool>> abort_flag = nullptr);
+      std::shared_ptr<std::atomic<bool>> abort_flag = nullptr,
+      const GenerateOptions* options = nullptr);
 
   // AgentService waits for a ShellStream start event before the command
   // finishes. Send this as soon as field 14 arrives, then run the command.

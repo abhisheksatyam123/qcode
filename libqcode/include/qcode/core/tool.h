@@ -19,6 +19,10 @@ namespace qcode {
 
 using JsonValue = nlohmann::json;
 
+/// Nested subagent turn. Second arg is the per-task abort flag (kill / parent Esc).
+using SubagentRunner = std::function<JsonValue(
+    const JsonValue& args, std::shared_ptr<std::atomic<bool>> abort_flag)>;
+
 /// Context provided to tool execution functions
 struct ToolExecutionContext {
   std::string tool_call_id;
@@ -30,7 +34,7 @@ struct ToolExecutionContext {
   // runs a REAL nested subagent turn instead of returning a simulated
   // result. Args: {prompt, subagent_type, description...}; returns JSON with
   // "output" / "error".
-  std::function<JsonValue(const JsonValue&)> subagent_runner{nullptr};
+  SubagentRunner subagent_runner{nullptr};
 };
 
 /// Tool execution function signature

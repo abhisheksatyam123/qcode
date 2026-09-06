@@ -41,6 +41,24 @@ std::vector<std::pair<std::string, std::string>> cursor_run_headers(
     const std::string& token, const std::string& request_id);
 std::string resolve_workspace(const GenerateOptions& options);
 
+// Heartbeats mean the agent is still alive (Grok 4.6 thinks for a long time
+// between visible tokens). Ending after 12s of text+heartbeat was cutting
+// turns short. Use the same 3-minute hang detector for every idle case.
+inline constexpr auto kIdleAfterTextTimeout = std::chrono::seconds(180);
+inline constexpr auto kIdleAfterExecTimeout = std::chrono::seconds(180);
+inline constexpr auto kIdleBeforeContentTimeout = std::chrono::seconds(180);
+
+inline bool idle_end_on_heartbeat(
+    bool has_text, bool saw_exec,
+    std::chrono::steady_clock::time_point last_activity,
+    std::chrono::steady_clock::time_point now =
+        std::chrono::steady_clock::now()) {
+  const auto idle = now - last_activity;
+  if (saw_exec) return idle >= kIdleAfterExecTimeout;
+  if (has_text) return idle >= kIdleAfterTextTimeout;
+  return idle >= kIdleBeforeContentTimeout;
+}
+
 struct AgentSessionState {
   std::string collected_text;
   std::string collected_reasoning;

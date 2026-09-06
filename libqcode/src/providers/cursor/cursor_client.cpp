@@ -123,7 +123,8 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
           },
           /*timeout_sec=*/0,
           [&options]() {
-            return options.abort_flag && options.abort_flag->load();
+            return (options.abort_flag && options.abort_flag->load()) ||
+                   (options.has_queued_work && options.has_queued_work());
           });
     });
 
@@ -218,8 +219,8 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
       };
       hooks.on_exec_reply = [impl_ptr](const CursorExecReply& reply) {
         // Cursor AgentService still proposes read/grep/write.
-        // We reject those locally; only surface bash.
-        if (reply.tool_name != "bash") return;
+        // Surface bash and qcode's task tool; hide the rest.
+        if (reply.tool_name != "bash" && reply.tool_name != "task") return;
         impl_ptr->push_event(StreamEvent::tool_call(
             reply.tool_call_id, reply.tool_name, reply.arguments.dump()));
         impl_ptr->push_event(StreamEvent::tool_result(
@@ -245,9 +246,11 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
                                       bidi_append_kv, builder, *kv, options);
             },
             /*timeout_sec=*/0,
-            [impl_ptr, abort = options.abort_flag]() {
+            [impl_ptr, abort = options.abort_flag,
+             has_queued = options.has_queued_work]() {
               return impl_ptr->is_stopped() ||
-                     (abort && abort->load());
+                     (abort && abort->load()) ||
+                     (has_queued && has_queued());
             });
       });
 

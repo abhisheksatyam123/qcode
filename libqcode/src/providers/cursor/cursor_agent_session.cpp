@@ -17,20 +17,6 @@ std::string default_workspace_path() {
   return path.string();
 }
 
-constexpr auto kIdleEndTimeout = std::chrono::seconds(12);
-constexpr auto kIdleAfterExecTimeout = std::chrono::seconds(180);
-constexpr auto kIdleBeforeContentTimeout = std::chrono::seconds(180);
-
-bool idle_end_on_heartbeat(
-    bool has_text,
-    bool saw_exec,
-    std::chrono::steady_clock::time_point last_activity) {
-  const auto idle = std::chrono::steady_clock::now() - last_activity;
-  if (saw_exec) return idle >= kIdleAfterExecTimeout;
-  if (has_text) return idle >= kIdleEndTimeout;
-  return idle >= kIdleBeforeContentTimeout;
-}
-
 std::string describe_frame(const std::string& payload) {
   std::string out;
   for (const auto& f : proto::parse_fields(payload)) {
@@ -56,7 +42,8 @@ bool answer_exec(const BidiAppend& bidi_append,
                  const std::string& workspace,
                  std::shared_ptr<std::atomic<bool>> abort_flag,
                  std::atomic<bool>& context_replied,
-                 const std::function<void(const CursorExecReply&)>& on_reply) {
+                 const std::function<void(const CursorExecReply&)>& on_reply,
+                 const GenerateOptions* options) {
   if (ev.kind == AgentStreamEvent::Kind::kRequestContext) {
     if (context_replied.exchange(true)) return true;
     const auto reply =
@@ -74,7 +61,7 @@ bool answer_exec(const BidiAppend& bidi_append,
       return false;
     }
   }
-  const auto reply = CursorExec::handle(req, workspace, abort_flag);
+  const auto reply = CursorExec::handle(req, workspace, abort_flag, options);
   if (on_reply) on_reply(reply);
   if (reply.client_messages.empty()) {
     LOG_ERROR("Cursor exec field={} produced no reply", ev.exec_field);
@@ -170,13 +157,17 @@ bool feed_agent_chunk(AgentSessionState& state,
   if (options.abort_flag && options.abort_flag->load()) {
     return false;
   }
+  if (options.has_queued_work && options.has_queued_work()) {
+    return false;
+  }
   for (const auto& payload : state.frame_buf.feed(chunk)) {
     const auto ev = CursorResponseParser::classify_agent_payload(payload);
     using Kind = AgentStreamEvent::Kind;
     switch (ev.kind) {
       case Kind::kHeartbeat:
         if (idle_end_on_heartbeat(!state.collected_text.empty(),
-                                  state.saw_exec.load(), state.last_activity)) {
+                                  state.saw_exec.load(),
+                                  state.last_activity)) {
           LOG_INFO("{}: idle end after heartbeat (text_len={})", hooks.log_tag,
                    state.collected_text.size());
           state.turn_ended = true;
@@ -211,7 +202,7 @@ bool feed_agent_chunk(AgentSessionState& state,
         if (ev.kind == Kind::kExec) state.saw_exec = true;
         if (!answer_exec(bidi_append, builder, ev, resolve_workspace(options),
                          options.abort_flag, state.context_replied,
-                         hooks.on_exec_reply)) {
+                         hooks.on_exec_reply, &options)) {
           state.stream_error = ev.kind == Kind::kRequestContext
                                    ? "Cursor request_context BidiAppend failed"
                                    : "Cursor exec BidiAppend failed";

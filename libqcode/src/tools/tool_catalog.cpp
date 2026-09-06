@@ -27,8 +27,8 @@ std::vector<ToolDescriptor> ToolCatalog::descriptors() {
     {
       "task",
       "Delegate bounded work to subagents (spawn, result, kill, pause, resume, resurrect).",
-      R"(task.spawn = { op?: "spawn", description: string, subagent_type: string,
-    prompt: string, mode?: "explore"|"implement"|"verify",
+      R"(task.spawn = { op?: "spawn", description?: string, subagent_type?: string,
+    prompt: string, task?: string, mode?: "explore"|"implement"|"verify",
     objective?: string, scope?: string[], out_of_scope?: string[],
     filesystem_policy?: "bash-only", output_format?: "structured-summary",
     can_edit?: boolean, allowed_paths?: string[], forbidden_paths?: string[],

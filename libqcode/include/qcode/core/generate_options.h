@@ -46,8 +46,11 @@ struct GenerateOptions {
   // Multi-agent hook (opencode TaskTool parity): injected by the generation
   // layer so the task tool can run a real nested subagent turn. Returns JSON
   // with "output" (final subagent text) or "error".
-  std::function<JsonValue(const JsonValue& args)> subagent_runner;
+  SubagentRunner subagent_runner;
   std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
+  // When true, ServerSideDuplex streams (Cursor/Grok) yield so a queued
+  // follow-up can start without the user having to Esc-abort the turn.
+  std::function<bool()> has_queued_work;
 
   // Callbacks for tool calling and retries
   std::optional<std::function<void(const GenerateStep&)>> on_step_finish;
