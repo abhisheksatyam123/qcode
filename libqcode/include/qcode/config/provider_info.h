@@ -36,4 +36,7 @@ struct ProviderInfo {
     std::vector<ModelInfo> models;
 };
 
+// Format a clean Markdown section of available providers and models for the system prompt.
+std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& providers);
+
 }  // namespace qcode

@@ -1,3 +1,4 @@
+#include <gmock/gmock.h>
 #include <qcode/config/config.h>
 #include <qcode/transform/provider_transform.h>
 #include <qcode/ui/commands.h>
@@ -342,6 +343,39 @@ TEST(TuiConfigTest, HomeConfigDrivesProvidersModelsAndEfforts) {
           << provider.id << "/" << model.id;
     }
   }
+}
+
+TEST(TuiConfigTest, FormatProviderCatalogForPrompt) {
+  std::vector<ProviderInfo> providers;
+  ProviderInfo p1;
+  p1.id = "openrouter";
+  p1.name = "OpenRouter";
+  ModelInfo m1;
+  m1.id = "deepseek/deepseek-v4-flash-0731";
+  m1.name = "DeepSeek V4 Flash";
+  m1.reasoning = true;
+  p1.models.push_back(m1);
+
+  ProviderInfo p2;
+  p2.id = "antigravity";
+  p2.name = "Antigravity";
+  ModelInfo m2;
+  m2.id = "gemini-3.8-flash";
+  m2.name = "Gemini 3.8 Flash";
+  m2.reasoning = false;
+  p2.models.push_back(m2);
+
+  providers.push_back(p1);
+  providers.push_back(p2);
+
+  std::string catalog_md = format_provider_catalog_for_prompt(providers);
+  EXPECT_THAT(catalog_md, testing::HasSubstr("### Available Providers & Models"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("**openrouter** (OpenRouter)"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("`deepseek/deepseek-v4-flash-0731`"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("[reasoning]"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("**antigravity** (Antigravity)"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("`gemini-3.8-flash`"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("model: \"<provider>/<model_id>\""));
 }
 
 TEST(TuiConfigTest, FiltersOutUnsupportedProviders) {

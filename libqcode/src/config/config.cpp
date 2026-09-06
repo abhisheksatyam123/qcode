@@ -548,5 +548,36 @@ std::vector<ProviderInfo> load_providers_from_config() {
     return loaded;
 }
 
-} // namespace qcode
+std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& providers) {
+    if (providers.empty()) return "";
 
+    std::ostringstream ss;
+    ss << "### Available Providers & Models (from opencode.json)\n\n"
+       << "You have access to the following configured providers and models. "
+       << "When delegating subtasks with `task` (`op: \"spawn\"`), you can assign distinct models "
+       << "in parallel using `model: \"<provider>/<model_id>\"` or `model: \"<model_id>\"`:\n\n";
+
+    for (const auto& provider : providers) {
+        if (provider.models.empty()) continue;
+        ss << "- **" << provider.id << "** (" << (provider.name.empty() ? provider.id : provider.name) << "):\n";
+        for (const auto& model : provider.models) {
+            ss << "  - `" << model.id << "`";
+            if (!model.name.empty() && model.name != model.id) {
+                ss << " (" << model.name << ")";
+            }
+            if (model.reasoning) {
+                ss << " [reasoning]";
+            }
+            ss << "\n";
+        }
+    }
+
+    ss << "\n#### Multi-Agent Parallel Delegation Guidelines\n"
+       << "- Run independent subtasks concurrently by specifying `background: true` on `task.spawn`.\n"
+       << "- Match tasks to model strengths (e.g. fast models for search/inspection, reasoning models for architecture/refactoring).\n"
+       << "- Collect results with `task` operation `result` and `background_task_id`.\n";
+
+    return ss.str();
+}
+
+} // namespace qcode

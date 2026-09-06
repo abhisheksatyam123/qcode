@@ -1176,9 +1176,17 @@ void run_generation_with_bus(
             "verbosity. Ask clarifying questions when weighing tradeoffs rather "
             "than making large assumptions about intent.\n"
             "</system-reminder>";
+        const std::string catalog_section = format_provider_catalog_for_prompt(providers);
+        if (!catalog_section.empty()) {
+            base_opts.system += "\n\n" + catalog_section;
+        }
         LOG_INFO("ChatBus: agent_mode=plan (read-only)");
     } else {
         base_opts.system += std::string(kOrchestratorReminder);
+        const std::string catalog_section = format_provider_catalog_for_prompt(providers);
+        if (!catalog_section.empty()) {
+            base_opts.system += "\n\n" + catalog_section;
+        }
         LOG_INFO("ChatBus: agent_mode=orchestrator (lead coordinator with parallel subagents)");
     }
 
