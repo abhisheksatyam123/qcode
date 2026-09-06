@@ -118,6 +118,13 @@ static JsonValue run_subagent_turn_multi(
   std::string target_model_id;
   const ModelInfo* target_model_info = nullptr;
 
+  auto matches_model = [](const ModelInfo& m, std::string_view query) -> bool {
+    if (m.id == query || m.name == query) return true;
+    if (ProviderTransform::cursor_picker_id(query) == m.id) return true;
+    if (ProviderTransform::cursor_picker_id(m.id) == query) return true;
+    return false;
+  };
+
   if (providers) {
     for (const auto& candidate : candidates) {
       auto slash = candidate.find('/');
@@ -129,8 +136,9 @@ static JsonValue run_subagent_turn_multi(
             target_provider = &p;
             target_model_id = mod_suffix;
             for (const auto& m : p.models) {
-              if (m.id == mod_suffix || m.name == mod_suffix) {
+              if (matches_model(m, mod_suffix)) {
                 target_model_info = &m;
+                target_model_id = m.id;
                 break;
               }
             }
@@ -142,7 +150,7 @@ static JsonValue run_subagent_turn_multi(
 
       for (const auto& p : *providers) {
         for (const auto& m : p.models) {
-          if (m.id == candidate || m.name == candidate) {
+          if (matches_model(m, candidate)) {
             target_provider = &p;
             target_model_id = m.id;
             target_model_info = &m;
@@ -170,8 +178,9 @@ static JsonValue run_subagent_turn_multi(
           target_provider = &p;
           target_model_id = default_model_id;
           for (const auto& m : p.models) {
-            if (m.id == default_model_id || m.name == default_model_id) {
+            if (matches_model(m, default_model_id)) {
               target_model_info = &m;
+              target_model_id = m.id;
               break;
             }
           }
@@ -202,8 +211,13 @@ static JsonValue run_subagent_turn_multi(
                              : target_provider->protocol;
     prov_opts.project_id = target_provider->project_id;
 
-    if (target_provider->id.find("antigravity") != std::string::npos ||
-        target_provider->name.find("Antigravity") != std::string::npos) {
+    qcode::providers::register_authenticated_providers();
+    if (target_provider->id == "cursor") {
+      if (prov_opts.api_key.empty()) {
+        prov_opts.api_key = get_cursor_access_token();
+      }
+    } else if (target_provider->id.find("antigravity") != std::string::npos ||
+               target_provider->name.find("Antigravity") != std::string::npos) {
       const auto fresh = get_antigravity_token(/*force_refresh=*/false);
       if (!fresh.empty()) {
         prov_opts.api_key = fresh;
@@ -1070,6 +1084,7 @@ void run_generation_with_bus(
     });
 
     // ── Resolve provider & API key ──
+    qcode::providers::register_authenticated_providers();
     qcode::Client client;
     std::string provider_id;
     std::string resolved_model_id = model_id;
@@ -1085,7 +1100,9 @@ void run_generation_with_bus(
         provider_options.protocol = p.protocol;
         provider_options.project_id = p.project_id;
         for (const auto& m : p.models) {
-          if (m.id == model_id || m.name == model_id) {
+          if (m.id == model_id || m.name == model_id ||
+              ProviderTransform::cursor_picker_id(model_id) == m.id ||
+              ProviderTransform::cursor_picker_id(m.id) == model_id) {
             resolved_model_id = m.id;
             resolved_model = &m;
             if (!m.protocol.empty()) {
@@ -1096,6 +1113,9 @@ void run_generation_with_bus(
         }
         break;
       }
+    }
+    if (provider_id == "cursor" && provider_options.api_key.empty()) {
+      provider_options.api_key = get_cursor_access_token();
     }
 
     const auto call = prepare_provider_call(

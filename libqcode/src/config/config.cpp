@@ -396,6 +396,18 @@ static void apply_provider_runtime_defaults(ProviderInfo& provider) {
             provider.api_key = key;
         }
     }
+    if (provider.id == "cursor" && provider.api_key.empty()) {
+        const auto token = get_cursor_access_token();
+        if (!token.empty()) {
+            provider.api_key = token;
+        }
+    }
+    if (provider.id == "antigravity" && provider.api_key.empty()) {
+        const auto token = get_antigravity_token();
+        if (!token.empty()) {
+            provider.api_key = token;
+        }
+    }
     finalize_configured_models(provider, provider.models);
     LOG_INFO("{} from config: {} models api={}", provider.id,
              provider.models.size(),

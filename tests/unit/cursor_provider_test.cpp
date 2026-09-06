@@ -1,3 +1,6 @@
+#include <qcode/providers/registry.h>
+#include <qcode/providers/authenticated_providers.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/core/generate_options.h>
 #include "providers/cursor/cursor_bidi.h"
 #include "providers/cursor/cursor_exec.h"
@@ -444,6 +447,30 @@ TEST(CursorProviderTest, BidiSessionShutsDownWithoutWork) {
   CursorBidi bidi("https://example.invalid", "token", "req", "cli-test");
   EXPECT_TRUE(bidi.is_ok());
   EXPECT_TRUE(bidi.flush());
+}
+
+TEST(CursorProviderTest, ResolvesFromProviderRegistryWithToken) {
+  providers::register_authenticated_providers();
+  providers::ProviderOptions options;
+  options.api_key = "test-cursor-token";
+  auto res = providers::ProviderRegistry::instance().resolve("cursor", options);
+  EXPECT_TRUE(res.ok()) << res.error;
+  EXPECT_TRUE(res.client.is_valid());
+  EXPECT_EQ(res.client.tool_execution_model(), ToolExecutionModel::ServerSideDuplex);
+}
+
+TEST(CursorProviderTest, RemapsAndResolvesCursorModelSlugs) {
+  // Test grok-4.6 remapping to cursor-grok-4.6
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("grok-4.6"), "cursor-grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("cursor-grok-4.6"), "cursor-grok-4.6");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("composer-2.5"), "composer-2.5");
+
+  // Wire slugs with different reasoning efforts
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("cursor-grok-4.6", "low"), "cursor-grok-4.6-low");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("cursor-grok-4.6", "medium"), "cursor-grok-4.6-medium");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("cursor-grok-4.6", "high"), "cursor-grok-4.6-high");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("cursor-grok-4.6", "max"), "cursor-grok-4.6-xhigh");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("composer-2.5", "high"), "composer-2.5-high");
 }
 
 TEST(CursorProviderTest, ExecGrepIsDisabled) {

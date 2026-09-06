@@ -32,8 +32,7 @@ void register_authenticated_providers() {
                     "v1internal"
                   : options.base_url;
           client_options.project_id = options.project_id;
-          return ClientResolution{
-              qcode::antigravity::create_client(token, client_options)};
+          return ClientResolution{qcode::antigravity::create_client(token, client_options), ""};
         });
 
     // Cursor auth (access token) lives in the TUI (reads
@@ -55,8 +54,7 @@ void register_authenticated_providers() {
           qcode::cursor::Options cursor_options;
           cursor_options.aiserver_base_url = aiserver;
           cursor_options.agent_base_url = agent;
-          return ClientResolution{
-              qcode::cursor::create_client(token, cursor_options)};
+          return ClientResolution{qcode::cursor::create_client(token, cursor_options), ""};
         });
   });
 }
