@@ -264,11 +264,11 @@ static JsonValue run_subagent_turn_multi(
     }
     sub_sys << "- Do not prompt or query the user. Use the bash tool to inspect files and execute commands.\n";
     sub_sys << "- Conclude with a clear, concise, structured summary detailing findings, changes, or test outcomes.\n\n";
-    sub_sys << ToolCatalog::build_tool_section(ToolConfig{true, false});
+    sub_sys << ToolCatalog::build_tool_section(ToolConfig::subagent());
 
     int max_steps = 25;
     qcode::GenerateOptions sub_opts(wire_model, sub_sys.str(), "");
-    sub_opts.tools = ToolCatalog::build_definitions(ToolConfig{true, false});
+    sub_opts.tools = ToolCatalog::build_definitions(ToolConfig::subagent());
     sub_opts.max_steps = max_steps;
     sub_opts.workspace = workspace;
     sub_opts.abort_flag = main_abort_flag;
@@ -1245,7 +1245,7 @@ void run_generation_with_bus(
       // Orchestrator has full tool suite: both bash and task subagent tools enabled (unless plan mode).
       const bool enable_task_tool = !plan_mode;
       qcode::ToolSet tools =
-          ToolCatalog::build_definitions(ToolConfig{true, enable_task_tool});
+          ToolCatalog::build_definitions(enable_task_tool ? ToolConfig::orchestrator() : ToolConfig::subagent());
       base_opts.tools = std::move(tools);
       // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
       constexpr int kMaxToolSteps = 100000;

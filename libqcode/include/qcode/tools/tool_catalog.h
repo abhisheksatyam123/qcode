@@ -21,6 +21,9 @@ struct ToolDescriptor {
 struct ToolConfig {
   bool enable_bash{true};
   bool enable_task{true};
+
+  static ToolConfig orchestrator() { return ToolConfig{true, true}; }
+  static ToolConfig subagent() { return ToolConfig{true, false}; }
 };
 
 // ── Agent tool catalog (prompt + ToolSet) ──

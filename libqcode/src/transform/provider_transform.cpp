@@ -596,22 +596,11 @@ bool is_opus_family(std::string_view model_id) {
 
 std::string sdk_key(std::string_view provider_name) {
   static const std::unordered_map<std::string, std::string> KEY_MAP = {
-    {"amazon", "bedrock"},
-    {"qpilot", "openai"},
-    {"qgenie", "openai"},
-    {"azure", "azure"},
-    {"google", "google"},
-    {"anthropic", "anthropic"},
-    {"openai", "openai"},
+    {"cursor", "cursor"},
+    {"opencode", "opencode"},
+    {"zen", "opencode"},
     {"openrouter", "openrouter"},
-    {"together", "togetherai"},
-    {"groq", "groq"},
-    {"mistral", "mistral"},
-    {"xai", "xai"},
-    {"perplexity", "perplexity"},
-    {"deepinfra", "deepinfra"},
-    {"cerebras", "cerebras"},
-    {"cohere", "cohere"},
+    {"antigravity", "antigravity"},
   };
 
   auto it = KEY_MAP.find(to_lower(provider_name));

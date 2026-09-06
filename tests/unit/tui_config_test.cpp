@@ -344,6 +344,35 @@ TEST(TuiConfigTest, HomeConfigDrivesProvidersModelsAndEfforts) {
   }
 }
 
+TEST(TuiConfigTest, FiltersOutUnsupportedProviders) {
+  ScopedConfig config(R"({
+      "provider": {
+        "opencode": {"name": "OpenCode", "models": {"m1": {}}},
+        "openrouter": {"name": "OpenRouter", "models": {"m2": {}}},
+        "cursor": {"name": "Cursor", "models": {"m3": {}}},
+        "antigravity": {"name": "Antigravity", "models": {"m4": {}}},
+        "openai": {"name": "OpenAI", "models": {"m5": {}}},
+        "anthropic": {"name": "Anthropic", "models": {"m6": {}}},
+        "qpilot": {"name": "QPilot", "models": {"m7": {}}},
+        "qgenie": {"name": "QGenie", "models": {"m8": {}}},
+        "unknown_vendor": {"name": "Unknown", "models": {"m9": {}}}
+      }
+    })");
+
+  const auto providers = config.load();
+  // Only the 4 supported providers must be loaded
+  ASSERT_EQ(providers.size(), 4u);
+  EXPECT_NE(FindProvider(providers, "opencode"), nullptr);
+  EXPECT_NE(FindProvider(providers, "openrouter"), nullptr);
+  EXPECT_NE(FindProvider(providers, "cursor"), nullptr);
+  EXPECT_NE(FindProvider(providers, "antigravity"), nullptr);
+  EXPECT_EQ(FindProvider(providers, "openai"), nullptr);
+  EXPECT_EQ(FindProvider(providers, "anthropic"), nullptr);
+  EXPECT_EQ(FindProvider(providers, "qpilot"), nullptr);
+  EXPECT_EQ(FindProvider(providers, "qgenie"), nullptr);
+  EXPECT_EQ(FindProvider(providers, "unknown_vendor"), nullptr);
+}
+
 TEST(TuiConfigTest, AntigravityTokenRefreshHelpers) {
   const auto path = std::filesystem::temp_directory_path() /
                     "qcode-antigravity-token-test.json";

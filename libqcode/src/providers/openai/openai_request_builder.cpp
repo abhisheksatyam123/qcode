@@ -352,25 +352,6 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
     headers.emplace("X-Title", "OpenCode");
   }
 
-  // Qualcomm specific headers (qpilot / qgenie)
-  if (config.base_url.find("qualcomm.com") != std::string::npos) {
-    std::string cli_name = "qgenie_cli";
-    if (config.base_url.find("qpilot") != std::string::npos) {
-      cli_name = "qpilot_cli";
-    }
-    std::string turn_id = qcode::utils::new_uuid();
-    std::string session_id = qcode::utils::new_uuid();
-    std::string enc_key = qcode::utils::random_hex(64);
-
-    headers.emplace("originator", "codex_cli_rs");
-    headers.emplace("version", "0.1.12");
-    headers.emplace("user-agent", "x86_64 / linux / terminal / " + cli_name + " / 0.1.12");
-    headers.emplace("session_id", session_id);
-    headers.emplace("x-codex-beta-features", "multi_agent");
-    headers.emplace("x-codex-turn-metadata", "{\"turn_id\":\"" + turn_id + "\",\"sandbox\":\"none\"}");
-    headers.emplace("x-encrypted-key", enc_key);
-  }
-
   // Config/JSON headers win over the built-in Referer/X-Title defaults.
   for (const auto& [key, value] : config.extra_headers) {
     headers.erase(key);

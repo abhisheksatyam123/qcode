@@ -404,6 +404,10 @@ static void apply_provider_runtime_defaults(ProviderInfo& provider) {
 
 }  // namespace
 
+static bool is_supported_provider(std::string_view id) {
+    return id == "cursor" || id == "opencode" || id == "openrouter" || id == "antigravity";
+}
+
 std::vector<ProviderInfo> load_providers_from_config() {
     std::vector<ProviderInfo> loaded;
     std::string path = config_path();
@@ -418,6 +422,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
         ordered_json config = ordered_json::parse(file);
         if (config.contains("provider")) {
             for (auto& [prov_id, prov_data] : config["provider"].items()) {
+                if (!is_supported_provider(prov_id)) {
+                    continue;
+                }
                 ProviderInfo prov;
                 prov.id = prov_id;
                 prov.name = prov_data.value("name", prov_id);

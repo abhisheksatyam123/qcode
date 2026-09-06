@@ -50,21 +50,19 @@ TEST(ProviderTransformTest, ZenApiProtocolMatchesOpenCodeDocs) {
 TEST(ProviderProfileTest, KindFromIdAndUrl) {
   EXPECT_EQ(provider_kind("opencode", ""), ProviderKind::kOpenCodeZen);
   EXPECT_EQ(provider_kind("openrouter", ""), ProviderKind::kOpenRouter);
-  EXPECT_EQ(provider_kind("anthropic", ""), ProviderKind::kAnthropic);
   EXPECT_EQ(provider_kind("cursor", ""), ProviderKind::kCursor);
   EXPECT_EQ(provider_kind("antigravity", ""), ProviderKind::kAntigravity);
-  EXPECT_EQ(provider_kind("openai", ""), ProviderKind::kOpenAI);
-  EXPECT_EQ(provider_kind("qpilot", ""), ProviderKind::kQPilot);
-  EXPECT_EQ(provider_kind("qgenie", ""), ProviderKind::kQGenie);
+  EXPECT_EQ(provider_kind("anthropic", ""), ProviderKind::kCompatible);
+  EXPECT_EQ(provider_kind("openai", ""), ProviderKind::kCompatible);
+  EXPECT_EQ(provider_kind("qpilot", ""), ProviderKind::kCompatible);
+  EXPECT_EQ(provider_kind("qgenie", ""), ProviderKind::kCompatible);
   EXPECT_EQ(provider_kind("custom", "https://opencode.ai/zen/v1"),
             ProviderKind::kOpenCodeZen);
   EXPECT_EQ(provider_kind("custom", "https://openrouter.ai/api/v1"),
             ProviderKind::kOpenRouter);
-  EXPECT_EQ(provider_kind("custom", "https://api.anthropic.com"),
-            ProviderKind::kAnthropic);
 }
 
-TEST(ProviderProfileTest, PrepareZenAndOpenRouterAndAnthropic) {
+TEST(ProviderProfileTest, PrepareZenAndOpenRouter) {
   providers::ProviderOptions zen;
   zen.base_url = "https://opencode.ai/zen/v1";
   zen.project_id = "proj";
@@ -103,12 +101,6 @@ TEST(ProviderProfileTest, PrepareZenAndOpenRouterAndAnthropic) {
   EXPECT_EQ(or_call.wire_model_id, "stealth/ox-alpha");
   EXPECT_EQ(openrouter.protocol, "chat_completions");
   EXPECT_TRUE(openrouter.completions_path.empty());
-
-  providers::ProviderOptions anthropic;
-  const auto anthro =
-      prepare_provider_call(anthropic, "anthropic", "claude-sonnet-4-6");
-  EXPECT_EQ(anthro.kind, ProviderKind::kAnthropic);
-  EXPECT_EQ(anthropic.protocol, "messages");
 }
 
 TEST(ProviderTransformTest, ChatTransportDetection) {

@@ -17,6 +17,20 @@ TEST(ToolCatalogTest, DescriptorsIncludeBash) {
     EXPECT_TRUE(has_bash);
 }
 
+TEST(ToolCatalogTest, OrchestratorAndSubagentToolSets) {
+    // Orchestrator has exactly 2 tools: bash and task (subagent)
+    auto orch_tools = ToolCatalog::build_definitions(ToolConfig::orchestrator());
+    EXPECT_EQ(orch_tools.size(), 2u);
+    EXPECT_TRUE(orch_tools.count("bash"));
+    EXPECT_TRUE(orch_tools.count("task"));
+
+    // Subagent has exactly 1 tool: bash
+    auto sub_tools = ToolCatalog::build_definitions(ToolConfig::subagent());
+    EXPECT_EQ(sub_tools.size(), 1u);
+    EXPECT_TRUE(sub_tools.count("bash"));
+    EXPECT_FALSE(sub_tools.count("task"));
+}
+
 TEST(ToolCatalogTest, BuildDefinitionsHonorsConfig) {
     auto both = ToolCatalog::build_definitions(ToolConfig{true, true});
     EXPECT_TRUE(both.count("bash"));

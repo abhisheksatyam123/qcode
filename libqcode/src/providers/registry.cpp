@@ -39,32 +39,12 @@ openai::CompatibleOptions to_openai(const ProviderOptions& options,
   return compatible;
 }
 
-ClientResolution resolve_openai(const ProviderOptions& options) {
-  const auto api_key = first_key(options.api_key, "OPENAI_API_KEY");
-  if (api_key.empty()) return ClientResolution::fail("OPENAI_API_KEY not set.");
-  return ClientResolution{openai::create_client(
-      api_key, to_openai(options, "https://api.openai.com"))};
-}
-
 ClientResolution resolve_openrouter(const ProviderOptions& options) {
   const auto api_key = first_key(options.api_key, "OPENROUTER_API_KEY");
   if (api_key.empty())
     return ClientResolution::fail("OPENROUTER_API_KEY not set.");
   return ClientResolution{openai::create_client(
       api_key, to_openai(options, "https://openrouter.ai/api"))};
-}
-
-ClientResolution resolve_anthropic(const ProviderOptions& options) {
-  const auto api_key = first_key(options.api_key, "ANTHROPIC_API_KEY");
-  if (api_key.empty())
-    return ClientResolution::fail("ANTHROPIC_API_KEY not set.");
-  anthropic::CompatibleOptions compatible;
-  compatible.base_url = options.base_url.empty() ? "https://api.anthropic.com"
-                                                 : options.base_url;
-  compatible.completions_path = options.completions_path;
-  compatible.headers = options.headers;
-  compatible.bearer_auth = false;
-  return ClientResolution{anthropic::create_client(api_key, compatible)};
 }
 
 ClientResolution resolve_opencode(const ProviderOptions& options) {
@@ -104,32 +84,6 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
   return ClientResolution{openai::create_client(api_key, compatible)};
 }
 
-ClientResolution resolve_qpilot(const ProviderOptions& options) {
-  const auto api_key = first_key(options.api_key, "QPILOT_API_KEY");
-  if (api_key.empty()) return ClientResolution::fail("QPILOT_API_KEY not set.");
-  return ClientResolution{openai::create_client(
-      api_key, to_openai(options, "https://qpilot-api.qualcomm.com"))};
-}
-
-ClientResolution resolve_qgenie(const ProviderOptions& options) {
-  const auto api_key = first_key(options.api_key, "QPILOT_API_KEY");
-  if (api_key.empty()) return ClientResolution::fail("QPILOT_API_KEY not set.");
-  return ClientResolution{openai::create_client(
-      api_key, to_openai(options, "https://qgenie-api.qualcomm.com"))};
-}
-
-ClientResolution resolve_compatible(const ProviderOptions& options,
-                                    const std::string& id) {
-  if (options.base_url.empty()) {
-    return ClientResolution::fail("Unknown provider: " + id);
-  }
-  if (options.api_key.empty()) {
-    return ClientResolution::fail("No API key configured for provider: " + id);
-  }
-  return ClientResolution{
-      openai::create_client(options.api_key, to_openai(options, options.base_url))};
-}
-
 }  // namespace
 
 ProviderRegistry& ProviderRegistry::instance() {
@@ -146,7 +100,9 @@ ClientResolution ProviderRegistry::resolve(
     const std::string& id, const ProviderOptions& options) const {
   auto it = resolvers_.find(id);
   if (it == resolvers_.end()) {
-    return resolve_compatible(options, id);
+    return ClientResolution::fail(
+        "Unsupported provider: " + id +
+        ". Supported providers are: cursor, opencode, openrouter, antigravity.");
   }
   return it->second(options);
 }
@@ -160,12 +116,8 @@ ClientResolution ProviderRegistry::resolve(const std::string& id,
 
 void register_core_providers() {
   auto& reg = ProviderRegistry::instance();
-  reg.register_provider("openai", resolve_openai);
   reg.register_provider("opencode", resolve_opencode);
   reg.register_provider("openrouter", resolve_openrouter);
-  reg.register_provider("anthropic", resolve_anthropic);
-  reg.register_provider("qpilot", resolve_qpilot);
-  reg.register_provider("qgenie", resolve_qgenie);
 }
 
 }  // namespace providers

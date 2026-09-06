@@ -38,13 +38,11 @@ class ScopedEnv {
   std::string saved_;
 };
 
-TEST(RegistryTest, CoreProvidersRegisterAndResolveOpenAI) {
-  // The "openai" resolver requires OPENAI_API_KEY (set at resolve time); provide
-  // a dummy key so resolution succeeds, mirroring OpenRouterSucceedsWithKey.
-  ScopedEnv key("OPENAI_API_KEY");
+TEST(RegistryTest, CoreProvidersRegisterAndResolveOpenRouter) {
+  ScopedEnv key("OPENROUTER_API_KEY");
   key.set("dummy-token");
   register_core_providers();
-  ClientResolution res = ProviderRegistry::instance().resolve("openai", "");
+  ClientResolution res = ProviderRegistry::instance().resolve("openrouter", "");
   EXPECT_TRUE(res.ok());
   EXPECT_TRUE(res.error.empty());
 }
@@ -83,28 +81,13 @@ TEST(RegistryTest, OpenRouterSucceedsWithKey) {
   EXPECT_TRUE(res.ok());
 }
 
-TEST(RegistryTest, AnthropicRequiresKey) {
-  ScopedEnv key("ANTHROPIC_API_KEY");
-  key.unset();
+TEST(RegistryTest, RemovedProvidersRejected) {
   register_core_providers();
-  ClientResolution res = ProviderRegistry::instance().resolve("anthropic", "");
-  EXPECT_FALSE(res.ok());
-}
-
-TEST(RegistryTest, AnthropicSucceedsWithKey) {
-  ScopedEnv key("ANTHROPIC_API_KEY");
-  key.set("dummy-token");
-  register_core_providers();
-  ClientResolution res = ProviderRegistry::instance().resolve("anthropic", "");
-  EXPECT_TRUE(res.ok());
-}
-
-TEST(RegistryTest, QpilotRequiresKey) {
-  ScopedEnv key("QPILOT_API_KEY");
-  key.unset();
-  register_core_providers();
-  ClientResolution res = ProviderRegistry::instance().resolve("qpilot", "");
-  EXPECT_FALSE(res.ok());
+  // openai, anthropic, qpilot, qgenie are removed in favor of the 4 supported providers
+  EXPECT_FALSE(ProviderRegistry::instance().resolve("openai", "").ok());
+  EXPECT_FALSE(ProviderRegistry::instance().resolve("anthropic", "").ok());
+  EXPECT_FALSE(ProviderRegistry::instance().resolve("qpilot", "").ok());
+  EXPECT_FALSE(ProviderRegistry::instance().resolve("qgenie", "").ok());
 }
 
 TEST(RegistryTest, CustomProviderCanBeRegistered) {

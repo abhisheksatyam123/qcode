@@ -20,14 +20,10 @@ std::string to_lower(std::string_view in) {
 ProviderKind provider_kind(std::string_view provider_id,
                            std::string_view base_url) {
   const auto id = to_lower(provider_id);
+  if (id == "cursor") return ProviderKind::kCursor;
   if (id == "opencode" || id == "zen") return ProviderKind::kOpenCodeZen;
   if (id == "openrouter") return ProviderKind::kOpenRouter;
-  if (id == "openai") return ProviderKind::kOpenAI;
-  if (id == "anthropic" || id == "claude") return ProviderKind::kAnthropic;
-  if (id == "cursor") return ProviderKind::kCursor;
   if (id == "antigravity") return ProviderKind::kAntigravity;
-  if (id == "qpilot") return ProviderKind::kQPilot;
-  if (id == "qgenie") return ProviderKind::kQGenie;
 
   const auto transport = ProviderTransform::chat_transport_for(std::string{base_url});
   if (transport == ProviderTransform::ChatTransport::kOpenCodeZen) {
@@ -35,12 +31,6 @@ ProviderKind provider_kind(std::string_view provider_id,
   }
   if (transport == ProviderTransform::ChatTransport::kOpenRouter) {
     return ProviderKind::kOpenRouter;
-  }
-  if (transport == ProviderTransform::ChatTransport::kOpenAI) {
-    return ProviderKind::kOpenAI;
-  }
-  if (to_lower(base_url).find("api.anthropic.com") != std::string::npos) {
-    return ProviderKind::kAnthropic;
   }
   return ProviderKind::kCompatible;
 }
@@ -72,16 +62,8 @@ ProviderCall prepare_provider_call(providers::ProviderOptions& options,
         options.protocol = wire_protocol_id(WireProtocol::kChatCompletions);
       }
       break;
-    case ProviderKind::kAnthropic:
-      if (options.protocol.empty()) {
-        options.protocol = wire_protocol_id(WireProtocol::kMessages);
-      }
-      break;
-    case ProviderKind::kOpenAI:
     case ProviderKind::kCursor:
     case ProviderKind::kAntigravity:
-    case ProviderKind::kQPilot:
-    case ProviderKind::kQGenie:
     case ProviderKind::kCompatible:
       break;
   }

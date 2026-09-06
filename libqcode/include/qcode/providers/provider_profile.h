@@ -8,17 +8,13 @@
 
 namespace qcode {
 
-/// First-class backends the TUI can resolve. Unknown catalog ids with a
-/// base URL fall through to kCompatible (OpenAI-shaped HTTP).
+/// Supported backends the TUI and engine can resolve:
+/// cursor, opencode, openrouter, antigravity.
 enum class ProviderKind {
-  kOpenAI,
+  kCursor,
   kOpenCodeZen,
   kOpenRouter,
-  kAnthropic,
-  kCursor,
   kAntigravity,
-  kQPilot,
-  kQGenie,
   kCompatible,
 };
 

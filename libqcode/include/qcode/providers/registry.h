@@ -60,9 +60,8 @@ class ProviderRegistry {
   std::map<std::string, ProviderResolver> resolvers_;
 };
 
-// Register key-based backends: openai, opencode, openrouter, anthropic,
-// qpilot, qgenie. Cursor and Antigravity are registered via
-// register_authenticated_providers().
+// Register key-based backends: opencode, openrouter.
+// Cursor and Antigravity are registered via register_authenticated_providers().
 void register_core_providers();
 
 }  // namespace providers
