@@ -25,7 +25,7 @@ struct GenerationContext {
     std::string reasoning_mode = "off";
     // Agent mode mirroring opencode: "build" (default, full access) or
     // "plan" (read-only research; no mutating tool calls).
-    std::string agent_mode = "build";
+    std::string agent_mode = "orchestrator";
     std::string workspace;
     std::shared_ptr<std::atomic<bool>> abort_flag = std::make_shared<std::atomic<bool>>(false);
 

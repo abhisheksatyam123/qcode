@@ -87,6 +87,17 @@ inline constexpr std::string_view kBuildContinueNudge =
     "calls.\n"
     "</system-reminder>";
 
+inline constexpr std::string_view kOrchestratorReminder =
+    "\n\n<system-reminder>\n"
+    "# Orchestrator Mode - System Reminder\n\n"
+    "You are the Lead Orchestrator agent. You coordinate and execute complex engineering tasks. "
+    "You have full authority to plan, inspect, build, and verify. "
+    "You can execute tasks directly using bash, or invoke subagents via the task tool to work on tasks in parallel. "
+    "When facing broad investigations, complex refactors, multi-file searches, or parallel verification steps, "
+    "spawn subagents (mode: explore | implement | verify) with available providers and models to run concurrently. "
+    "Monitor their status, collect their results, and synthesize their outputs to complete the user's objective.\n"
+    "</system-reminder>";
+
 inline constexpr std::string_view kBuildModeReminder =
     "\n\n<system-reminder>\n"
     "# Build Mode - System Reminder\n\n"

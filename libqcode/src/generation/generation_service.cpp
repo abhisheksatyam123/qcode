@@ -79,39 +79,204 @@ static std::string tool_results_fingerprint(
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Multi-agent: nested subagent turn (opencode 'general' agent)
+//  Multi-agent: nested subagent turn (parallel multi-provider & multi-model)
 // ──────────────────────────────────────────────────────────────
-// Runs a bounded generate → tool → generate loop on its own context so the
-// task tool delegates real work instead of simulating it.
-static JsonValue run_subagent_turn(qcode::Client& client,
-                                   const std::string& model_id,
-                                   const std::string& prompt,
-                                   const std::string& workspace,
-                                   std::shared_ptr<std::atomic<bool>> abort_flag) {
-  constexpr int kSubagentMaxSteps = 20;
-  constexpr const char* kGeneralPrompt =
-      "You are a general-purpose research and execution subagent. You are "
-      "spawned by the lead agent to handle a focused task autonomously: "
-      "complex searches, multistep investigations, or self-contained jobs. "
-      "Work independently — do not ask the user questions. Use the available "
-      "tools to inspect files and gather facts. Finish with a concise, "
-      "complete summary of what you found or did, including exact file paths "
-      "and key evidence.";
+static JsonValue run_subagent_turn_multi(
+    std::shared_ptr<std::vector<ProviderInfo>> providers,
+    const std::string& default_provider_id,
+    const std::string& default_model_id,
+    const std::string& workspace,
+    std::shared_ptr<std::atomic<bool>> main_abort_flag,
+    const JsonValue& args) {
+  std::string prompt_text = args.value("prompt", args.value("task", args.value("objective", "")));
+  if (prompt_text.empty()) {
+    return JsonValue{{"error", "task prompt is required"}};
+  }
+
+  if (main_abort_flag && main_abort_flag->load()) {
+    return JsonValue{{"error", "Subagent cancelled due to abort flag"}};
+  }
+
+  std::string subagent_type = args.value("subagent_type", "general");
+  std::string mode = args.value("mode", "explore");
+  std::string description = args.value("description", "");
+  std::string objective = args.value("objective", "");
+
+  std::vector<std::string> candidates;
+  if (args.contains("model") && args["model"].is_string() && !args["model"].get<std::string>().empty()) {
+    candidates.push_back(args["model"].get<std::string>());
+  }
+  if (args.contains("models") && args["models"].is_array()) {
+    for (const auto& m : args["models"]) {
+      if (m.is_string() && !m.get<std::string>().empty()) {
+        candidates.push_back(m.get<std::string>());
+      }
+    }
+  }
+
+  const ProviderInfo* target_provider = nullptr;
+  std::string target_model_id;
+  const ModelInfo* target_model_info = nullptr;
+
+  if (providers) {
+    for (const auto& candidate : candidates) {
+      auto slash = candidate.find('/');
+      if (slash != std::string::npos) {
+        std::string prov_prefix = candidate.substr(0, slash);
+        std::string mod_suffix = candidate.substr(slash + 1);
+        for (const auto& p : *providers) {
+          if (p.id == prov_prefix || p.name == prov_prefix) {
+            target_provider = &p;
+            target_model_id = mod_suffix;
+            for (const auto& m : p.models) {
+              if (m.id == mod_suffix || m.name == mod_suffix) {
+                target_model_info = &m;
+                break;
+              }
+            }
+            break;
+          }
+        }
+        if (target_provider) break;
+      }
+
+      for (const auto& p : *providers) {
+        for (const auto& m : p.models) {
+          if (m.id == candidate || m.name == candidate) {
+            target_provider = &p;
+            target_model_id = m.id;
+            target_model_info = &m;
+            break;
+          }
+        }
+        if (target_provider) break;
+      }
+      if (target_provider) break;
+
+      for (const auto& p : *providers) {
+        if (p.id == candidate || p.name == candidate) {
+          target_provider = &p;
+          target_model_id = p.models.empty() ? default_model_id : p.models.front().id;
+          if (!p.models.empty()) target_model_info = &p.models.front();
+          break;
+        }
+      }
+      if (target_provider) break;
+    }
+
+    if (!target_provider) {
+      for (const auto& p : *providers) {
+        if (p.id == default_provider_id || p.name == default_provider_id) {
+          target_provider = &p;
+          target_model_id = default_model_id;
+          for (const auto& m : p.models) {
+            if (m.id == default_model_id || m.name == default_model_id) {
+              target_model_info = &m;
+              break;
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    if (!target_provider && !providers->empty()) {
+      target_provider = &(*providers)[0];
+      target_model_id = target_provider->models.empty() ? default_model_id : target_provider->models.front().id;
+      if (!target_provider->models.empty()) target_model_info = &target_provider->models.front();
+    }
+  }
+
+  if (!target_provider) {
+    return JsonValue{{"error", "No available AI provider configured for subagent"}};
+  }
 
   JsonValue out;
   try {
-    qcode::GenerateOptions opts(model_id, kGeneralPrompt, "");
-    // No task tool inside subagents — prevents recursive spawning.
-    opts.tools = ToolCatalog::build_definitions(ToolConfig{true, false});
-    opts.max_steps = kSubagentMaxSteps;
-    opts.workspace = workspace;
-    opts.abort_flag = abort_flag;
-    opts.messages.push_back(Message::user(prompt));
+    qcode::providers::ProviderOptions prov_opts;
+    prov_opts.base_url = target_provider->api_url;
+    prov_opts.api_key = target_provider->api_key;
+    prov_opts.headers = target_provider->headers;
+    prov_opts.protocol = (target_model_info && !target_model_info->protocol.empty())
+                             ? target_model_info->protocol
+                             : target_provider->protocol;
+    prov_opts.project_id = target_provider->project_id;
 
-    // Delegate multi-turn subagent execution to the unified MultiStepCoordinator
-    qcode::GenerateResult res =
-        MultiStepCoordinator::execute_multi_step(opts, [&client](const GenerateOptions& step_opts) {
-          return client.generate_text(step_opts);
+    if (target_provider->id.find("antigravity") != std::string::npos ||
+        target_provider->name.find("Antigravity") != std::string::npos) {
+      const auto fresh = get_antigravity_token(/*force_refresh=*/false);
+      if (!fresh.empty()) {
+        prov_opts.api_key = fresh;
+      }
+    }
+
+    const auto call = prepare_provider_call(prov_opts, target_provider->id, target_model_id, "");
+    std::string wire_model = call.wire_model_id.empty() ? target_model_id : call.wire_model_id;
+
+    auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
+        target_provider->id, prov_opts);
+    if (!resolution.ok()) {
+      return JsonValue{{"error", "Failed to resolve subagent client for provider '" +
+                                 target_provider->id + "': " + resolution.error}};
+    }
+    qcode::Client subagent_client = std::move(resolution.client);
+
+    std::ostringstream sub_sys;
+    sub_sys << "You are an autonomous '" << subagent_type
+            << "' subagent delegated by the Lead Orchestrator.\n";
+    if (!description.empty()) {
+      sub_sys << "Task: " << description << "\n";
+    }
+    if (!objective.empty()) {
+      sub_sys << "Objective: " << objective << "\n";
+    }
+    if (!mode.empty()) {
+      sub_sys << "Delegation Mode: " << mode << "\n";
+    }
+    if (args.contains("scope") && args["scope"].is_array() && !args["scope"].empty()) {
+      sub_sys << "Scope:\n";
+      for (const auto& s : args["scope"]) {
+        if (s.is_string()) sub_sys << "- " << s.get<std::string>() << "\n";
+      }
+    }
+    if (args.contains("out_of_scope") && args["out_of_scope"].is_array() && !args["out_of_scope"].empty()) {
+      sub_sys << "Out of Scope:\n";
+      for (const auto& s : args["out_of_scope"]) {
+        if (s.is_string()) sub_sys << "- " << s.get<std::string>() << "\n";
+      }
+    }
+    if (mode == "implement" && args.contains("allowed_paths") && args["allowed_paths"].is_array()) {
+      sub_sys << "Allowed Paths for edits:\n";
+      for (const auto& p : args["allowed_paths"]) {
+        if (p.is_string()) sub_sys << "- " << p.get<std::string>() << "\n";
+      }
+    }
+
+    sub_sys << "\nOperational Directives:\n";
+    if (mode == "explore") {
+      sub_sys << "- Mode is EXPLORE: Read-only inspection and analysis. STRICTLY FORBIDDEN to modify any files.\n";
+    } else if (mode == "implement") {
+      sub_sys << "- Mode is IMPLEMENT: Execute focused, high-precision edits strictly within the allowed paths.\n";
+    } else if (mode == "verify") {
+      sub_sys << "- Mode is VERIFY: Run tests, build checks, linters, or audits to verify correctness.\n";
+    } else {
+      sub_sys << "- Work independently and execute the required operations.\n";
+    }
+    sub_sys << "- Do not prompt or query the user. Use the bash tool to inspect files and execute commands.\n";
+    sub_sys << "- Conclude with a clear, concise, structured summary detailing findings, changes, or test outcomes.\n\n";
+    sub_sys << ToolCatalog::build_tool_section(ToolConfig{true, false});
+
+    int max_steps = 25;
+    qcode::GenerateOptions sub_opts(wire_model, sub_sys.str(), "");
+    sub_opts.tools = ToolCatalog::build_definitions(ToolConfig{true, false});
+    sub_opts.max_steps = max_steps;
+    sub_opts.workspace = workspace;
+    sub_opts.abort_flag = main_abort_flag;
+    sub_opts.messages.push_back(Message::user(prompt_text));
+
+    qcode::GenerateResult res = MultiStepCoordinator::execute_multi_step(
+        sub_opts, [&subagent_client](const GenerateOptions& step_opts) {
+          return subagent_client.generate_text(step_opts);
         });
 
     if (!res.is_success()) {
@@ -1013,8 +1178,8 @@ void run_generation_with_bus(
             "</system-reminder>";
         LOG_INFO("ChatBus: agent_mode=plan (read-only)");
     } else {
-        base_opts.system += std::string(kBuildModeReminder);
-        LOG_INFO("ChatBus: agent_mode=build (auto-continue stalls)");
+        base_opts.system += std::string(kOrchestratorReminder);
+        LOG_INFO("ChatBus: agent_mode=orchestrator (lead coordinator with parallel subagents)");
     }
 
     Model transform_model(resolved_model_id, provider_id);
@@ -1077,27 +1242,28 @@ void run_generation_with_bus(
     const bool is_server_duplex_agent =
         (client.tool_execution_model() == ToolExecutionModel::ServerSideDuplex);
     if (enable_tools && !is_server_duplex_agent) {
-      // Plan mode drops the task subagent (delegation implies execution).
+      // Orchestrator has full tool suite: both bash and task subagent tools enabled (unless plan mode).
+      const bool enable_task_tool = !plan_mode;
       qcode::ToolSet tools =
-          ToolCatalog::build_definitions(ToolConfig{true, false});
+          ToolCatalog::build_definitions(ToolConfig{true, enable_task_tool});
       base_opts.tools = std::move(tools);
       // Soft cap against runaway tool loops (cost + stuck "gen…" UI).
       constexpr int kMaxToolSteps = 100000;
       base_opts.max_steps = kMaxToolSteps;
-      // Multi-agent: let the task tool spawn real subagent turns on the same
-      // client/model (general agent). Captured by reference — the runner is
-      // only invoked from within this worker thread while client lives.
+
+      auto providers_ptr = std::make_shared<std::vector<ProviderInfo>>(providers);
+      std::string current_prov_id = provider_id;
+      std::string current_model_id = resolved_model_id;
+      std::string current_workspace = ctx.workspace;
+      std::shared_ptr<std::atomic<bool>> main_abort = ctx.abort_flag;
+
       base_opts.subagent_runner =
-          [&client, resolved_model_id, &ctx](
+          [providers_ptr, current_prov_id, current_model_id, current_workspace, main_abort](
               const JsonValue& args) -> JsonValue {
-        std::string prompt_text = args.value(
-            "prompt", args.value("task", args.value("objective", "")));
-        if (prompt_text.empty()) {
-          return {{"error", "task prompt is required"}};
-        }
-        return run_subagent_turn(client, resolved_model_id, prompt_text,
-                                 ctx.workspace, ctx.abort_flag);
-      };
+            return run_subagent_turn_multi(
+                providers_ptr, current_prov_id, current_model_id,
+                current_workspace, main_abort, args);
+          };
       auto refresh_client = [&](qcode::Client& out_client) -> bool {
         // Re-read Antigravity OAuth (force refresh on 401).
         if (provider_id.find("antigravity") != std::string::npos ||

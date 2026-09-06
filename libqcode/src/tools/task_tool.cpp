@@ -1,17 +1,20 @@
 #include <qcode/tools/task_tool.h>
 
 #include <algorithm>
-#include <qcode/core/logger.h>
 #include <chrono>
 #include <ctime>
+#include <future>
+#include <mutex>
 #include <random>
 #include <sstream>
 #include <thread>
 
+#include <qcode/core/logger.h>
+
 namespace qcode {
 
 // ── TaskTool implementation ──
-// Direct port of opencode's TaskTool (src/tool/task/index.ts + contract/port.ts)
+// Multi-agent orchestration and subagent execution registry
 
 static std::string generate_session_id() {
   auto now = std::chrono::system_clock::now();
@@ -30,7 +33,6 @@ static std::string generate_bg_id(const std::string& session_id) {
 }
 
 // ── Subagent result parsing ──
-// Port of parseSubagentResult from opencode
 
 struct ParsedSubagentResult {
   bool structured = false;
@@ -69,6 +71,258 @@ static ParsedSubagentResult parse_subagent_result(const std::string& text) {
   return parsed;
 }
 
+// ── Subagent Task Registry ──
+// Manages asynchronous parallel subagent jobs, status tracking, waiting, and cancellation
+
+struct SubagentTaskEntry {
+  std::string background_task_id;
+  std::string session_id;
+  std::string description;
+  std::string subagent_type;
+  std::string mode;
+  std::string model;
+  std::string status;  // "running", "done", "error", "killed"
+  std::string output;
+  std::string error;
+  std::shared_ptr<std::atomic<bool>> abort_flag;
+  std::shared_future<JsonValue> future;
+  std::chrono::steady_clock::time_point start_time;
+};
+
+class SubagentRegistry {
+ public:
+  static SubagentRegistry& instance() {
+    static SubagentRegistry reg;
+    return reg;
+  }
+
+  void register_task(const std::string& bg_id,
+                     const std::string& session_id,
+                     const std::string& description,
+                     const std::string& subagent_type,
+                     const std::string& mode,
+                     const std::string& model,
+                     std::shared_ptr<std::atomic<bool>> abort_flag,
+                     std::future<JsonValue> fut) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto entry = std::make_shared<SubagentTaskEntry>();
+    entry->background_task_id = bg_id;
+    entry->session_id = session_id;
+    entry->description = description;
+    entry->subagent_type = subagent_type;
+    entry->mode = mode;
+    entry->model = model;
+    entry->status = "running";
+    entry->abort_flag = abort_flag;
+    entry->future = fut.share();
+    entry->start_time = std::chrono::steady_clock::now();
+    tasks_[bg_id] = entry;
+    by_session_[session_id] = entry;
+  }
+
+  void register_completed(const std::string& bg_id,
+                          const std::string& session_id,
+                          const std::string& description,
+                          const std::string& subagent_type,
+                          const std::string& mode,
+                          const std::string& model,
+                          const std::string& output) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto entry = std::make_shared<SubagentTaskEntry>();
+    entry->background_task_id = bg_id;
+    entry->session_id = session_id;
+    entry->description = description;
+    entry->subagent_type = subagent_type;
+    entry->mode = mode;
+    entry->model = model;
+    entry->status = "done";
+    entry->output = output;
+    entry->start_time = std::chrono::steady_clock::now();
+    tasks_[bg_id] = entry;
+    by_session_[session_id] = entry;
+  }
+
+  JsonValue await_or_poll(const std::string& bg_id, int timeout_ms) {
+    std::shared_ptr<SubagentTaskEntry> entry;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      auto it = tasks_.find(bg_id);
+      if (it == tasks_.end()) {
+        auto sit = by_session_.find(bg_id);
+        if (sit != by_session_.end()) entry = sit->second;
+      } else {
+        entry = it->second;
+      }
+    }
+
+    if (!entry) {
+      JsonValue err;
+      err["error"] = "Background task not found: " + bg_id;
+      return err;
+    }
+
+    // If already terminal (done, error, killed)
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (entry->status == "done" || entry->status == "error" || entry->status == "killed") {
+        JsonValue res;
+        res["title"] = "task " + entry->status + ": " + entry->description;
+        res["output"] = entry->status == "error" ? ("Error: " + entry->error) : entry->output;
+        res["metadata"] = {
+            {"status", entry->status},
+            {"background_task_id", entry->background_task_id},
+            {"task_id", entry->session_id},
+            {"sessionId", entry->session_id},
+            {"agent", entry->subagent_type},
+            {"mode", entry->mode},
+        };
+        if (entry->status == "error") res["error"] = entry->error;
+        return res;
+      }
+    }
+
+    std::shared_future<JsonValue> fut = entry->future;
+    if (!fut.valid()) {
+      JsonValue res;
+      res["title"] = "task complete: " + entry->description;
+      res["output"] = entry->output;
+      res["metadata"] = {
+          {"status", entry->status},
+          {"background_task_id", entry->background_task_id},
+          {"task_id", entry->session_id},
+      };
+      return res;
+    }
+
+    std::future_status status;
+    if (timeout_ms == 0) {
+      status = fut.wait_for(std::chrono::milliseconds(0));
+    } else {
+      status = fut.wait_for(std::chrono::milliseconds(timeout_ms));
+    }
+
+    if (status == std::future_status::ready) {
+      JsonValue out_json;
+      try {
+        out_json = fut.get();
+      } catch (const std::exception& e) {
+        out_json = JsonValue{{"error", std::string("Subagent crashed: ") + e.what()}};
+      }
+
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (out_json.is_object() && out_json.contains("error")) {
+        entry->status = "error";
+        entry->error = out_json.value("error", "Subagent failed");
+        entry->output = "Error: " + entry->error;
+      } else {
+        entry->status = "done";
+        entry->output = out_json.value("output", "Subagent finished with no output");
+      }
+
+      JsonValue res;
+      res["title"] = "task complete: " + entry->description;
+      res["output"] = entry->output;
+      res["metadata"] = {
+          {"status", entry->status},
+          {"background_task_id", entry->background_task_id},
+          {"task_id", entry->session_id},
+          {"sessionId", entry->session_id},
+          {"agent", entry->subagent_type},
+          {"mode", entry->mode},
+      };
+      if (entry->status == "error") res["error"] = entry->error;
+      return res;
+    }
+
+    // Still pending / running
+    JsonValue res;
+    res["title"] = "task result: " + bg_id;
+    res["output"] = "task_id: " + bg_id + "\nstatus: running\n\nStill running. Collect with a later result call.";
+    res["metadata"] = {
+        {"status", "running"},
+        {"background_task_id", bg_id},
+        {"task_id", entry->session_id},
+    };
+    return res;
+  }
+
+  JsonValue kill(const std::string& id, const std::string& reason) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tasks_.find(id);
+    std::shared_ptr<SubagentTaskEntry> entry;
+    if (it == tasks_.end()) {
+      auto sit = by_session_.find(id);
+      if (sit != by_session_.end()) entry = sit->second;
+    } else {
+      entry = it->second;
+    }
+
+    if (!entry) {
+      JsonValue res;
+      res["title"] = "task kill: " + id;
+      res["output"] = "Task " + id + " not found to kill.";
+      res["metadata"] = {{"status", "not_found"}, {"task_id", id}};
+      return res;
+    }
+
+    if (entry->abort_flag) {
+      entry->abort_flag->store(true);
+    }
+    entry->status = "killed";
+    entry->output = "Task killed by orchestrator." + (!reason.empty() ? (" Reason: " + reason) : "");
+
+    JsonValue res;
+    res["title"] = "task kill: " + id;
+    res["output"] = entry->output;
+    res["metadata"] = {
+        {"status", "killed"},
+        {"task_id", id},
+        {"background_task_id", entry->background_task_id},
+        {"sessionId", entry->session_id},
+    };
+    return res;
+  }
+
+  JsonValue list() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    JsonValue res;
+    res["title"] = "subagent tasks";
+    JsonValue list_arr = JsonValue::array();
+    std::stringstream ss;
+    ss << "Active & Recent Subagent Tasks:\n";
+    for (const auto& [id, t] : tasks_) {
+      JsonValue item;
+      item["background_task_id"] = t->background_task_id;
+      item["task_id"] = t->session_id;
+      item["description"] = t->description;
+      item["agent"] = t->subagent_type;
+      item["mode"] = t->mode;
+      item["model"] = t->model;
+      item["status"] = t->status;
+      list_arr.push_back(item);
+      ss << "- " << t->background_task_id << " [" << t->status << "] (" << t->subagent_type << " / " << t->mode << "): " << t->description << "\n";
+    }
+    res["output"] = tasks_.empty() ? "No background tasks registered." : ss.str();
+    res["metadata"] = {{"tasks", list_arr}};
+    return res;
+  }
+
+  void clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    tasks_.clear();
+    by_session_.clear();
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  std::map<std::string, std::shared_ptr<SubagentTaskEntry>> tasks_;
+  std::map<std::string, std::shared_ptr<SubagentTaskEntry>> by_session_;
+};
+
+void TaskTool::clear_background_tasks() {
+  SubagentRegistry::instance().clear();
+}
+
 JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext& context) {
   (void)context;
 
@@ -102,7 +356,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
     return err;
   }
 
-  // Build the subagent output
+  // Build the subagent output metadata
   JsonValue metadata;
   metadata["sessionId"] = session_id;
   metadata["agent"] = subagent_type;
@@ -129,8 +383,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
       budget_timeout = args["budget"]["timeout_ms"].get<int>();
   }
 
-  // For foreground spawn, run a REAL nested subagent turn when the
-  // generation layer provided a runner (multi-agent parity with opencode).
+  // For foreground spawn, run a REAL nested subagent turn synchronously
   if (!is_background) {
     std::string output_text;
     bool ran = false;
@@ -144,8 +397,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
       ran = true;
     }
     if (!ran) {
-      // No generation-layer runner available (e.g. direct tool invocation):
-      // fall back to the acknowledgement template.
+      // Direct tool invocation without runner: template acknowledgement
       std::stringstream fallback;
       fallback << "task_id: " << session_id << "\n\n";
       fallback << "<task_result>\n";
@@ -166,12 +418,36 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
     return result;
   }
 
-  // Background spawn
+  // Background spawn: runs concurrently in parallel with independent provider/model
   std::string bg_id = generate_bg_id(session_id);
+  std::string chosen_model = args.value("model", "");
+
+  if (context.subagent_runner) {
+    auto runner = context.subagent_runner;
+    auto sub_abort = std::make_shared<std::atomic<bool>>(false);
+    auto fut = std::async(std::launch::async, [runner, args]() -> JsonValue {
+      return runner(args);
+    });
+    SubagentRegistry::instance().register_task(
+        bg_id, session_id, description, subagent_type, mode, chosen_model, sub_abort, std::move(fut));
+  } else {
+    // Direct or mock invocation without runner: register completed template
+    std::stringstream fallback;
+    fallback << "task_id: " << session_id << "\n\n";
+    fallback << "<task_result>\n";
+    fallback << "@subagent " << subagent_type << " " << description << "\n\n";
+    if (!objective.empty()) fallback << "Objective: " << objective << "\n";
+    if (scope_ss.tellp() > 0) fallback << "Scope:\n" << scope_ss.str();
+    fallback << "Prompt: " << prompt_text << "\n";
+    fallback << "</task_result>";
+    SubagentRegistry::instance().register_completed(
+        bg_id, session_id, description, subagent_type, mode, chosen_model, fallback.str());
+  }
 
   JsonValue result;
   result["title"] = std::string("task started: ") + description;
   result["output"] = "background_task_id: " + bg_id + "\ntask_id: " + session_id + "\nstatus: running";
+  result["metadata"] = metadata;
   result["metadata"]["status"] = "running";
   result["metadata"]["background_task_id"] = bg_id;
   result["metadata"]["task_id"] = session_id;
@@ -181,7 +457,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& args, const ToolExecutionContext
 
 JsonValue TaskTool::exec_result(const JsonValue& args) {
   LOG_DEBUG("TaskTool: exec_result");
-  std::string bg_id = args.value("background_task_id", "");
+  std::string bg_id = args.value("background_task_id", args.value("task_id", ""));
   if (bg_id.empty()) {
     JsonValue err;
     err["error"] = "background_task_id is required for result operation";
@@ -189,36 +465,27 @@ JsonValue TaskTool::exec_result(const JsonValue& args) {
   }
 
   int timeout_ms = args.value("timeout_ms", 30000);
-
-  JsonValue result;
-  result["title"] = "task result: " + bg_id;
-  result["output"] = "task_id: " + bg_id + "\nstatus: pending\n\nStill running. Collect with a later result call.";
-  result["metadata"]["status"] = "pending";
-  result["metadata"]["background_task_id"] = bg_id;
-
-  if (timeout_ms == 0) {
-    // Non-blocking status check
-    return result;
-  }
-
-  // In a full implementation, this would wait for the subagent to complete.
-  // For now, return pending status.
-  return result;
+  return SubagentRegistry::instance().await_or_poll(bg_id, timeout_ms);
 }
 
 JsonValue TaskTool::exec_lifecycle(const JsonValue& args, const std::string& op) {
-  std::string task_id = args.value("task_id", "");
-  std::string pid = args.value("pid", "");
+  std::string id = args.value("task_id", args.value("pid", args.value("background_task_id", "")));
   std::string reason = args.value("reason", "");
 
+  if (op == "kill") {
+    return SubagentRegistry::instance().kill(id, reason);
+  }
+  if (op == "status" || op == "list") {
+    return SubagentRegistry::instance().list();
+  }
+
   JsonValue result;
-  result["title"] = std::string("task ") + op + ": " + (!task_id.empty() ? task_id : pid);
+  result["title"] = std::string("task ") + op + ": " + (!id.empty() ? id : "");
   result["output"] = "Operation " + op + " completed for task " +
-                     (!task_id.empty() ? task_id : pid) +
+                     (!id.empty() ? id : "") +
                      (!reason.empty() ? " (reason: " + reason + ")" : "");
   result["metadata"]["op"] = op;
-  result["metadata"]["task_id"] = task_id;
-  result["metadata"]["pid"] = pid;
+  result["metadata"]["task_id"] = id;
   return result;
 }
 
@@ -241,7 +508,7 @@ JsonValue TaskTool::execute(const JsonValue& args, const ToolExecutionContext& c
   std::string op = args.value("op", "spawn");
 
   if (op == "result") return exec_result(args);
-  if (op == "kill" || op == "pause" || op == "resume" || op == "resurrect")
+  if (op == "kill" || op == "pause" || op == "resume" || op == "resurrect" || op == "status" || op == "list")
     return exec_lifecycle(args, op);
   if (op == "model") return exec_model(args);
 
@@ -256,7 +523,7 @@ Tool TaskTool::definition() {
   auto& props = schema["properties"];
 
   props["op"] = JsonValue{{"type", "string"},
-    {"enum", {"spawn", "result", "kill", "pause", "resume", "resurrect", "model"}},
+    {"enum", {"spawn", "result", "kill", "pause", "resume", "resurrect", "model", "status", "list"}},
     {"description", "Task operation."}};
   props["description"] = JsonValue{{"type", "string"}};
   props["subagent_type"] = JsonValue{{"type", "string"}};

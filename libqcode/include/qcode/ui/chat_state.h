@@ -73,7 +73,7 @@ struct ChatState {
             std::make_shared<std::unordered_map<unsigned long, HitBox>>();
     // Agent mode: "build" (full access) or "plan" (read-only research).
     std::shared_ptr<std::string> agent_mode =
-        std::make_shared<std::string>("build");
+        std::make_shared<std::string>("orchestrator");
     // Reasoning/thinking level: "off" or a model-configured effort from JSON.
     std::shared_ptr<std::string> reasoning_mode =
         std::make_shared<std::string>("off");

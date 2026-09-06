@@ -121,6 +121,7 @@ class TaskTool {
  public:
   static JsonValue execute(const JsonValue& args, const ToolExecutionContext& context);
   static Tool definition();
+  static void clear_background_tasks();
 
  private:
   static JsonValue exec_spawn(const JsonValue& args, const ToolExecutionContext& context);

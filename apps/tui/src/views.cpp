@@ -419,7 +419,7 @@ ftxui::Element render_view(
         (agent_busy ? text(" " + footer_spin) | color(accent(theme)) | bold
                     : emptyElement()),
         (plan_mode ? text(" Plan") | bold | color(queue_amber())
-                   : text(" Build") | bold | color(accent2(theme))),
+                   : text(" Orchestrator") | bold | color(accent2(theme))),
         text(" " + hdr_model) | color(accent(theme)),
     };
     if (!variant_label.empty())

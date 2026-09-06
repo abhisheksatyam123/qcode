@@ -319,21 +319,22 @@ bool handle_slash_command(
 
     if (cmd == "agent") {
         // /agent          — show current agent
-        // /agent <name>   — switch (build|plan)
+        // /agent <name>   — switch (orchestrator|plan)
         std::string name = args;
         while (!name.empty() && std::isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
         while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
         if (name.empty()) {
-            const std::string cur = state.agent_mode ? *state.agent_mode : "build";
+            const std::string cur = state.agent_mode ? *state.agent_mode : "orchestrator";
             bus.publish<qcode::contract::ToastRequested>({
-                .message = "Agent: " + cur + " (/agent build|plan)",
+                .message = "Agent: " + cur + " (/agent orchestrator|plan)",
                 .variant = "info"
             });
             return true;
         }
-        if (name != "build" && name != "plan") {
+        if (name == "build") name = "orchestrator";
+        if (name != "orchestrator" && name != "plan") {
             bus.publish<qcode::contract::ToastRequested>({
-                .message = "Unknown agent '" + name + "'. Use build|plan.",
+                .message = "Unknown agent '" + name + "'. Use orchestrator|plan.",
                 .variant = "warning"
             });
             return true;
@@ -347,7 +348,7 @@ bool handle_slash_command(
         bus.publish<qcode::contract::ToastRequested>({
             .message = name == "plan"
                            ? "Plan mode: read-only research, no edits"
-                           : "Build mode: full tool access",
+                           : "Orchestrator mode: lead coordinator with parallel subagents",
             .variant = "success"
         });
         LOG_INFO("Commands: agent mode set to '{}'", name);
@@ -395,7 +396,7 @@ bool handle_slash_command(
         if (state.session_id && !state.session_id->empty()) {
             qcode::session::set_session_modes(
                 *state.session_id,
-                state.agent_mode ? *state.agent_mode : "build", lvl);
+                state.agent_mode ? *state.agent_mode : "orchestrator", lvl);
         }
         bus.publish<qcode::contract::ToastRequested>({
             .message = "Model variant (effort): " + lvl,

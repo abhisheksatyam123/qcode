@@ -106,7 +106,7 @@ int main() {
     //  2. Provider & Config setup
     // ═══════════════════════════════════════════════════════════
     std::string prompt_input;
-    qcode::ToolConfig tool_cfg{true, false};
+    qcode::ToolConfig tool_cfg{true, true};
     std::string system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
     bool enable_tools = true;
 
@@ -217,7 +217,7 @@ int main() {
         }
         qcode::session::set_session_modes(
             *state.session_id,
-            state.agent_mode ? *state.agent_mode : "build",
+            state.agent_mode ? *state.agent_mode : "orchestrator",
             *state.reasoning_mode);
     };
 
@@ -281,7 +281,7 @@ int main() {
         if (state.session_id && !state.session_id->empty()) {
             qcode::session::set_session_modes(
                 *state.session_id,
-                state.agent_mode ? *state.agent_mode : "build", lvl);
+                state.agent_mode ? *state.agent_mode : "orchestrator", lvl);
         }
         store.add_toast("Variant: " + lvl, lvl == "off" ? "info" : "success",
                         1500);
@@ -363,7 +363,7 @@ int main() {
     };
 
     auto toggle_agent_mode = [&]() {
-        *state.agent_mode = (*state.agent_mode == "plan") ? "build" : "plan";
+        *state.agent_mode = (*state.agent_mode == "plan") ? "orchestrator" : "plan";
         if (state.session_id && !state.session_id->empty()) {
             qcode::session::set_session_modes(
                 *state.session_id, *state.agent_mode,
@@ -371,7 +371,7 @@ int main() {
         }
         store.add_toast(*state.agent_mode == "plan"
                             ? "Plan mode: read-only research, no edits"
-                            : "Build mode: full tool access",
+                            : "Orchestrator: lead coordinator with parallel subagents",
                         *state.agent_mode == "plan" ? "warning" : "success",
                         2500);
     };
