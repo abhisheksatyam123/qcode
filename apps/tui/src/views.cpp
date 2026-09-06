@@ -134,38 +134,50 @@ static std::string format_usage_upstream(long long total, int window_size,
 // Soft amber used for pending / queued chrome (readable on dark terminals).
 static Color queue_amber() { return Color::RGB(0xE8, 0xB8, 0x4A); }
 
-// Grok-style queued prompt card: looks like a user turn, dimmed, with a
-// position badge so the queue is visible in the message list.
-static Element render_queued_prompt(const std::string& prompt_body,
-                                    size_t index, size_t total,
-                                    const std::string& theme) {
-    Elements body_lines;
-    std::istringstream iss(prompt_body);
-    std::string line;
-    bool any = false;
-    while (std::getline(iss, line)) {
-        any = true;
-        body_lines.push_back(
-            hbox({text("  "), text(line) | color(Color::GrayLight)}));
-    }
-    if (!any) {
-        body_lines.push_back(hbox({text("  "), text("(empty prompt)") | dim}));
+// Compact Opencode-style queued block: amber left bar, clean indentation,
+// without bulky borders, duplicate headers, or empty lines.
+static Element render_queued_block(const std::vector<std::string>& queue,
+                                   const std::string& /*theme*/) {
+    if (queue.empty()) return text("");
+
+    Elements rows;
+    rows.push_back(
+        hbox({
+            text("┃ ") | bold | color(queue_amber()),
+            text("⏳ Queued") | bold | color(queue_amber()),
+            text(" · /clear-queue to cancel") | dim | color(theme_text_muted()),
+        }));
+
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        if (qi > 0) {
+            rows.push_back(
+                hbox({
+                    text("┃ ") | color(queue_amber()),
+                    text("  ---") | dim | color(Color::GrayDark),
+                }));
+        }
+        std::istringstream iss(queue[qi]);
+        std::string line;
+        bool any = false;
+        while (std::getline(iss, line)) {
+            any = true;
+            rows.push_back(
+                hbox({
+                    text("┃ ") | color(queue_amber()),
+                    text("  "),
+                    paragraph(line) | color(Color::GrayLight) | flex,
+                }));
+        }
+        if (!any) {
+            rows.push_back(
+                hbox({
+                    text("┃ ") | color(queue_amber()),
+                    text("  (empty prompt)") | dim | color(Color::GrayDark),
+                }));
+        }
     }
 
-    auto header = hbox({
-        text(" #" + std::to_string(index + 1) + "/" + std::to_string(total) + " ") |
-            bold | bgcolor(queue_amber()) | color(Color::Black),
-        text("  You") | bold | color(accent2(theme)),
-        text(" · queued") | dim | color(queue_amber()),
-        filler(),
-        text("pending ") | dim | color(Color::GrayDark),
-    });
-
-    return vbox({
-        header,
-        separatorLight() | color(Color::GrayDark),
-        vbox(std::move(body_lines)),
-    }) | borderRounded | color(queue_amber());
+    return vbox(std::move(rows));
 }
 
 ftxui::Element render_logo() {
@@ -708,24 +720,12 @@ ftxui::Element render_view(
                     dim | hcenter);
             }
 
-            // Queued prompts appear at the end of the message list (Grok/Claude style cards)
+            // Queued prompts appear at the end of the message list (compact amber block)
             const auto* queue =
                 state.queued_prompt_texts ? state.queued_prompt_texts.get()
                                           : nullptr;
             if (queue && !queue->empty() && last >= history_size) {
-                Elements queue_cards;
-                queue_cards.push_back(text(""));
-                queue_cards.push_back(hbox({
-                    text(" ⏳ QUEUED PROMPTS ") | bold | color(queue_amber()),
-                    text(" · /clear-queue to cancel") | dim | color(Color::GrayDark),
-                }));
-                queue_cards.push_back(text(""));
-
-                for (size_t qi = 0; qi < queue->size(); ++qi) {
-                    queue_cards.push_back(render_queued_prompt((*queue)[qi], qi, queue->size(), theme));
-                }
-                
-                msgs.push_back(vbox(std::move(queue_cards)));
+                msgs.push_back(render_queued_block(*queue, theme));
             }
 
             const int input_height = prompt_input_height(prompt_input, 8);

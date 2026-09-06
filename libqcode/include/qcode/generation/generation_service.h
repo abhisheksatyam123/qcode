@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <functional>
 #include <memory>
 
 #include <qcode/core/bus_port.h>
@@ -31,6 +32,11 @@ struct GenerationContext {
     // Tool observability counters (updated by backend during generation)
     int tool_call_count = 0;
     double total_tool_time_ms = 0.0;
+
+    // Optional query callback to check if the user queued a prompt during this turn.
+    // When true, the tool loop yields after completing the current tool step so the
+    // queued prompt is picked up immediately.
+    std::function<bool()> has_queued_work = nullptr;
 };
 
 /**

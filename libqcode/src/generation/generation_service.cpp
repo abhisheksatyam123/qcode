@@ -474,6 +474,14 @@ static void run_tools_generation_bus(
           options.on_step_finish.value()(step_data);
         }
         if (stuck) break;
+        if (ctx.has_queued_work && ctx.has_queued_work()) {
+          LOG_INFO(
+              "run_tools_generation_bus: queued prompt pending after tool step={}; "
+              "yielding turn to pick it up immediately",
+              step);
+          finished = true;
+          break;
+        }
       } else {
         no_progress_repeat = 0;
         last_progress_fp.clear();
@@ -487,13 +495,20 @@ static void run_tools_generation_bus(
         }
         if (should_auto_continue_build(plan_mode, auto_continues,
                                        step_res.text)) {
-          ++auto_continues;
-          LOG_INFO(
-              "run_tools_generation_bus: auto-continue {} after text-only "
-              "stop (text_len={})",
-              auto_continues, step_res.text.size());
-          response_messages.push_back(
-              qcode::Message::user(std::string(kBuildContinueNudge)));
+          if (ctx.has_queued_work && ctx.has_queued_work()) {
+            LOG_INFO(
+                "run_tools_generation_bus: queued prompt pending; skipping "
+                "auto-continue to pick up queued prompt immediately");
+            finished = true;
+          } else {
+            ++auto_continues;
+            LOG_INFO(
+                "run_tools_generation_bus: auto-continue {} after text-only "
+                "stop (text_len={})",
+                auto_continues, step_res.text.size());
+            response_messages.push_back(
+                qcode::Message::user(std::string(kBuildContinueNudge)));
+          }
         } else {
           LOG_DEBUG(
               "run_tools_generation_bus: step={} no tool calls, finishing",

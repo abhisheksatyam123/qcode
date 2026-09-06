@@ -67,6 +67,11 @@ TEST(EnqueuePromptQueuing, StaysInQueueAndNotInHistoryUntilExecution) {
     EXPECT_EQ(store.queue_size(), 2u);
     EXPECT_EQ(store.state().queued_prompt_texts->size(), 2u);
     EXPECT_EQ(store.state().queued_prompt_texts->back(), "second prompt");
+
+    // Appending to last merges with newline and keeps queue size unchanged
+    store.append_to_last_queued_prompt("appended line");
+    EXPECT_EQ(store.queue_size(), 2u);
+    EXPECT_EQ(store.state().queued_prompt_texts->back(), "second prompt\nappended line");
 }
 
 }  // namespace

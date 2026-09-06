@@ -387,6 +387,26 @@ void save_message(const std::string& session_id, const std::string& sender, cons
 
 // ── Persisted prompt queue ──
 
+void queued_prompt_append_last(const std::string& session_id, const std::string& text) {
+    if (session_id.empty() || !is_valid_session_id(session_id) || text.empty()) return;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+
+    const std::string sql =
+        "UPDATE queued_prompts SET content = content || char(10) || ? "
+        "WHERE id = (SELECT id FROM queued_prompts WHERE session_id = ? ORDER BY id DESC LIMIT 1);";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql.c_str(), &stmt)) {
+        sqlite3_bind_text(stmt, 1, text.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            LOG_ERROR("SQLite: queued_prompt_append_last failed: {}", sqlite3_errmsg(db));
+        }
+        sqlite3_finalize(stmt);
+    }
+}
+
 void queued_prompt_add(const std::string& session_id, const std::string& content) {
     if (session_id.empty() || !is_valid_session_id(session_id)) return;
     auto db_lock = SharedDbHandle::instance().acquire();

@@ -50,6 +50,8 @@ std::vector<std::pair<std::string, std::string>> load_session_messages(const std
 // become pending session data and survive restarts) ──
 // Append a queued prompt for a session (FIFO by insertion).
 void queued_prompt_add(const std::string& session_id, const std::string& content);
+// Append text to the newest queued prompt for the session.
+void queued_prompt_append_last(const std::string& session_id, const std::string& text);
 // All queued prompts for a session, oldest first.
 std::vector<std::string> queued_prompt_load(const std::string& session_id);
 // Drop the oldest queued prompt (call after it starts running).

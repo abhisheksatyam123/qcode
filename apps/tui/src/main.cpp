@@ -505,14 +505,18 @@ int main() {
                                   turn_status == "generating" ||
                                   turn_status == "agent";
         if (turn_visible) {
-            store.enqueue_prompt(prompt_input);
-            const auto n = store.queue_size();
-            store.add_toast(
-                generation.is_busy() && !store.is_generating()
-                    ? "Queued — waiting for previous turn to finish"
-                    : "Queued · #" + std::to_string(n),
-                "info", 1500);
-            LOG_INFO("Main: prompt queued (queue_size={})", n);
+            if (store.has_queued_prompt()) {
+                store.append_to_last_queued_prompt(prompt_input);
+                store.add_toast("Prompt merged into queued message", "info", 1500);
+            } else {
+                store.enqueue_prompt(prompt_input);
+                store.add_toast(
+                    generation.is_busy() && !store.is_generating()
+                        ? "Queued — waiting for previous turn to finish"
+                        : "Queued · #1",
+                    "info", 1500);
+            }
+            LOG_INFO("Main: prompt queued/merged (queue_size={})", store.queue_size());
             prompt_input = "";
             *state.auto_scroll = true;
             screen.Post(Event::Custom);

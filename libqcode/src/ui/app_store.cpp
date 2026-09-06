@@ -379,6 +379,9 @@ void AppStore::append_to_last_queued_prompt(const std::string& text) {
                       static_cast<int>(prompt_queue_.size()));
         }
     }
+    if (!session_id().empty()) {
+        qcode::session::queued_prompt_append_last(session_id(), text);
+    }
     notify();
 }
 

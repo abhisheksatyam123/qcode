@@ -120,6 +120,25 @@ TEST_F(QueuedPromptStoreTest, RowsSurviveReopen) {
     EXPECT_EQ(loaded[1], "me too");
 }
 
+TEST_F(QueuedPromptStoreTest, AppendLastUpdatesNewestRow) {
+    const std::string sid = create_new_session("prov", "model", "ws");
+    queued_prompt_add(sid, "first prompt");
+    queued_prompt_append_last(sid, "additional context");
+
+    auto loaded = queued_prompt_load(sid);
+    ASSERT_EQ(loaded.size(), 1u);
+    EXPECT_EQ(loaded[0], "first prompt\nadditional context");
+
+    // Adding second prompt, then appending again only affects the newest
+    queued_prompt_add(sid, "second prompt");
+    queued_prompt_append_last(sid, "more for second");
+
+    loaded = queued_prompt_load(sid);
+    ASSERT_EQ(loaded.size(), 2u);
+    EXPECT_EQ(loaded[0], "first prompt\nadditional context");
+    EXPECT_EQ(loaded[1], "second prompt\nmore for second");
+}
+
 TEST_F(QueuedPromptStoreTest, DeletingSessionCascadesQueueRows) {
     const std::string sid = create_new_session("prov", "model", "ws");
     queued_prompt_add(sid, "doomed");

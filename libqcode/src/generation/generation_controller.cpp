@@ -207,7 +207,10 @@ void GenerationController::spawn_unlocked(std::string prompt,
                 .agent_mode = state_ptr->agent_mode ? *state_ptr->agent_mode
                                                     : "build",
                 .workspace = session::get_session_workspace(spawn_session),
-                .abort_flag = state_ptr->abort_flag};
+                .abort_flag = state_ptr->abort_flag,
+                .has_queued_work = [store_ptr]() {
+                    return store_ptr->has_queued_prompt();
+                }};
             if (state_ptr->abort_flag) {
                 state_ptr->abort_flag->store(false, std::memory_order_release);
             }
@@ -308,12 +311,16 @@ void GenerationController::spawn_unlocked(std::string prompt,
                 "GenerationController: complete duration_ms={} "
                 "queue_remaining={}",
                 duration_ms, store_ptr->queue_size());
+            busy_ptr->store(false, std::memory_order_release);
             if (store_ptr->is_generating() &&
                 store_ptr->session_id() == spawn_session) {
                 store_ptr->set_generating(false);
                 if (store_ptr->status() != "error") {
                     store_ptr->set_status("idle");
                 }
+            }
+            if (bus_ptr) {
+                bus_ptr->wake();
             }
         });
 }
