@@ -308,5 +308,46 @@ TEST_F(TaskToolTest, DefinitionAdvertisesCallableSchema) {
   EXPECT_TRUE(props.contains("background_task_id"));
 }
 
+TEST_F(TaskToolTest, SwappedCursorTaskFieldsAreRepaired) {
+  JsonValue seen;
+  ToolExecutionContext context;
+  context.subagent_runner = [&](const JsonValue& args,
+                                std::shared_ptr<std::atomic<bool>>) {
+    seen = args;
+    return JsonValue{{"output", "ok"}};
+  };
+  JsonValue out = TaskTool::execute(
+      JsonValue{
+          {"prompt", "explore"},
+          {"subagent_type", "cursor-grok-4.6"},
+          {"model", "Read-only. Workspace: /home/abhi/project/qcode\n\nRead README.md"},
+          {"description", "readme"},
+          {"run_in_background", false},
+      },
+      context);
+  EXPECT_FALSE(out.contains("error")) << out.dump();
+  EXPECT_THAT(seen.value("prompt", ""), testing::HasSubstr("README.md"));
+  EXPECT_EQ(seen.value("mode", ""), "explore");
+  EXPECT_EQ(seen.value("subagent_type", ""), "explore");
+  EXPECT_EQ(seen.value("model", ""), "cursor-grok-4.6");
+}
+
+TEST_F(TaskToolTest, PromptLikeModelIsNotSplitAsProvider) {
+  JsonValue norm = TaskTool::normalize_spawn_args(JsonValue{
+      {"prompt", "explore"},
+      {"model", "Read-only. Workspace: /tmp"},
+      {"description", "x"},
+  });
+  EXPECT_FALSE(norm.contains("provider"));
+  EXPECT_THAT(norm.value("prompt", ""), testing::HasSubstr("Workspace:"));
+}
+
+TEST_F(TaskToolTest, SessionIdParsedFromSpawnOutput) {
+  JsonValue result;
+  result["output"] = "background_task_id: bg_ses_1\ntask_id: ses_123abc\nstatus: running";
+  result["metadata"] = {{"sessionId", "ses_123abc"}, {"task_id", "ses_123abc"}};
+  EXPECT_EQ(TaskTool::session_id_from_result(result), "ses_123abc");
+}
+
 }  // namespace test
 }  // namespace qcode

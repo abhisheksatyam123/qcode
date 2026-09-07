@@ -1,4 +1,5 @@
 #include <qcode/transform/gemini_transform.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/random.h>
 
@@ -33,6 +34,56 @@ std::string openai_message_text(const nlohmann::json& msg) {
     }
   }
   return text;
+}
+
+// Gemini/Antigravity Schema protobuf rejects JSON Schema keywords such as
+// exclusiveMinimum. Convert integer exclusive bounds to inclusive ones and
+// drop other keys the wire proto does not define.
+nlohmann::json sanitize_gemini_schema(nlohmann::json node) {
+  if (node.is_array()) {
+    for (auto& item : node) {
+      item = sanitize_gemini_schema(std::move(item));
+    }
+    return node;
+  }
+  if (!node.is_object()) {
+    return node;
+  }
+
+  auto apply_exclusive = [](nlohmann::json& obj, const char* exclusive_key,
+                            const char* inclusive_key, int delta) {
+    if (!obj.contains(exclusive_key)) {
+      return;
+    }
+    const auto& exclusive = obj[exclusive_key];
+    if (exclusive.is_number_integer()) {
+      const int converted = exclusive.get<int>() + delta;
+      bool replace = !obj.contains(inclusive_key) || !obj[inclusive_key].is_number();
+      if (!replace) {
+        const double existing = obj[inclusive_key].get<double>();
+        replace = delta > 0 ? existing < converted : existing > converted;
+      }
+      if (replace) {
+        obj[inclusive_key] = converted;
+      }
+    }
+    obj.erase(exclusive_key);
+  };
+  apply_exclusive(node, "exclusiveMinimum", "minimum", 1);
+  apply_exclusive(node, "exclusiveMaximum", "maximum", -1);
+
+  static const char* kDrop[] = {
+      "$schema", "$id", "$ref", "$comment", "const", "if", "then", "else",
+      "unevaluatedProperties", "uniqueItems", "contentEncoding", "propertyNames",
+      "prefixItems", "readOnly", "writeOnly"};
+  for (const char* key : kDrop) {
+    node.erase(key);
+  }
+
+  for (auto it = node.begin(); it != node.end(); ++it) {
+    *it = sanitize_gemini_schema(std::move(*it));
+  }
+  return node;
 }
 
 void mark_last_part_cache(nlohmann::json& parts) {
@@ -111,7 +162,8 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
               args = nlohmann::json::object();
             }
           }
-          const auto call_id = call.value("id", "");
+          const auto call_id =
+              ProviderTransform::canonicalize_tool_call_id(call.value("id", ""));
           const auto name = function.value("name", "");
           tool_names[call_id] = name;
           nlohmann::json function_part{
@@ -124,7 +176,8 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
         }
       }
       if (role == "tool") {
-        const auto call_id = msg.value("tool_call_id", "");
+        const auto call_id = ProviderTransform::canonicalize_tool_call_id(
+            msg.value("tool_call_id", ""));
         // Skip orphaned tool results whose tool_call_id has no matching
         // tool_use (functionCall) in a preceding assistant message.  Claude
         // models reject these with a 400 "unexpected tool_use_id" error.
@@ -200,8 +253,8 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
       declarations.push_back(
           {{"name", function.value("name", "")},
            {"description", function.value("description", "")},
-           {"parameters", function.value("parameters",
-                                          nlohmann::json::object())}});
+           {"parameters", sanitize_gemini_schema(function.value(
+                              "parameters", nlohmann::json::object()))}});
     }
     if (!declarations.empty()) {
       gemini_req["tools"] = {{{"functionDeclarations",

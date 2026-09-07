@@ -468,6 +468,12 @@ ftxui::Element render_view(
         left.push_back(text(" · ") | dim | color(theme_text_muted(theme)));
         left.push_back(text(hdr_session.empty() ? "session" : hdr_session) |
                        color(theme_text(theme)));
+        if (state.return_session_id && !state.return_session_id->empty() &&
+            state.session_back_box) {
+            Element back = text(" ← parent") | bold | color(accent2(theme));
+            back = std::move(back) | reflect_box(*state.session_back_box);
+            left.push_back(std::move(back));
+        }
         left.push_back(text("  ") | dim);
         // Mode lives in the footer (upstream statusline order); header keeps
         // identity + usage + tabs only.
@@ -678,6 +684,8 @@ ftxui::Element render_view(
 
             if (state.tool_block_order) state.tool_block_order->clear();
             if (state.tool_arrow_boxes) state.tool_arrow_boxes->clear();
+            if (state.tool_task_boxes) state.tool_task_boxes->clear();
+            if (state.tool_task_sessions) state.tool_task_sessions->clear();
             if (state.thinking_header_boxes)
                 state.thinking_header_boxes->clear();
             if (first > 0) {
@@ -1065,6 +1073,7 @@ ftxui::Element render_view(
         auto all_sessions = session::list_sessions_full();
         auto subagent_data = TaskTool::list_tasks();
         if (state.session_row_boxes) state.session_row_boxes->clear();
+        if (state.subagent_row_boxes) state.subagent_row_boxes->clear();
 
         Elements content_rows;
 
@@ -1072,7 +1081,7 @@ ftxui::Element render_view(
         content_rows.push_back(hbox(
             text(" SESSIONS & SUBAGENTS ") | bold | color(accent2(theme)),
             filler(),
-            text("↑↓ select   Enter continue/switch   r refresh") | dim
+            text("↑↓ select   Enter/click open   b back to parent   r refresh") | dim
         ));
         content_rows.push_back(separatorLight() | color(accent(theme)));
 
@@ -1098,13 +1107,19 @@ ftxui::Element render_view(
                 else if (status == "done") status_col = Color::Green;
                 else if (status == "error" || status == "killed") status_col = Color::Red;
 
-                content_rows.push_back(hbox(
+                Element row = hbox(
                     text("  " + bg_id) | dim,
                     text(" [" + status + "] ") | bold | color(status_col),
                     text("(" + agent_type + " · " + mode_str + ") ") | color(accent(theme)),
                     text(!model_str.empty() ? ("{" + model_str + "} ") : "") | dim,
                     text(desc) | bold
-                ));
+                );
+                if (state.subagent_row_boxes) {
+                    state.subagent_row_boxes->emplace_back();
+                    row = std::move(row) |
+                          reflect_box(state.subagent_row_boxes->back());
+                }
+                content_rows.push_back(std::move(row));
             }
             content_rows.push_back(text(""));
         }

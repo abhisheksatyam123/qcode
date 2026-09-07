@@ -388,7 +388,19 @@ void promote_task_fields(JsonValue& args) {
   take("1", "description");
   take("2", "prompt");
   take("3", "subagent_type");
-  take("4", "model");
+  // Field 4 is model when it looks like an id; a paragraph is the prompt
+  // (Cursor Task vs qcode spawn field mix-up).
+  if (!args.contains("model") && args.contains("4") && args["4"].is_string()) {
+    const std::string f4 = args["4"].get<std::string>();
+    if (f4.find(' ') != std::string::npos || f4.size() > 80 ||
+        f4.find('\n') != std::string::npos) {
+      if (!args.contains("prompt") || args.value("prompt", "").size() < f4.size()) {
+        args["prompt"] = f4;
+      }
+    } else if (!f4.empty()) {
+      args["model"] = f4;
+    }
+  }
   if ((!args.contains("prompt") || args.value("prompt", "").empty()) &&
       args.contains("description") && args["description"].is_string()) {
     args["prompt"] = args["description"];

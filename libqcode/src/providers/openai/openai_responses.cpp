@@ -1,5 +1,7 @@
 #include "openai_responses.h"
 
+#include <qcode/transform/provider_transform.h>
+
 #include <optional>
 #include <string>
 
@@ -69,7 +71,7 @@ nlohmann::json to_responses_request(const nlohmann::json& request) {
     if (role == "tool") {
       responses["input"].push_back(
           {{"type", "function_call_output"},
-           {"call_id", message.value("tool_call_id", "")},
+           {"call_id", ProviderTransform::canonicalize_tool_call_id(message.value("tool_call_id", ""))},
            {"output", message.contains("content")
                           ? json_string_or_dump(message["content"], "")
                           : ""}});
@@ -91,7 +93,7 @@ nlohmann::json to_responses_request(const nlohmann::json& request) {
                 ? json_string_or_dump(function["arguments"], "{}")
                 : "{}";
         responses["input"].push_back({{"type", "function_call"},
-                                      {"call_id", call.value("id", "")},
+                                      {"call_id", ProviderTransform::canonicalize_tool_call_id(call.value("id", ""))},
                                       {"name", function.value("name", "")},
                                       {"arguments", arguments}});
       }

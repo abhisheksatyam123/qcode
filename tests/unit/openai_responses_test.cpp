@@ -29,6 +29,66 @@ TEST(OpenAIResponsesTest, BuildsResponsesRequestWithTools) {
   EXPECT_EQ(request["input"][0]["content"][0]["text"], "hello");
 }
 
+TEST(OpenAIResponsesTest, MuseSparkToolSchemaDropsExclusiveMinimum) {
+  OpenAIRequestBuilder builder(true);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  GenerateOptions options;
+  options.model = "muse-spark-1.3-contributor-free";
+  options.prompt = "hi";
+  options.tools.emplace(
+      "task",
+      Tool{"T", nlohmann::json::parse(R"({
+        "type": "object",
+        "properties": {
+          "budget": {
+            "type": "object",
+            "properties": {
+              "timeout_ms": {"type": "integer", "exclusiveMinimum": 0}
+            }
+          }
+        }
+      })")});
+  const auto request = builder.build_request_json(options);
+  ASSERT_TRUE(request.contains("tools"));
+  const auto& timeout = request["tools"][0]["parameters"]["properties"]
+                               ["budget"]["properties"]["timeout_ms"];
+  EXPECT_FALSE(timeout.contains("exclusiveMinimum"));
+  ASSERT_TRUE(timeout.contains("minimum"));
+  EXPECT_EQ(timeout["minimum"].get<int>(), 1);
+}
+
+TEST(OpenAIResponsesTest, ClampsLongCallIdsForMuseSpark) {
+  OpenAIRequestBuilder builder(true);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  GenerateOptions options;
+  options.model = "muse-spark-1.3-contributor-free";
+  const std::string long_id(80, 'c');
+  options.messages = {
+      Message::user("hi"),
+      Message::assistant_with_tools(
+          "", {ToolCallContentPart{
+                  long_id, "lookup", nlohmann::json{{"q", "x"}}}}),
+      Message::tool_results(
+          {{long_id, nlohmann::json{{"v", 1}}, false}}),
+      Message::user("next"),
+  };
+  const auto request = builder.build_request_json(options);
+  ASSERT_TRUE(request.contains("input"));
+  std::string call_id;
+  std::string output_id;
+  for (const auto& item : request["input"]) {
+    if (item.value("type", "") == "function_call") {
+      call_id = item.value("call_id", "");
+    }
+    if (item.value("type", "") == "function_call_output") {
+      output_id = item.value("call_id", "");
+    }
+  }
+  EXPECT_EQ(call_id, output_id);
+  EXPECT_LE(call_id.size(), 64u);
+  EXPECT_FALSE(call_id.empty());
+}
+
 TEST(OpenAIResponsesTest, LowersToolTurnsWithoutNullAssistantContent) {
   OpenAIRequestBuilder builder(true);
   GenerateOptions options;

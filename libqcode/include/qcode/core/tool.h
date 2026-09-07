@@ -29,6 +29,7 @@ struct ToolExecutionContext {
   Messages messages;
   std::optional<std::function<void()>> abort_signal;
   std::string workspace;
+  std::string session_id;  // parent/orchestrator session when set
   std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
   // Multi-agent hook (opencode TaskTool parity): when set, the task tool
   // runs a REAL nested subagent turn instead of returning a simulated

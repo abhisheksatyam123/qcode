@@ -54,10 +54,14 @@ std::optional<int> top_k(const Model& model);
 
 /// Normalize messages for a specific provider/model:
 /// - Removes unsupported content parts (audio, video, etc. if unsupported)
-/// - Flattens tool_call_id sequences
+/// - Canonicalizes tool_call ids to [A-Za-z0-9_-]{1,64} (OpenAI Responses
+///   rejects longer call_id; required when switching Cursor/Grok → Muse Spark)
 /// - Closes unpaired tool calls (see close_unpaired_tool_calls)
 /// - Applies provider-specific adjustments
 Messages normalize_messages(const Messages& messages, const Model& model);
+
+/// Scrub + bound a tool-call id so every provider can replay it. Stable.
+[[nodiscard]] std::string canonicalize_tool_call_id(std::string_view id);
 
 /// Insert synthetic error tool results immediately after assistant tool_calls
 /// that have no matching result. OpenAI/Claude 400 when a function_call is
@@ -91,8 +95,9 @@ int max_output_tokens(int model_limit);
 
 /// Normalize JSON schema for provider quirks:
 /// - Anthropic/Bedrock: flatten top-level anyOf/oneOf
-/// - Gemini: sanitize schema
-/// - Qualcomm Vertex: extra processing
+/// - All providers: exclusiveMinimum/Maximum → inclusive min/max; drop
+///   $schema and other keys LLM tool APIs commonly reject
+/// - Gemini: additional sanitization in convert_openai_to_gemini
 JsonValue normalize_schema(const JsonValue& schema, const Model& model);
 
 // ── Utility ──

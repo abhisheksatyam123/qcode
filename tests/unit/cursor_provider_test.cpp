@@ -562,6 +562,33 @@ TEST(CursorProviderTest, ExecMcpProtobufTaskArgsInvokeRunner) {
             std::string::npos);
 }
 
+
+TEST(CursorProviderTest, ExecMcpTaskField4PromptIsNotModel) {
+  bool called = false;
+  GenerateOptions options;
+  options.subagent_runner = [&](const nlohmann::json& args,
+                                std::shared_ptr<std::atomic<bool>>) {
+    called = true;
+    EXPECT_NE(args.value("prompt", "").find("README.md"), std::string::npos);
+    EXPECT_NE(args.value("model", ""), args.value("prompt", ""));
+    return nlohmann::json{{"output", "ok"}};
+  };
+
+  const std::string task_args =
+      proto::bytes_field(1, "readme") + proto::bytes_field(2, "explore") +
+      proto::bytes_field(3, "cursor-grok-4.6") +
+      proto::bytes_field(4, "Read-only. Workspace: /tmp\n\nRead README.md");
+  CursorExecRequest req;
+  req.id = 12;
+  req.exec_id = "task-swap";
+  req.args_field = 11;
+  req.args = proto::bytes_field(1, "task") + proto::bytes_field(2, task_args);
+
+  const auto reply = CursorExec::handle(req, "/tmp", nullptr, &options);
+  EXPECT_TRUE(called);
+  EXPECT_FALSE(reply.is_error) << reply.result.dump();
+}
+
 TEST(CursorProviderTest, ExecUnknownFieldProtobufTaskDoesNotReturnEmptyError) {
   bool called = false;
   GenerateOptions options;

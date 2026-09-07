@@ -19,6 +19,14 @@ std::string create_new_session(const std::string& provider, const std::string& m
                                const std::string& workspace = "",
                                const std::string& custom_id = "");
 
+// Insert a session row with an explicit id (e.g. TaskTool ses_*). No-op if the
+// id already exists or the database is unavailable.
+void ensure_session_row(const std::string& id,
+                        const std::string& title,
+                        const std::string& provider = "",
+                        const std::string& model = "",
+                        const std::string& workspace = "");
+
 // Retrieve the last active session ID from the database, or empty if none
 std::string get_last_active_session();
 

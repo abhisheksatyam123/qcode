@@ -20,6 +20,14 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     const GenerateOptions& options) {
   std::string model_id =
       ProviderTransform::chat_wire_model_id(transport_, options.model);
+  std::string schema_provider = "openai";
+  if (wire_protocol_ == "google") {
+    schema_provider = "google";
+  } else if (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen) {
+    schema_provider = "opencode";
+  } else if (transport_ == ProviderTransform::ChatTransport::kOpenRouter) {
+    schema_provider = "openrouter";
+  }
   nlohmann::json request{{"model", model_id},
                          {"messages", nlohmann::json::array()}};
 
@@ -41,8 +49,8 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
     // Close unpaired tool calls (TUI restart / abort mid-tool) so Responses
     // does not 400 with "No tool output found for function call".
-    const auto messages =
-        ProviderTransform::close_unpaired_tool_calls(options.messages);
+    const auto messages = ProviderTransform::normalize_messages(
+        options.messages, Model(options.model, schema_provider));
 
     // Use provided messages
     for (const auto& msg : messages) {
@@ -53,8 +61,10 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
         // OpenAI expects each tool result as a separate message with role
         // "tool"
         for (const auto& result : msg.get_tool_results()) {
+          const std::string result_id =
+              ProviderTransform::canonicalize_tool_call_id(result.tool_call_id);
           if (!result.tool_call_id.empty() &&
-              !seen_tool_call_ids.contains(result.tool_call_id)) {
+              !seen_tool_call_ids.contains(result_id)) {
             LOG_DEBUG(
                 "openai_request_builder: dropping orphaned tool result "
                 "tool_call_id={}",
@@ -63,7 +73,8 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
           }
           nlohmann::json tool_message;
           tool_message["role"] = "tool";
-          tool_message["tool_call_id"] = result.tool_call_id;
+          tool_message["tool_call_id"] =
+              ProviderTransform::canonicalize_tool_call_id(result.tool_call_id);
 
           if (!result.is_error) {
             tool_message["content"] = result.result.dump();
@@ -86,7 +97,10 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       // Get tool calls
       auto tool_calls = msg.get_tool_calls();
       for (const auto& tool_call : tool_calls) {
-        if (!tool_call.id.empty()) seen_tool_call_ids.insert(tool_call.id);
+        if (!tool_call.id.empty()) {
+          seen_tool_call_ids.insert(
+              ProviderTransform::canonicalize_tool_call_id(tool_call.id));
+        }
       }
 
       // Set content - OpenAI expects both text and tool calls in the same
@@ -120,7 +134,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
         nlohmann::json tool_calls_array = nlohmann::json::array();
         for (const auto& tool_call : tool_calls) {
           nlohmann::json encoded_call{
-              {"id", tool_call.id},
+              {"id", ProviderTransform::canonicalize_tool_call_id(tool_call.id)},
               {"type", "function"},
               {"function",
                {{"name", tool_call.tool_name},
@@ -218,7 +232,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
     nlohmann::json tools_array = nlohmann::json::array();
     auto active_tool_names = options.get_active_tool_names();
-    Model model_info(options.model, "openai");
+    Model model_info(options.model, schema_provider);
 
     for (const auto& tool_name : active_tool_names) {
       auto it = options.tools.find(tool_name);

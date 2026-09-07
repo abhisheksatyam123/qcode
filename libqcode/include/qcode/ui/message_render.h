@@ -25,7 +25,8 @@ ftxui::Element ToolBlock(const std::string& icon,
                           const std::string& shell_command = "",
                           const std::string& theme = "opencode",
                           ChatState* state = nullptr,
-                          const std::string& tool_call_id = "");
+                          const std::string& tool_call_id = "",
+                          const std::string& open_session_id = "");
 
 // ── Legacy BlockTool (compatibility) ──
 ftxui::Element BlockTool(const std::string& title, ftxui::Element content,

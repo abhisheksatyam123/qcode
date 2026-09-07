@@ -1,4 +1,6 @@
 #include <qcode/tools/task_tool.h>
+#include <qcode/session/session_store.h>
+#include <cctype>
 #include <qcode/tools/task_target.h>
 
 #include <algorithm>
@@ -72,6 +74,12 @@ static ParsedSubagentResult parse_subagent_result(const std::string& text) {
   return parsed;
 }
 
+static void persist_subagent_output(const std::string& session_id,
+                                    const std::string& text) {
+  if (session_id.empty() || text.empty()) return;
+  qcode::session::save_message(session_id, "Assistant", text);
+}
+
 // ── Subagent Task Registry ──
 // Manages asynchronous parallel subagent jobs, status tracking, waiting, and cancellation
 
@@ -141,6 +149,7 @@ class SubagentRegistry {
     entry->start_time = std::chrono::steady_clock::now();
     tasks_[bg_id] = entry;
     by_session_[session_id] = entry;
+    persist_subagent_output(session_id, output);
   }
 
   JsonValue await_or_poll(const std::string& bg_id, int timeout_ms) {
@@ -219,6 +228,7 @@ class SubagentRegistry {
         entry->status = "done";
         entry->output = out_json.value("output", "Subagent finished with no output");
       }
+      persist_subagent_output(entry->session_id, entry->output);
 
       JsonValue res;
       res["title"] = "task complete: " + entry->description;
@@ -284,6 +294,39 @@ class SubagentRegistry {
     return res;
   }
 
+  void harvest_ready() {
+    std::vector<std::shared_ptr<SubagentTaskEntry>> pending;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (auto& [_, t] : tasks_) {
+        if (t && t->status == "running" && t->future.valid()) pending.push_back(t);
+      }
+    }
+    for (auto& entry : pending) {
+      if (entry->future.wait_for(std::chrono::milliseconds(0)) !=
+          std::future_status::ready) {
+        continue;
+      }
+      JsonValue out_json;
+      try {
+        out_json = entry->future.get();
+      } catch (const std::exception& e) {
+        out_json = JsonValue{{"error", std::string("Subagent crashed: ") + e.what()}};
+      }
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (entry->status != "running") continue;
+      if (out_json.is_object() && out_json.contains("error")) {
+        entry->status = "error";
+        entry->error = out_json.value("error", "Subagent failed");
+        entry->output = "Error: " + entry->error;
+      } else {
+        entry->status = "done";
+        entry->output = out_json.value("output", "Subagent finished with no output");
+      }
+      persist_subagent_output(entry->session_id, entry->output);
+    }
+  }
+
   JsonValue list() const {
     std::lock_guard<std::mutex> lock(mutex_);
     JsonValue res;
@@ -325,12 +368,104 @@ void TaskTool::clear_background_tasks() {
 }
 
 JsonValue TaskTool::list_tasks() {
+  SubagentRegistry::instance().harvest_ready();
   return SubagentRegistry::instance().list();
 }
 
-static JsonValue normalize_spawn_args(JsonValue args) {
-  std::string mode = args.value("mode", "");
+static bool is_known_mode_token(const std::string& s) {
+  return s == "explore" || s == "implement" || s == "verify" || s == "general" ||
+         s == "generalPurpose";
+}
+
+static bool looks_like_prompt_text(const std::string& s) {
+  if (s.size() > 80) return true;
+  if (s.find('\n') != std::string::npos) return true;
+  if (s.find("Workspace:") != std::string::npos) return true;
+  return s.find(' ') != std::string::npos && s.size() > 24;
+}
+
+static bool looks_like_model_id(const std::string& s) {
+  if (s.empty() || s.find(' ') != std::string::npos ||
+      s.find('\n') != std::string::npos) {
+    return false;
+  }
+  if (is_inherit_model_id(s)) return true;
+  if (s.rfind("cursor-", 0) == 0 || s.rfind("claude-", 0) == 0 ||
+      s.rfind("gemini-", 0) == 0) {
+    return true;
+  }
+  if (s.find('/') != std::string::npos) return true;
+  return s.size() < 96 && s.find(':') != std::string::npos;
+}
+
+static bool looks_like_provider_id(const std::string& s) {
+  if (s.empty() || s.size() > 32) return false;
+  if (!std::isalpha(static_cast<unsigned char>(s[0]))) return false;
+  for (char c : s) {
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-')
+      return false;
+  }
+  return true;
+}
+
+JsonValue TaskTool::normalize_spawn_args(JsonValue args) {
+  // Cursor Task protobuf leftovers: field 10 is often the real prompt.
+  if (args.contains("10") && args["10"].is_string()) {
+    const std::string f10 = args["10"].get<std::string>();
+    const std::string prompt = args.value("prompt", "");
+    if (looks_like_prompt_text(f10) &&
+        (prompt.empty() || is_known_mode_token(prompt))) {
+      args["prompt"] = f10;
+    }
+  }
+
+  std::string prompt_text = args.value("prompt", "");
+  std::string model = args.value("model", "");
   std::string subagent_type = args.value("subagent_type", args.value("agent", ""));
+  std::string mode = args.value("mode", "");
+
+  // Lead models mix Cursor Task fields with qcode spawn fields:
+  // prompt=mode, subagent_type=model id, model=actual prompt.
+  if (is_known_mode_token(prompt_text) && looks_like_prompt_text(model)) {
+    const std::string actual_prompt = model;
+    if (mode.empty()) mode = prompt_text;
+    if (looks_like_model_id(subagent_type)) {
+      args["model"] = subagent_type;
+      model = subagent_type;
+    } else {
+      args.erase("model");
+      model.clear();
+    }
+    subagent_type = mode;
+    args["subagent_type"] = subagent_type;
+    args["prompt"] = actual_prompt;
+    prompt_text = actual_prompt;
+  }
+
+  if (looks_like_model_id(subagent_type) &&
+      (model.empty() || looks_like_prompt_text(model))) {
+    if (looks_like_prompt_text(model) &&
+        (prompt_text.empty() || is_known_mode_token(prompt_text))) {
+      if (is_known_mode_token(prompt_text) && mode.empty()) mode = prompt_text;
+      args["prompt"] = model;
+      prompt_text = model;
+    }
+    args["model"] = subagent_type;
+    model = subagent_type;
+    subagent_type = !mode.empty() ? mode
+                    : (is_known_mode_token(prompt_text) ? prompt_text : "general");
+    args["subagent_type"] = subagent_type;
+  }
+
+  if (looks_like_prompt_text(model) &&
+      (prompt_text.empty() || is_known_mode_token(prompt_text))) {
+    if (is_known_mode_token(prompt_text) && mode.empty()) mode = prompt_text;
+    args["prompt"] = model;
+    prompt_text = model;
+    args.erase("model");
+    model.clear();
+  }
+
   if (subagent_type.empty()) {
     if (mode == "explore" || mode == "implement" || mode == "verify") {
       subagent_type = mode;
@@ -347,24 +482,23 @@ static JsonValue normalize_spawn_args(JsonValue args) {
     } else {
       mode = "explore";
     }
-    args["mode"] = mode;
   }
+  args["mode"] = mode;
 
-  std::string prompt_text = args.value("prompt", "");
   if (prompt_text.empty()) prompt_text = args.value("task", "");
   if (prompt_text.empty()) prompt_text = args.value("objective", "");
   if (prompt_text.empty()) prompt_text = args.value("description", "");
   if (!prompt_text.empty()) args["prompt"] = prompt_text;
 
-  std::string model = args.value("model", "");
+  model = args.value("model", "");
   std::string provider = args.value("provider", "");
   if (provider.empty() && !model.empty() && !is_inherit_model_id(model)) {
     const auto colon = model.find(':');
     if (colon != std::string::npos && colon > 0 && colon + 1 < model.size()) {
       const std::string prefix = model.substr(0, colon);
-      // Without the catalog, only split provider:model when the prefix is a
-      // simple id (no '/'). OpenRouter model ids use ':' (e.g. name:free).
-      if (prefix.find('/') == std::string::npos) {
+      // Only split catalog form provider:model. Prompt text like
+      // "Read-only. Workspace: /path" must not become a provider.
+      if (looks_like_provider_id(prefix) && prefix.find('/') == std::string::npos) {
         args["provider"] = prefix;
         args["model"] = model.substr(colon + 1);
       }
@@ -380,8 +514,45 @@ static JsonValue normalize_spawn_args(JsonValue args) {
   return args;
 }
 
+std::string TaskTool::session_id_from_result(const JsonValue& result) {
+  if (!result.is_object()) {
+    if (result.is_string()) {
+      const std::string s = result.get<std::string>();
+      const auto pos = s.find("task_id: ");
+      if (pos != std::string::npos) {
+        auto end = s.find_first_of(" \n\r\t", pos + 9);
+        return s.substr(pos + 9, end == std::string::npos ? std::string::npos
+                                                          : end - (pos + 9));
+      }
+    }
+    return "";
+  }
+  if (result.contains("result") && result["result"].is_object()) {
+    std::string nested = session_id_from_result(result["result"]);
+    if (!nested.empty()) return nested;
+  }
+  if (result.contains("metadata") && result["metadata"].is_object()) {
+    std::string sid = result["metadata"].value(
+        "sessionId", result["metadata"].value("task_id", ""));
+    if (!sid.empty() && sid.rfind("bg_", 0) != 0) return sid;
+  }
+  std::string sid = result.value("sessionId", result.value("task_id", ""));
+  if (!sid.empty() && sid.rfind("bg_", 0) != 0) return sid;
+  if (result.contains("output") && result["output"].is_string()) {
+    const std::string s = result["output"].get<std::string>();
+    auto pos = s.find("task_id: ");
+    if (pos != std::string::npos) {
+      auto end = s.find_first_of(" \n\r\t", pos + 9);
+      sid = s.substr(pos + 9, end == std::string::npos ? std::string::npos
+                                                       : end - (pos + 9));
+      if (!sid.empty() && sid.rfind("bg_", 0) != 0) return sid;
+    }
+  }
+  return "";
+}
+
 JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionContext& context) {
-  JsonValue args = normalize_spawn_args(raw_args);
+  JsonValue args = TaskTool::normalize_spawn_args(raw_args);
 
   std::string subagent_type = args.value("subagent_type", "general");
   std::string description = args.value("description", "");
@@ -394,6 +565,12 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
   }
 
   std::string session_id = generate_session_id();
+  {
+    std::string title = description.empty() ? subagent_type : description;
+    qcode::session::ensure_session_row(session_id, title, args.value("provider", ""),
+                                       args.value("model", ""), context.workspace);
+    qcode::session::save_message(session_id, "User", prompt_text);
+  }
   bool is_background = args.value("background", args.value("run_in_background", false));
 
   std::string mode = args.value("mode", "explore");
@@ -456,6 +633,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
       }
       output_text =
           sub.value("output", std::string("Subagent finished with no output"));
+      persist_subagent_output(session_id, output_text);
       ran = true;
     }
     if (!ran) {

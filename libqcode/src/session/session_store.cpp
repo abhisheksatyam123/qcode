@@ -373,6 +373,48 @@ bool is_valid_session_id(const std::string& id) {
     return true;
 }
 
+void ensure_session_row(const std::string& id,
+                        const std::string& title,
+                        const std::string& provider,
+                        const std::string& model,
+                        const std::string& workspace) {
+    if (id.empty() || !is_valid_session_id(id)) return;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+
+    const char* check_sql = "SELECT 1 FROM sessions WHERE id = ? LIMIT 1;";
+    sqlite3_stmt* check_stmt = nullptr;
+    bool exists = false;
+    if (prepare_stmt(db, check_sql, &check_stmt)) {
+        sqlite3_bind_text(check_stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+        exists = sqlite3_step(check_stmt) == SQLITE_ROW;
+        sqlite3_finalize(check_stmt);
+    }
+    if (exists) return;
+
+    auto now = std::chrono::system_clock::now();
+    long long created_at = std::chrono::duration_cast<std::chrono::seconds>(
+                               now.time_since_epoch())
+                               .count();
+    std::string use_title = title.empty() ? ("Subagent " + id) : title;
+    const char* sql =
+        "INSERT INTO sessions (id, title, provider, model, created_at, workspace) "
+        "VALUES (?, ?, ?, ?, ?, ?);";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, use_title.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, provider.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 4, model.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 5, created_at);
+        sqlite3_bind_text(stmt, 6, workspace.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+}
+
+
 void save_message(const std::string& session_id, const std::string& sender, const std::string& content) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);

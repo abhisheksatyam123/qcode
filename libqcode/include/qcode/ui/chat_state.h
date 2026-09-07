@@ -86,6 +86,12 @@ struct ChatState {
     int selected_session_item = 0;  // Selected index in Sessions/Subagents tab
     std::shared_ptr<std::vector<HitBox>> session_row_boxes =
         std::make_shared<std::vector<HitBox>>();
+    // Parallel-subagent rows on the Sessions tab (index == task index).
+    std::shared_ptr<std::vector<HitBox>> subagent_row_boxes =
+        std::make_shared<std::vector<HitBox>>();
+    // Session to restore when leaving a subagent (tool click / subagent row).
+    std::shared_ptr<std::string> return_session_id = std::make_shared<std::string>();
+    std::shared_ptr<HitBox> session_back_box = std::make_shared<HitBox>();
 
     int terminal_height = 40;  // Approximate terminal height, updated during render
 
@@ -138,6 +144,11 @@ struct ChatState {
     std::shared_ptr<int> focused_tool_index = std::make_shared<int>(-1);
     std::shared_ptr<std::unordered_map<std::string, HitBox>> tool_arrow_boxes =
         std::make_shared<std::unordered_map<std::string, HitBox>>();
+    // Clickable task-tool titles → subagent session id.
+    std::shared_ptr<std::unordered_map<std::string, HitBox>> tool_task_boxes =
+        std::make_shared<std::unordered_map<std::string, HitBox>>();
+    std::shared_ptr<std::unordered_map<std::string, std::string>> tool_task_sessions =
+        std::make_shared<std::unordered_map<std::string, std::string>>();
 };
 
 }  // namespace qcode

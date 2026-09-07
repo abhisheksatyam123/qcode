@@ -3,12 +3,14 @@
 // models (ox-alpha, deepseek-v4-flash): reasoning effort placement,
 // reasoning_content replay, usage accounting, and keyless Zen auth.
 
+#include <cctype>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <qcode/core/generate_options.h>
 #include <qcode/providers/provider_profile.h>
 #include <qcode/transform/provider_transform.h>
+#include <nlohmann/json.hpp>
 #include <qcode/providers/zen_route.h>
 #include <qcode/ui/commands.h>
 
@@ -536,6 +538,89 @@ TEST(OpenRouterWireFormatTest, SkipsInterleavedReasoningReplay) {
     if (msg.value("role", "") != "assistant") continue;
     EXPECT_FALSE(msg.contains("reasoning_content"));
     EXPECT_FALSE(msg.contains("reasoning"));
+  }
+}
+
+TEST(ProviderTransformTest, CanonicalizeToolCallIdBoundsAndScrubs) {
+  EXPECT_EQ(ProviderTransform::canonicalize_tool_call_id("call_ok"), "call_ok");
+  EXPECT_EQ(ProviderTransform::canonicalize_tool_call_id("call/1:x"), "call_1_x");
+  EXPECT_EQ(ProviderTransform::canonicalize_tool_call_id(""), "call");
+  const std::string long_id(80, 'a');
+  const auto a = ProviderTransform::canonicalize_tool_call_id(long_id);
+  const auto b = ProviderTransform::canonicalize_tool_call_id(long_id);
+  EXPECT_EQ(a, b);
+  EXPECT_LE(a.size(), 64u);
+  EXPECT_NE(a, long_id);
+  for (char c : a) {
+    EXPECT_TRUE(std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+                c == '-');
+  }
+}
+
+TEST(ProviderTransformTest, NormalizeMessagesRewritesLongIdsAndKeepsPairing) {
+  const std::string long_id(80, 'b');
+  Messages history;
+  history.push_back(Message::user("hi"));
+  history.push_back(Message::assistant_with_tools(
+      "", {ToolCallContentPart{long_id, "bash", nlohmann::json{{"cmd", "ls"}}}}));
+  history.push_back(Message::tool_results(
+      {{long_id, nlohmann::json{{"ok", true}}, false}}));
+  Model model("muse-spark-1.3-contributor-free", "opencode");
+  const auto out = ProviderTransform::normalize_messages(history, model);
+  std::string call_id;
+  std::string result_id;
+  for (const auto& msg : out) {
+    for (const auto& c : msg.get_tool_calls()) call_id = c.id;
+    for (const auto& r : msg.get_tool_results()) result_id = r.tool_call_id;
+  }
+  EXPECT_FALSE(call_id.empty());
+  EXPECT_EQ(call_id, result_id);
+  EXPECT_LE(call_id.size(), 64u);
+}
+
+TEST(ProviderTransformSchemaTest, GeminiStripsNestedExclusiveMinimum) {
+  nlohmann::json schema = {
+      {"type", "object"},
+      {"properties",
+       {{"budget",
+         {{"type", "object"},
+          {"properties",
+           {{"timeout_ms",
+             {{"type", "integer"}, {"exclusiveMinimum", 0}}}}}}}}}};
+  Model model("gemini-3.8-flash", "antigravity");
+  auto out = ProviderTransform::normalize_schema(schema, model);
+  const auto& timeout =
+      out["properties"]["budget"]["properties"]["timeout_ms"];
+  EXPECT_FALSE(timeout.contains("exclusiveMinimum"));
+  ASSERT_TRUE(timeout.contains("minimum"));
+  EXPECT_EQ(timeout["minimum"].get<int>(), 1);
+}
+
+TEST(ProviderTransformSchemaTest, ZenAndOpenAIAlsoStripExclusiveMinimum) {
+  nlohmann::json schema = nlohmann::json::parse(R"({
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/07/schema",
+    "properties": {
+      "budget": {
+        "type": "object",
+        "properties": {
+          "timeout_ms": {"type": "integer", "exclusiveMinimum": 0}
+        }
+      }
+    }
+  })");
+  const Model models[] = {
+      Model("muse-spark-1.3-contributor-free", "opencode"),
+      Model("grok-4.6", "openai"),
+  };
+  for (const auto& model : models) {
+    auto out = ProviderTransform::normalize_schema(schema, model);
+    EXPECT_FALSE(out.contains("$schema")) << model.name;
+    const auto& timeout =
+        out["properties"]["budget"]["properties"]["timeout_ms"];
+    EXPECT_FALSE(timeout.contains("exclusiveMinimum")) << model.name;
+    ASSERT_TRUE(timeout.contains("minimum")) << model.name;
+    EXPECT_EQ(timeout["minimum"].get<int>(), 1) << model.name;
   }
 }
 

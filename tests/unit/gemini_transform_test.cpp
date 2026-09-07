@@ -121,6 +121,26 @@ TEST(GeminiTransformTest, ConvertPreservesToolsCallsAndResults) {
       gemini["generationConfig"]["thinkingConfig"]["includeThoughts"].get<bool>());
 }
 
+TEST(GeminiTransformTest, ConvertStripsExclusiveMinimumFromToolSchema) {
+  json request = parsed(R"({
+    "messages": [{"role": "user", "content": "hi"}],
+    "tools": [{"type": "function", "function": {"name": "task", "description": "T",
+      "parameters": {"type": "object", "properties": {
+        "budget": {"type": "object", "properties": {
+          "timeout_ms": {"type": "integer", "exclusiveMinimum": 0, "$schema": "https://json-schema.org/draft/07/schema"}
+        }}
+      }}}}]
+  })");
+  const auto gemini = convert_openai_to_gemini(request);
+  const auto& timeout = gemini["tools"][0]["functionDeclarations"][0]
+                            ["parameters"]["properties"]["budget"]["properties"]
+                            ["timeout_ms"];
+  EXPECT_FALSE(timeout.contains("exclusiveMinimum"));
+  EXPECT_FALSE(timeout.contains("$schema"));
+  ASSERT_TRUE(timeout.contains("minimum"));
+  EXPECT_EQ(timeout["minimum"].get<int>(), 1);
+}
+
 TEST(GeminiTransformTest, ReasoningObjectEffortMapsToThinkingLevel) {
   json request = parsed(R"({"messages":[{"role":"user","content":"hi"}],
     "reasoning":{"effort":"medium","exclude":false}})");

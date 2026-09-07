@@ -24,6 +24,7 @@
 #include <qcode/transform/provider_transform.h>
 #include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
+#include <qcode/tools/task_tool.h>
 #include <qcode/config/provider_info.h>
 #include <qcode/ui/chat_state.h>
 #include <qcode/session/system_prompt.h>
@@ -421,6 +422,40 @@ int main(int argc, char* argv[]) {
         persist_session_variant();
         store.add_toast("Started new session", "success", 2000);
         screen.Post(Event::Custom);
+    };
+
+    auto open_chat_session = [&](const std::string& id, const std::string& title,
+                                 bool remember_return) {
+        if (id.empty()) return;
+        if (state.session_id && *state.session_id == id) {
+            state.tab_selected = 0;
+            screen.Post(Event::Custom);
+            return;
+        }
+        if (remember_return && state.session_id && !state.session_id->empty() &&
+            state.return_session_id) {
+            *state.return_session_id = *state.session_id;
+        }
+        generation.prepare_session_switch();
+        store.set_session_id(id);
+        std::string use_title = title.empty() ? qcode::session::get_session_title(id)
+                                              : title;
+        sync_session_title(state, use_title);
+        state.messages_history->clear();
+        qcode::session::reload_session_history(id, state);
+        if (state.retry_available) *state.retry_available = false;
+        state.tab_selected = 0;
+        store.add_toast("Opened session: " + (use_title.empty() ? id : use_title),
+                        "info", 1500);
+        screen.Post(Event::Custom);
+    };
+
+    auto return_to_parent_session = [&]() -> bool {
+        if (!state.return_session_id || state.return_session_id->empty()) return false;
+        const std::string pid = *state.return_session_id;
+        state.return_session_id->clear();
+        open_chat_session(pid, "", false);
+        return true;
     };
 
     auto open_model_picker = [&]() {
@@ -1128,6 +1163,9 @@ int main(int argc, char* argv[]) {
                 screen.Post(Event::Custom);
                 return true;
             }
+            if (e == Event::Character('b') || e == Event::Character('B')) {
+                if (return_to_parent_session()) return true;
+            }
 
             if (session_count > 0) {
                 if (e == Event::ArrowUp || e == Event::Character('k') ||
@@ -1284,6 +1322,44 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
+                if (state.return_session_id && !state.return_session_id->empty() &&
+                    state.session_back_box &&
+                    state.session_back_box->Contain(e.mouse().x, e.mouse().y)) {
+                    if (return_to_parent_session()) return true;
+                }
+                if (state.tab_selected == 3 && state.subagent_row_boxes) {
+                    auto listed = qcode::TaskTool::list_tasks();
+                    const auto& tasks =
+                        (listed.contains("metadata") &&
+                         listed["metadata"].contains("tasks"))
+                            ? listed["metadata"]["tasks"]
+                            : nlohmann::json::array();
+                    for (size_t i = 0; i < state.subagent_row_boxes->size() &&
+                                       i < tasks.size();
+                         ++i) {
+                        if ((*state.subagent_row_boxes)[i].Contain(e.mouse().x,
+                                                                   e.mouse().y)) {
+                            const std::string sid = tasks[i].value(
+                                "task_id", tasks[i].value("sessionId", ""));
+                            const std::string desc =
+                                tasks[i].value("description", sid);
+                            open_chat_session(sid, desc, true);
+                            return true;
+                        }
+                    }
+                }
+                if (state.tool_task_boxes && state.tool_task_sessions) {
+                    for (const auto& [id, box] : *state.tool_task_boxes) {
+                        if (box.Contain(e.mouse().x, e.mouse().y)) {
+                            auto it = state.tool_task_sessions->find(id);
+                            if (it != state.tool_task_sessions->end() &&
+                                !it->second.empty()) {
+                                open_chat_session(it->second, "", true);
+                                return true;
+                            }
+                        }
+                    }
+                }
                 if (state.tool_arrow_boxes) {
                     for (const auto& [id, box] : *state.tool_arrow_boxes) {
                         if (box.Contain(e.mouse().x, e.mouse().y)) {
@@ -1317,6 +1393,11 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
+        }
+        if ((e == Event::Character('b') || e == Event::Character('B')) &&
+            (!state.is_generating || !state.is_generating->load()) &&
+            state.return_session_id && !state.return_session_id->empty()) {
+            if (return_to_parent_session()) return true;
         }
         if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
         if (e == Event::Special("\x1b\x32")) { state.tab_selected = 1; return true; }

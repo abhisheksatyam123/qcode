@@ -6,6 +6,7 @@
 #include <qcode/ui/chat_state.h>
 #include <qcode/ui/markdown.h>
 #include <qcode/ui/message_render.h>
+#include <qcode/tools/task_tool.h>
 #include <qcode/ui/themes.h>
 #include <qcode/ui/tool_renderers.h>
 #include <nlohmann/json.hpp>
@@ -205,7 +206,8 @@ Element ToolBlock(const std::string& icon,
                    const std::string& shell_command,
                    const std::string& theme,
                    ChatState* state,
-                   const std::string& tool_call_id) {
+                   const std::string& tool_call_id,
+                   const std::string& open_session_id) {
     // ── Title row: ▸ # description · tool          ✓ 4ms ──
     Elements title_row;
     if (collapsible) {
@@ -275,7 +277,14 @@ Element ToolBlock(const std::string& icon,
     }
 
     Elements body;
-    body.push_back(hbox(std::move(title_row)));
+    Element title_el = hbox(std::move(title_row));
+    if (state && !open_session_id.empty() && !tool_call_id.empty() &&
+        state->tool_task_boxes && state->tool_task_sessions) {
+        (*state->tool_task_sessions)[tool_call_id] = open_session_id;
+        title_el = std::move(title_el) |
+                   reflect_simple((*state->tool_task_boxes)[tool_call_id]);
+    }
+    body.push_back(std::move(title_el));
 
     // When expanded, only render the explicit command line if there was a separate description
     if (!collapsed) {
@@ -516,6 +525,10 @@ static Element render_tool_result(const qcode::ToolResultContentPart& part,
     }
     const std::string status = part.is_error ? "failed" : "success";
     const auto output = extract_result_output(part);
+    std::string open_sid;
+    if (tool_name == "task" || tool_name == "Task") {
+        open_sid = TaskTool::session_id_from_result(part.result);
+    }
     return ToolBlock(tool_icon(tool_name), tool_display_name(tool_name), "",
                       output.empty()
                           ? emptyElement()
@@ -523,7 +536,8 @@ static Element render_tool_result(const qcode::ToolResultContentPart& part,
                       false, status,
                       part.is_error ? theme_error(theme) : theme_success(theme),
                       part.duration_ms, false, true, false,
-                      tool_name.empty() ? "tool" : tool_name, theme, const_cast<ChatState*>(&state), part.tool_call_id);
+                      tool_name.empty() ? "tool" : tool_name, theme,
+                      const_cast<ChatState*>(&state), part.tool_call_id, open_sid);
 }
 
 // Opencode-style reasoning header: warning-coloured "+/- Thought" toggle
@@ -756,11 +770,16 @@ static Element render_tool_pair(const qcode::ToolCallContentPart& call_part,
     const Color status_color =
         result_part.is_error ? theme_error(theme) : theme_success(theme);
 
+    std::string open_sid;
+    if (call_part.tool_name == "task" || call_part.tool_name == "Task") {
+        open_sid = TaskTool::session_id_from_result(result_part.result);
+    }
     return ToolBlock(
         tool_icon(call_part.tool_name), tool_display_name(call_part.tool_name),
         desc, render_shell_output(call_part, result_part, theme, collapsed),
         false, status, status_color, result_part.duration_ms, collapsed,
-        collapsible, focused, command, theme, const_cast<ChatState*>(&state), call_part.id);
+        collapsible, focused, command, theme, const_cast<ChatState*>(&state),
+        call_part.id, open_sid);
 }
 
 }  // namespace qcode

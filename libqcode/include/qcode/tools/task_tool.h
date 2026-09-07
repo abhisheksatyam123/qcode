@@ -67,9 +67,9 @@ inline JsonValue spawn_parameters() {
   p["budget"] = JsonValue{
     {"type", "object"},
     {"properties", JsonValue{
-      {"max_files", JsonValue{{"type", "integer"}, {"exclusiveMinimum", 0}}},
-      {"max_output_chars", JsonValue{{"type", "integer"}, {"exclusiveMinimum", 0}}},
-      {"timeout_ms", JsonValue{{"type", "integer"}, {"exclusiveMinimum", 0}}}
+      {"max_files", JsonValue{{"type", "integer"}, {"minimum", 1}}},
+      {"max_output_chars", JsonValue{{"type", "integer"}, {"minimum", 1}}},
+      {"timeout_ms", JsonValue{{"type", "integer"}, {"minimum", 1}}}
     }}
   };
 
@@ -133,6 +133,8 @@ class TaskTool {
   static Tool definition();
   static void clear_background_tasks();
   static JsonValue list_tasks();
+  static JsonValue normalize_spawn_args(JsonValue args);
+  static std::string session_id_from_result(const JsonValue& result);
 
  private:
   static JsonValue exec_spawn(const JsonValue& args, const ToolExecutionContext& context);

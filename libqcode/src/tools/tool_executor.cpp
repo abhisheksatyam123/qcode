@@ -58,6 +58,7 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   context.messages = messages;
   if (options) {
     context.workspace = options->workspace;
+    context.session_id = options->session_id;
   }
   if (options && options->subagent_runner) {
     context.subagent_runner = options->subagent_runner;

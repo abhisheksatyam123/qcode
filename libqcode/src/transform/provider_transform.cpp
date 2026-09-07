@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <iterator>
 #include <ranges>
 #include <set>
@@ -12,6 +13,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <functional>
 
 namespace qcode {
 namespace ProviderTransform {
@@ -411,15 +413,45 @@ static std::string sanitize_surrogates(std::string s) {
   return out;
 }
 
-static std::string scrub_tool_id(const std::string& id) {
-  std::string out = id;
-  for (char& ch : out) {
-    if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-          (ch >= '0' && ch <= '9') || ch == '_' || ch == '-')) {
-      ch = '_';
-    }
+static std::string hex_u64(uint64_t v) {
+  static const char kHex[] = "0123456789abcdef";
+  std::string out(16, '0');
+  for (int i = 15; i >= 0; --i) {
+    out[static_cast<std::size_t>(i)] = kHex[v & 0xf];
+    v >>= 4;
   }
   return out;
+}
+
+static uint64_t fnv1a64(std::string_view s) {
+  uint64_t h = 14695981039346656037ull;
+  for (unsigned char c : s) {
+    h ^= static_cast<uint64_t>(c);
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
+std::string canonicalize_tool_call_id(std::string_view id) {
+  // OpenAI Responses: call_id length must be <= 64. Claude also rejects
+  // punctuation besides _ and -. Always lower to this subset so switching
+  // models mid-session does not 400 on a previous provider's id format.
+  constexpr std::size_t kMax = 64;
+  std::string out;
+  out.reserve(std::min(id.size(), kMax));
+  for (char ch : id) {
+    const unsigned char c = static_cast<unsigned char>(ch);
+    if (std::isalnum(c) || ch == '_' || ch == '-') {
+      out.push_back(ch);
+    } else {
+      out.push_back('_');
+    }
+  }
+  if (out.empty()) out = "call";
+  if (out.size() <= kMax) return out;
+  const std::string hash = hex_u64(fnv1a64(id));
+  const std::size_t prefix_len = kMax - 1 - hash.size();
+  return out.substr(0, prefix_len) + "_" + hash;
 }
 
 static bool is_empty_text(const std::string& t) {
@@ -470,12 +502,12 @@ Messages normalize_messages(const Messages& messages, const Model& model) {
         filtered_content.push_back(std::move(tp));
       } else if (std::holds_alternative<ToolCallContentPart>(part)) {
         auto tc = std::get<ToolCallContentPart>(part);
-        tc.id = scrub_tool_id(tc.id);
+        tc.id = canonicalize_tool_call_id(tc.id);
         tc.arguments = sanitize_json_value(std::move(tc.arguments));
         filtered_content.push_back(std::move(tc));
       } else if (std::holds_alternative<ToolResultContentPart>(part)) {
         auto tr = std::get<ToolResultContentPart>(part);
-        tr.tool_call_id = scrub_tool_id(tr.tool_call_id);
+        tr.tool_call_id = canonicalize_tool_call_id(tr.tool_call_id);
         tr.result = sanitize_json_value(std::move(tr.result));
         if ((is_claude || is_bedrock) && is_empty_json_text(tr.result)) continue;
         filtered_content.push_back(std::move(tr));
@@ -612,17 +644,58 @@ JsonValue normalize_schema(const JsonValue& schema, const Model& model) {
     }
   }
 
-  // Gemini-specific sanitization
-  if (contains(id, "gemini") || provider == "google") {
-    // Gemini doesn't support certain schema features
-    if (result.contains("required") && result["required"].is_array()) {
-      // Keep required, it's fine
+  // LLM tool APIs (Gemini protobuf, OpenAI/Zen Responses, many OpenAI-
+  // compatible proxies) reject JSON Schema keywords such as exclusiveMinimum.
+  // Convert exclusive integer bounds to inclusive min/max and drop keys that
+  // are not in the common tool-schema subset. Must run for every provider:
+  // OpenAIRequestBuilder used to pass provider "openai" even for Muse Spark
+  // and Gemini-via-OpenAI, so a Gemini-only strip never fired on those paths.
+  std::function<void(JsonValue&)> lower = [&](JsonValue& node) {
+    if (node.is_array()) {
+      for (auto& item : node) {
+        lower(item);
+      }
+      return;
     }
-    // Remove null type entries
-    if (result.contains("type") && result["type"].is_null()) {
-      result.erase("type");
+    if (!node.is_object()) {
+      return;
     }
-  }
+    auto apply_exclusive = [](JsonValue& obj, const char* exclusive_key,
+                              const char* inclusive_key, int delta) {
+      if (!obj.contains(exclusive_key)) {
+        return;
+      }
+      const auto& exclusive = obj[exclusive_key];
+      if (exclusive.is_number_integer()) {
+        const int converted = exclusive.get<int>() + delta;
+        bool replace = !obj.contains(inclusive_key) || !obj[inclusive_key].is_number();
+        if (!replace) {
+          const double existing = obj[inclusive_key].get<double>();
+          replace = delta > 0 ? existing < converted : existing > converted;
+        }
+        if (replace) {
+          obj[inclusive_key] = converted;
+        }
+      }
+      obj.erase(exclusive_key);
+    };
+    apply_exclusive(node, "exclusiveMinimum", "minimum", 1);
+    apply_exclusive(node, "exclusiveMaximum", "maximum", -1);
+
+    static const char* kDrop[] = {
+        "$schema", "$id", "$comment", "if", "then", "else",
+        "unevaluatedProperties", "prefixItems", "readOnly", "writeOnly"};
+    for (const char* key : kDrop) {
+      node.erase(key);
+    }
+    if (node.contains("type") && node["type"].is_null()) {
+      node.erase("type");
+    }
+    for (auto it = node.begin(); it != node.end(); ++it) {
+      lower(*it);
+    }
+  };
+  lower(result);
 
   return result;
 }
