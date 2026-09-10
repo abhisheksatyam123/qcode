@@ -3972,7 +3972,7 @@ function renderMessage(msg) {
   const acts = document.createElement('div'); acts.className = 'msg-actions';
   const mkBtn = (label, title, fn) => {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'msg-action-btn';
-    b.textContent = label; b.title = title; b.addEventListener('click', fn); acts.appendChild(b); return b;
+    b.textContent = label; b.title = title; b.setAttribute('aria-label', title); b.addEventListener('click', fn); acts.appendChild(b); return b;
   };
   mkBtn('Copy', 'Copy message text', () => copyText(msg.content || '', 'Message copied'));
   if (msg.role === 'assistant' && msg.content) {
@@ -3988,7 +3988,7 @@ function renderMessage(msg) {
     const pre = code.parentElement;
     if (!pre || pre.querySelector('.copy-code-btn')) return;
     pre.style.position = 'relative';
-    const cb = document.createElement('button'); cb.type = 'button'; cb.className = 'copy-code-btn'; cb.textContent = 'Copy';
+    const cb = document.createElement('button'); cb.type = 'button'; cb.className = 'copy-code-btn'; cb.textContent = 'Copy'; cb.setAttribute('aria-label', 'Copy code block');
     cb.addEventListener('click', (e) => { e.stopPropagation(); copyText(code.innerText, 'Code copied'); });
     pre.appendChild(cb);
   });
@@ -4817,7 +4817,7 @@ function updateJumpPill() {
   const show = (c.scrollHeight - c.scrollTop - c.clientHeight) > 300;
   if (show && !pill) {
     pill = document.createElement('button'); pill.id = 'jump-latest'; /* id="jump-latest" */ pill.className = 'jump-latest';
-    pill.textContent = '↓ Latest'; pill.type = 'button';
+    pill.textContent = '↓ Latest'; pill.type = 'button'; pill.setAttribute('aria-label', 'Jump to latest message');
     pill.addEventListener('click', () => { c.scrollTop = c.scrollHeight; updateJumpPill(); });
     document.getElementById('main-area').appendChild(pill);
   } else if (!show && pill) pill.remove();

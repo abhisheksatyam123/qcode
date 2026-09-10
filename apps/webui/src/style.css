@@ -3465,3 +3465,62 @@ kbd {
 .close-session-tab-btn:hover {
   color: var(--danger);
 }
+
+/* ── R1: T1-T7 new classes (themed) ── */
+.stopped-early {
+  margin-top: 8px; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid var(--warning); background: rgba(245, 158, 11, 0.08);
+  color: var(--warning); font-size: 12px;
+}
+.thinking-hint {
+  margin: 8px 0; padding: 6px 12px; border-radius: 8px;
+  border: 1px dashed var(--border); color: var(--muted);
+  font-size: 11px; text-align: center;
+}
+.msg-actions { display: flex; gap: 6px; margin-top: 8px; }
+.msg-action-btn {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--muted); font-size: 11px;
+  padding: 2px 10px; cursor: pointer;
+}
+.msg-action-btn:hover { color: var(--text); border-color: var(--blue); }
+.msg-ts { margin-left: 8px; font-size: 10px; color: var(--muted); font-weight: normal; }
+.jump-latest {
+  position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%);
+  background: var(--surface); border: 1px solid var(--blue); color: var(--text);
+  border-radius: 16px; padding: 4px 14px; font-size: 12px; cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.3); z-index: 20;
+}
+.jump-latest:hover { background: var(--blue); color: #fff; }
+.diff-toggle { cursor: pointer; user-select: none; }
+.diff-toggle:hover { color: var(--blue); }
+.diff-view pre {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px; overflow-x: auto;
+  font-size: 11px; color: var(--text);
+}
+.open-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.open-tab {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0; color: var(--muted);
+  font-size: 11px; padding: 3px 8px; cursor: pointer;
+}
+.open-tab.active { color: var(--text); border-color: var(--blue); }
+.open-tab:hover { color: var(--text); }
+.open-tab-x { opacity: 0.6; margin-left: 2px; }
+.open-tab-x:hover { color: var(--danger); opacity: 1; }
+.session-item-wrapper.pinned { border-left: 2px solid var(--warning); }
+.error-panel {
+  margin: 12px; padding: 12px; border-radius: 8px;
+  border: 1px solid var(--danger); background: rgba(239, 68, 68, 0.06);
+  color: var(--danger); font-size: 12px;
+}
+
+/* ── R2: mobile safe-area + overlay ── */
+@media (max-width: 768px) {
+  #input-area { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  #sidebar { max-width: 85vw; }
+  .jump-latest { bottom: 110px; }
+  .msg-actions { flex-wrap: wrap; }
+  #terminal-panel { min-height: 40vh; }
+}

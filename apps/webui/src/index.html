@@ -117,7 +117,7 @@
     <div class="main-content-wrapper" id="main-content-wrapper">
       <main id="main">
         <div id="chat-container">
-          <div id="messages"></div>
+          <div id="messages" aria-live="polite" aria-label="Chat messages"></div>
         </div>
         <div id="input-area">
           <div class="queue-indicator hidden" id="queue-indicator">
@@ -285,7 +285,7 @@
     </div>
   </div>
 
-  <div id="modal-overlay"></div>
+  <div id="modal-overlay" role="dialog" aria-modal="true" tabindex="-1"></div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
