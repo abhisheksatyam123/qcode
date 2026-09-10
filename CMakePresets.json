@@ -16,7 +16,6 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "BUILD_TESTS": "OFF",
-        "BUILD_EXAMPLES": "OFF",
         "QCODE_BUILD_TUI": "ON",
         "QCODE_BUILD_SERVER": "ON",
         "QCODE_BUILD_CLI": "ON"
@@ -32,7 +31,6 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "BUILD_TESTS": "OFF",
-        "BUILD_EXAMPLES": "OFF",
         "QCODE_BUILD_TUI": "ON",
         "QCODE_BUILD_SERVER": "ON",
         "QCODE_BUILD_CLI": "ON"
@@ -51,7 +49,6 @@
         "ANDROID_PLATFORM": "android-24",
         "ANDROID_STL": "c++_shared",
         "BUILD_TESTS": "OFF",
-        "BUILD_EXAMPLES": "OFF",
         "QCODE_BUILD_TUI": "OFF",
         "QCODE_BUILD_SERVER": "OFF",
         "QCODE_BUILD_CLI": "OFF"
@@ -70,7 +67,6 @@
         "ANDROID_PLATFORM": "android-24",
         "ANDROID_STL": "c++_shared",
         "BUILD_TESTS": "OFF",
-        "BUILD_EXAMPLES": "OFF",
         "QCODE_BUILD_TUI": "OFF",
         "QCODE_BUILD_SERVER": "OFF",
         "QCODE_BUILD_CLI": "OFF"
@@ -86,7 +82,6 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "BUILD_TESTS": "ON",
-        "BUILD_EXAMPLES": "OFF",
         "QCODE_BUILD_TUI": "ON",
         "QCODE_BUILD_SERVER": "ON",
         "QCODE_BUILD_CLI": "ON",

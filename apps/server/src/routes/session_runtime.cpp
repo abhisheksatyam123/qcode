@@ -30,6 +30,13 @@ std::vector<qcode::bus::Subscription> subscribe_session(
         [session](const ToolCallStarted::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
             session->tool_call_count++;
+            // Flush thinking accumulated since the previous tool call as its
+            // own row so DB order preserves the think -> tool interleaving
+            // the webui timeline renders.
+            if (!session->reasoning_text.empty()) {
+                qcode::session::save_message(p.session_id, "Reasoning", session->reasoning_text);
+                session->reasoning_text.clear();
+            }
             nlohmann::json call_json = {
                 {"id", p.tool_call_id},
                 {"name", p.tool_name},
@@ -90,6 +97,7 @@ std::vector<qcode::bus::Subscription> subscribe_session(
     subs.push_back(bus.subscribe<ReasoningDelta>(
         [session](const ReasoningDelta::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
+            if (!p.text.empty()) session->reasoning_text += p.text;
             auto j = qcode::server::reasoning_delta_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));

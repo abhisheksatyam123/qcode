@@ -128,11 +128,13 @@
             <textarea id="prompt-input" placeholder="Ask QCode anything…" rows="1" aria-label="Message QCode"></textarea>
             <div class="input-actions">
               <span class="input-info"><kbd>Esc</kbd> pause &middot; <kbd>Ctrl</kbd>+<kbd>P</kbd> commands &middot; <kbd>Shift</kbd>+<kbd>Enter</kbd> newline</span>
-              <button id="retry-btn" class="retry-btn" type="button" aria-label="Retry last prompt" title="Retry last prompt (/retry)">Retry</button>
-              <button id="pause-btn" class="pause-btn hidden" type="button" aria-label="Pause generation" title="Pause (Esc)">
-                <span class="pause-icon"><svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span><span>Pause</span>
-              </button>
-              <button id="send-btn" aria-label="Send message"><span>Send</span><span class="send-icon"><svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></span></button>
+              <div class="composer-actions">
+                <button id="retry-btn" class="retry-btn" type="button" aria-label="Retry last prompt" title="Retry last prompt (/retry)">Retry</button>
+                <button id="pause-btn" class="pause-btn hidden" type="button" aria-label="Pause generation" title="Pause (Esc)">
+                  <span class="pause-icon"><svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span><span>Pause</span>
+                </button>
+                <button id="send-btn" aria-label="Send message"><span>Send</span><span class="send-icon"><svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></span></button>
+              </div>
             </div>
           </div>
         </div>

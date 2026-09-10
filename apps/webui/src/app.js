@@ -2238,6 +2238,47 @@ async function handleSessionCommand(args) {
   }, 'Type a title or workspace to filter…', args || '');
 }
 
+// ── Interleaved thinking timeline ──
+// Each assistant message keeps `timeline`: an ordered list of
+// { kind: 'thought' } (coalesced thinking chunk) and { kind: 'tool', tool_call_id }
+// entries. Live reasoning deltas accumulate into the trailing thought entry so
+// thinking renders adjacent to the tool call it preceded. Persisted history
+// rebuilds the same order from interleaved Reasoning/ToolCall DB rows.
+function appendThoughtChunk(msg, text) {
+  if (!text) return;
+  if (!msg.reasoning) msg.reasoning = '';
+  msg.reasoning += text;
+  if (!msg.timeline) msg.timeline = [];
+  const last = msg.timeline[msg.timeline.length - 1];
+  if (last && last.kind === 'thought' && !last.closed) {
+    last.text = (last.text || '') + text;
+    return;
+  }
+  msg.timeline.push({ kind: 'thought', text });
+}
+
+function closeOpenThought(msg) {
+  if (!msg.timeline) return;
+  const last = msg.timeline[msg.timeline.length - 1];
+  if (last && last.kind === 'thought') last.closed = true;
+}
+
+function renderThoughtBlock(text) {
+  const rc = document.createElement('div'); rc.className = 'reasoning-block collapsed';
+  const rl = document.createElement('div'); rl.className = 'reasoning-label';
+  const est = Math.max(1, Math.floor((text.length + 3) / 4));
+  const compact = est >= 1000 ? Math.round(est / 1000) + 'k' : String(est);
+  rl.innerHTML = '+ Thought <span class="thought-tokens">· ' + compact + '</span>';
+  const rt = document.createElement('div'); rt.className = 'reasoning-text';
+  rt.innerHTML = renderMarkdown(text); tagMarkdownLinks(rt);
+  rl.addEventListener('click', () => {
+    const open = rc.classList.toggle('collapsed');
+    rl.innerHTML = (open ? '+ Thought' : '- Thought') + ' <span class="thought-tokens">· ' + compact + '</span>';
+  });
+  rc.appendChild(rl); rc.appendChild(rt);
+  return rc;
+}
+
 function parseMessages(msgs, session) {
   session.messages = [];
   let currentAssistantMsg = null;
@@ -2247,10 +2288,10 @@ function parseMessages(msgs, session) {
       session.messages.push({ role: 'user', content: m.content });
     } else if (m.role === 'Assistant' || m.role === 'assistant') {
       if (!currentAssistantMsg) {
-        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
         session.messages.push(currentAssistantMsg);
       } else if (currentAssistantMsg.content && currentAssistantMsg.toolEvents && currentAssistantMsg.toolEvents.length > 0) {
-        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
         session.messages.push(currentAssistantMsg);
       }
       if (currentAssistantMsg.content) {
@@ -2262,22 +2303,25 @@ function parseMessages(msgs, session) {
       try {
         const tc = JSON.parse(m.content);
         if (!currentAssistantMsg) {
-          currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+          currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
           session.messages.push(currentAssistantMsg);
         }
-        currentAssistantMsg.toolEvents.push({
+        const entry = {
           type: 'tool_call',
           tool_call_id: tc.id,
           tool_name: tc.name,
           arguments: tc.arguments,
           status: 'running'
-        });
+        };
+        currentAssistantMsg.toolEvents.push(entry);
+        if (!currentAssistantMsg.timeline) currentAssistantMsg.timeline = [];
+        currentAssistantMsg.timeline.push({ kind: 'tool', tool_call_id: tc.id });
       } catch (e) {}
     } else if (m.role === 'ToolResult') {
       try {
         const tr = JSON.parse(m.content);
         if (!currentAssistantMsg) {
-          currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+          currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
           session.messages.push(currentAssistantMsg);
         }
         const tc = currentAssistantMsg.toolEvents.find(t => t.tool_call_id === tr.tool_call_id);
@@ -2286,7 +2330,7 @@ function parseMessages(msgs, session) {
           tc.result = tr.result;
           tc.duration_ms = tr.duration_ms;
         } else {
-          currentAssistantMsg.toolEvents.push({
+          const orphan = {
             type: 'tool_call',
             tool_call_id: tr.tool_call_id,
             tool_name: 'tool',
@@ -2294,19 +2338,27 @@ function parseMessages(msgs, session) {
             status: tr.is_error ? 'error' : 'success',
             result: tr.result,
             duration_ms: tr.duration_ms
-          });
+          };
+          currentAssistantMsg.toolEvents.push(orphan);
+          if (!currentAssistantMsg.timeline) currentAssistantMsg.timeline = [];
+          currentAssistantMsg.timeline.push({ kind: 'tool', tool_call_id: tr.tool_call_id });
         }
       } catch (e) {}
     } else if (m.role === 'Reasoning') {
       if (!currentAssistantMsg) {
-        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
         session.messages.push(currentAssistantMsg);
       }
+      if (!currentAssistantMsg.timeline) currentAssistantMsg.timeline = [];
+      let text = '';
       try {
         const r = JSON.parse(m.content);
-        currentAssistantMsg.reasoning = r.text || '';
+        text = r.text || '';
       } catch (e) {
-        currentAssistantMsg.reasoning = m.content;
+        text = m.content;
+      }
+      if (text) {
+        appendThoughtChunk(currentAssistantMsg, text);
       }
     } else {
       currentAssistantMsg = null;
@@ -2454,7 +2506,7 @@ async function runGeneration(session, text) {
   session.lastUserPrompt = text;
   session.messages.push({ role: 'user', content: text });
   
-  const assistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+  const assistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
   session.messages.push(assistantMsg);
 
   if (session.id === state.sessionId) {
@@ -2644,9 +2696,8 @@ function handleEvent(evt, msg, session) {
       }
       break;
     case 'backend.reasoning.delta':
-      if (!msg.reasoning) msg.reasoning = '';
       if (evt.text) {
-        msg.reasoning += evt.text;
+        appendThoughtChunk(msg, evt.text);
         msg.streamError = null;
       }
       if (session.id === state.sessionId && !evt.done) { renderMessages(); scrollToBottom(); }
@@ -2666,7 +2717,10 @@ function handleEvent(evt, msg, session) {
     }
     case 'backend.tool.call.started':
       if (!msg.toolEvents) msg.toolEvents = [];
+      closeOpenThought(msg);
       msg.toolEvents.push({ type: 'tool_call', tool_call_id: evt.tool_call_id, tool_name: evt.tool_name, arguments: evt.arguments, status: 'running' });
+      if (!msg.timeline) msg.timeline = [];
+      msg.timeline.push({ kind: 'tool', tool_call_id: evt.tool_call_id });
       if (session.id === state.sessionId) {
         renderMessages();
         scrollToBottom();
@@ -3691,24 +3745,31 @@ function renderMessage(msg) {
     header.innerHTML = '<span class="role-icon">' + (icons[msg.role] || '') + '</span> ' + capitalize(msg.role);
     div.appendChild(header);
   }
-  if (msg.toolEvents && msg.toolEvents.length > 0) {
-    const tc = document.createElement('div'); tc.className = 'tool-events';
-    for (const t of msg.toolEvents) tc.appendChild(renderToolBlock(t));
-    content.appendChild(tc);
-  }
-  if (msg.reasoning && state.showThinking) {
-    const rc = document.createElement('div'); rc.className = 'reasoning-block collapsed';
-    const rl = document.createElement('div'); rl.className = 'reasoning-label';
-    const est = Math.max(1, Math.floor((msg.reasoning.length + 3) / 4));
-    const compact = est >= 1000 ? Math.round(est / 1000) + 'k' : String(est);
-    rl.innerHTML = '+ Thought <span class="thought-tokens">· ' + compact + '</span>';
-    const rt = document.createElement('div'); rt.className = 'reasoning-text'; rt.innerHTML = renderMarkdown(msg.reasoning); tagMarkdownLinks(rt);
-    rl.addEventListener('click', () => {
-      const open = rc.classList.toggle('collapsed');
-      rl.innerHTML = (open ? '+ Thought' : '- Thought') + ' <span class="thought-tokens">· ' + compact + '</span>';
-    });
-    rc.appendChild(rl); rc.appendChild(rt);
-    content.appendChild(rc);
+  // Interleaved thinking/tool timeline: each thought renders adjacent to the
+  // tool call it preceded. Falls back to legacy order when no timeline exists.
+  if (msg.timeline && msg.timeline.length > 0) {
+    const byId = {};
+    if (msg.toolEvents) for (const t of msg.toolEvents) byId[t.tool_call_id] = t;
+    for (const entry of msg.timeline) {
+      if (entry.kind === 'tool') {
+        const t = byId[entry.tool_call_id];
+        if (!t) continue;
+        const tc = document.createElement('div'); tc.className = 'tool-events';
+        tc.appendChild(renderToolBlock(t));
+        content.appendChild(tc);
+      } else if (entry.kind === 'thought' && entry.text && state.showThinking) {
+        content.appendChild(renderThoughtBlock(entry.text));
+      }
+    }
+  } else {
+    if (msg.toolEvents && msg.toolEvents.length > 0) {
+      const tc = document.createElement('div'); tc.className = 'tool-events';
+      for (const t of msg.toolEvents) tc.appendChild(renderToolBlock(t));
+      content.appendChild(tc);
+    }
+    if (msg.reasoning && state.showThinking) {
+      content.appendChild(renderThoughtBlock(msg.reasoning));
+    }
   }
   if (msg.usage) {
     const uc = document.createElement('div'); uc.className = 'usage-block';

@@ -258,9 +258,9 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
                 if (evt.value("type", "") == "backend.message.delta") {
                     session->assistant_text += evt.value("text", "");
                 }
-                if (evt.value("type", "") == "backend.reasoning.delta") {
-                    session->reasoning_text += evt.value("text", "");
-                }
+                // NOTE: reasoning_text is accumulated in the ReasoningDelta
+                // subscriber (session_runtime.cpp), which flushes a Reasoning
+                // row before each ToolCall row to preserve think/tool order.
                 std::string chunk = evt.dump() + "\n";
                 if (!sink.write(chunk.data(), chunk.size())) {
                     if (session->abort_flag) session->abort_flag->store(true);
@@ -278,9 +278,6 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
                 for (const auto& evt : events) {
                     if (evt.value("type", "") == "backend.message.delta") {
                         session->assistant_text += evt.value("text", "");
-                    }
-                    if (evt.value("type", "") == "backend.reasoning.delta") {
-                        session->reasoning_text += evt.value("text", "");
                     }
                     std::string chunk = evt.dump() + "\n";
                     if (!sink.write(chunk.data(), chunk.size())) {

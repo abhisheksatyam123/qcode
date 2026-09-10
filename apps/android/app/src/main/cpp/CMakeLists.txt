@@ -6,22 +6,17 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(QCODE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../../.." CACHE PATH "qcode repository root")
+set(QCODE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../../../.." CACHE PATH "qcode repository root")
 get_filename_component(QCODE_ROOT "${QCODE_ROOT}" ABSOLUTE)
 
 set(QCODE_BUILD_TUI OFF CACHE BOOL "" FORCE)
 set(QCODE_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(QCODE_BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
-# Prefer the Android sysroot for OpenSSL/CURL when present.
-# Host-side NDK sysroot unpack tree lives under the unified build root.
-# Legacy sibling dir (build-android-deps/) is kept as a fallback.
+# Prefer the Android sysroot for OpenSSL/CURL when present
+# (unified build root; see CMakePresets.json and docs/building.md).
 set(ANDROID_DEPS_SYSROOT "${QCODE_ROOT}/build/android-deps/sysroot-arm64-v8a")
-if(NOT EXISTS "${ANDROID_DEPS_SYSROOT}")
-  set(ANDROID_DEPS_SYSROOT "${QCODE_ROOT}/build-android-deps/sysroot-arm64-v8a")
-endif()
 if(EXISTS "${ANDROID_DEPS_SYSROOT}")
   list(PREPEND CMAKE_PREFIX_PATH "${ANDROID_DEPS_SYSROOT}")
   list(PREPEND CMAKE_FIND_ROOT_PATH "${ANDROID_DEPS_SYSROOT}")
@@ -39,12 +34,8 @@ if(EXISTS "${ANDROID_DEPS_SYSROOT}")
   set(CURL_DIR "${ANDROID_DEPS_SYSROOT}/lib/cmake/CURL" CACHE PATH "" FORCE)
 endif()
 
-set(HTTPLIB_COMPILE_DEFS
-    CPPHTTPLIB_OPENSSL_SUPPORT=1
-    CPPHTTPLIB_BROTLI_SUPPORT=1
-    CPPHTTPLIB_ZLIB_SUPPORT=1
-    CPPHTTPLIB_THREAD_POOL_COUNT=8
-)
+# HTTPLIB_COMPILE_DEFS comes from the root CMakeLists (single source of truth);
+# do not duplicate it here so engine and JNI always share the same flags.
 
 add_subdirectory("${QCODE_ROOT}" qcode_build)
 

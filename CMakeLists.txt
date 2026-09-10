@@ -35,7 +35,6 @@ endif()
 
 # Build options
 option(BUILD_TESTS "Build tests" OFF)
-option(BUILD_EXAMPLES "Build example applications" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(QCODE_BUILD_TUI "Build TUI application" ON)
 option(QCODE_BUILD_SERVER "Build headless server" ON)
@@ -62,6 +61,7 @@ endif()
 
 set(HTTPLIB_COMPILE_DEFS
     CPPHTTPLIB_OPENSSL_SUPPORT=1
+    CPPHTTPLIB_ZLIB_SUPPORT=1
     CPPHTTPLIB_BROTLI_SUPPORT=1
     CPPHTTPLIB_THREAD_POOL_COUNT=8
 )
@@ -92,10 +92,6 @@ endif()
 
 if(QCODE_BUILD_CLI)
     add_subdirectory(apps/cli)
-endif()
-
-if(BUILD_EXAMPLES)
-    add_subdirectory(examples)
 endif()
 
 if(BUILD_TESTS)
@@ -173,7 +169,6 @@ message(STATUS "qcode ${PROJECT_VERSION} Configuration Summary")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  C++ named modules: ${QCODE_CXX_MODULES}")
-message(STATUS "  Build examples: ${BUILD_EXAMPLES}")
 message(STATUS "  Build tests: ${BUILD_TESTS}")
 message(STATUS "  Build TUI: ${QCODE_BUILD_TUI}")
 message(STATUS "  Build Server: ${QCODE_BUILD_SERVER}")

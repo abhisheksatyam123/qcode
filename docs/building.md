@@ -20,8 +20,7 @@ All CMake outputs live under `build/<preset>/`. Never create sibling
 | `android-arm64-v8a-release` | `build/android-arm64-v8a-release/` | NDK cross, release |
 
 Android host-side sysroot (OpenSSL/CURL unpack) lives at
-`build/android-deps/sysroot-<abi>/` (the JNI build falls back to the
-legacy `build-android-deps/` path if present).
+`build/android-deps/sysroot-<abi>/`.
 
 ## Build commands
 

@@ -27,7 +27,6 @@ Android NDK still uses headers (`#include <qcode/...>`) and the `qcode::compat::
 - `docs/`: architecture, build guides, and [server HTTP API](server-api.md)
 - `tests/`: Google Test suite (`unit/`, `integration/`, `utils/`)
 - `third_party/`: vendored httplib, nlohmann_json, sqlite, googletest, zlib, brotli, … (FTXUI is fetched via CMake FetchContent, not this tree)
-- `examples/`: API samples (link `qcode::engine`)
 - `scripts/`: `build.py`, `format.py`, `lint.py`, plus Android Python fetch and a model-capabilities helper
 - `cmake/`: `find_package` install config template (`qcode-config.cmake.in`)
 - `build/`: ignored output root (`build/<preset>/`; see `CMakePresets.json` and `docs/building.md`)
