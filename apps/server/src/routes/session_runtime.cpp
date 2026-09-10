@@ -74,6 +74,10 @@ std::vector<qcode::bus::Subscription> subscribe_session(
     subs.push_back(bus.subscribe<ErrorOccurred>(
         [session](const ErrorOccurred::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
+            if (p.severity == "info") {
+                // Heartbeat / progress notice — not an error, do not queue as error event
+                return;
+            }
             if (p.severity == "error" || p.severity == "fatal") {
                 session->error = p.message;
             }

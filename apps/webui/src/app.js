@@ -2634,7 +2634,10 @@ function handleEvent(evt, msg, session) {
       // Append (do NOT overwrite): backend sends incremental chunks and a
       // final empty-text delta with done=true, which would otherwise wipe
       // the accumulated assistant text (leaving only the token usage line).
-      if (evt.text) msg.content = (msg.content || '') + evt.text;
+      if (evt.text) {
+        msg.content = (msg.content || '') + evt.text;
+        msg.streamError = null;
+      }
       if (session.id === state.sessionId) {
         renderMessages();
         scrollToBottom();
@@ -2642,7 +2645,10 @@ function handleEvent(evt, msg, session) {
       break;
     case 'backend.reasoning.delta':
       if (!msg.reasoning) msg.reasoning = '';
-      if (evt.text) msg.reasoning += evt.text;
+      if (evt.text) {
+        msg.reasoning += evt.text;
+        msg.streamError = null;
+      }
       if (session.id === state.sessionId && !evt.done) { renderMessages(); scrollToBottom(); }
       break;
     case 'backend.token.usage.updated': {
@@ -2681,6 +2687,14 @@ function handleEvent(evt, msg, session) {
       }
       break;
     case 'backend.error.occurred':
+      if (evt.severity === 'info') {
+        // Heartbeat or status notice — do not flag generation as an error
+        break;
+      }
+      if (evt.severity === 'warning') {
+        showToast(evt.message);
+        break;
+      }
       showToast(evt.message);
       msg.streamError = evt.message || 'The backend reported an error';
       if (session.id === state.sessionId) renderMessages();
@@ -2689,6 +2703,8 @@ function handleEvent(evt, msg, session) {
       if (evt.error) {
         msg.streamError = evt.error;
         showToast('Generation failed: ' + evt.error);
+      } else {
+        msg.streamError = null;
       }
       if (session.id === state.sessionId) renderMessages();
       break;
