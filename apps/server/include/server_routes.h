@@ -27,5 +27,7 @@ void setup_server_routes(
     std::shared_ptr<std::vector<qcode::ProviderInfo>> providers,
     const ServerSetupOptions& options);
 
+void shutdown_active_sessions();
+
 }  // namespace server
 }  // namespace qcode

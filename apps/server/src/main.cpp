@@ -12,20 +12,18 @@
 #include <atomic>
 #include <csignal>
 #include <cstdlib>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
-static std::atomic<bool> g_running{true};
+static std::atomic<bool> g_shutdown_requested{false};
 static std::shared_ptr<qcode::bus::BusRuntime> g_bus;
-static httplib::Server* g_svr = nullptr;
 
 void handle_signal(int) {
-    g_running = false;
-    if (g_svr) {
-        g_svr->stop();
-    }
+    g_shutdown_requested = true;
 }
 
 int main(int argc, char* argv[]) {
@@ -63,7 +61,6 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, handle_signal);
 
     httplib::Server svr;
-    g_svr = &svr;
 
     qcode::server::ServerSetupOptions options;
     {
@@ -82,6 +79,14 @@ int main(int argc, char* argv[]) {
 
     qcode::server::setup_server_routes(svr, g_bus, providers_list, options);
 
+    std::thread shutdown_watcher([&svr]() {
+        while (!g_shutdown_requested.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        LOG_INFO("Shutdown requested, stopping server...");
+        svr.stop();
+    });
+
     LOG_INFO("Starting HTTP server on port {}...", port);
     std::cout << "QCode server listening on http://0.0.0.0:" << port << "\n";
     std::cout << "  Health:  GET /health\n";
@@ -89,8 +94,16 @@ int main(int argc, char* argv[]) {
     std::cout << "  Generate:  POST /generate (body: {\"text\":\"...\", \"provider\":\"...\", \"model\":\"...\"})\n";
     std::cout << "    Response is NDJSON stream of events\n";
     svr.listen("0.0.0.0", port);
-    g_svr = nullptr;
 
-    LOG_INFO("Server shutting down");
+    g_shutdown_requested = true;
+    if (shutdown_watcher.joinable()) {
+        shutdown_watcher.join();
+    }
+
+    LOG_INFO("Server stopping, signalling active sessions...");
+    qcode::server::shutdown_active_sessions();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    LOG_INFO("Server shutdown complete");
     return 0;
 }

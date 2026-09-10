@@ -33,9 +33,16 @@ std::vector<qcode::bus::Subscription> subscribe_session(
             // Flush thinking accumulated since the previous tool call as its
             // own row so DB order preserves the think -> tool interleaving
             // the webui timeline renders.
-            if (!session->reasoning_text.empty()) {
-                qcode::session::save_message(p.session_id, "Reasoning", session->reasoning_text);
-                session->reasoning_text.clear();
+            std::string reasoning_to_save;
+            {
+                std::lock_guard<std::mutex> lock(session->queue_mutex);
+                if (!session->reasoning_text.empty()) {
+                    reasoning_to_save = std::move(session->reasoning_text);
+                    session->reasoning_text.clear();
+                }
+            }
+            if (!reasoning_to_save.empty()) {
+                qcode::session::save_message(p.session_id, "Reasoning", reasoning_to_save);
             }
             nlohmann::json call_json = {
                 {"id", p.tool_call_id},
@@ -85,11 +92,11 @@ std::vector<qcode::bus::Subscription> subscribe_session(
                 // Heartbeat / progress notice — not an error, do not queue as error event
                 return;
             }
+            auto j = qcode::server::error_occurred_to_json(p);
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
             if (p.severity == "error" || p.severity == "fatal") {
                 session->error = p.message;
             }
-            auto j = qcode::server::error_occurred_to_json(p);
-            std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
         }
     ));
@@ -97,9 +104,9 @@ std::vector<qcode::bus::Subscription> subscribe_session(
     subs.push_back(bus.subscribe<ReasoningDelta>(
         [session](const ReasoningDelta::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
-            if (!p.text.empty()) session->reasoning_text += p.text;
             auto j = qcode::server::reasoning_delta_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
+            if (!p.text.empty()) session->reasoning_text += p.text;
             session->event_queue.push_back(std::move(j));
         }
     ));

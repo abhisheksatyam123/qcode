@@ -164,6 +164,7 @@ let term = null;       // xterm instance
 let termFontSize = window.innerWidth <= 600 ? 12 : 13;
 let fitAddon = null;   // xterm fit addon
 let termId = null;     // server terminal session id
+let termPollFails = 0; // T6.1 consecutive stream failures
 let termPollTimer = null;
 
 // ── Slash commands ──
@@ -904,6 +905,10 @@ async function init() {
     const savedTheme = localStorage.getItem('qcode-theme');
     if (savedTheme && THEMES[savedTheme]) applyTheme(savedTheme);
   } catch (_) {}
+  restorePrefs();
+  if (state.theme && THEMES[state.theme]) applyTheme(state.theme);
+  if (state.reasoning && reasoningSelect) reasoningSelect.value = state.reasoning;
+  if (state.provider && providerSelect) providerSelect.value = state.provider;
   try {
     const verRes = await fetch("/api/version");
     if (verRes.ok) {
@@ -1042,6 +1047,7 @@ function setupEventListeners() {
   });
   reasoningSelect.addEventListener('change', () => {
     state.reasoning = reasoningSelect.value;
+    persistPrefs();
   });
   modelSelect.addEventListener('change', () => {
     state.model = modelSelect.value;
@@ -1060,7 +1066,14 @@ function setupEventListeners() {
   promptInput.addEventListener('input', () => {
     updateSlashMenu();
     resizePromptInput();
+    persistDraft();
   });
+    const fsFilter = document.getElementById('fs-filter-input');
+  if (fsFilter) fsFilter.addEventListener('input', () => { state.fsFilterText = fsFilter.value; renderFsListingEntries(); });
+  const sessFilter = document.getElementById('sessions-filter-input');
+  if (sessFilter) sessFilter.addEventListener('input', () => { state.sessionsFilterText = sessFilter.value; renderSessionTabs(); });
+  const chatC = document.getElementById('chat-container');
+  if (chatC) chatC.addEventListener('scroll', () => updateJumpPill(), { passive: true });
   document.addEventListener('click', (e) => {
     if (slashMenuEl && !slashMenuEl.contains(e.target) && e.target !== promptInput) {
       closeSlashMenu();
@@ -1521,16 +1534,26 @@ async function startTerminal(workspace) {
       sendTerminalInput(data);
     });
 
-    // Poll for output
+    // Poll for output (T6.1: auto-reconnect after repeated failures)
+    termPollFails = 0;
     termPollTimer = setInterval(async () => {
       if (!termId) return;
       try {
         const res = await fetch('/terminal/' + termId + '/stream');
         if (res.ok) {
+          termPollFails = 0;
           const text = await res.text();
           if (text) term.write(text);
+        } else {
+          termPollFails = (termPollFails || 0) + 1;
         }
-      } catch (e) {}
+      } catch (e) { termPollFails = (termPollFails || 0) + 1; }
+      if ((termPollFails || 0) >= 12) {
+        termPollFails = 0;
+        if (term) term.write('\r\n[reconnecting…]\r\n');
+        try { await startTerminal(state.sessionWorkspace || ''); }
+        catch (_) { showToast('Terminal reconnect failed'); }
+      }
     }, 80);
 
   } catch (e) {
@@ -1556,6 +1579,8 @@ async function closeTerminal() {
 }
 
 function switchTab(tab) {
+  state.activeTab = tab;
+  persistPrefs();
   if (state.layoutMode === 'split') {
     state.layoutMode = 'tab';
   }
@@ -2021,6 +2046,7 @@ function applyTheme(name) {
   set('--warning', t.warning);
   set('--success', t.success);
   try { localStorage.setItem('qcode-theme', name); } catch (_) {}
+  persistPrefs();
   return true;
 }
 
@@ -2142,6 +2168,7 @@ async function handleRetryCommand() {
 
 function toggleThinking() {
   state.showThinking = !state.showThinking;
+  persistPrefs();
   renderMessages();
   showToast(state.showThinking ? 'Thinking: shown' : 'Thinking: hidden');
 }
@@ -2504,9 +2531,9 @@ async function handleCompactCommand() {
 async function runGeneration(session, text) {
   session.cancelRequested = false;
   session.lastUserPrompt = text;
-  session.messages.push({ role: 'user', content: text });
+  session.messages.push({ role: 'user', content: text, createdAt: Date.now() });
   
-  const assistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
+  const assistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [], createdAt: Date.now() };
   session.messages.push(assistantMsg);
 
   if (session.id === state.sessionId) {
@@ -2549,6 +2576,7 @@ async function runGeneration(session, text) {
     if (!res.body) throw new Error('The server returned an empty response stream');
     const reader = res.body.getReader();
     session.reader = reader;
+    session._retries = session._retries || 0;
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -2575,15 +2603,26 @@ async function runGeneration(session, text) {
     consumeLine(buffer);
 
     if (!receivedComplete && !session.cancelRequested && !assistantMsg.streamError) {
+      assistantMsg.stoppedEarly = true;
       throw new Error('The response stream ended before generation completed');
     }
   } catch (e) {
+    // Automatic resume on transport abort (keeps same assistantMsg, no duplicate user prompt)
+    if ((e.name === 'AbortError' || /network|fetch|aborted|interrupted/i.test(e.message || '')) && !session.cancelRequested && !receivedComplete && (session._retries || 0) < 1) {
+      session._retries = (session._retries || 0) + 1;
+      showToast('Connection dropped — reconnecting…');
+      await new Promise(r => setTimeout(r, 600));
+      session.reader = null;
+      return runGenerationResume(session, assistantMsg);
+    }
     // Some browsers report a transport error after receiving the final chunk.
     // The generation.complete event is authoritative in that case.
     if (e.name !== 'AbortError' && !session.cancelRequested && !receivedComplete && !assistantMsg.streamError) {
-      const message = e.message || 'Connection interrupted';
-      showToast('Generation interrupted: ' + message);
+      const isNet = /network|fetch|abort|interrupted|failed/i.test(e.message || '');
+      const message = isNet ? 'Connection lost — click Retry to continue' : (e.message || 'Connection interrupted');
+      showToast(isNet ? 'Connection lost' : ('Generation interrupted: ' + message));
       assistantMsg.streamError = message;
+      assistantMsg.stoppedEarly = true;
     }
   } finally {
     session.reader = null;
@@ -2620,6 +2659,72 @@ async function runGeneration(session, text) {
   }
 }
 
+// Resume streaming into the SAME assistantMsg (no duplicate user prompt).
+async function runGenerationResume(session, assistantMsg) {
+  try {
+    const res = await fetch(`/session/${session.id}/generate?resume=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: '',
+        resume: true,
+        provider: session.provider,
+        model: session.model,
+        reasoning_mode: state.reasoning,
+        session_id: session.id
+      })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    if (!res.body) throw new Error('empty resume stream');
+    const reader = res.body.getReader();
+    session.reader = reader;
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let gotComplete = false;
+    const consume = (line) => {
+      if (!line.trim()) return;
+      try {
+        const event = JSON.parse(line);
+        handleEvent(event, assistantMsg, session);
+        if (event.type === 'generation.complete') gotComplete = true;
+      } catch (_) {}
+    };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) consume(line);
+    }
+    buffer += decoder.decode();
+    consume(buffer);
+    if (!gotComplete) {
+      assistantMsg.stoppedEarly = true;
+    } else {
+      assistantMsg.streamError = null;
+      assistantMsg.stoppedEarly = false;
+    }
+  } catch (e2) {
+    assistantMsg.stoppedEarly = true;
+    const isNet = /network|fetch|abort|interrupted|failed/i.test(e2.message || '');
+    const msg = isNet ? 'Connection lost — click Retry to continue' : (e2.message || 'Connection interrupted');
+    assistantMsg.streamError = assistantMsg.streamError || msg;
+    showToast(isNet ? 'Connection lost' : ('Resume failed: ' + assistantMsg.streamError));
+  } finally {
+    session.reader = null;
+    session._retries = 0;
+    session.generating = false;
+    renderSessionTabs();
+    if (session.id === state.sessionId) {
+      setGenerating(false);
+      renderMessages();
+      scrollToBottom();
+    }
+    updateQueueIndicator();
+  }
+}
+
 function updateQueueIndicator() {
   const indicator = document.getElementById('queue-indicator');
   const textEl = document.getElementById('queue-text');
@@ -2637,6 +2742,7 @@ function updateQueueIndicator() {
 
 async function sendMessage() {
   if (isModalOpen()) return;
+  clearDraft();
   const text = promptInput.value.trim();
   if (!text) return;
   if (text.startsWith('/')) {
@@ -2682,6 +2788,9 @@ function handleEvent(evt, msg, session) {
         renderSessionTabs();
       }
       break;
+    case 'backend.heartbeat':
+      // Periodic keepalive from server — stream is healthy
+      break;
     case 'backend.message.delta':
       // Append (do NOT overwrite): backend sends incremental chunks and a
       // final empty-text delta with done=true, which would otherwise wipe
@@ -2709,6 +2818,7 @@ function handleEvent(evt, msg, session) {
       if (evt.total_tokens != null && evt.total_tokens > 0) parts.push('total ' + evt.total_tokens);
       if (evt.cached_prompt_tokens != null && evt.cached_prompt_tokens > 0) parts.push('cached ' + evt.cached_prompt_tokens);
       if (evt.reasoning_tokens != null && evt.reasoning_tokens > 0) parts.push('thinking ' + evt.reasoning_tokens);
+      else if (state.reasoning !== 'off') parts.push('thinking 0');
       if (parts.length > 0) {
         msg.usage = 'Tokens — ' + parts.join(' · ');
         if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
@@ -2755,10 +2865,13 @@ function handleEvent(evt, msg, session) {
       break;
     case 'generation.complete':
       if (evt.error) {
+        // T1.2: surface backend error inline even when partial text exists.
         msg.streamError = evt.error;
+        msg.stoppedEarly = true;
         showToast('Generation failed: ' + evt.error);
       } else {
         msg.streamError = null;
+        msg.stoppedEarly = false;
       }
       if (session.id === state.sessionId) renderMessages();
       break;
@@ -2850,13 +2963,18 @@ function renderGitChanges(data) {
 
   const diff = data.diff || '';
   if (diff.trim().length > 0) {
-    html += '<div class="stat-section-title">Unified Diff</div>';
-    html += '<div class="diff-block"><pre>' + esc(diff) + '</pre></div>';
+    html += '<div class="stat-section-title diff-toggle" tabindex="0">Unified Diff (click to toggle)</div>';
+    html += '<div class="diff-view diff-block"><pre>' + esc(diff) + '</pre></div>';
   } else if (files.length === 0) {
     html += '<div class="files-empty">Working tree clean — no modified files.</div>';
   }
 
   filesGit.innerHTML = html;
+  filesGit.querySelectorAll('.diff-toggle').forEach((t) => {
+    const go = () => { const d = filesGit.querySelector('.diff-view'); if (d) d.classList.toggle('hidden'); };
+    t.addEventListener('click', go);
+    t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+  });
   filesGit.querySelectorAll('.file-row-clickable').forEach((row) => {
     row.addEventListener('click', () => {
       const p = row.getAttribute('data-open-path');
@@ -3000,6 +3118,11 @@ async function loadFsListing(relPath) {
   }
 }
 
+function fsMatchesFilter(name) {
+  const q = (state.fsFilterText || '').toLowerCase();
+  if (!q) return true;
+  return name.toLowerCase().includes(q);
+}
 function renderFsListingEntries() {
   if (!fsListing) return;
   const filter = (state.fsFilterText || '').toLowerCase().trim();
@@ -3305,6 +3428,29 @@ function clearFsEditor() {
   updateFsHighlight();
 }
 
+function fsTrackTab(path) {
+  state.fsTabs = state.fsTabs || [];
+  if (path && !state.fsTabs.includes(path)) state.fsTabs.push(path);
+  renderFsTabs();
+}
+function renderFsTabs() {
+  let bar = document.getElementById('fs-open-tabs');
+  if (!bar) {
+    const pane = document.getElementById('fs-browser-pane') || document.getElementById('files-explorer');
+    if (!pane) return;
+    bar = document.createElement('div'); bar.id = 'fs-open-tabs'; /* id="fs-open-tabs" */ bar.className = 'open-tabs';
+    pane.prepend(bar);
+  }
+  bar.innerHTML = '';
+  for (const t of (state.fsTabs || [])) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'open-tab' + (t === state.fsOpenPath ? ' active' : '');
+    b.textContent = t.split('/').pop(); b.title = t;
+    b.addEventListener('click', () => openFsFile(t));
+    const x = document.createElement('span'); x.className = 'open-tab-x'; x.textContent = ' ×';
+    x.addEventListener('click', (e) => { e.stopPropagation(); state.fsTabs = (state.fsTabs||[]).filter(z => z !== t); renderFsTabs(); });
+    b.appendChild(x); bar.appendChild(b);
+  }
+}
 async function openFsFile(relPath, fragment = null) {
   if (!relPath || !state.sessionId) return;
   if (state.fsOpenPath === relPath && !state.fsDirty) {
@@ -3321,6 +3467,7 @@ async function openFsFile(relPath, fragment = null) {
   const isMd = isMarkdownFile(relPath);
 
   state.fsOpenPath = relPath;
+  fsTrackTab(relPath);
   fsLang = detectFsLanguage(relPath);
 
   if (fsFileIcon) fsFileIcon.textContent = getFsFileIcon(relPath, false);
@@ -3720,6 +3867,12 @@ function renderMessages() {
   }
 
   const queue = session.promptQueue || [];
+  if (state.reasoning === 'off' && session.messages.length > 0) {
+    const hint = document.createElement('div');
+    hint.className = 'thinking-hint';
+    hint.textContent = 'Reasoning is Off — set Low/Med/High or /variant for thinking trace.';
+    messagesEl.appendChild(hint);
+  }
   if (session.messages.length === 0 && queue.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-chat';
@@ -3743,6 +3896,10 @@ function renderMessage(msg) {
     const header = document.createElement('div'); header.className = 'message-header';
     const icons = { user: SVG_ICONS.user, assistant: SVG_ICONS.assistant, system: SVG_ICONS.system, tool: SVG_ICONS.tool };
     header.innerHTML = '<span class="role-icon">' + (icons[msg.role] || '') + '</span> ' + capitalize(msg.role);
+    if (msg.createdAt) {
+      const ts = document.createElement('span'); ts.className = 'msg-ts'; ts.title = new Date(msg.createdAt).toLocaleString();
+      ts.textContent = relTime(msg.createdAt); header.appendChild(ts);
+    }
     div.appendChild(header);
   }
   // Interleaved thinking/tool timeline: each thought renders adjacent to the
@@ -3788,16 +3945,74 @@ function renderMessage(msg) {
     if (isGenerating && isLastMsg) textEl.className += ' streaming-cursor';
     content.appendChild(textEl);
   }
+  if (msg.stoppedEarly && !msg.streamError) {
+    const warn = document.createElement('div');
+    warn.className = 'stopped-early';
+    warn.textContent = 'Stopped early — partial response kept. Retry to continue.';
+    content.appendChild(warn);
+  }
   if (msg.streamError) {
-    const isInterrupted = /interrupted|stream ended|abort|cancel/i.test(msg.streamError);
+    const isInterrupted = /interrupted|stream ended|abort|cancel|network|fetch|connection|offline/i.test(msg.streamError);
     const title = isInterrupted ? 'Response interrupted' : 'Generation error';
     const error = document.createElement('div');
-    error.className = 'stream-error';
+    error.className = 'stream-error' + (isInterrupted ? ' interrupted' : '');
     error.innerHTML = '<span>!</span><div><strong>' + title + '</strong><br>'
       + esc(msg.streamError) + '</div>';
+    if (isInterrupted) {
+      const retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'msg-action-btn error-retry-btn';
+      retryBtn.textContent = 'Retry';
+      retryBtn.title = 'Retry generation';
+      retryBtn.addEventListener('click', () => handleRetryCommand());
+      error.appendChild(retryBtn);
+    }
     content.appendChild(error);
   }
+  const acts = document.createElement('div'); acts.className = 'msg-actions';
+  const mkBtn = (label, title, fn) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'msg-action-btn';
+    b.textContent = label; b.title = title; b.addEventListener('click', fn); acts.appendChild(b); return b;
+  };
+  mkBtn('Copy', 'Copy message text', () => copyText(msg.content || '', 'Message copied'));
+  if (msg.role === 'assistant' && msg.content) {
+    mkBtn('Raw', 'Toggle raw markdown', () => {
+      const pre = div.querySelector('.md-content');
+      if (pre) { const showing = pre.dataset.raw === '1'; pre.dataset.raw = showing ? '0' : '1'; pre.textContent = showing ? '' : (msg.content || ''); if (showing) { pre.innerHTML = renderMarkdown(msg.content); tagMarkdownLinks(pre); } }
+    });
+    mkBtn('Rerun', 'Retry from this prompt', () => handleRetryCommand());
+  }
+  content.appendChild(acts);
+  // T3.1 copy-code buttons
+  content.querySelectorAll('pre code').forEach((code) => {
+    const pre = code.parentElement;
+    if (!pre || pre.querySelector('.copy-code-btn')) return;
+    pre.style.position = 'relative';
+    const cb = document.createElement('button'); cb.type = 'button'; cb.className = 'copy-code-btn'; cb.textContent = 'Copy';
+    cb.addEventListener('click', (e) => { e.stopPropagation(); copyText(code.innerText, 'Code copied'); });
+    pre.appendChild(cb);
+  });
   div.appendChild(content); return div;
+}
+
+function relTime(ts) {
+  const d = Date.now() - ts;
+  if (d < 60e3) return 'just now';
+  if (d < 3600e3) return Math.floor(d/60e3) + 'm ago';
+  if (d < 86400e3) return Math.floor(d/3600e3) + 'h ago';
+  return new Date(ts).toLocaleDateString();
+}
+function copyText(t, okMsg) {
+  const done = () => showToast(okMsg || 'Copied');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(done).catch(() => fallbackCopy(t, done));
+  } else fallbackCopy(t, done);
+}
+function fallbackCopy(t, done) {
+  try {
+    const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove(); done();
+  } catch (_) { showToast('Copy failed'); }
 }
 
 function parseToolValue(value) {
@@ -4582,7 +4797,31 @@ function setGenerating(on) {
   if (pauseBtn) pauseBtn.classList.toggle('hidden', !on);
   if (typeof retryBtn !== 'undefined' && retryBtn) retryBtn.disabled = Boolean(on);
 }
-function scrollToBottom() { document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight; }
+function nearBottom() {
+  const c = document.getElementById('chat-container');
+  if (!c) return true;
+  return (c.scrollHeight - c.scrollTop - c.clientHeight) < 120;
+}
+function scrollToBottom(force) {
+  const c = document.getElementById('chat-container');
+  if (!c) return;
+  if (force || nearBottom() || document.body.classList.contains('is-generating')) {
+    c.scrollTop = c.scrollHeight;
+  }
+  updateJumpPill();
+}
+function updateJumpPill() {
+  const c = document.getElementById('chat-container');
+  if (!c || !document.getElementById('main-area')) return;
+  let pill = document.getElementById('jump-latest');
+  const show = (c.scrollHeight - c.scrollTop - c.clientHeight) > 300;
+  if (show && !pill) {
+    pill = document.createElement('button'); pill.id = 'jump-latest'; /* id="jump-latest" */ pill.className = 'jump-latest';
+    pill.textContent = '↓ Latest'; pill.type = 'button';
+    pill.addEventListener('click', () => { c.scrollTop = c.scrollHeight; updateJumpPill(); });
+    document.getElementById('main-area').appendChild(pill);
+  } else if (!show && pill) pill.remove();
+}
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 function esc(s) {
   const str = String(s == null ? '' : s);
@@ -4590,6 +4829,47 @@ function esc(s) {
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 4000); }
+
+// ── T2 Persistence (qcode.* localStorage) ──
+const PERSIST_KEYS = ['provider','model','reasoning','theme','activeTab','showThinking','layoutMode','filesSubtab','sessionId'];
+function persistPrefs() {
+  try {
+    const o = {};
+    for (const k of PERSIST_KEYS) o[k] = state[k] !== undefined ? state[k] : null;
+    localStorage.setItem('qcode-prefs', JSON.stringify(o));
+  } catch (_) {}
+}
+function restorePrefs() {
+  try {
+    const raw = localStorage.getItem('qcode-prefs');
+    if (!raw) return;
+    const o = JSON.parse(raw);
+    for (const k of PERSIST_KEYS) {
+      if (o[k] !== undefined && o[k] !== null) {
+        if (k === 'theme' && !THEMES[o[k]]) continue;
+        state[k] = o[k];
+      }
+    }
+  } catch (_) {}
+}
+function persistDraft() {
+  try {
+    if (!state.sessionId || !promptInput) return;
+    localStorage.setItem('qcode-draft-' + state.sessionId, promptInput.value);
+  } catch (_) {}
+}
+function restoreDraft() {
+  try {
+    if (!state.sessionId || !promptInput) return;
+    const d = localStorage.getItem('qcode-draft-' + state.sessionId);
+    if (d) { promptInput.value = d; resizePromptInput(); }
+  } catch (_) {}
+}
+function clearDraft() {
+  try {
+    if (state.sessionId) localStorage.removeItem('qcode-draft-' + state.sessionId);
+  } catch (_) {}
+}
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -4734,6 +5014,7 @@ async function switchSession(id) {
     window.location.hash = `/session/${id}`;
   }
 
+  persistPrefs();
   setGenerating(session.generating);
   renderMessages();
   scrollToBottom();
@@ -4741,6 +5022,7 @@ async function switchSession(id) {
   updateStatusBar();
   closeMobileSidebar();
   updateQueueIndicator();
+  restoreDraft();
 
   // Refresh the auxiliary tabs for the newly active session.
   if (state.activeTab === 'files') loadFilesTab();
@@ -4800,8 +5082,18 @@ async function deleteSessionPermanently(id) {
 function renderSessionTabs() {
   if (!sessionTabsContainer) return;
 
-  sessionTabsContainer.innerHTML = state.openSessions.map(session => {
+  state.pinned = state.pinned || [];
+  let list = [...state.openSessions];
+  const q = (state.sessionsFilterText || '').toLowerCase().trim();
+  if (q) list = list.filter(x => ((x.title||'') + ' ' + (x.workspace||'') + ' ' + x.id).toLowerCase().includes(q));
+  list.sort((a, b) => ((state.pinned.includes(b.id)?1:0) - (state.pinned.includes(a.id)?1:0)));
+  try {
+    const raw = localStorage.getItem('qcode-pinned');
+    if (raw) state.pinned = JSON.parse(raw);
+  } catch (_) {}
+  sessionTabsContainer.innerHTML = list.map(session => {
     const isActive = session.id === state.sessionId;
+    const pinned = (state.pinned||[]).includes(session.id) ? ' pinned' : '';
     const activeClass = isActive && (state.layoutMode === 'split' || state.activeTab === 'chat') ? 'active' : '';
     const title = session.title || 'Session';
     const genIndicator = session.generating ? '<span class="session-gen-indicator">⏳</span> ' : '';
@@ -4811,7 +5103,7 @@ function renderSessionTabs() {
     const iconHtml = isSub ? '<span class="session-subagent-icon">🤖</span>' : SVG_ICONS.chat;
     const subPill = isSub ? '<span class="session-subagent-pill">child</span>' : '';
     return `
-      <div class="session-item-wrapper ${activeClass ? 'active' : ''} ${isSub ? 'is-subagent' : ''}" data-id="${session.id}">
+      <div class="session-item-wrapper ${activeClass ? 'active' : ''} ${isSub ? 'is-subagent' : ''}${pinned}" data-id="${session.id}">
         <div class="session-item-main" data-id="${session.id}">
           <div class="session-item-title-row">
             <span class="session-icon">${iconHtml}</span>
@@ -4821,6 +5113,7 @@ function renderSessionTabs() {
           ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">📁 ${esc(ws)}</div>` : ''}
         </div>
         <div class="session-item-actions">
+          <button class="session-action-btn pin-session-btn" data-id="${session.id}" title="Pin/unpin">${(state.pinned||[]).includes(session.id) ? '★' : '☆'}</button>
           ${isSub
             ? `<button class="session-action-btn close-session-tab-btn" data-id="${session.id}" title="Close tab (keeps saved session)">&times;</button>`
             : `<button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">${SVG_ICONS.rename}</button>`}
@@ -4857,6 +5150,16 @@ function renderSessionTabs() {
       if (confirmed) {
         await deleteSessionPermanently(btn.dataset.id);
       }
+    });
+  });
+  sessionTabsContainer.querySelectorAll('.pin-session-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.pinned = state.pinned || [];
+      const i = state.pinned.indexOf(btn.dataset.id);
+      if (i >= 0) state.pinned.splice(i, 1); else state.pinned.push(btn.dataset.id);
+      try { localStorage.setItem('qcode-pinned', JSON.stringify(state.pinned)); } catch (_) {}
+      renderSessionTabs();
     });
   });
 

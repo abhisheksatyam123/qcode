@@ -49,6 +49,14 @@ bool query_flag_true(const httplib::Request& req, const char* name) {
 }
 }  // namespace
 
+void shutdown_active_sessions() {
+    std::lock_guard<std::mutex> lock(g_sessions_mutex);
+    for (auto& [id, sess] : g_sessions) {
+        if (sess && sess->abort_flag) {
+            sess->abort_flag->store(true);
+        }
+    }
+}
 
 void register_session_routes(
     httplib::Server& svr,
@@ -68,10 +76,148 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
         return;
     }
 
+    const bool is_resume = body.value("resume", false);
     std::string text = body.value("text", "");
-    if (text.empty()) {
+    if (text.empty() && !is_resume) {
         res.status = 400;
         res.set_content(R"({"error":"'text' field is required"})", "application/json");
+        return;
+    }
+
+    if (is_resume) {
+        std::shared_ptr<GenSession> session;
+        {
+            std::lock_guard<std::mutex> lock(g_sessions_mutex);
+            auto it = g_sessions.find(session_id);
+            if (it != g_sessions.end()) session = it->second;
+        }
+        if (!session) {
+            if (!qcode::session::is_valid_session_id(session_id)) {
+                res.status = 404;
+                res.set_content(R"({"error":"session not found"})", "application/json");
+                return;
+            }
+            res.set_chunked_content_provider("application/x-ndjson; charset=utf-8",
+                [session_id](size_t, httplib::DataSink& sink) -> bool {
+                    nlohmann::json final_msg = {
+                        {"type", "generation.complete"},
+                        {"session_id", session_id}
+                    };
+                    std::string chunk = final_msg.dump() + "\n";
+                    sink.write(chunk.data(), chunk.size());
+                    sink.done();
+                    return true;
+                });
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_header("Access-Control-Allow-Headers", "*");
+            res.set_header("Cache-Control", "no-cache, no-transform");
+            res.set_header("Connection", "keep-alive");
+            res.set_header("X-Accel-Buffering", "no");
+            return;
+        }
+
+        if (session->done.load()) {
+            res.set_chunked_content_provider("application/x-ndjson; charset=utf-8",
+                [session](size_t, httplib::DataSink& sink) -> bool {
+                    nlohmann::json final_msg = {
+                        {"type", "generation.complete"},
+                        {"session_id", session->id},
+                        {"tool_call_count", session->tool_call_count.load()},
+                        {"total_tool_time_ms", session->total_tool_time_ms.load()}
+                    };
+                    std::string chunk = final_msg.dump() + "\n";
+                    sink.write(chunk.data(), chunk.size());
+                    sink.done();
+                    return true;
+                });
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_header("Access-Control-Allow-Headers", "*");
+            res.set_header("Cache-Control", "no-cache, no-transform");
+            res.set_header("Connection", "keep-alive");
+            res.set_header("X-Accel-Buffering", "no");
+            return;
+        }
+
+        const uint64_t resume_turn = session->active_turn.load();
+        res.set_chunked_content_provider("application/x-ndjson; charset=utf-8",
+            [bus, session, resume_turn, last_write = std::chrono::steady_clock::now()]
+            (size_t /*offset*/, httplib::DataSink& sink) mutable -> bool
+            {
+                try {
+                    bus->drain();
+                    std::vector<nlohmann::json> events;
+                    {
+                        std::lock_guard<std::mutex> lock(session->queue_mutex);
+                        events.swap(session->event_queue);
+                        for (const auto& evt : events) {
+                            if (evt.value("type", "") == "backend.message.delta") {
+                                session->assistant_text += evt.value("text", "");
+                            }
+                        }
+                    }
+
+                    for (const auto& evt : events) {
+                        std::string chunk = evt.dump() + "\n";
+                        if (!sink.write(chunk.data(), chunk.size())) {
+                            return false;
+                        }
+                        last_write = std::chrono::steady_clock::now();
+                    }
+
+                    if (session->done.load() && session->active_turn.load() == resume_turn) {
+                        bus->drain();
+                        {
+                            std::lock_guard<std::mutex> lock(session->queue_mutex);
+                            events.swap(session->event_queue);
+                            for (const auto& evt : events) {
+                                if (evt.value("type", "") == "backend.message.delta") {
+                                    session->assistant_text += evt.value("text", "");
+                                }
+                            }
+                        }
+                        for (const auto& evt : events) {
+                            std::string chunk = evt.dump() + "\n";
+                            if (!sink.write(chunk.data(), chunk.size())) {
+                                return false;
+                            }
+                        }
+                        nlohmann::json final_msg = {
+                            {"type", "generation.complete"},
+                            {"session_id", session->id},
+                            {"tool_call_count", session->tool_call_count.load()},
+                            {"total_tool_time_ms", session->total_tool_time_ms.load()}
+                        };
+                        std::string chunk = final_msg.dump() + "\n";
+                        sink.write(chunk.data(), chunk.size());
+                        sink.done();
+                        return true;
+                    }
+
+                    auto now = std::chrono::steady_clock::now();
+                    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_write).count() >= 2500) {
+                        nlohmann::json hb = {
+                            {"type", "backend.heartbeat"},
+                            {"session_id", session->id}
+                        };
+                        std::string chunk = hb.dump() + "\n";
+                        if (!sink.write(chunk.data(), chunk.size())) {
+                            return false;
+                        }
+                        last_write = now;
+                    }
+
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    return true;
+                } catch (...) {
+                    return false;
+                }
+            }
+        );
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "*");
+        res.set_header("Cache-Control", "no-cache, no-transform");
+        res.set_header("Connection", "keep-alive");
+        res.set_header("X-Accel-Buffering", "no");
         return;
     }
 
@@ -159,22 +305,21 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
 
     // Set up turn ID and per-turn state
     const uint64_t turn_id = ++session->active_turn;
-    session->abort_flag = std::make_shared<std::atomic<bool>>(false);
+    auto abort_flag = std::make_shared<std::atomic<bool>>(false);
+    session->abort_flag = abort_flag;
     session->generation_started = false;
     session->done = false;
-    session->error.clear();
-    session->assistant_text.clear();
-    session->reasoning_text.clear();
     session->tool_call_count = 0;
     session->total_tool_time_ms = 0;
     {
         std::lock_guard<std::mutex> lock(session->queue_mutex);
         session->event_queue.clear();
+        session->error.clear();
+        session->assistant_text.clear();
+        session->reasoning_text.clear();
     }
 
     // Load (or reload) the entire session history from the SQLite database
-    // to ensure we have the complete, up-to-date context (including ToolCall,
-    // ToolResult, System, and Assistant messages).
     session->messages = qcode::session::load_session_history_parsed(session->id);
 
     // Resolve workspace
@@ -198,124 +343,154 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
     qcode::Messages messages = qcode::apply_compaction_cutoff(session->messages);
 
     // ── Set up streaming response ──
-    // Generation runs in a background thread. The chunked provider
-    // callback polls the event queue and writes events as they arrive,
-    // giving true real-time streaming to the client.
     res.set_chunked_content_provider("application/x-ndjson; charset=utf-8",
         [bus, session, provider, model, system_prompt, messages = std::move(messages),
-         turn_id, ws, reasoning_mode](size_t /*offset*/, httplib::DataSink& sink) mutable -> bool
+         turn_id, ws, reasoning_mode, abort_flag,
+         last_write = std::chrono::steady_clock::now()](size_t /*offset*/, httplib::DataSink& sink) mutable -> bool
         {
-            // Start generation in a background thread (once per turn)
-            if (!session->generation_started.exchange(true)) {
-                // Send session.started event first
-                nlohmann::json start_msg = {
-                    {"type", "session.started"},
-                    {"session_id", session->id}
-                };
-                std::string chunk = start_msg.dump() + "\n";
-                if (!sink.write(chunk.data(), chunk.size())) {
-                    if (session->abort_flag) session->abort_flag->store(true);
-                    return false;
-                }
-
-                auto abort_flag = session->abort_flag;
-                std::thread gen_thread([session, provider, model, system_prompt,
-                                        messages = std::move(messages), turn_id, abort_flag, ws, reasoning_mode]() {
-                    qcode::GenerationContext ctx{
-                        .session_id = session->id,
-                        .reasoning_mode = reasoning_mode,
-                        .workspace = ws,
-                        .abort_flag = abort_flag
+            try {
+                // Start generation in a background thread (once per turn)
+                if (!session->generation_started.exchange(true)) {
+                    nlohmann::json start_msg = {
+                        {"type", "session.started"},
+                        {"session_id", session->id}
                     };
-                    try {
-                        g_backend->run_generation(
-                            provider, model, system_prompt,
-                            messages, true, ctx);
-                    } catch (const std::exception& e) {
-                        LOG_ERROR("Generation error: {}", e.what());
-                        if (session->active_turn.load() == turn_id) {
-                            session->error = e.what();
+                    std::string chunk = start_msg.dump() + "\n";
+                    if (!sink.write(chunk.data(), chunk.size())) {
+                        return false;
+                    }
+                    last_write = std::chrono::steady_clock::now();
+
+                    std::thread gen_thread([session, provider, model, system_prompt,
+                                            messages = std::move(messages), turn_id, abort_flag, ws, reasoning_mode]() {
+                        qcode::GenerationContext ctx{
+                            .session_id = session->id,
+                            .reasoning_mode = reasoning_mode,
+                            .workspace = ws,
+                            .abort_flag = abort_flag
+                        };
+                        try {
+                            g_backend->run_generation(
+                                provider, model, system_prompt,
+                                messages, true, ctx);
+                        } catch (const std::exception& e) {
+                            LOG_ERROR("Generation error: {}", e.what());
+                            std::lock_guard<std::mutex> lock(session->queue_mutex);
+                            if (session->active_turn.load() == turn_id) {
+                                session->error = e.what();
+                            }
+                        } catch (...) {
+                            LOG_ERROR("Unknown error during generation");
+                            std::lock_guard<std::mutex> lock(session->queue_mutex);
+                            if (session->active_turn.load() == turn_id) {
+                                session->error = "Unknown error during generation";
+                            }
                         }
-                    }
-                    if (session->active_turn.load() == turn_id) {
-                        session->done = true;
-                    }
-                });
-                gen_thread.detach();
-            }
-
-            // Dispatch bus events to subscribers (bus requires explicit drain)
-            bus->drain();
-
-            // Drain queued events
-            std::vector<nlohmann::json> events;
-            {
-                std::lock_guard<std::mutex> lock(session->queue_mutex);
-                events.swap(session->event_queue);
-            }
-
-            for (const auto& evt : events) {
-                if (evt.value("type", "") == "backend.message.delta") {
-                    session->assistant_text += evt.value("text", "");
+                        if (session->active_turn.load() == turn_id) {
+                            session->done = true;
+                        }
+                    });
+                    gen_thread.detach();
                 }
-                // NOTE: reasoning_text is accumulated in the ReasoningDelta
-                // subscriber (session_runtime.cpp), which flushes a Reasoning
-                // row before each ToolCall row to preserve think/tool order.
-                std::string chunk = evt.dump() + "\n";
-                if (!sink.write(chunk.data(), chunk.size())) {
-                    if (session->abort_flag) session->abort_flag->store(true);
-                    return false;
-                }
-            }
 
-            // If generation is done for this turn, drain remaining events and complete stream
-            if (session->done.load() && session->active_turn.load() == turn_id) {
+                // Dispatch bus events to subscribers
                 bus->drain();
+
+                // Drain queued events under lock
+                std::vector<nlohmann::json> events;
                 {
                     std::lock_guard<std::mutex> lock(session->queue_mutex);
                     events.swap(session->event_queue);
-                }
-                for (const auto& evt : events) {
-                    if (evt.value("type", "") == "backend.message.delta") {
-                        session->assistant_text += evt.value("text", "");
+                    for (const auto& evt : events) {
+                        if (evt.value("type", "") == "backend.message.delta") {
+                            session->assistant_text += evt.value("text", "");
+                        }
                     }
+                }
+
+                for (const auto& evt : events) {
                     std::string chunk = evt.dump() + "\n";
                     if (!sink.write(chunk.data(), chunk.size())) {
-                        if (session->abort_flag) session->abort_flag->store(true);
+                        LOG_DEBUG("Client disconnected while writing event for session {}", session->id);
                         return false;
                     }
+                    last_write = std::chrono::steady_clock::now();
                 }
 
-                // Persist the assistant reply so the session is resumable.
-                if (!session->assistant_text.empty()) {
-                    qcode::session::save_message(session->id, "Assistant", session->assistant_text);
+                // If generation is done for this turn, drain remaining events and complete stream
+                if (session->done.load() && session->active_turn.load() == turn_id) {
+                    bus->drain();
+                    std::string text_to_save;
+                    std::string reasoning_to_save;
+                    std::string error_to_report;
+                    {
+                        std::lock_guard<std::mutex> lock(session->queue_mutex);
+                        events.swap(session->event_queue);
+                        for (const auto& evt : events) {
+                            if (evt.value("type", "") == "backend.message.delta") {
+                                session->assistant_text += evt.value("text", "");
+                            }
+                        }
+                        text_to_save = session->assistant_text;
+                        reasoning_to_save = session->reasoning_text;
+                        error_to_report = session->error;
+                    }
+
+                    for (const auto& evt : events) {
+                        std::string chunk = evt.dump() + "\n";
+                        if (!sink.write(chunk.data(), chunk.size())) {
+                            LOG_DEBUG("Client disconnected while writing remaining event for session {}", session->id);
+                            return false;
+                        }
+                    }
+
+                    // Persist assistant reply so session is resumable
+                    if (!text_to_save.empty()) {
+                        qcode::session::save_message(session->id, "Assistant", text_to_save);
+                    }
+                    if (!reasoning_to_save.empty()) {
+                        qcode::session::save_message(session->id, "Reasoning", reasoning_to_save);
+                    }
+
+                    nlohmann::json final_msg = {
+                        {"type", "generation.complete"},
+                        {"session_id", session->id},
+                        {"tool_call_count", session->tool_call_count.load()},
+                        {"total_tool_time_ms", session->total_tool_time_ms.load()}
+                    };
+                    if (!error_to_report.empty() && text_to_save.empty()) {
+                        final_msg["error"] = error_to_report;
+                    }
+                    std::string chunk = final_msg.dump() + "\n";
+                    sink.write(chunk.data(), chunk.size());
+                    sink.done();
+                    return true;
                 }
-                if (!session->reasoning_text.empty()) {
-                    qcode::session::save_message(session->id, "Reasoning", session->reasoning_text);
+
+                // Generation is still running. If idle for >= 2500ms, send keepalive heartbeat
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_write).count() >= 2500) {
+                    nlohmann::json hb = {
+                        {"type", "backend.heartbeat"},
+                        {"session_id", session->id}
+                    };
+                    std::string chunk = hb.dump() + "\n";
+                    if (!sink.write(chunk.data(), chunk.size())) {
+                        LOG_DEBUG("Client disconnected during heartbeat for session {}", session->id);
+                        return false;
+                    }
+                    last_write = now;
                 }
-                nlohmann::json final_msg = {
-                    {"type", "generation.complete"},
-                    {"session_id", session->id},
-                    {"tool_call_count", session->tool_call_count.load()},
-                    {"total_tool_time_ms", session->total_tool_time_ms.load()}
-                };
-                if (!session->error.empty() && session->assistant_text.empty()) {
-                    final_msg["error"] = session->error;
-                }
-                std::string chunk = final_msg.dump() + "\n";
-                if (!sink.write(chunk.data(), chunk.size())) {
-                    if (session->abort_flag) session->abort_flag->store(true);
-                    return false;
-                }
-                sink.done();
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 return true;
+            } catch (const std::exception& e) {
+                LOG_ERROR("Chunked provider exception for session {}: {}", session->id, e.what());
+                return false;
+            } catch (...) {
+                LOG_ERROR("Chunked provider unknown exception for session {}", session->id);
+                return false;
             }
-
-            // Avoid a hot loop while waiting for the provider or a tool.
-            if (events.empty()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-            return true;
         }
     );
     res.set_header("Access-Control-Allow-Origin", "*");

@@ -986,6 +986,7 @@ body {
 .composer-actions .pause-btn,
 .composer-actions #send-btn {
   margin-left: 0;
+  color: var(--text-muted);
 }
 
 .input-info {
