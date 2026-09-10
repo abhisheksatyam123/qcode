@@ -25,6 +25,7 @@
 #include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
 #include <qcode/tools/task_tool.h>
+#include <nlohmann/json.hpp>
 #include <qcode/config/provider_info.h>
 #include <qcode/ui/chat_state.h>
 #include <qcode/session/system_prompt.h>
@@ -37,8 +38,8 @@
 #include <qcode/core/identity.h>
 #include <qcode/session/git_workspace.h>
 #include "picker_helpers.h"
-#include "tui_overlays.h"
-#include "tui_git_monitor.h"
+#include "overlays.h"
+#include "git_monitor.h"
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -117,15 +118,19 @@ int main(int argc, char* argv[]) {
     // ── Spinner: advance frame periodically + queue watchdog ──
     std::thread spinner_thread([&store, &generation, app_running, &screen]() {
         qcode::logger::set_thread_name("spinner");
-        while (app_running->load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            const auto& st = store.status();
-            if (store.is_generating() || st == "generating" || st == "agent") {
-                store.advance_frame();
-            } else if (store.has_queued_prompt() && !generation.is_busy() && st != "error") {
-                // Fail-safe watchdog: wake the UI to process pending queued prompts.
-                screen.Post(Event::Custom);
+        try {
+            while (app_running->load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                const auto& st = store.status();
+                if (store.is_generating() || st == "generating" || st == "agent") {
+                    store.advance_frame();
+                } else if (store.has_queued_prompt() && !generation.is_busy() && st != "error") {
+                    // Fail-safe watchdog: wake the UI to process pending queued prompts.
+                    screen.Post(Event::Custom);
+                }
             }
+        } catch (const std::exception& e) {
+            LOG_ERROR("spinner_thread exception: {}", e.what());
         }
     });
 
@@ -436,7 +441,6 @@ int main(int argc, char* argv[]) {
             state.return_session_id) {
             *state.return_session_id = *state.session_id;
         }
-        generation.prepare_session_switch();
         store.set_session_id(id);
         std::string use_title = title.empty() ? qcode::session::get_session_title(id)
                                               : title;
@@ -444,6 +448,32 @@ int main(int argc, char* argv[]) {
         state.messages_history->clear();
         qcode::session::reload_session_history(id, state);
         if (state.retry_available) *state.retry_available = false;
+
+        const bool gen_running =
+            (id == generation.running_session_id() && generation.is_busy()) ||
+            qcode::TaskTool::is_session_running(id);
+        store.set_generating(gen_running);
+        store.set_status(gen_running ? "generating" : "idle");
+        auto pm = qcode::session::get_session_provider_model(id);
+        if (!pm.first.empty() || !pm.second.empty()) {
+            for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
+                if (providers_list[i].name == pm.first || providers_list[i].id == pm.first) {
+                    for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
+                        if (providers_list[i].models[j].name == pm.second || providers_list[i].models[j].id == pm.second) {
+                            selected_provider = i;
+                            selected_model = j;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        auto modes = qcode::session::get_session_modes(id);
+        if (state.agent_mode) {
+            *state.agent_mode = modes.first.empty() ? "orchestrator" : modes.first;
+        }
+
         state.tab_selected = 0;
         store.add_toast("Opened session: " + (use_title.empty() ? id : use_title),
                         "info", 1500);
@@ -527,6 +557,25 @@ int main(int argc, char* argv[]) {
             } else {
                 store.add_toast("No queued prompts to clear", "info", 1500);
             }
+        } else if (cmd.id == "session_stop") {
+            if (generation.is_active()) {
+                if (state.abort_flag && state.abort_flag->load()) {
+                    generation.force_stop_ui();
+                } else {
+                    generation.request_abort();
+                    store.add_toast(
+                        "Stopping… (Esc or /stop again to force)", "warning", 3000);
+                }
+            } else if (store.has_queued_prompt()) {
+                const auto n = store.queue_size();
+                store.clear_prompt_queue();
+                store.add_toast(
+                    n == 1 ? "Cleared 1 queued prompt"
+                           : ("Cleared " + std::to_string(n) + " queued prompts"),
+                    "info", 1500);
+            } else {
+                store.add_toast("No generation active", "info", 1500);
+            }
         } else if (cmd.id == "session_retry") {
             trigger_retry();
         } else if (cmd.id == "model_select") {
@@ -565,6 +614,71 @@ int main(int argc, char* argv[]) {
 
     auto submit = [&] {
         if (prompt_input.empty()) return;
+
+        // Extract slash command early so control commands work even while generating
+        std::string slash_cmd;
+        if (prompt_input[0] == '/') {
+            slash_cmd = prompt_input.substr(1);
+            slash_cmd.erase(slash_cmd.begin(), std::find_if(slash_cmd.begin(), slash_cmd.end(), [](unsigned char ch) {
+                return !std::isspace(ch);
+            }));
+            slash_cmd.erase(std::find_if(slash_cmd.rbegin(), slash_cmd.rend(), [](unsigned char ch) {
+                return !std::isspace(ch);
+            }).base(), slash_cmd.end());
+            std::transform(slash_cmd.begin(), slash_cmd.end(), slash_cmd.begin(), ::tolower);
+        }
+
+        // Immediate control commands that must execute even during active generation:
+        if (slash_cmd == "clear-queue" || slash_cmd == "clearqueue" || slash_cmd == "cq") {
+            prompt_input = "";
+            if (store.has_queued_prompt()) {
+                const auto n = store.queue_size();
+                store.clear_prompt_queue();
+                store.add_toast(
+                    n == 1 ? "Cleared 1 queued prompt"
+                           : ("Cleared " + std::to_string(n) + " queued prompts"),
+                    "info", 1500);
+            } else {
+                store.add_toast("No queued prompts to clear", "info", 1500);
+            }
+            screen.Post(Event::Custom);
+            return;
+        }
+        if (slash_cmd == "stop" || slash_cmd == "abort") {
+            prompt_input = "";
+            if (generation.is_active()) {
+                if (state.abort_flag && state.abort_flag->load()) {
+                    generation.force_stop_ui();
+                } else {
+                    generation.request_abort();
+                    store.add_toast(
+                        "Stopping… (Esc or /stop again to force)", "warning", 3000);
+                }
+            } else if (store.has_queued_prompt()) {
+                const auto n = store.queue_size();
+                store.clear_prompt_queue();
+                store.add_toast(
+                    n == 1 ? "Cleared 1 queued prompt"
+                           : ("Cleared " + std::to_string(n) + " queued prompts"),
+                    "info", 1500);
+            } else {
+                store.add_toast("No generation active", "info", 1500);
+            }
+            screen.Post(Event::Custom);
+            return;
+        }
+        if (slash_cmd == "force-stop" || slash_cmd == "forcestop" || slash_cmd == "kill") {
+            prompt_input = "";
+            generation.force_stop_ui();
+            screen.Post(Event::Custom);
+            return;
+        }
+        if (slash_cmd == "exit" || slash_cmd == "quit" || slash_cmd == "q") {
+            prompt_input = "";
+            screen.Exit();
+            return;
+        }
+
         const auto& turn_status = store.status();
         const bool turn_visible = store.is_generating() ||
                                   turn_status == "generating" ||
@@ -603,6 +717,26 @@ int main(int argc, char* argv[]) {
             if (cmd == "retry") {
                 prompt_input = "";
                 trigger_retry();
+                return;
+            }
+
+            if (cmd == "stop" || cmd == "abort") {
+                prompt_input = "";
+                if (generation.is_active()) {
+                    generation.request_abort();
+                    store.add_toast(
+                        "Stopping… (Esc again to force)", "warning", 3000);
+                } else if (store.has_queued_prompt()) {
+                    const auto n = store.queue_size();
+                    store.clear_prompt_queue();
+                    store.add_toast(
+                        n == 1 ? "Cleared 1 queued prompt"
+                               : ("Cleared " + std::to_string(n) + " queued prompts"),
+                        "info", 1500);
+                } else {
+                    store.add_toast("No generation active", "info", 1500);
+                }
+                screen.Post(Event::Custom);
                 return;
             }
 
@@ -749,12 +883,7 @@ int main(int argc, char* argv[]) {
 
         if (qcode::tui::handle_session_select_keys(e, overlays,
             [&](const qcode::session::SessionInfo& picked) {
-                generation.prepare_session_switch();
-                store.set_session_id(picked.id);
-                sync_session_title(state, picked.title);
-                state.messages_history->clear();
-                qcode::session::reload_session_history(picked.id, state);
-                if (state.retry_available) *state.retry_available = false;
+                open_chat_session(picked.id, picked.title, false);
 
                 if (!picked.provider.empty() && !picked.model.empty()) {
                     for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
@@ -1009,6 +1138,11 @@ int main(int argc, char* argv[]) {
                 return true;
             }
 
+            // Child subagent view → back to parent session
+            if (state.return_session_id && !state.return_session_id->empty()) {
+                if (return_to_parent_session()) return true;
+            }
+
             // Abort takes priority over clearing the prompt while a turn runs
             // (or while a force-stopped worker is still finishing HTTP).
             if (generation.is_active()) {
@@ -1026,6 +1160,16 @@ int main(int argc, char* argv[]) {
             }
             if (!prompt_input.empty()) {
                 prompt_input.clear();
+                return true;
+            }
+            if (store.has_queued_prompt()) {
+                const auto n = store.queue_size();
+                store.clear_prompt_queue();
+                store.add_toast(
+                    n == 1 ? "Cleared 1 queued prompt"
+                           : ("Cleared " + std::to_string(n) + " queued prompts"),
+                    "info", 1500);
+                screen.Post(Event::Custom);
                 return true;
             }
         }
@@ -1153,13 +1297,17 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // ── Sessions tab: list navigation, continue / switch session, refresh ──
+        // ── Sessions tab: delegated children only (open in chat tab) ──
         if (state.tab_selected == 3 && !any_overlay()) {
-            auto sessions = qcode::session::list_sessions_full();
-            int session_count = static_cast<int>(sessions.size());
+            auto listed = qcode::TaskTool::list_tasks();
+            const auto& tasks =
+                (listed.contains("metadata") && listed["metadata"].contains("tasks"))
+                    ? listed["metadata"]["tasks"]
+                    : nlohmann::json::array();
+            int child_count = static_cast<int>(tasks.size());
 
             if (e == Event::Character('r') || e == Event::Character('R')) {
-                store.add_toast("Refreshed sessions and subagents", "info", 1000);
+                store.add_toast("Refreshed child sessions", "info", 1000);
                 screen.Post(Event::Custom);
                 return true;
             }
@@ -1167,47 +1315,33 @@ int main(int argc, char* argv[]) {
                 if (return_to_parent_session()) return true;
             }
 
-            if (session_count > 0) {
+            if (child_count > 0) {
                 if (e == Event::ArrowUp || e == Event::Character('k') ||
                     e == Event::Character('K')) {
-                    state.selected_session_item = std::max(0, state.selected_session_item - 1);
+                    state.selected_session_item =
+                        std::max(0, state.selected_session_item - 1);
                     screen.Post(Event::Custom);
                     return true;
                 }
                 if (e == Event::ArrowDown || e == Event::Character('j') ||
                     e == Event::Character('J')) {
-                    state.selected_session_item = std::min(state.selected_session_item + 1, session_count - 1);
+                    state.selected_session_item = std::min(
+                        state.selected_session_item + 1, child_count - 1);
                     screen.Post(Event::Custom);
                     return true;
                 }
                 if (e == Event::Return) {
-                    int idx = std::clamp(state.selected_session_item, 0, session_count - 1);
-                    const auto& picked = sessions[idx];
-                    generation.prepare_session_switch();
-                    store.set_session_id(picked.id);
-                    sync_session_title(state, picked.title);
-                    state.messages_history->clear();
-                    qcode::session::reload_session_history(picked.id, state);
-                    if (state.retry_available) *state.retry_available = false;
-
-                    if (!picked.provider.empty() && !picked.model.empty()) {
-                        for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
-                            if (providers_list[i].name == picked.provider || providers_list[i].id == picked.provider) {
-                                for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
-                                    if (providers_list[i].models[j].name == picked.model || providers_list[i].models[j].id == picked.model) {
-                                        selected_provider = i;
-                                        selected_model = j;
-                                        break;
-                                    }
-                                }
-                                break;
-                            }
-                        }
+                    int idx = std::clamp(state.selected_session_item, 0,
+                                         child_count - 1);
+                    const std::string sid = tasks[idx].value(
+                        "task_id", tasks[idx].value("sessionId", ""));
+                    const std::string desc =
+                        tasks[idx].value("description", sid);
+                    if (!sid.empty()) {
+                        open_chat_session(sid, desc, true);
+                        store.add_toast("Opened child session: " + desc, "info",
+                                        1500);
                     }
-                    apply_config_variant_if_unset();
-                    state.tab_selected = 0;  // Switch to Chat tab to continue session!
-                    store.add_toast("Continued session: " + picked.title, "info", 1500);
-                    screen.Post(Event::Custom);
                     return true;
                 }
             }
@@ -1287,41 +1421,6 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
-                if (state.tab_selected == 3 && state.session_row_boxes) {
-                    auto sessions = qcode::session::list_sessions_full();
-                    for (size_t i = 0; i < state.session_row_boxes->size() && i < sessions.size(); ++i) {
-                        if ((*state.session_row_boxes)[i].Contain(e.mouse().x, e.mouse().y)) {
-                            state.selected_session_item = static_cast<int>(i);
-                            const auto& picked = sessions[i];
-                            generation.prepare_session_switch();
-                            store.set_session_id(picked.id);
-                            sync_session_title(state, picked.title);
-                            state.messages_history->clear();
-                            qcode::session::reload_session_history(picked.id, state);
-                            if (state.retry_available) *state.retry_available = false;
-
-                            if (!picked.provider.empty() && !picked.model.empty()) {
-                                for (int pi = 0; pi < static_cast<int>(providers_list.size()); ++pi) {
-                                    if (providers_list[pi].name == picked.provider || providers_list[pi].id == picked.provider) {
-                                        for (int pj = 0; pj < static_cast<int>(providers_list[pi].models.size()); ++pj) {
-                                            if (providers_list[pi].models[pj].name == picked.model || providers_list[pi].models[pj].id == picked.model) {
-                                                selected_provider = pi;
-                                                selected_model = pj;
-                                                break;
-                                            }
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                            apply_config_variant_if_unset();
-                            state.tab_selected = 0;
-                            store.add_toast("Continued session: " + picked.title, "info", 1500);
-                            screen.Post(Event::Custom);
-                            return true;
-                        }
-                    }
-                }
                 if (state.return_session_id && !state.return_session_id->empty() &&
                     state.session_back_box &&
                     state.session_back_box->Contain(e.mouse().x, e.mouse().y)) {
@@ -1395,7 +1494,7 @@ int main(int argc, char* argv[]) {
             }
         }
         if ((e == Event::Character('b') || e == Event::Character('B')) &&
-            (!state.is_generating || !state.is_generating->load()) &&
+            prompt_input.empty() &&
             state.return_session_id && !state.return_session_id->empty()) {
             if (return_to_parent_session()) return true;
         }
@@ -1482,7 +1581,12 @@ int main(int argc, char* argv[]) {
         return layout;
     });
 
-    screen.Loop(renderer);
+    try {
+        screen.Loop(renderer);
+    } catch (const std::exception& e) {
+        LOG_ERROR("Main: uncaught exception in screen.Loop: {}", e.what());
+        std::cerr << "\n[qcode-tui error] " << e.what() << "\n";
+    }
 
     // ═══════════════════════════════════════════════════════════
     //  7. Cleanup

@@ -65,7 +65,7 @@ class serializer
     @param[in] error_handler_  how to react on decoding errors
     */
     serializer(output_adapter_t<char> s, const char ichar,
-               error_handler_t error_handler_ = error_handler_t::strict)
+               error_handler_t error_handler_ = error_handler_t::replace)
         : o(std::move(s))
         , thousands_sep('\0')  // PATCHED: No thousands separator
         , decimal_point('.')   // PATCHED: Always use '.' as decimal point

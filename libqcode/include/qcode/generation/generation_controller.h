@@ -48,6 +48,8 @@ public:
 
     ~GenerationController();
 
+        std::string running_session_id() const;
+
     bool is_busy() const noexcept {
         return busy_->load(std::memory_order_acquire);
     }
@@ -60,7 +62,7 @@ public:
     void request_abort();
 
     // Unstick the UI immediately without joining the worker.
-    // Preserves queued prompts (same as request_abort).
+    // Clears queued prompts and prevents auto-resuming.
     void force_stop_ui();
 
     // Abort the in-flight turn and idle the UI for a session switch.
@@ -87,6 +89,8 @@ private:
     // After Esc, wait before auto-starting a queued prompt so "Esc again to
     // force" cannot abort the next Grok/Cursor turn that just spawned.
     std::chrono::steady_clock::time_point queue_resume_at_{};
+    mutable std::mutex active_session_mutex_;
+    std::string active_session_id_;
 };
 
 }  // namespace qcode

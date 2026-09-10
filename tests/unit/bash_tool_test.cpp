@@ -167,5 +167,39 @@ TEST(BashToolTest, AllowsEscapedQuotesInPythonInlineCommands) {
   EXPECT_NE(result["output"].get<std::string>().find("65536"), std::string::npos);
 }
 
+
+TEST(BashToolTest, ReadOnlyContextRejectsRedirect) {
+  ToolExecutionContext ctx;
+  ctx.can_edit = false;
+  ctx.workspace = "/tmp";
+  const auto out = BashTool::execute(
+      nlohmann::json{{"command", "echo hi > /tmp/qcode-readonly-test"},
+                     {"description", "write a file"}},
+      ctx);
+  EXPECT_TRUE(out.contains("error")) << out.dump();
+  EXPECT_NE(out.value("error", "").find("Read-only"), std::string::npos);
+}
+
+TEST(BashToolTest, ReadOnlyContextAllowsEcho) {
+  ToolExecutionContext ctx;
+  ctx.can_edit = false;
+  ctx.workspace = "/tmp";
+  const auto out = BashTool::execute(
+      nlohmann::json{{"command", "echo hi"}, {"description", "print hi"}},
+      ctx);
+  EXPECT_FALSE(out.contains("error")) << out.dump();
+  EXPECT_NE(out.value("output", "").find("hi"), std::string::npos);
+}
+
+TEST(BashToolTest, ReadOnlyContextRejectsRm) {
+  ToolExecutionContext ctx;
+  ctx.can_edit = false;
+  const auto out = BashTool::execute(
+      nlohmann::json{{"command", "rm -rf /tmp/qcode-readonly-test"},
+                     {"description", "delete path"}},
+      ctx);
+  EXPECT_TRUE(out.contains("error")) << out.dump();
+}
+
 }  // namespace
 }  // namespace qcode

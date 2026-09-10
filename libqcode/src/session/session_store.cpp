@@ -23,19 +23,7 @@ namespace session {
 
 class MessageWriterConnection final {
 public:
-    MessageWriterConnection() {
-        std::string path;
-        db_ = open_database(path);
-        if (!db_) return;
-        sqlite3_busy_timeout(db_, 2000);
-        constexpr auto kInsertSql =
-            "INSERT INTO messages (session_id, sender, content, created_at) "
-            "VALUES (?, ?, ?, ?);";
-        if (!prepare_stmt(db_, kInsertSql, &insert_)) {
-            sqlite3_close(db_);
-            db_ = nullptr;
-        }
-    }
+    MessageWriterConnection() = default;
 
     ~MessageWriterConnection() {
         if (insert_) sqlite3_finalize(insert_);
@@ -48,6 +36,27 @@ public:
     void write(const std::string& session_id, const std::string& sender,
                const std::string& content, long long created_at) {
         std::lock_guard<std::mutex> lock(mutex_);
+        const std::string expected_path = get_db_path();
+        if (db_ && current_path_ != expected_path) {
+            if (insert_) { sqlite3_finalize(insert_); insert_ = nullptr; }
+            sqlite3_close(db_);
+            db_ = nullptr;
+        }
+        if (!db_) {
+            std::string actual_path;
+            db_ = open_database(actual_path);
+            if (!db_) return;
+            current_path_ = expected_path;
+            sqlite3_busy_timeout(db_, 2000);
+            constexpr auto kInsertSql =
+                "INSERT INTO messages (session_id, sender, content, created_at) "
+                "VALUES (?, ?, ?, ?);";
+            if (!prepare_stmt(db_, kInsertSql, &insert_)) {
+                sqlite3_close(db_);
+                db_ = nullptr;
+                return;
+            }
+        }
         if (!insert_) return;
         sqlite3_reset(insert_);
         sqlite3_clear_bindings(insert_);
@@ -348,6 +357,8 @@ std::string get_last_active_session() {
         "    FROM messages "
         "    GROUP BY session_id "
         ") m ON m.session_id = sessions.id "
+        "WHERE COALESCE(sessions.agent_mode, '') != 'subagent' "
+        "  AND sessions.id NOT LIKE 'ses_%' "
         "ORDER BY COALESCE(m.last_msg_time, sessions.created_at) DESC "
         "LIMIT 1;";
     sqlite3_stmt* stmt = nullptr;
@@ -399,8 +410,8 @@ void ensure_session_row(const std::string& id,
                                .count();
     std::string use_title = title.empty() ? ("Subagent " + id) : title;
     const char* sql =
-        "INSERT INTO sessions (id, title, provider, model, created_at, workspace) "
-        "VALUES (?, ?, ?, ?, ?, ?);";
+        "INSERT INTO sessions (id, title, provider, model, created_at, workspace, agent_mode) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'subagent');";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
         sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
@@ -594,12 +605,21 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
                     auto j = nlohmann::json::parse(content);
                     if (j.is_object() && j.contains("id") && j.contains("name")) {
                         auto args = j.value("arguments", nlohmann::json::object());
-                        history.push_back(
-                            qcode::Message::assistant_with_tools(
-                                "",
-                                {{j.at("id").get<std::string>(),
-                                  j.at("name").get<std::string>(),
-                                  std::move(args)}}));
+                        qcode::ToolCallContentPart call{
+                            j.at("id").get<std::string>(),
+                            j.at("name").get<std::string>(),
+                            std::move(args),
+                            j.value("thought_signature", "")};
+                        // Merge into the previous assistant turn so parallel
+                        // tool_calls (and the preamble text) stay one message.
+                        if (!history.empty() &&
+                            history.back().role == qcode::kMessageRoleAssistant &&
+                            !history.back().has_tool_results()) {
+                            history.back().content.push_back(std::move(call));
+                        } else {
+                            history.push_back(qcode::Message::assistant_with_tools(
+                                "", {std::move(call)}));
+                        }
                         continue;
                     }
                 } catch (...) {
@@ -768,6 +788,23 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
             }
 
             if (has_tools) {
+                std::string assistant_text;
+                for (const auto& part : m.content) {
+                    if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
+                        assistant_text += tp->text;
+                    }
+                }
+                if (!assistant_text.empty()) {
+                    sqlite3_reset(ins_stmt);
+                    sqlite3_clear_bindings(ins_stmt);
+                    sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 2, "Assistant", -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 3, assistant_text.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(ins_stmt, 4, created_at);
+                    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+                        LOG_ERROR("SQLite: overwrite insert Assistant text failed: {}", sqlite3_errmsg(db));
+                    }
+                }
                 for (const auto& part : m.content) {
                     if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
                         nlohmann::json call_json = {
@@ -775,7 +812,10 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
                             {"name", tcp->tool_name},
                             {"arguments", tcp->arguments},
                         };
-                        std::string content = call_json.dump();
+                        if (!tcp->thought_signature.empty()) {
+                            call_json["thought_signature"] = tcp->thought_signature;
+                        }
+                        std::string content = call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
                         
                         sqlite3_reset(ins_stmt);
                         sqlite3_clear_bindings(ins_stmt);
@@ -797,7 +837,7 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
                             {"is_error", trp->is_error},
                             {"duration_ms", trp->duration_ms},
                         };
-                        std::string content = result_json.dump();
+                        std::string content = result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 
                         sqlite3_reset(ins_stmt);
                         sqlite3_clear_bindings(ins_stmt);
@@ -868,7 +908,7 @@ std::vector<std::pair<std::string, std::string>> load_session_messages(const std
     return out;
 }
 
-std::vector<std::pair<std::string, std::string>> list_sessions() {
+std::vector<std::pair<std::string, std::string>> list_sessions(bool include_subagents) {
     std::vector<std::pair<std::string, std::string>> sessions;
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
@@ -876,17 +916,21 @@ std::vector<std::pair<std::string, std::string>> list_sessions() {
         return sessions;
     }
 
-    const char* sql =
+    std::string sql =
         "SELECT sessions.id, sessions.title "
         "FROM sessions "
         "LEFT JOIN ( "
         "    SELECT session_id, MAX(created_at) AS last_msg_time "
         "    FROM messages "
         "    GROUP BY session_id "
-        ") m ON m.session_id = sessions.id "
-        "ORDER BY COALESCE(m.last_msg_time, sessions.created_at) DESC;";
+        ") m ON m.session_id = sessions.id ";
+    if (!include_subagents) {
+        sql += "WHERE COALESCE(sessions.agent_mode, '') != 'subagent' "
+               "  AND sessions.id NOT LIKE 'ses_%' ";
+    }
+    sql += "ORDER BY COALESCE(m.last_msg_time, sessions.created_at) DESC;";
     sqlite3_stmt* stmt = nullptr;
-    if (prepare_stmt(db, sql, &stmt)) {
+    if (prepare_stmt(db, sql.c_str(), &stmt)) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             const unsigned char* id_txt = sqlite3_column_text(stmt, 0);
             const unsigned char* title_txt = sqlite3_column_text(stmt, 1);
@@ -901,7 +945,7 @@ std::vector<std::pair<std::string, std::string>> list_sessions() {
     return sessions;
 }
 
-std::vector<SessionInfo> list_sessions_full() {
+std::vector<SessionInfo> list_sessions_full(bool include_subagents) {
     std::vector<SessionInfo> sessions;
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
@@ -909,7 +953,7 @@ std::vector<SessionInfo> list_sessions_full() {
         return sessions;
     }
 
-    const char* sql =
+    std::string sql =
         "SELECT sessions.id, sessions.title, COALESCE(sessions.workspace, ''), "
         "       COALESCE(sessions.provider, ''), COALESCE(sessions.model, ''), "
         "       COALESCE(m.last_msg_time, sessions.created_at) AS last_active, "
@@ -919,10 +963,14 @@ std::vector<SessionInfo> list_sessions_full() {
         "    SELECT session_id, MAX(created_at) AS last_msg_time, COUNT(*) AS msg_count "
         "    FROM messages "
         "    GROUP BY session_id "
-        ") m ON m.session_id = sessions.id "
-        "ORDER BY last_active DESC;";
+        ") m ON m.session_id = sessions.id ";
+    if (!include_subagents) {
+        sql += "WHERE COALESCE(sessions.agent_mode, '') != 'subagent' "
+               "  AND sessions.id NOT LIKE 'ses_%' ";
+    }
+    sql += "ORDER BY last_active DESC;";
     sqlite3_stmt* stmt = nullptr;
-    if (prepare_stmt(db, sql, &stmt)) {
+    if (prepare_stmt(db, sql.c_str(), &stmt)) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             SessionInfo info;
             const unsigned char* id_txt = sqlite3_column_text(stmt, 0);
@@ -1132,6 +1180,28 @@ void rename_session(const std::string& session_id, const std::string& new_title)
         sqlite3_finalize(stmt);
     }
 
+}
+
+std::pair<std::string, std::string> get_session_provider_model(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return {};
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return {};
+
+    const char* sql = "SELECT COALESCE(provider, ''), COALESCE(model, '') FROM sessions WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    std::pair<std::string, std::string> pm;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* prov = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            const auto* mod = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            if (prov) pm.first = prov;
+            if (mod) pm.second = mod;
+        }
+        sqlite3_finalize(stmt);
+    }
+    return pm;
 }
 
 void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model) {

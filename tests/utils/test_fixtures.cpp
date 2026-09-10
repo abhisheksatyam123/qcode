@@ -1,3 +1,4 @@
+#include <qcode/session/session_store.h>
 #include "test_fixtures.h"
 
 #include <qcode/core/enums.h>
@@ -371,3 +372,68 @@ void TestAssertions::assertHasRequiredFields(
 
 }  // namespace test
 }  // namespace qcode
+#include <unistd.h>
+#include <filesystem>
+
+namespace {
+
+class DatabaseIsolationListener final : public ::testing::EmptyTestEventListener {
+ public:
+  explicit DatabaseIsolationListener(std::string db_path)
+      : global_db_path_(std::move(db_path)) {}
+
+  void OnTestStart(const ::testing::TestInfo&) override {
+    ensure_db_set();
+  }
+
+  void OnTestEnd(const ::testing::TestInfo&) override {
+    ensure_db_set();
+  }
+
+ private:
+  void ensure_db_set() {
+    const char* current = std::getenv("QCODE_DB_PATH");
+    if (!current || current[0] == '\0') {
+      setenv("QCODE_DB_PATH", global_db_path_.c_str(), 1);
+    }
+  }
+
+  std::string global_db_path_;
+};
+
+class GlobalTestDatabaseEnvironment final : public ::testing::Environment {
+ public:
+  void SetUp() override {
+    char temp_template[] = "/tmp/qcode_gtest_db_XXXXXX";
+    int fd = mkstemp(temp_template);
+    if (fd >= 0) {
+      close(fd);
+      unlink(temp_template);
+      temp_db_path_ = std::string(temp_template) + ".db";
+      setenv("QCODE_DB_PATH", temp_db_path_.c_str(), 1);
+      allocated_ = true;
+      qcode::session::init_database();
+      ::testing::UnitTest::GetInstance()->listeners().Append(
+          new DatabaseIsolationListener(temp_db_path_));
+    }
+  }
+
+  void TearDown() override {
+    if (allocated_ && !temp_db_path_.empty()) {
+      std::error_code ec;
+      std::filesystem::remove(temp_db_path_, ec);
+      std::filesystem::remove(temp_db_path_ + "-wal", ec);
+      std::filesystem::remove(temp_db_path_ + "-shm", ec);
+      unsetenv("QCODE_DB_PATH");
+    }
+  }
+
+ private:
+  std::string temp_db_path_;
+  bool allocated_ = false;
+};
+
+::testing::Environment* const s_global_db_env =
+    ::testing::AddGlobalTestEnvironment(new GlobalTestDatabaseEnvironment());
+
+}  // namespace

@@ -1,3 +1,6 @@
+#include <unistd.h>
+#include <filesystem>
+#include <qcode/session/session_store.h>
 // Multi-agent wiring: when the generation layer injects a subagent_runner,
 // the task tool must execute the real nested turn and surface its output /
 // errors instead of returning the simulated acknowledgement.
@@ -19,11 +22,28 @@ namespace test {
 class TaskToolTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    char tmpl[] = "/tmp/qcode_task_test_XXXXXX";
+    int fd = mkstemp(tmpl);
+    if (fd >= 0) {
+      close(fd);
+      unlink(tmpl);
+      db_path_ = std::string(tmpl) + ".db";
+      setenv("QCODE_DB_PATH", db_path_.c_str(), 1);
+    }
+    qcode::session::init_database();
     TaskTool::clear_background_tasks();
   }
   void TearDown() override {
     TaskTool::clear_background_tasks();
+    if (!db_path_.empty()) {
+      std::error_code ec;
+      std::filesystem::remove(db_path_, ec);
+      std::filesystem::remove(db_path_ + "-wal", ec);
+      std::filesystem::remove(db_path_ + "-shm", ec);
+      unsetenv("QCODE_DB_PATH");
+    }
   }
+  std::string db_path_;
 };
 
 TEST_F(TaskToolTest, UsesInjectedRunnerAndReturnsRealOutput) {
@@ -294,6 +314,17 @@ TEST_F(TaskToolTest, UsesModeAsSubagentTypeWhenOmitted) {
   EXPECT_EQ(seen.value("subagent_type", ""), "explore");
 }
 
+TEST_F(TaskToolTest, UnsupportedLifecycleOpsReturnError) {
+  for (const char* op : {"pause", "resume", "resurrect", "model"}) {
+    const JsonValue out = TaskTool::execute(JsonValue{{"op", op}, {"task_id", "x"}}, {});
+    ASSERT_TRUE(out.contains("error")) << op << " " << out.dump();
+    const std::string err = out.value("error", "");
+    EXPECT_TRUE(err.find("Unsupported") != std::string::npos ||
+                err.find("not supported") != std::string::npos)
+        << op << ": " << err;
+  }
+}
+
 TEST_F(TaskToolTest, DefinitionAdvertisesCallableSchema) {
   Tool tool = TaskTool::definition();
   EXPECT_EQ(tool.name, "task");
@@ -306,6 +337,10 @@ TEST_F(TaskToolTest, DefinitionAdvertisesCallableSchema) {
   EXPECT_TRUE(props.contains("model"));
   EXPECT_TRUE(props.contains("scope"));
   EXPECT_TRUE(props.contains("background_task_id"));
+  const auto& op_enum = props["op"]["enum"];
+  EXPECT_THAT(op_enum.dump(), testing::HasSubstr("spawn"));
+  EXPECT_THAT(op_enum.dump(), testing::HasSubstr("kill"));
+  EXPECT_THAT(op_enum.dump(), testing::Not(testing::HasSubstr("pause")));
 }
 
 TEST_F(TaskToolTest, SwappedCursorTaskFieldsAreRepaired) {
@@ -340,6 +375,46 @@ TEST_F(TaskToolTest, PromptLikeModelIsNotSplitAsProvider) {
   });
   EXPECT_FALSE(norm.contains("provider"));
   EXPECT_THAT(norm.value("prompt", ""), testing::HasSubstr("Workspace:"));
+}
+
+TEST_F(TaskToolTest, ReassemblesShreddedProtoPromptFields) {
+  JsonValue seen;
+  ToolExecutionContext context;
+  context.subagent_runner = [&](const JsonValue& args,
+                                std::shared_ptr<std::atomic<bool>>) {
+    seen = args;
+    return JsonValue{{"output", "ok"}};
+  };
+  const std::string f10 =
+      "AD-ONLY large nested session. Do not edit any files.\n\nInspect /home/a";
+  const std::string f12 =
+      "i/project/qcode with bash. Produce a LONG factual report covering TaskTool.";
+  JsonValue out = TaskTool::execute(
+      JsonValue{
+          {"prompt", "generalPurpose"},
+          {"subagent_type", "composer-2.5-fast"},
+          {"description", "call-abc\nfc_def"},
+          {"10", f10},
+          {"12", f12},
+          {"4", 68},
+          {"9", "c5a0606b85fc1aec05deb798dbce1f50"},
+          {"run_in_background", false},
+      },
+      context);
+  EXPECT_FALSE(out.contains("error")) << out.dump();
+  EXPECT_THAT(seen.value("prompt", ""), testing::HasSubstr("/home/ai/project/qcode"));
+  EXPECT_THAT(seen.value("prompt", ""), testing::HasSubstr("TaskTool"));
+  EXPECT_GT(seen.value("prompt", "").size(), 69u);
+  EXPECT_FALSE(seen.value("run_in_background", false));
+}
+
+TEST_F(TaskToolTest, Field10AloneStillBecomesPromptWhenNamedIsModeToken) {
+  JsonValue norm = TaskTool::normalize_spawn_args(JsonValue{
+      {"prompt", "explore"},
+      {"10", "AD-ONLY large session test. Do not edit files. Workspace is /home/abh"},
+  });
+  EXPECT_THAT(norm.value("prompt", ""), testing::HasSubstr("Workspace is /home/abh"));
+  EXPECT_EQ(norm.value("mode", ""), "explore");
 }
 
 TEST_F(TaskToolTest, SessionIdParsedFromSpawnOutput) {

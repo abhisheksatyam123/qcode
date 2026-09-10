@@ -144,11 +144,14 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
       if (role != "tool" && !text_content.empty()) {
         parts.push_back({{"text", text_content}});
       }
-      if (msg.contains("reasoning") && !msg["reasoning"].is_null()) {
+      // Gemini 2.5+ 400s on thought parts without a thoughtSignature. Unsigned
+      // reasoning from Grok/Muse must not be replayed as thought:true.
+      if (msg.contains("reasoning") && !msg["reasoning"].is_null() &&
+          msg.contains("reasoning_signature") &&
+          msg["reasoning_signature"].is_string() &&
+          !msg["reasoning_signature"].get<std::string>().empty()) {
         nlohmann::json part{{"text", msg["reasoning"]}, {"thought", true}};
-        if (msg.contains("reasoning_signature")) {
-          part["thoughtSignature"] = msg["reasoning_signature"];
-        }
+        part["thoughtSignature"] = msg["reasoning_signature"];
         parts.push_back(std::move(part));
       }
       if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
@@ -169,9 +172,18 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
           nlohmann::json function_part{
               {"functionCall",
                {{"id", call_id}, {"name", name}, {"args", std::move(args)}}}};
-          if (call.contains("thought_signature")) {
-            function_part["thoughtSignature"] = call["thought_signature"];
+          // Gemini 2.5+/3 and Antigravity 400 if a functionCall part has no
+          // thoughtSignature. Replay unsigned calls (other models, closed
+          // unpaired tools) with the documented skip token.
+          std::string sig;
+          if (call.contains("thought_signature") &&
+              call["thought_signature"].is_string()) {
+            sig = call["thought_signature"].get<std::string>();
           }
+          if (sig.empty()) {
+            sig = "skip_thought_signature_validator";
+          }
+          function_part["thoughtSignature"] = std::move(sig);
           parts.push_back(std::move(function_part));
         }
       }

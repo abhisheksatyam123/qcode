@@ -222,9 +222,11 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
         // Surface bash and qcode's task tool; hide the rest.
         if (reply.tool_name != "bash" && reply.tool_name != "task") return;
         impl_ptr->push_event(StreamEvent::tool_call(
-            reply.tool_call_id, reply.tool_name, reply.arguments.dump()));
+            reply.tool_call_id, reply.tool_name,
+            reply.arguments.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)));
         impl_ptr->push_event(StreamEvent::tool_result(
-            reply.tool_call_id, reply.tool_name, reply.result.dump(),
+            reply.tool_call_id, reply.tool_name,
+            reply.result.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace),
             reply.is_error));
       };
       hooks.is_stopped = [impl_ptr]() { return impl_ptr->is_stopped(); };

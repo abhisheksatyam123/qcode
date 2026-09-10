@@ -51,6 +51,12 @@ GenerationController::GenerationController(
 
 GenerationController::~GenerationController() { shutdown(); }
 
+std::string GenerationController::running_session_id() const {
+    if (!is_busy()) return "";
+    std::lock_guard<std::mutex> lock(active_session_mutex_);
+    return active_session_id_;
+}
+
 bool GenerationController::is_active() const noexcept {
     const auto& st =
         store_.state().status ? *store_.state().status : std::string{};
@@ -81,19 +87,35 @@ void GenerationController::prepare_session_switch() {
 }
 
 void GenerationController::force_stop_ui() {
-    // Unstick the UI only — keep any queued prompts so they can still run.
     prepare_session_switch();
+    const auto queued_count = store_.queue_size();
+    if (queued_count > 0) {
+        store_.clear_prompt_queue();
+        LOG_INFO("GenerationController: force_stop_ui cleared {} queued prompts",
+                 queued_count);
+    }
     if (store_.state().last_user_prompt &&
         !store_.state().last_user_prompt->empty()) {
         store_.mark_retry_available(*store_.state().last_user_prompt);
-        store_.add_toast("Generation force-stopped  · press r to retry",
-                         "warning", 2500);
+        std::string msg = "Generation force-stopped";
+        if (queued_count > 0) {
+            msg += " (" + std::to_string(queued_count) + " queued dropped)";
+        }
+        msg += " · press r to retry";
+        store_.add_toast(msg, "warning", 2500);
     } else {
-        store_.add_toast("Generation force-stopped", "warning", 2500);
+        std::string msg = "Generation force-stopped";
+        if (queued_count > 0) {
+            msg += " (" + std::to_string(queued_count) + " queued dropped)";
+        }
+        store_.add_toast(msg, "warning", 2500);
     }
 }
 
 void GenerationController::spawn(std::string prompt, GenerationRequest request) {
+    if (store_.state().abort_flag) {
+        store_.state().abort_flag->store(false, std::memory_order_release);
+    }
     if (is_busy()) {
         store_.enqueue_prompt(std::move(prompt));
         const auto n = store_.queue_size();
@@ -107,6 +129,10 @@ void GenerationController::spawn(std::string prompt, GenerationRequest request) 
 void GenerationController::maybe_start_queued(GenerationRequest request) {
     if (store_.is_generating() || is_busy() || store_.status() == "error" ||
         !store_.has_queued_prompt()) {
+        return;
+    }
+    if (store_.state().abort_flag && store_.state().abort_flag->load()) {
+        // Previous turn was aborted by user — do not auto-start queued prompts.
         return;
     }
     if (std::chrono::steady_clock::now() < queue_resume_at_) {
@@ -147,6 +173,10 @@ void GenerationController::spawn_unlocked(std::string prompt,
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(active_session_mutex_);
+        active_session_id_ = store_.session_id();
+    }
     busy_->store(true, std::memory_order_release);
     store_.set_generating(true);
     store_.clear_error();
@@ -202,14 +232,20 @@ void GenerationController::spawn_unlocked(std::string prompt,
     const std::string spawn_session = store_.session_id();
 
     worker_ = qcode::compat::jthread(
-        [bus_ptr, state_ptr, providers_copy = std::move(providers_copy),
+        [this, bus_ptr, state_ptr, providers_copy = std::move(providers_copy),
          app_running, busy_ptr, store_ptr, sel_prov, sel_mod,
          sys_prompt = std::move(sys_prompt),
          tools_enabled, spawn_session](qcode::compat::stop_token stop_token) {
             // Clear busy + wake UI when the worker exits (including after Esc
             // force-stop left is_generating already false).
             const auto busy_guard = std::shared_ptr<void>(
-                nullptr, [busy_ptr, store_ptr, spawn_session, bus_ptr](void*) {
+                nullptr, [this, busy_ptr, store_ptr, spawn_session, bus_ptr](void*) {
+                    {
+                        std::lock_guard<std::mutex> lock(active_session_mutex_);
+                        if (active_session_id_ == spawn_session) {
+                            active_session_id_.clear();
+                        }
+                    }
                     busy_ptr->store(false, std::memory_order_release);
                     if (store_ptr->session_id() == spawn_session &&
                         store_ptr->status() != "error") {
@@ -226,117 +262,125 @@ void GenerationController::spawn_unlocked(std::string prompt,
                 return;
             }
 
-            const auto gen_start = std::chrono::steady_clock::now();
-            GenerationContext ctx{
-                .session_id = spawn_session,
-                .reasoning_mode = *state_ptr->reasoning_mode,
-                .agent_mode = state_ptr->agent_mode ? *state_ptr->agent_mode
-                                                    : "build",
-                .workspace = session::get_session_workspace(spawn_session),
-                .abort_flag = state_ptr->abort_flag,
-                .has_queued_work = [store_ptr]() {
-                    return store_ptr->has_queued_prompt();
-                }};
-            if (state_ptr->abort_flag) {
-                state_ptr->abort_flag->store(false, std::memory_order_release);
-            }
-
-            // Snapshot history via shared_ptr so compaction cannot race the
-            // vector while we copy.
-            const auto history = state_ptr->messages_history;
-            qcode::Messages gen_messages = history ? *history : qcode::Messages{};
-            gen_messages = qcode::apply_compaction_cutoff(gen_messages);
-            gen_messages.erase(
-                std::remove_if(gen_messages.begin(), gen_messages.end(),
-                               [](const qcode::Message& message) {
-                                   return message.role == qcode::kMessageRoleSystem;
-                               }),
-                gen_messages.end());
-
-            const size_t ctx_window =
-                providers_copy[sel_prov].models[sel_mod].context_window;
-            if (ctx_window > 0) {
-                const size_t sys_tok = estimate_system_tokens(sys_prompt);
-                const size_t msg_tok = estimate_tokens(gen_messages);
-                const size_t heuristic = sys_tok + msg_tok;
-                const size_t total = calibrate_estimate(
-                    heuristic, *state_ptr->last_actual_prompt_tokens,
-                    *state_ptr->last_estimated_tokens);
-                *state_ptr->last_estimated_tokens = static_cast<int>(heuristic);
-                // Publish the current per-turn context size so the TUI can show
-                // "<current context> / <window>" instead of the session lifetime
-                // total. This grows as tool calls append messages each step.
-                *state_ptr->current_context_tokens = static_cast<int>(total);
-                if (bus_ptr) {
-                    bus_ptr->publish<contract::ContextSizeUpdated>({.context_tokens = static_cast<int>(total)});
+            try {
+                const auto gen_start = std::chrono::steady_clock::now();
+                GenerationContext ctx{
+                    .session_id = spawn_session,
+                    .reasoning_mode = *state_ptr->reasoning_mode,
+                    .agent_mode = state_ptr->agent_mode ? *state_ptr->agent_mode
+                                                        : "build",
+                    .workspace = session::get_session_workspace(spawn_session),
+                    .abort_flag = state_ptr->abort_flag,
+                    .has_queued_work = [store_ptr]() {
+                        return store_ptr->has_queued_prompt();
+                    }};
+                if (state_ptr->abort_flag) {
+                    state_ptr->abort_flag->store(false, std::memory_order_release);
                 }
 
-                const size_t warn_at = (ctx_window * 7) / 10;
-                const size_t prune_at = (ctx_window * 85) / 100;
-                const int pct = static_cast<int>(total * 100 / ctx_window);
-                LOG_INFO(
-                    "Context window: {}/{} tokens ({}%)  [sys={} msg={} "
-                    "window={} model={}]",
-                    total, ctx_window, pct, sys_tok, msg_tok, ctx_window,
-                    providers_copy[sel_prov].models[sel_mod].name);
-                if (total > prune_at) {
-                    LOG_WARN(
-                        "Context over window: {}/{} tokens ({}%) >= prune "
-                        "threshold {} — pruning",
-                        total, ctx_window, pct, prune_at);
-                    gen_messages = prune_context(gen_messages, ctx_window);
-                    const size_t after =
-                        sys_tok + estimate_tokens(gen_messages);
-                    if (after < total) {
-                        LOG_INFO(
-                            "Context pruned: {} -> {} tokens ({}% of window)",
-                            total, after, static_cast<int>(after * 100 / ctx_window));
-                        store_ptr->add_toast(
-                            "Context pruned: " + std::to_string(total) +
-                                " → " + std::to_string(after) + " tokens",
-                            "warning", 4000);
-                        *state_ptr->consecutive_prunes =
-                            *state_ptr->consecutive_prunes + 1;
+                // Snapshot history via shared_ptr so compaction cannot race the
+                // vector while we copy.
+                const auto history = state_ptr->messages_history;
+                qcode::Messages gen_messages = history ? *history : qcode::Messages{};
+                gen_messages = qcode::apply_compaction_cutoff(gen_messages);
+                gen_messages.erase(
+                    std::remove_if(gen_messages.begin(), gen_messages.end(),
+                                   [](const qcode::Message& message) {
+                                       return message.role == qcode::kMessageRoleSystem;
+                                   }),
+                    gen_messages.end());
+
+                const size_t ctx_window =
+                    providers_copy[sel_prov].models[sel_mod].context_window;
+                if (ctx_window > 0) {
+                    const size_t sys_tok = estimate_system_tokens(sys_prompt);
+                    const size_t msg_tok = estimate_tokens(gen_messages);
+                    const size_t heuristic = sys_tok + msg_tok;
+                    const size_t total = calibrate_estimate(
+                        heuristic, *state_ptr->last_actual_prompt_tokens,
+                        *state_ptr->last_estimated_tokens);
+                    *state_ptr->last_estimated_tokens = static_cast<int>(heuristic);
+                    // Publish the current per-turn context size so the TUI can show
+                    // "<current context> / <window>" instead of the session lifetime
+                    // total. This grows as tool calls append messages each step.
+                    *state_ptr->current_context_tokens = static_cast<int>(total);
+                    if (bus_ptr) {
+                        bus_ptr->publish<contract::ContextSizeUpdated>({.context_tokens = static_cast<int>(total)});
                     }
-                } else if (total > warn_at) {
-                    LOG_WARN(
-                        "Context near window: {}/{} tokens ({}%) > warn "
-                        "threshold {} — suggest /compact",
-                        total, ctx_window, pct, warn_at);
-                    store_ptr->add_toast(
-                        "Context at " + std::to_string(total) + "/" +
-                            std::to_string(ctx_window) +
-                            " tokens — run /compact soon",
-                        "info", 3000);
-                    *state_ptr->consecutive_prunes = 0;
-                } else {
-                    *state_ptr->consecutive_prunes = 0;
+
+                    const size_t warn_at = (ctx_window * 7) / 10;
+                    const size_t prune_at = (ctx_window * 85) / 100;
+                    const int pct = static_cast<int>(total * 100 / ctx_window);
+                    LOG_INFO(
+                        "Context window: {}/{} tokens ({}%)  [sys={} msg={} "
+                        "window={} model={}]",
+                        total, ctx_window, pct, sys_tok, msg_tok, ctx_window,
+                        providers_copy[sel_prov].models[sel_mod].name);
+                    if (total > prune_at) {
+                        LOG_WARN(
+                            "Context over window: {}/{} tokens ({}%) >= prune "
+                            "threshold {} — pruning",
+                            total, ctx_window, pct, prune_at);
+                        gen_messages = prune_context(gen_messages, ctx_window);
+                        const size_t after =
+                            sys_tok + estimate_tokens(gen_messages);
+                        if (after < total) {
+                            LOG_INFO(
+                                "Context pruned: {} -> {} tokens ({}% of window)",
+                                total, after, static_cast<int>(after * 100 / ctx_window));
+                            store_ptr->add_toast(
+                                "Context pruned: " + std::to_string(total) +
+                                    " → " + std::to_string(after) + " tokens",
+                                "warning", 4000);
+                            *state_ptr->consecutive_prunes =
+                                *state_ptr->consecutive_prunes + 1;
+                        }
+                    } else if (total > warn_at) {
+                        LOG_WARN(
+                            "Context near window: {}/{} tokens ({}%) > warn "
+                            "threshold {} — suggest /compact",
+                            total, ctx_window, pct, warn_at);
+                        store_ptr->add_toast(
+                            "Context at " + std::to_string(total) + "/" +
+                                std::to_string(ctx_window) +
+                                " tokens — run /compact soon",
+                            "info", 3000);
+                        *state_ptr->consecutive_prunes = 0;
+                    } else {
+                        *state_ptr->consecutive_prunes = 0;
+                    }
+
+                    if (*state_ptr->consecutive_prunes >= 3) {
+                        *state_ptr->consecutive_prunes = 0;
+                        LOG_WARN(
+                            "Context required pruning for three consecutive turns");
+                        store_ptr->add_toast(
+                            "Context remains large — run /compact when this "
+                            "turn finishes",
+                            "warning", 5000);
+                    }
                 }
 
-                if (*state_ptr->consecutive_prunes >= 3) {
-                    *state_ptr->consecutive_prunes = 0;
-                    LOG_WARN(
-                        "Context required pruning for three consecutive turns");
-                    store_ptr->add_toast(
-                        "Context remains large — run /compact when this "
-                        "turn finishes",
-                        "warning", 5000);
+                backend.run_generation(providers_copy[sel_prov].id,
+                                       providers_copy[sel_prov].models[sel_mod].id,
+                                       sys_prompt, gen_messages, tools_enabled,
+                                       ctx);
+
+                const auto duration_ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - gen_start)
+                        .count();
+                LOG_INFO(
+                    "GenerationController: complete duration_ms={} "
+                    "queue_remaining={}",
+                    duration_ms, store_ptr->queue_size());
+            } catch (const std::exception& e) {
+                LOG_ERROR("GenerationController: worker exception: {}", e.what());
+                if (store_ptr->session_id() == spawn_session) {
+                    store_ptr->set_status("error");
+                    store_ptr->add_toast(std::string("Generation error: ") + e.what(), "error", 5000);
                 }
             }
-
-            backend.run_generation(providers_copy[sel_prov].id,
-                                   providers_copy[sel_prov].models[sel_mod].id,
-                                   sys_prompt, gen_messages, tools_enabled,
-                                   ctx);
-
-            const auto duration_ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - gen_start)
-                    .count();
-            LOG_INFO(
-                "GenerationController: complete duration_ms={} "
-                "queue_remaining={}",
-                duration_ms, store_ptr->queue_size());
             busy_ptr->store(false, std::memory_order_release);
             if (store_ptr->is_generating() &&
                 store_ptr->session_id() == spawn_session) {

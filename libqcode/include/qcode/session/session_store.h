@@ -70,7 +70,7 @@ void queued_prompt_remove_at(const std::string& session_id, size_t index_1based)
 void queued_prompt_clear(const std::string& session_id);
 
 // Retrieve a list of all saved sessions (session_id, display_title)
-std::vector<std::pair<std::string, std::string>> list_sessions();
+std::vector<std::pair<std::string, std::string>> list_sessions(bool include_subagents = false);
 
 // Retrieve all saved sessions with workspace info
 struct SessionInfo {
@@ -82,7 +82,7 @@ struct SessionInfo {
     long long last_active_at = 0;
     int message_count = 0;
 };
-std::vector<SessionInfo> list_sessions_full();
+std::vector<SessionInfo> list_sessions_full(bool include_subagents = false);
 
 // Rename a session title
 void rename_session(const std::string& session_id, const std::string& new_title);
@@ -90,6 +90,7 @@ void rename_session(const std::string& session_id, const std::string& new_title)
 // Update the provider/model associated with a session (keeps the stored
 // selection in sync with what was actually used for generation)
 void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model);
+std::pair<std::string, std::string> get_session_provider_model(const std::string& session_id);
 
 // Persisted per-session agent ("build"/"plan") and reasoning
 // ("off"/"low"/...) modes. get returns {agent, reasoning}; either string is

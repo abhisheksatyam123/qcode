@@ -4,6 +4,8 @@
 #include <qcode/tools/task_target.h>
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 #include <chrono>
 #include <ctime>
 #include <future>
@@ -351,6 +353,16 @@ class SubagentRegistry {
     return res;
   }
 
+  bool is_session_running(const std::string& session_id) {
+    if (session_id.empty()) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = by_session_.find(session_id);
+    if (it != by_session_.end()) {
+      return it->second->status == "running";
+    }
+    return false;
+  }
+
   void clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     tasks_.clear();
@@ -370,6 +382,11 @@ void TaskTool::clear_background_tasks() {
 JsonValue TaskTool::list_tasks() {
   SubagentRegistry::instance().harvest_ready();
   return SubagentRegistry::instance().list();
+}
+
+bool TaskTool::is_session_running(const std::string& session_id) {
+  SubagentRegistry::instance().harvest_ready();
+  return SubagentRegistry::instance().is_session_running(session_id);
 }
 
 static bool is_known_mode_token(const std::string& s) {
@@ -408,9 +425,86 @@ static bool looks_like_provider_id(const std::string& s) {
   return true;
 }
 
+static bool is_numeric_json_key(const std::string& k) {
+  if (k.empty()) return false;
+  for (char c : k) {
+    if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+  }
+  return true;
+}
+
+static bool looks_like_hex_id(const std::string& s) {
+  if (s.size() != 32 && s.size() != 36) return false;
+  for (char c : s) {
+    if (c == '-') continue;
+    if (!std::isxdigit(static_cast<unsigned char>(c))) return false;
+  }
+  return true;
+}
+
+static bool looks_like_tool_call_label(const std::string& s) {
+  return s.rfind("call-", 0) == 0 && s.find("fc_") != std::string::npos;
+}
+
+// Cursor Task protobuf leftovers split a long prompt across numbered string
+// fields (commonly 10 then 12, cut at 69 bytes mid-path). Join nearby shards.
+static std::string reassemble_numbered_prompt_shards(const JsonValue& args) {
+  if (!args.is_object()) return {};
+  std::vector<std::pair<int, std::string>> shards;
+  for (auto it = args.begin(); it != args.end(); ++it) {
+    if (!is_numeric_json_key(it.key()) || !it.value().is_string()) continue;
+    const std::string v = it.value().get<std::string>();
+    if (v.empty() || is_known_mode_token(v) || looks_like_model_id(v) ||
+        looks_like_hex_id(v) || looks_like_tool_call_label(v)) {
+      continue;
+    }
+    const int num = std::stoi(it.key());
+    // TaskArgs 1-4 are description/prompt/type/model. Leftover shards are 10+.
+    if (num < 10) continue;
+    shards.emplace_back(num, v);
+  }
+  if (shards.empty()) return {};
+  std::sort(shards.begin(), shards.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+
+  std::string best;
+  std::string cur = shards.front().second;
+  int prev = shards.front().first;
+  auto consider = [&](const std::string& s) {
+    if (s.size() > best.size()) best = s;
+  };
+  for (size_t i = 1; i < shards.size(); ++i) {
+    const int num = shards[i].first;
+    const std::string& piece = shards[i].second;
+    const bool nearby = num >= prev && (num - prev) <= 2;
+    const char lead = piece.empty() ? '\0' : piece.front();
+    const bool mid_token = std::islower(static_cast<unsigned char>(lead)) ||
+                           lead == '/' || lead == 'i' || lead == ' ';
+    if (nearby && (looks_like_prompt_text(cur) || looks_like_prompt_text(cur + piece) ||
+                   mid_token)) {
+      cur += piece;
+      prev = num;
+    } else {
+      consider(cur);
+      cur = piece;
+      prev = num;
+    }
+  }
+  consider(cur);
+  return best;
+}
+
 JsonValue TaskTool::normalize_spawn_args(JsonValue args) {
-  // Cursor Task protobuf leftovers: field 10 is often the real prompt.
-  if (args.contains("10") && args["10"].is_string()) {
+  // Cursor Task protobuf leftovers: field 10 is often the real prompt; long
+  // text is split across nearby numbered fields (10 + 12).
+  const std::string assembled = reassemble_numbered_prompt_shards(args);
+  if (!assembled.empty()) {
+    const std::string prompt = args.value("prompt", "");
+    if (prompt.empty() || is_known_mode_token(prompt) ||
+        assembled.size() > prompt.size()) {
+      args["prompt"] = assembled;
+    }
+  } else if (args.contains("10") && args["10"].is_string()) {
     const std::string f10 = args["10"].get<std::string>();
     const std::string prompt = args.value("prompt", "");
     if (looks_like_prompt_text(f10) &&
@@ -510,6 +604,8 @@ JsonValue TaskTool::normalize_spawn_args(JsonValue args) {
     if (!args.contains("allowed_paths") || args["allowed_paths"].empty()) {
       args["allowed_paths"] = JsonValue::array({"."});
     }
+  } else if (mode == "explore") {
+    args["can_edit"] = false;
   }
   return args;
 }
@@ -621,7 +717,11 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
     std::string output_text;
     bool ran = false;
     if (context.subagent_runner) {
-      JsonValue sub = context.subagent_runner(args, context.abort_flag);
+      JsonValue sub_args = args;
+      sub_args["sessionId"] = session_id;
+      sub_args["session_id"] = session_id;
+      sub_args["task_id"] = session_id;
+      JsonValue sub = context.subagent_runner(sub_args, context.abort_flag);
       if (sub.is_object() && sub.contains("error")) {
         if (sub["error"].is_string() && sub["error"].get<std::string>().empty()) {
           sub["error"] = "subagent failed";
@@ -665,11 +765,15 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
   if (context.subagent_runner) {
     auto runner = context.subagent_runner;
     auto sub_abort = std::make_shared<std::atomic<bool>>(false);
-    auto fut = std::async(std::launch::async, [runner, args, sub_abort]() -> JsonValue {
+    JsonValue sub_args = args;
+    sub_args["sessionId"] = session_id;
+    sub_args["session_id"] = session_id;
+    sub_args["task_id"] = session_id;
+    auto fut = std::async(std::launch::async, [runner, sub_args, sub_abort]() -> JsonValue {
       if (sub_abort && sub_abort->load()) {
         return JsonValue{{"error", "Subagent cancelled"}};
       }
-      return runner(args, sub_abort);
+      return runner(sub_args, sub_abort);
     });
     SubagentRegistry::instance().register_task(
         bg_id, session_id, description, subagent_type, mode, chosen_model, sub_abort, std::move(fut));
@@ -722,29 +826,22 @@ JsonValue TaskTool::exec_lifecycle(const JsonValue& args, const std::string& op)
     return SubagentRegistry::instance().list();
   }
 
-  JsonValue result;
-  result["title"] = std::string("task ") + op + ": " + (!id.empty() ? id : "");
-  result["output"] = "Operation " + op + " completed for task " +
-                     (!id.empty() ? id : "") +
-                     (!reason.empty() ? " (reason: " + reason + ")" : "");
-  result["metadata"]["op"] = op;
-  result["metadata"]["task_id"] = id;
-  return result;
+  JsonValue err;
+  err["error"] =
+      "Unsupported task op '" + op +
+      "'. Use spawn, result, kill, or list.";
+  err["metadata"]["op"] = op;
+  err["metadata"]["task_id"] = id;
+  return err;
 }
 
 JsonValue TaskTool::exec_model(const JsonValue& args) {
-  std::string task_id = args.value("task_id", "");
-  std::string pid = args.value("pid", "");
-  std::string model = args.value("model", "");
-
-  JsonValue result;
-  result["title"] = "task model: " + (!task_id.empty() ? task_id : pid);
-  result["output"] = "Model override set for task " + (!task_id.empty() ? task_id : pid) +
-                     " to " + model;
-  result["metadata"]["model"] = model;
-  result["metadata"]["task_id"] = task_id;
-  result["metadata"]["pid"] = pid;
-  return result;
+  (void)args;
+  JsonValue err;
+  err["error"] =
+      "task op 'model' is not supported. Pass provider and model on spawn "
+      "(provider:model from opencode.json).";
+  return err;
 }
 
 JsonValue TaskTool::execute(const JsonValue& args, const ToolExecutionContext& context) {
@@ -761,8 +858,7 @@ JsonValue TaskTool::execute(const JsonValue& args, const ToolExecutionContext& c
 Tool TaskTool::definition() {
   JsonValue schema = TaskToolSchema::spawn_parameters();
   auto& props = schema["properties"];
-  props["op"]["enum"] = {"spawn", "result", "kill", "pause", "resume",
-                         "resurrect", "model", "status", "list"};
+  props["op"]["enum"] = {"spawn", "result", "kill", "list", "status"};
   props["background_task_id"] = JsonValue{
       {"type", "string"},
       {"description", "Background task id for result/kill."}};

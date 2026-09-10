@@ -28,8 +28,8 @@ inline JsonValue spawn_parameters() {
   auto& p = s["properties"];
 
   // op (default "spawn")
-  p["op"] = JsonValue{{"type", "string"}, {"enum", {"spawn", "result", "kill", "pause", "resume", "resurrect", "model"}},
-                       {"description", "Operation type. Default spawn."}};
+  p["op"] = JsonValue{{"type", "string"}, {"enum", {"spawn", "result", "kill", "list", "status"}},
+                       {"description", "Operation type. Default spawn. Use result/kill/list for background tasks."}};
 
   // Common spawn fields
   p["description"] = JsonValue{{"type", "string"}, {"description", "Short label for the subagent task."}};
@@ -133,6 +133,7 @@ class TaskTool {
   static Tool definition();
   static void clear_background_tasks();
   static JsonValue list_tasks();
+  static bool is_session_running(const std::string& session_id);
   static JsonValue normalize_spawn_args(JsonValue args);
   static std::string session_id_from_result(const JsonValue& result);
 

@@ -459,6 +459,52 @@ TEST(ProviderTransformTest, NormalizeMessagesKeepsObjectToolResults) {
   }
 }
 
+TEST(ProviderTransformTest, NormalizeMessagesHandlesInvalidUtf8InToolResult) {
+  // Invalid UTF-8 byte sequences (e.g. 0xB6 at index 113) in bash output
+  // previously caused nlohmann::json to throw type_error.316 and crash the TUI.
+  Messages history;
+  history.push_back(Message::user("test"));
+  history.push_back(Message::assistant_with_tools(
+      "", {ToolCallContentPart{
+              "call_1", "bash",
+              nlohmann::json{{"command", "echo test"}}}}));
+
+  // Build a string with an invalid UTF-8 byte at index 113: 0xB6
+  std::string bad_str(113, 'a');
+  bad_str.push_back(static_cast<char>(0xB6));
+  bad_str += " trailing text";
+
+  history.push_back(Message::tool_results(
+      {{"call_1",
+        nlohmann::json{{"output", bad_str},
+                       {"metadata", {{"exit", 0}}}},
+        false}}));
+  history.push_back(Message::user("follow up"));
+
+  Model model("gpt-4o", "openai");
+  Messages normalized;
+  EXPECT_NO_THROW(normalized =
+                      ProviderTransform::normalize_messages(history, model));
+  ASSERT_EQ(normalized.size(), 4u);
+  ASSERT_TRUE(normalized[2].has_tool_results());
+  const auto results = normalized[2].get_tool_results();
+  ASSERT_EQ(results.size(), 1u);
+  EXPECT_TRUE(results[0].result.is_object());
+
+  // Serializing should not throw type_error.316
+  std::string dumped;
+  EXPECT_NO_THROW(dumped = results[0].result.dump());
+  EXPECT_FALSE(dumped.empty());
+
+  openai::OpenAIRequestBuilder builder(true);
+  GenerateOptions options;
+  options.model = "gpt-4o";
+  options.messages = std::move(normalized);
+  nlohmann::json req_json;
+  EXPECT_NO_THROW(req_json = builder.build_request_json(options));
+  EXPECT_NO_THROW(req_json.dump());
+}
+
 TEST(ProviderTransformTest, ClosesUnpairedToolCallsBeforeUserFollowUp) {
   // TUI restart after ToolCallStarted (no ToolCallCompleted) leaves a
   // function_call in history. The next user prompt must not replay that
@@ -623,6 +669,83 @@ TEST(ProviderTransformSchemaTest, ZenAndOpenAIAlsoStripExclusiveMinimum) {
     EXPECT_EQ(timeout["minimum"].get<int>(), 1) << model.name;
   }
 }
+
+TEST(ProviderTransformTest, DropsUnsignedReasoningForGeminiAndClaude) {
+  Messages history;
+  history.push_back(Message::user("hi"));
+  Message assistant = Message::assistant_with_tools(
+      "ok", {ToolCallContentPart{"call_1", "bash",
+                                 nlohmann::json{{"command", "ls"}},
+                                 "gemini-thought-sig"}});
+  assistant.content.emplace_back(ReasoningContentPart{"grok thoughts", ""});
+  history.push_back(std::move(assistant));
+  history.push_back(Message::tool_results(
+      {{"call_1", nlohmann::json{{"output", "a"}}, false}}));
+
+  const auto gemini = ProviderTransform::normalize_messages(
+      history, Model("gemini-3.1-pro", "google"));
+  ASSERT_GE(gemini.size(), 2u);
+  EXPECT_TRUE(gemini[1].get_reasoning().empty())
+      << "unsigned Grok thoughts must not replay as Gemini thought parts";
+  ASSERT_TRUE(gemini[1].has_tool_calls());
+  EXPECT_EQ(gemini[1].get_tool_calls()[0].thought_signature,
+            "gemini-thought-sig");
+
+  const auto claude = ProviderTransform::normalize_messages(
+      history, Model("claude-sonnet-4-6", "anthropic"));
+  EXPECT_TRUE(claude[1].get_reasoning().empty());
+  ASSERT_TRUE(claude[1].has_tool_calls());
+  EXPECT_TRUE(claude[1].get_tool_calls()[0].thought_signature.empty())
+      << "Gemini thought_signature must not ride to Claude";
+}
+
+TEST(ProviderTransformTest, KeepsUnsignedReasoningForMuseSpark) {
+  Messages history;
+  Message assistant = Message::assistant("done");
+  assistant.content.emplace_back(ReasoningContentPart{"thinking hard", ""});
+  history.push_back(Message::user("hi"));
+  history.push_back(std::move(assistant));
+
+  const auto muse = ProviderTransform::normalize_messages(
+      history, Model("muse-spark-1.3-contributor-free", "opencode"));
+  ASSERT_EQ(muse.size(), 2u);
+  EXPECT_EQ(muse[1].get_reasoning(), "thinking hard");
+}
+
+TEST(ProviderTransformTest, DropsSignedGeminiReasoningOnMuseSpark) {
+  Messages history;
+  Message assistant = Message::assistant("done");
+  assistant.content.emplace_back(
+      ReasoningContentPart{"secret chain", "sig-from-gemini"});
+  history.push_back(Message::user("hi"));
+  history.push_back(std::move(assistant));
+
+  const auto muse = ProviderTransform::normalize_messages(
+      history, Model("muse-spark-1.3-contributor-free", "opencode"));
+  ASSERT_EQ(muse.size(), 2u);
+  EXPECT_TRUE(muse[1].get_reasoning().empty());
+}
+
+TEST(ProviderTransformTest, KeepsSignedReasoningForNativeFamily) {
+  Messages history;
+  Message assistant = Message::assistant("done");
+  assistant.content.emplace_back(
+      ReasoningContentPart{"claude thinking", "anthropic-sig"});
+  history.push_back(Message::user("hi"));
+  history.push_back(std::move(assistant));
+
+  const auto claude = ProviderTransform::normalize_messages(
+      history, Model("claude-opus-4-6", "anthropic"));
+  EXPECT_EQ(claude[1].get_reasoning(), "claude thinking");
+
+  Message gem = Message::assistant("done");
+  gem.content.emplace_back(ReasoningContentPart{"g thoughts", "g-sig"});
+  Messages gh{Message::user("hi"), std::move(gem)};
+  const auto gemini = ProviderTransform::normalize_messages(
+      gh, Model("gemini-3.8-flash", "google"));
+  EXPECT_EQ(gemini[1].get_reasoning(), "g thoughts");
+}
+
 
 }  // namespace test
 }  // namespace qcode

@@ -1,7 +1,7 @@
 #include <qcode/ui/message_render.h>
 #include <views.h>
 #include "file_diff_preview.h"
-#include "views_pickers.h"
+#include "pickers.h"
 #include <qcode/config/provider_info.h>
 #include <qcode/core/logger.h>
 #include <qcode/tools/task_tool.h>
@@ -420,7 +420,9 @@ ftxui::Element render_view(
         (agent_busy ? text(" " + footer_spin) | color(accent(theme)) | bold
                     : emptyElement()),
         (plan_mode ? text(" Plan") | bold | color(queue_amber())
-                   : text(" Orchestrator") | bold | color(accent2(theme))),
+                   : ((state.agent_mode && *state.agent_mode == "subagent")
+                          ? text(" Subagent") | bold | color(Color::CyanLight)
+                          : text(" Orchestrator") | bold | color(accent2(theme)))),
         text(" " + hdr_model) | color(accent(theme)),
     };
     if (!variant_label.empty())
@@ -468,9 +470,12 @@ ftxui::Element render_view(
         left.push_back(text(" · ") | dim | color(theme_text_muted(theme)));
         left.push_back(text(hdr_session.empty() ? "session" : hdr_session) |
                        color(theme_text(theme)));
+        if (state.agent_mode && *state.agent_mode == "subagent") {
+            left.push_back(text(" [subagent]") | bold | color(Color::CyanLight));
+        }
         if (state.return_session_id && !state.return_session_id->empty() &&
             state.session_back_box) {
-            Element back = text(" ← parent") | bold | color(accent2(theme));
+            Element back = text(" ← parent (b)") | bold | color(accent2(theme));
             back = std::move(back) | reflect_box(*state.session_back_box);
             left.push_back(std::move(back));
         }
@@ -1068,32 +1073,34 @@ ftxui::Element render_view(
             text("")
         }) | borderRounded | color(accent(theme)) | size(WIDTH, LESS_THAN, 80) | hcenter | flex;
     }
-    // ── Tab 3: Sessions & Subagents ──
+    // ── Tab 3: delegated child sessions only ──
     else {
-        auto all_sessions = session::list_sessions_full();
         auto subagent_data = TaskTool::list_tasks();
         if (state.session_row_boxes) state.session_row_boxes->clear();
         if (state.subagent_row_boxes) state.subagent_row_boxes->clear();
 
         Elements content_rows;
 
-        // Header
         content_rows.push_back(hbox(
-            text(" SESSIONS & SUBAGENTS ") | bold | color(accent2(theme)),
+            text(" DELEGATED CHILD SESSIONS ") | bold | color(accent2(theme)),
             filler(),
-            text("↑↓ select   Enter/click open   b back to parent   r refresh") | dim
+            text("↑↓ select   Enter/click open in chat   b parent   r refresh") | dim
         ));
         content_rows.push_back(separatorLight() | color(accent(theme)));
 
-        // 1. Subagent Tasks Section
         bool has_subagents = subagent_data.contains("metadata") &&
                              subagent_data["metadata"].contains("tasks") &&
                              !subagent_data["metadata"]["tasks"].empty();
-        if (has_subagents) {
+        if (!has_subagents) {
+            content_rows.push_back(text("  No delegated child sessions.") | dim);
+            content_rows.push_back(
+                text("  Spawn with the task tool. Saved parent sessions stay in the session picker.") | dim);
+        } else {
             const auto& tasks = subagent_data["metadata"]["tasks"];
             content_rows.push_back(hbox(
-                text("▶ PARALLEL SUBAGENTS (" + std::to_string(tasks.size()) + ")") | bold | color(Color::CyanLight)
+                text("▶ CHILDREN (" + std::to_string(tasks.size()) + ")") | bold | color(Color::CyanLight)
             ));
+            int row_i = 0;
             for (const auto& t : tasks) {
                 std::string bg_id = t.value("background_task_id", "");
                 std::string status = t.value("status", "");
@@ -1101,74 +1108,37 @@ ftxui::Element render_view(
                 std::string mode_str = t.value("mode", "explore");
                 std::string model_str = t.value("model", "");
                 std::string desc = t.value("description", "");
+                std::string sid = t.value("task_id", t.value("sessionId", ""));
+                const bool is_current = (state.session_id && sid == *state.session_id);
+                const bool is_active_cursor = (row_i == state.selected_session_item);
 
                 Color status_col = Color::Default;
                 if (status == "running") status_col = Color::Yellow;
                 else if (status == "done") status_col = Color::Green;
                 else if (status == "error" || status == "killed") status_col = Color::Red;
 
+                std::string marker = is_active_cursor ? "▶ " : (is_current ? "● " : "  ");
                 Element row = hbox(
-                    text("  " + bg_id) | dim,
-                    text(" [" + status + "] ") | bold | color(status_col),
+                    text(marker) | color(is_active_cursor ? accent2(theme)
+                                         : (is_current ? accent(theme) : Color::Default)),
+                    text(bg_id + " ") | dim,
+                    text("[" + status + "] ") | bold | color(status_col),
                     text("(" + agent_type + " · " + mode_str + ") ") | color(accent(theme)),
                     text(!model_str.empty() ? ("{" + model_str + "} ") : "") | dim,
-                    text(desc) | bold
+                    text(desc) | bold,
+                    filler(),
+                    text(is_current ? "[open] " : "  ") | color(Color::Green) | bold
                 );
+                if (is_active_cursor) {
+                    row = std::move(row) | bgcolor(bg_popup());
+                }
                 if (state.subagent_row_boxes) {
                     state.subagent_row_boxes->emplace_back();
                     row = std::move(row) |
                           reflect_box(state.subagent_row_boxes->back());
                 }
                 content_rows.push_back(std::move(row));
-            }
-            content_rows.push_back(text(""));
-        }
-
-        // 2. Saved Sessions Section (continue / switch)
-        content_rows.push_back(hbox(
-            text("▶ SAVED SESSIONS (" + std::to_string(all_sessions.size()) + ")") | bold | color(accent2(theme)),
-            filler(),
-            text("Press Enter to continue session") | dim
-        ));
-
-        if (all_sessions.empty()) {
-            content_rows.push_back(text("  (no saved sessions)") | dim);
-        } else {
-            if (state.session_row_boxes) {
-                state.session_row_boxes->resize(all_sessions.size());
-            }
-
-            for (size_t i = 0; i < all_sessions.size(); ++i) {
-                const auto& s = all_sessions[i];
-                const bool is_current = (state.session_id && s.id == *state.session_id);
-                const bool is_active_cursor = (static_cast<int>(i) == state.selected_session_item);
-                std::string marker = is_active_cursor ? "▶ " : (is_current ? "● " : "  ");
-
-                std::string count_str = s.message_count > 0 ? (std::to_string(s.message_count) + " msgs") : "new";
-                std::string time_str = format_relative_time(s.last_active_at);
-
-                Element row = hbox(
-                    text(marker) | color(is_active_cursor ? accent2(theme) : (is_current ? accent(theme) : Color::Default)),
-                    text(s.title.empty() ? "(untitled)" : s.title) | (is_active_cursor ? bold : nothing) |
-                        color(is_active_cursor ? Color::White : (is_current ? accent2(theme) : Color::GrayLight)),
-                    text(!s.model.empty() ? (" [" + s.model + "]") : "") | dim | color(Color::CyanLight),
-                    text(!s.workspace.empty() ? (" " + s.workspace) : "") | dim | color(Color::GrayDark),
-                    filler(),
-                    text(" " + count_str + " ") | dim | color(Color::GrayLight),
-                    text(!time_str.empty() ? ("· " + time_str + " ") : " ") | dim | color(accent2(theme)),
-                    text(is_current ? "[active] " : "  ") | color(Color::Green) | bold
-                );
-
-                if (is_active_cursor) {
-                    row = std::move(row) | bgcolor(bg_popup());
-                } else if (is_current) {
-                    row = std::move(row) | color(accent2(theme));
-                }
-
-                if (state.session_row_boxes) {
-                    row = std::move(row) | reflect_box((*state.session_row_boxes)[i]);
-                }
-                content_rows.push_back(std::move(row));
+                ++row_i;
             }
         }
 

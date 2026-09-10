@@ -56,6 +56,8 @@ std::optional<int> top_k(const Model& model);
 /// - Removes unsupported content parts (audio, video, etc. if unsupported)
 /// - Canonicalizes tool_call ids to [A-Za-z0-9_-]{1,64} (OpenAI Responses
 ///   rejects longer call_id; required when switching Cursor/Grok → Muse Spark)
+/// - Drops reasoning / thought_signature that the target family cannot replay
+///   (unsigned thoughts 400 Gemini; signed Gemini/Claude blobs 400 Muse/OpenAI)
 /// - Closes unpaired tool calls (see close_unpaired_tool_calls)
 /// - Applies provider-specific adjustments
 Messages normalize_messages(const Messages& messages, const Model& model);

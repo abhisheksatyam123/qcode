@@ -48,7 +48,9 @@ const state = {
   sessionTitle: '',
   sessionWorkspace: '',
   // UI Tabs & layout state
-  activeTab: 'chat', // 'chat' | 'terminal' | 'files' | 'stats'
+  activeTab: 'chat', // 'chat' | 'terminal' | 'files' | 'stats' | 'sessions'
+  parentSessionId: null,
+  agentMode: 'orchestrator',
   layoutMode: 'tab', // 'tab' or 'split'
   terminalOpen: false,
   // Files tab: explorer + editor
@@ -64,7 +66,10 @@ const state = {
   fsMobileView: 'browser',   // 'browser' | 'viewer'
   fsRawEntries: [],
   fsReady: false,
-  fsCache: {}
+  fsCache: {},
+  showThinking: true,
+  theme: 'qcode',
+  sessionsFilterText: ''
 };
 
 // ── DOM refs ──
@@ -72,6 +77,7 @@ const messagesEl = document.getElementById('messages');
 const promptInput = document.getElementById('prompt-input');
 const sendBtn = document.getElementById('send-btn');
 const pauseBtn = document.getElementById('pause-btn');
+const retryBtn = document.getElementById('retry-btn');
 const clearBtn = document.getElementById('clear-btn');
 const providerSelect = document.getElementById('provider-select');
 const modelSelect = document.getElementById('model-select');
@@ -134,6 +140,13 @@ const statsContent = document.getElementById('stats-content');
 const statsRefreshBtn = document.getElementById('stats-refresh-btn');
 const tabFilesBtn = document.getElementById('tab-files-btn');
 const tabStatsBtn = document.getElementById('tab-stats-btn');
+const tabSessionsBtn = document.getElementById('tab-sessions-btn');
+const sessionsPanel = document.getElementById('sessions-panel');
+const sessionsContent = document.getElementById('sessions-content');
+const sessionsRefreshBtn = document.getElementById('sessions-refresh-btn');
+const parentBackBtn = document.getElementById('parent-back-btn');
+const subagentBadge = document.getElementById('subagent-badge');
+const agentModeBtn = document.getElementById('agent-mode-btn');
 
 // New DOM refs for tabs & layout toggle
 const mainEl = document.getElementById('main');
@@ -155,15 +168,692 @@ let termPollTimer = null;
 
 // ── Slash commands ──
 const SLASH_COMMANDS = [
-  { name: '/help',      desc: 'Show available commands' },
-  { name: '/model',     desc: 'List or switch provider/model' },
-  { name: '/variant',   desc: 'Set model variant / effort: off|low|medium|high' },
-  { name: '/new',       desc: 'Start a new chat session' },
-  { name: '/tools',     desc: 'Toggle tool use: on|off' },
-  { name: '/rename',    desc: 'Rename current session' },
-  { name: '/session',   desc: 'List or load saved sessions' },
-  { name: '/compact',   desc: 'Summarize conversation' },
+  { name: '/help',        desc: 'Show help and keyboard shortcuts' },
+  { name: '/model',       desc: 'Select a model from any provider' },
+  { name: '/variant',     desc: 'Select thinking / reasoning effort' },
+  { name: '/theme',       desc: 'Select a UI theme color' },
+  { name: '/new',         desc: 'Start a new session' },
+  { name: '/rename',      desc: 'Rename current session' },
+  { name: '/session',     desc: 'Manage and load saved sessions' },
+  { name: '/compact',     desc: 'Summarize conversation to save context' },
+  { name: '/agent',       desc: 'Switch between orchestrator and plan' },
+  { name: '/queue',       desc: 'List or drop queued prompts (/queue rm <n>)' },
+  { name: '/clear-queue', desc: 'Clear all queued prompts' },
+  { name: '/retry',       desc: 'Resend the last user prompt' },
+  { name: '/tools',       desc: 'Toggle tool use: on|off' },
 ];
+
+const PALETTE_COMMANDS = [
+  { id: 'session_new',         label: 'New Session',              sublabel: 'Ctrl+N',        category: 'Session' },
+  { id: 'session_list',        label: 'Switch Session',           sublabel: '/session',      category: 'Session' },
+  { id: 'session_rename',      label: 'Rename Session',           sublabel: '/rename',       category: 'Session' },
+  { id: 'session_compact',     label: 'Compact Context',          sublabel: '/compact',      category: 'Session' },
+  { id: 'session_clear_queue', label: 'Clear Prompt Queue',       sublabel: '/clear-queue',  category: 'Session' },
+  { id: 'session_retry',       label: 'Retry Last Prompt',        sublabel: '/retry',        category: 'Session' },
+  { id: 'model_select',        label: 'Select Model',             sublabel: '/model',        category: 'Model' },
+  { id: 'model_variant',       label: 'Select Reasoning Variant', sublabel: '/variant',      category: 'Model' },
+  { id: 'agent_mode_toggle',   label: 'Toggle Agent Mode',        sublabel: '/agent',        category: 'Agent' },
+  { id: 'thinking_toggle',     label: 'Toggle Thinking Trace',    sublabel: 'F2',            category: 'View' },
+  { id: 'chat_open',           label: 'Chat',                    sublabel: 'Alt+1',         category: 'View' },
+  { id: 'files_open',          label: 'Changed Files',            sublabel: 'Alt+2',         category: 'View' },
+  { id: 'stats_open',          label: 'Session Stats',            sublabel: 'Alt+3',         category: 'View' },
+  { id: 'sessions_open',       label: 'Sessions & Subagents',     sublabel: 'Alt+4',         category: 'View' },
+  { id: 'theme_select',        label: 'Switch Theme',             sublabel: '/theme',        category: 'Appearance' },
+  { id: 'help',                label: 'Help & Shortcuts',         sublabel: '/help',         category: 'General' },
+];
+
+const THEMES = {
+  "qcode": {
+    "title": "QCode Web",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#6EE7D8",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "opencode": {
+    "title": "OpenCode",
+    "bg": "#0A0A0A",
+    "surface": "#141414",
+    "raised": "#1E1E1E",
+    "text": "#EEEEEE",
+    "muted": "#808080",
+    "accent": "#FAB283",
+    "accent2": "#5C9CF5",
+    "danger": "#E06C75",
+    "warning": "#F5A742",
+    "success": "#7FD88F"
+  },
+  "tokyonight": {
+    "title": "Tokyo Night",
+    "bg": "#1A1B26",
+    "surface": "#1E2030",
+    "raised": "#222436",
+    "text": "#C8D3F5",
+    "muted": "#828BB8",
+    "accent": "#82AAFF",
+    "accent2": "#C099FF",
+    "danger": "#FF757F",
+    "warning": "#FF966C",
+    "success": "#C3E88D"
+  },
+  "nord": {
+    "title": "Nord",
+    "bg": "#2E3440",
+    "surface": "#3B4252",
+    "raised": "#434C5E",
+    "text": "#D8DEE9",
+    "muted": "#8B95A7",
+    "accent": "#88C0D0",
+    "accent2": "#81A1C1",
+    "danger": "#BF616A",
+    "warning": "#D08770",
+    "success": "#A3BE8C"
+  },
+  "gruvbox": {
+    "title": "Gruvbox",
+    "bg": "#282828",
+    "surface": "#3C3836",
+    "raised": "#504945",
+    "text": "#EBDBB2",
+    "muted": "#928374",
+    "accent": "#83A598",
+    "accent2": "#D3869B",
+    "danger": "#FB4934",
+    "warning": "#FE8019",
+    "success": "#B8BB26"
+  },
+  "catppuccin": {
+    "title": "Catppuccin Mocha",
+    "bg": "#1E1E2E",
+    "surface": "#181825",
+    "raised": "#11111B",
+    "text": "#CDD6F4",
+    "muted": "#9399B2",
+    "accent": "#89B4FA",
+    "accent2": "#CBA6F7",
+    "danger": "#F38BA8",
+    "warning": "#F9E2AF",
+    "success": "#A6E3A1"
+  },
+  "rosepine": {
+    "title": "Ros\u00e9 Pine",
+    "bg": "#191724",
+    "surface": "#1F1D2E",
+    "raised": "#26233A",
+    "text": "#E0DEF4",
+    "muted": "#6E6A86",
+    "accent": "#9CCFD8",
+    "accent2": "#C4A7E7",
+    "danger": "#EB6F92",
+    "warning": "#F6C177",
+    "success": "#31748F"
+  },
+  "vesper": {
+    "title": "Vesper",
+    "bg": "#101010",
+    "surface": "#101010",
+    "raised": "#101010",
+    "text": "#FFFFFF",
+    "muted": "#A0A0A0",
+    "accent": "#FFC799",
+    "accent2": "#99FFE4",
+    "danger": "#FF8080",
+    "warning": "#FFC799",
+    "success": "#99FFE4"
+  },
+  "one-dark": {
+    "title": "One Dark",
+    "bg": "#282C34",
+    "surface": "#21252B",
+    "raised": "#353B45",
+    "text": "#ABB2BF",
+    "muted": "#5C6370",
+    "accent": "#61AFEF",
+    "accent2": "#C678DD",
+    "danger": "#E06C75",
+    "warning": "#E5C07B",
+    "success": "#98C379"
+  },
+  "aura": {
+    "title": "Aura",
+    "bg": "#0F0F0F",
+    "surface": "#15141B",
+    "raised": "#15141B",
+    "text": "#EDECEE",
+    "muted": "#6D6D6D",
+    "accent": "#A277FF",
+    "accent2": "#F694FF",
+    "danger": "#FF6767",
+    "warning": "#FFCA85",
+    "success": "#61FFCA"
+  },
+  "zenburn": {
+    "title": "Zenburn",
+    "bg": "#3F3F3F",
+    "surface": "#4F4F4F",
+    "raised": "#5F5F5F",
+    "text": "#DCDCCC",
+    "muted": "#9F9F9F",
+    "accent": "#8CD0D3",
+    "accent2": "#DC8CC3",
+    "danger": "#CC9393",
+    "warning": "#F0DFAF",
+    "success": "#7F9F7F"
+  },
+  "cobalt2": {
+    "title": "Cobalt2",
+    "bg": "#193549",
+    "surface": "#122738",
+    "raised": "#1F4662",
+    "text": "#FFFFFF",
+    "muted": "#ADB7C9",
+    "accent": "#0088FF",
+    "accent2": "#9A5FEB",
+    "danger": "#FF0088",
+    "warning": "#FFC600",
+    "success": "#9EFF80"
+  },
+  "synthwave84": {
+    "title": "SynthWave '84",
+    "bg": "#262335",
+    "surface": "#1E1A29",
+    "raised": "#2A2139",
+    "text": "#FFFFFF",
+    "muted": "#848BBD",
+    "accent": "#36F9F6",
+    "accent2": "#FF7EDB",
+    "danger": "#FE4450",
+    "warning": "#FEDE5D",
+    "success": "#72F1B8"
+  },
+  "osaka-jade": {
+    "title": "Osaka Jade",
+    "bg": "#111C18",
+    "surface": "#1A2520",
+    "raised": "#23372B",
+    "text": "#C1C497",
+    "muted": "#53685B",
+    "accent": "#2DD5B7",
+    "accent2": "#D2689C",
+    "danger": "#FF5345",
+    "warning": "#E5C736",
+    "success": "#549E6A"
+  },
+  "matrix": {
+    "title": "Matrix",
+    "bg": "#0A0E0A",
+    "surface": "#0E130D",
+    "raised": "#141C12",
+    "text": "#62FF94",
+    "muted": "#8CA391",
+    "accent": "#2EFF6A",
+    "accent2": "#00EFFF",
+    "danger": "#FF4B4B",
+    "warning": "#E6FF57",
+    "success": "#62FF94"
+  },
+  "flexoki": {
+    "title": "Flexoki Dark",
+    "bg": "#100F0F",
+    "surface": "#1C1B1A",
+    "raised": "#282726",
+    "text": "#CECDC3",
+    "muted": "#6F6E69",
+    "accent": "#DA702C",
+    "accent2": "#4385BE",
+    "danger": "#D14D41",
+    "warning": "#DA702C",
+    "success": "#879A39"
+  },
+  "material": {
+    "title": "Material Ocean",
+    "bg": "#263238",
+    "surface": "#1E272C",
+    "raised": "#37474F",
+    "text": "#EEFFFF",
+    "muted": "#546E7A",
+    "accent": "#82AAFF",
+    "accent2": "#C792EA",
+    "danger": "#F07178",
+    "warning": "#FFCB6B",
+    "success": "#C3E88D"
+  },
+  "ayu": {
+    "title": "Ayu Dark",
+    "bg": "#0B0E14",
+    "surface": "#0F131A",
+    "raised": "#0D1017",
+    "text": "#BFBDB6",
+    "muted": "#565B66",
+    "accent": "#59C2FF",
+    "accent2": "#D2A6FF",
+    "danger": "#D95757",
+    "warning": "#E6B673",
+    "success": "#7FD962"
+  },
+  "everforest": {
+    "title": "Everforest",
+    "bg": "#2D353B",
+    "surface": "#333C43",
+    "raised": "#343F44",
+    "text": "#D3C6AA",
+    "muted": "#7A8478",
+    "accent": "#A7C080",
+    "accent2": "#7FBBB3",
+    "danger": "#E67E80",
+    "warning": "#E69875",
+    "success": "#A7C080"
+  },
+  "kanagawa": {
+    "title": "Kanagawa",
+    "bg": "#1F1F28",
+    "surface": "#2A2A37",
+    "raised": "#363646",
+    "text": "#DCD7BA",
+    "muted": "#727169",
+    "accent": "#7E9CD8",
+    "accent2": "#957FB8",
+    "danger": "#E82424",
+    "warning": "#D7A657",
+    "success": "#98BB6C"
+  },
+  "monokai": {
+    "title": "Monokai",
+    "bg": "#272822",
+    "surface": "#1E1F1C",
+    "raised": "#3E3D32",
+    "text": "#F8F8F2",
+    "muted": "#75715E",
+    "accent": "#66D9EF",
+    "accent2": "#AE81FF",
+    "danger": "#F92672",
+    "warning": "#E6DB74",
+    "success": "#A6E22E"
+  },
+  "github": {
+    "title": "GitHub Dark",
+    "bg": "#0D1117",
+    "surface": "#010409",
+    "raised": "#161B22",
+    "text": "#C9D1D9",
+    "muted": "#8B949E",
+    "accent": "#58A6FF",
+    "accent2": "#BC8CFF",
+    "danger": "#F85149",
+    "warning": "#E3B341",
+    "success": "#3FB950"
+  },
+  "solarized": {
+    "title": "Solarized Dark",
+    "bg": "#002B36",
+    "surface": "#073642",
+    "raised": "#073642",
+    "text": "#839496",
+    "muted": "#586E75",
+    "accent": "#268BD2",
+    "accent2": "#6C71C4",
+    "danger": "#DC322F",
+    "warning": "#B58900",
+    "success": "#859900"
+  },
+  "dracula": {
+    "title": "Dracula",
+    "bg": "#282A36",
+    "surface": "#21222C",
+    "raised": "#44475A",
+    "text": "#F8F8F2",
+    "muted": "#6272A4",
+    "accent": "#BD93F9",
+    "accent2": "#FF79C6",
+    "danger": "#FF5555",
+    "warning": "#F1FA8C",
+    "success": "#50FA7B"
+  },
+  "carbonfox": {
+    "title": "Carbonfox",
+    "bg": "#161616",
+    "surface": "#1A1A1A",
+    "raised": "#1E1E1E",
+    "text": "#F2F4F8",
+    "muted": "#7D848F",
+    "accent": "#33B1FF",
+    "accent2": "#78A9FF",
+    "danger": "#EE5396",
+    "warning": "#F1C21B",
+    "success": "#25BE6A"
+  },
+  "catppuccin-frappe": {
+    "title": "Catppuccin Frapp\\u00e9",
+    "bg": "#303446",
+    "surface": "#292C3C",
+    "raised": "#232634",
+    "text": "#C6D0F5",
+    "muted": "#949CB8",
+    "accent": "#8DA4E2",
+    "accent2": "#CA9EE6",
+    "danger": "#E78284",
+    "warning": "#E5C890",
+    "success": "#A6D189"
+  },
+  "catppuccin-macchiato": {
+    "title": "Catppuccin Macchiato",
+    "bg": "#24273A",
+    "surface": "#1E2030",
+    "raised": "#181926",
+    "text": "#CAD3F5",
+    "muted": "#939AB7",
+    "accent": "#8AADF4",
+    "accent2": "#C6A0F6",
+    "danger": "#ED8796",
+    "warning": "#EED49F",
+    "success": "#A6DA95"
+  },
+  "cursor": {
+    "title": "Cursor Dark",
+    "bg": "#181818",
+    "surface": "#141414",
+    "raised": "#262626",
+    "text": "#E4E4E4",
+    "muted": "#E4E4E4",
+    "accent": "#88C0D0",
+    "accent2": "#81A1C1",
+    "danger": "#E34671",
+    "warning": "#F1B467",
+    "success": "#3FA266"
+  },
+  "lucent-orng": {
+    "title": "Lucent Orange",
+    "bg": "#000000",
+    "surface": "#000000",
+    "raised": "#000000",
+    "text": "#EEEEEE",
+    "muted": "#808080",
+    "accent": "#EC5B2B",
+    "accent2": "#EE7948",
+    "danger": "#E06C75",
+    "warning": "#EC5B2B",
+    "success": "#6BA1E6"
+  },
+  "mercury": {
+    "title": "Mercury",
+    "bg": "#171721",
+    "surface": "#10101A",
+    "raised": "#272735",
+    "text": "#DDDDE5",
+    "muted": "#9D9DA8",
+    "accent": "#8DA4F5",
+    "accent2": "#A7B6F8",
+    "danger": "#FC92B4",
+    "warning": "#FC9B6F",
+    "success": "#77C599"
+  },
+  "nightowl": {
+    "title": "Night Owl",
+    "bg": "#011627",
+    "surface": "#0B253A",
+    "raised": "#0B253A",
+    "text": "#D6DEEB",
+    "muted": "#5F7E97",
+    "accent": "#82AAFF",
+    "accent2": "#7FDBCA",
+    "danger": "#EF5350",
+    "warning": "#ECC48D",
+    "success": "#C5E478"
+  },
+  "orng": {
+    "title": "Orange",
+    "bg": "#0A0A0A",
+    "surface": "#141414",
+    "raised": "#1E1E1E",
+    "text": "#EEEEEE",
+    "muted": "#808080",
+    "accent": "#EC5B2B",
+    "accent2": "#EE7948",
+    "danger": "#E06C75",
+    "warning": "#EC5B2B",
+    "success": "#6BA1E6"
+  },
+  "palenight": {
+    "title": "Palenight",
+    "bg": "#292D3E",
+    "surface": "#1E2132",
+    "raised": "#32364A",
+    "text": "#A6ACCD",
+    "muted": "#676E95",
+    "accent": "#82AAFF",
+    "accent2": "#C792EA",
+    "danger": "#F07178",
+    "warning": "#FFCB6B",
+    "success": "#C3E88D"
+  },
+  "vercel": {
+    "title": "Vercel",
+    "bg": "#000000",
+    "surface": "#1A1A1A",
+    "raised": "#292929",
+    "text": "#EDEDED",
+    "muted": "#878787",
+    "accent": "#0070F3",
+    "accent2": "#52A8FF",
+    "danger": "#E5484D",
+    "warning": "#FFB224",
+    "success": "#46A758"
+  },
+  "orange": {
+    "title": "Classic Orange",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#FAB283",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "green": {
+    "title": "Forest Green",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#7FD88F",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "blue": {
+    "title": "Deep Blue",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#5C9CF5",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "purple": {
+    "title": "Cyberpunk Purple",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#9D7CD8",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "monochrome": {
+    "title": "Monochrome",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#EEEEEE",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "pastel": {
+    "title": "Pastel Blush Pink",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#F5A9C0",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "mint": {
+    "title": "Pastel Mint",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#98E4C8",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "lavender": {
+    "title": "Pastel Lavender",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#C5B4E3",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "peach": {
+    "title": "Pastel Peach",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#F5C6A0",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "sky": {
+    "title": "Pastel Sky",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#A8D8F0",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "rose": {
+    "title": "Pastel Rose",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#E8A0B0",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "butter": {
+    "title": "Pastel Butter",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#F0E0A0",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "coral": {
+    "title": "Pastel Coral",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#F08070",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "lilac": {
+    "title": "Pastel Lilac",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#C8A8E0",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "sage": {
+    "title": "Pastel Sage",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#A8C8A0",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  },
+  "retro": {
+    "title": "Retro Terminal",
+    "bg": "#080B12",
+    "surface": "#0E131E",
+    "raised": "#141B28",
+    "text": "#E7EDF7",
+    "muted": "#8995A8",
+    "accent": "#00FF66",
+    "accent2": "#2DD4BF",
+    "danger": "#FB7185",
+    "warning": "#FBBF24",
+    "success": "#3ECF8E"
+  }
+};
 
 let slashMenuEl = null;
 let slashActiveIdx = -1;
@@ -197,7 +887,7 @@ async function handleHashChange() {
         switchSession(sid);
       } else {
         session = await loadSessionData(sid);
-        if (session && session.title) {
+        if (session && (session.title || session.messages.length > 0 || session.id)) {
           state.openSessions.push(session);
           switchSession(sid);
         } else {
@@ -210,6 +900,10 @@ async function handleHashChange() {
 
 // ── Init ──
 async function init() {
+  try {
+    const savedTheme = localStorage.getItem('qcode-theme');
+    if (savedTheme && THEMES[savedTheme]) applyTheme(savedTheme);
+  } catch (_) {}
   try {
     const verRes = await fetch("/api/version");
     if (verRes.ok) {
@@ -429,6 +1123,28 @@ function setupEventListeners() {
   if (tabStatsBtn) {
     tabStatsBtn.addEventListener('click', () => switchTab('stats'));
   }
+  if (tabSessionsBtn) {
+    tabSessionsBtn.addEventListener('click', () => switchTab('sessions'));
+  }
+  if (sessionsRefreshBtn) {
+    sessionsRefreshBtn.addEventListener('click', () => loadDelegatedSessionsTab());
+  }
+  const sessionsFilterInput = document.getElementById('sessions-filter-input');
+  if (sessionsFilterInput) {
+    sessionsFilterInput.addEventListener('input', (e) => {
+      state.sessionsFilterText = e.target.value.toLowerCase().trim();
+      loadDelegatedSessionsTab();
+    });
+  }
+  if (parentBackBtn) {
+    parentBackBtn.addEventListener('click', () => returnToParentSession());
+  }
+  if (agentModeBtn) {
+    agentModeBtn.addEventListener('click', () => toggleAgentMode());
+  }
+  if (retryBtn) {
+    retryBtn.addEventListener('click', () => handleRetryCommand());
+  }
   if (filesRefreshBtn) {
     filesRefreshBtn.addEventListener('click', () => loadFilesTab());
   }
@@ -565,9 +1281,49 @@ function setupEventListeners() {
   // Escape key pauses/cancels the active generation from anywhere
   // (document level catches input textarea, FS editor, and unfocused UI).
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && e.type === 'keydown') {
+    const key = e.key;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && key.toLowerCase() === 'p') {
+      e.preventDefault();
+      showCommandPalette();
+      return;
+    }
+    if (mod && key.toLowerCase() === 'n') {
+      e.preventDefault();
+      showNewSessionModal();
+      return;
+    }
+    if (key === 'F2') {
+      e.preventDefault();
+      toggleThinking();
+      return;
+    }
+    if (e.altKey && !mod && (key === '1' || key === '2' || key === '3' || key === '4')) {
+      e.preventDefault();
+      if (key === '1') switchTab('chat');
+      else if (key === '2') { switchTab('files'); switchFilesSubtab('git'); }
+      else if (key === '3') switchTab('stats');
+      else switchTab('sessions');
+      return;
+    }
+    if ((key === 'b' || key === 'B') && !mod && !e.altKey) {
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+      if (tag !== 'input' && tag !== 'textarea' && !e.target.isContentEditable) {
+        if (state.agentMode === 'subagent' || state.parentSessionId) {
+          e.preventDefault();
+          returnToParentSession();
+          return;
+        }
+      }
+    }
+    if (key === 'Escape' && e.type === 'keydown') {
       if (isModalOpen()) return;
-      pauseActiveGeneration();
+      const activeSession = state.openSessions.find(s => s.id === state.sessionId);
+      if (activeSession && activeSession.generating) {
+        pauseActiveGeneration();
+      } else if (state.agentMode === 'subagent' || state.parentSessionId) {
+        returnToParentSession();
+      }
     }
   });
 
@@ -582,6 +1338,22 @@ function setupEventListeners() {
 function updateStatusBar() {
   statusSession.textContent = state.sessionTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
   statusWorkspace.textContent = state.sessionWorkspace ? SVG_ICONS.folder + ' ' + state.sessionWorkspace : '';
+  const isSub = state.agentMode === 'subagent';
+  if (subagentBadge) subagentBadge.classList.toggle('hidden', !isSub);
+  if (parentBackBtn) {
+    parentBackBtn.classList.toggle('hidden', !isSub && !state.parentSessionId);
+    parentBackBtn.title = 'Return to parent session (Esc or b)';
+  }
+  if (agentModeBtn) {
+    agentModeBtn.classList.toggle('hidden', isSub);
+    if (!isSub) {
+      const label = state.agentMode === 'plan' ? 'Plan' : 'Orchestrator';
+      agentModeBtn.textContent = label;
+      agentModeBtn.classList.toggle('plan', state.agentMode === 'plan');
+      agentModeBtn.classList.remove('subagent');
+      agentModeBtn.disabled = !state.sessionId;
+    }
+  }
 }
 
 async function updateConnectionStatus() {
@@ -795,6 +1567,7 @@ function switchTab(tab) {
   }
   if (tab === 'files') loadFilesTab();
   if (tab === 'stats') loadStatsTab();
+  if (tab === 'sessions') loadDelegatedSessionsTab();
   updateLayoutUI();
   closeMobileSidebar();
 }
@@ -817,8 +1590,9 @@ function updateLayoutUI() {
     // Split is chat + terminal only — never stack files/stats alongside.
     if (filesPanel) filesPanel.classList.add('hidden');
     if (statsPanel) statsPanel.classList.add('hidden');
+    if (sessionsPanel) sessionsPanel.classList.add('hidden');
 
-    [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn].forEach(b => {
+    [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
       if (b) b.classList.remove('active');
     });
     if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
@@ -833,7 +1607,8 @@ function updateLayoutUI() {
     if (terminalPanel) terminalPanel.classList.add('hidden');
     if (filesPanel) filesPanel.classList.add('hidden');
     if (statsPanel) statsPanel.classList.add('hidden');
-    [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn].forEach(b => {
+    if (sessionsPanel) sessionsPanel.classList.add('hidden');
+    [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
       if (b) b.classList.remove('active');
     });
 
@@ -849,6 +1624,9 @@ function updateLayoutUI() {
     } else if (state.activeTab === 'stats') {
       if (statsPanel) statsPanel.classList.remove('hidden');
       if (tabStatsBtn) tabStatsBtn.classList.add('active');
+    } else if (state.activeTab === 'sessions') {
+      if (sessionsPanel) sessionsPanel.classList.remove('hidden');
+      if (tabSessionsBtn) tabSessionsBtn.classList.add('active');
     }
   }
   renderSessionTabs();
@@ -1173,22 +1951,249 @@ function handleSlashCommand(text) {
     case 'rename': handleRenameCommand(args); break;
     case 'session': case 'load': handleSessionCommand(args); break;
     case 'compact': handleCompactCommand(); break;
+    case 'theme': case 'themes': handleThemeCommand(args); break;
+    case 'agent': handleAgentCommand(args); break;
+    case 'queue': handleQueueCommand(args); break;
+    case 'clear-queue': case 'cq': handleClearQueueCommand(); break;
+    case 'retry': handleRetryCommand(); break;
     default: addSystemMessage('Unknown command: /' + cmd + '. Type /help for available commands.');
   }
 }
 
 function handleHelpCommand() {
-  addSystemMessage(
-    'Available commands:\n' +
-    '  /model [list]              - select provider/model\n' +
-    '  /variant [off|low|medium|high] - set model variant / reasoning effort\n' +
-    '  /new                       - start a new session\n' +
-    '  /tools [on|off]            - toggle tool use\n' +
-    '  /rename [title]            - rename current session\n' +
-    '  /session [list]            - manage saved sessions\n' +
-    '  /compact                   - compress conversation into handoff\n' +
-    '  /help                      - show this help'
-  );
+  modalOverlay.innerHTML = `
+    <div class="picker-modal help-modal">
+      <div class="picker-header">Help</div>
+      <div class="picker-body help-body">
+        <p class="help-lead">Press <kbd>Ctrl</kbd>+<kbd>P</kbd> to see every command.</p>
+        <div class="help-section">Session</div>
+        <div class="help-row"><kbd>Ctrl</kbd>+<kbd>N</kbd><span>New session</span></div>
+        <div class="help-row"><kbd>/new</kbd><span>Start a new session</span></div>
+        <div class="help-row"><kbd>/session</kbd><span>Switch session</span></div>
+        <div class="help-row"><kbd>/rename</kbd><span>Rename current session</span></div>
+        <div class="help-row"><kbd>/compact</kbd><span>Summarize context</span></div>
+        <div class="help-section">Model</div>
+        <div class="help-row"><kbd>/model</kbd><span>Switch model</span></div>
+        <div class="help-row"><kbd>/variant</kbd><span>Reasoning effort</span></div>
+        <div class="help-row"><kbd>/agent</kbd><span>Orchestrator / Plan</span></div>
+        <div class="help-section">View</div>
+        <div class="help-row"><kbd>Esc</kbd><span>Stop generation</span></div>
+        <div class="help-row"><kbd>/retry</kbd><span>Retry last prompt</span></div>
+        <div class="help-row"><kbd>F2</kbd><span>Toggle thinking</span></div>
+        <div class="help-row"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd><span>Chat / Files / Stats / Sessions</span></div>
+        <div class="help-row"><kbd>/theme</kbd><span>Switch theme</span></div>
+        <div class="help-row"><kbd>/queue</kbd><span>List or drop queued prompts</span></div>
+        <div class="help-row"><kbd>/clear-queue</kbd><span>Clear all queued prompts</span></div>
+        <div class="help-row"><kbd>/tools</kbd><span>Toggle tool use on|off</span></div>
+      </div>
+      <div class="picker-footer">esc/enter close</div>
+    </div>`;
+  modalOverlay.classList.add('active');
+  const close = (ev) => {
+    if (ev.key === 'Escape' || ev.key === 'Enter') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      document.removeEventListener('keydown', close, true);
+      closeModal();
+    }
+  };
+  document.addEventListener('keydown', close, true);
+}
+
+function applyTheme(name) {
+  const t = THEMES[name];
+  if (!t) return false;
+  state.theme = name;
+  const root = document.documentElement;
+  root.dataset.theme = name;
+  const set = (k, v) => root.style.setProperty(k, v);
+  set('--bg', t.bg);
+  set('--surface', t.surface);
+  set('--surface-raised', t.raised);
+  set('--surface-soft', t.surface);
+  set('--text', t.text);
+  set('--muted', t.muted);
+  set('--faint', t.muted);
+  set('--accent', t.accent);
+  set('--accent-strong', t.accent2);
+  set('--blue', t.accent2);
+  set('--danger', t.danger);
+  set('--warning', t.warning);
+  set('--success', t.success);
+  try { localStorage.setItem('qcode-theme', name); } catch (_) {}
+  return true;
+}
+
+function handleThemeCommand(args) {
+  const q = (args || '').trim().toLowerCase();
+  if (q && THEMES[q]) {
+    applyTheme(q);
+    showToast('Theme: ' + THEMES[q].title);
+    return;
+  }
+  const items = Object.keys(THEMES).map((id) => ({
+    id,
+    label: THEMES[id].title,
+    sublabel: id,
+    category: id === 'qcode' ? 'Web' : 'TUI',
+    isActive: id === state.theme
+  }));
+  showFuzzyPicker('Select Theme', items, state.theme, (chosen) => {
+    applyTheme(chosen.id);
+    showToast('Theme: ' + chosen.label);
+  }, 'Type a theme name…', q);
+}
+
+function handleAgentCommand(args) {
+  let name = (args || '').trim().toLowerCase();
+  if (!name) {
+    showToast('Agent: ' + state.agentMode + ' (/agent orchestrator|plan)');
+    return;
+  }
+  if (name === 'build') name = 'orchestrator';
+  if (name !== 'orchestrator' && name !== 'plan') {
+    showToast("Unknown agent '" + name + "'. Use orchestrator|plan.");
+    return;
+  }
+  if (state.agentMode === name) {
+    showToast('Agent: ' + name);
+    return;
+  }
+  if (state.agentMode === 'subagent') {
+    showToast('Subagent sessions cannot change mode');
+    return;
+  }
+  toggleAgentModeTo(name);
+}
+
+async function toggleAgentModeTo(next) {
+  if (!state.sessionId || state.agentMode === 'subagent') return;
+  if (!next) next = state.agentMode === 'plan' ? 'orchestrator' : 'plan';
+  try {
+    const res = await fetch('/session/' + state.sessionId + '/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_mode: next })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    state.agentMode = next;
+    const session = state.openSessions.find(s => s.id === state.sessionId);
+    if (session) session.agentMode = next;
+    updateStatusBar();
+    showToast(next === 'plan' ? 'Plan mode: read-only research, no edits' : 'Orchestrator: lead coordinator with parallel subagents');
+  } catch (e) {
+    showToast('Failed to set mode: ' + e.message);
+  }
+}
+
+function handleQueueCommand(args) {
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  const queue = (session && session.promptQueue) ? session.promptQueue : [];
+  const raw = (args || '').trim();
+  if (raw.startsWith('rm ')) {
+    const n = parseInt(raw.slice(3).trim(), 10);
+    if (!session || !n || n < 1 || n > queue.length) {
+      showToast('Usage: /queue rm <1-based index>');
+      return;
+    }
+    session.promptQueue.splice(n - 1, 1);
+    updateQueueIndicator();
+    renderMessages();
+    showToast('Removed queued prompt #' + n);
+    return;
+  }
+  if (queue.length === 0) {
+    showToast('No queued prompts');
+    return;
+  }
+  const lines = queue.map((t, i) => (i + 1) + '. ' + t.replace(/\s+/g, ' ').slice(0, 120));
+  addSystemMessage('Queued prompts:\n' + lines.join('\n') + '\n\n/queue rm <n>  or  /clear-queue');
+}
+
+function handleClearQueueCommand() {
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  const n = (session && session.promptQueue) ? session.promptQueue.length : 0;
+  if (!n) {
+    showToast('No queued prompts to clear');
+    return;
+  }
+  session.promptQueue = [];
+  updateQueueIndicator();
+  renderMessages();
+  showToast(n === 1 ? 'Cleared 1 queued prompt' : ('Cleared ' + n + ' queued prompts'));
+}
+
+async function handleRetryCommand() {
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (!session) { showToast('No active session'); return; }
+  if (session.generating) { showToast('Already generating'); return; }
+  let prompt = session.lastUserPrompt || '';
+  if (!prompt) {
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      if (session.messages[i].role === 'user' && session.messages[i].content) {
+        prompt = session.messages[i].content;
+        break;
+      }
+    }
+  }
+  if (!prompt) { showToast('No user prompt available to retry.'); return; }
+  await runGeneration(session, prompt);
+}
+
+function toggleThinking() {
+  state.showThinking = !state.showThinking;
+  renderMessages();
+  showToast(state.showThinking ? 'Thinking: shown' : 'Thinking: hidden');
+}
+
+function showCommandPalette(initialQuery) {
+  if (isModalOpen()) {
+    closeModal();
+    return;
+  }
+  const items = PALETTE_COMMANDS.map((c) => ({
+    id: c.id,
+    label: c.label,
+    sublabel: c.sublabel,
+    category: c.category
+  }));
+  showFuzzyPicker('Commands', items, '', (chosen) => {
+    executePaletteCommand(chosen.id);
+  }, 'Type a command…', initialQuery || '');
+}
+
+function executePaletteCommand(id) {
+  switch (id) {
+    case 'session_new': showNewSessionModal(); break;
+    case 'session_list': handleSessionCommand(''); break;
+    case 'session_rename': handleRenameCommand(''); break;
+    case 'session_compact': handleCompactCommand(); break;
+    case 'session_clear_queue': handleClearQueueCommand(); break;
+    case 'session_retry': handleRetryCommand(); break;
+    case 'model_select': handleModelCommand(''); break;
+    case 'model_variant': handleVariantCommand(''); break;
+    case 'agent_mode_toggle': toggleAgentMode(); break;
+    case 'thinking_toggle': toggleThinking(); break;
+    case 'chat_open': switchTab('chat'); break;
+    case 'files_open': switchTab('files'); switchFilesSubtab('git'); break;
+    case 'stats_open': switchTab('stats'); break;
+    case 'sessions_open': switchTab('sessions'); break;
+    case 'theme_select': handleThemeCommand(''); break;
+    case 'help': handleHelpCommand(); break;
+    default: break;
+  }
+}
+
+function renderQueuedBlock(queue) {
+  const wrap = document.createElement('div');
+  wrap.className = 'queued-block';
+  let html = '<div class="queued-head">⏳ Queued <span class="queued-hint">· /clear-queue to cancel</span></div>';
+  queue.forEach((text, i) => {
+    if (i > 0) html += '<div class="queued-sep">---</div>';
+    html += '<div class="queued-body">' + esc(text) + '</div>';
+  });
+  wrap.innerHTML = html;
+  return wrap;
 }
 
 // ── /model ──
@@ -1244,8 +2249,15 @@ function parseMessages(msgs, session) {
       if (!currentAssistantMsg) {
         currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
         session.messages.push(currentAssistantMsg);
+      } else if (currentAssistantMsg.content && currentAssistantMsg.toolEvents && currentAssistantMsg.toolEvents.length > 0) {
+        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [] };
+        session.messages.push(currentAssistantMsg);
       }
-      currentAssistantMsg.content = m.content;
+      if (currentAssistantMsg.content) {
+        currentAssistantMsg.content += '\n\n' + m.content;
+      } else {
+        currentAssistantMsg.content = m.content;
+      }
     } else if (m.role === 'ToolCall') {
       try {
         const tc = JSON.parse(m.content);
@@ -1323,6 +2335,8 @@ async function loadSessionData(id) {
       session.workspace = info.workspace || '';
       session.provider = info.provider || '';
       session.model = info.model || '';
+      session.agentMode = info.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+      session.reasoning = info.reasoning_mode || session.reasoning || 'off';
     }
   } catch (e) {}
 
@@ -1336,6 +2350,9 @@ async function loadSessionData(id) {
     }
   } catch (e) {}
 
+  if (!session.title && session.id) {
+    session.title = (session.agentMode === 'subagent' ? 'Subagent ' : 'Session ') + session.id.substring(0, 8);
+  }
   return session;
 }
 
@@ -1353,9 +2370,21 @@ async function loadSessionById(id) {
 
 function handleNewCommand() { showNewSessionModal(); }
 function handleVariantCommand(args) {
-  const lvl = args || (state.reasoning === 'off' ? 'low' : state.reasoning === 'low' ? 'medium' : state.reasoning === 'medium' ? 'high' : 'off');
-  if (!['off', 'low', 'medium', 'high'].includes(lvl)) { addSystemMessage('Invalid variant. Use off|low|medium|high.'); return; }
-  state.reasoning = lvl; reasoningSelect.value = lvl; showToast('Variant (effort): ' + lvl);
+  const known = ['off', 'low', 'medium', 'high'];
+  const q = (args || '').trim().toLowerCase();
+  if (known.includes(q)) {
+    state.reasoning = q;
+    if (reasoningSelect) reasoningSelect.value = q;
+    showToast('Variant (effort): ' + q);
+    return;
+  }
+  if (q && !known.includes(q)) { addSystemMessage('Invalid variant. Use off|low|medium|high.'); return; }
+  const items = known.map((id) => ({ id, label: id, category: 'Reasoning', isActive: id === state.reasoning }));
+  showFuzzyPicker('Select Reasoning Variant', items, state.reasoning, (chosen) => {
+    state.reasoning = chosen.id;
+    if (reasoningSelect) reasoningSelect.value = chosen.id;
+    showToast('Variant (effort): ' + chosen.id);
+  }, 'off | low | medium | high', q);
 }
 function handleToolsCommand(args) {
   const val = args || (state.toolsEnabled ? 'off' : 'on');
@@ -1422,6 +2451,7 @@ async function handleCompactCommand() {
 
 async function runGeneration(session, text) {
   session.cancelRequested = false;
+  session.lastUserPrompt = text;
   session.messages.push({ role: 'user', content: text });
   
   const assistantMsg = { role: 'assistant', content: '', toolEvents: [] };
@@ -1492,13 +2522,13 @@ async function runGeneration(session, text) {
     buffer += decoder.decode();
     consumeLine(buffer);
 
-    if (!receivedComplete && !session.cancelRequested) {
+    if (!receivedComplete && !session.cancelRequested && !assistantMsg.streamError) {
       throw new Error('The response stream ended before generation completed');
     }
   } catch (e) {
     // Some browsers report a transport error after receiving the final chunk.
     // The generation.complete event is authoritative in that case.
-    if (e.name !== 'AbortError' && !session.cancelRequested && !receivedComplete) {
+    if (e.name !== 'AbortError' && !session.cancelRequested && !receivedComplete && !assistantMsg.streamError) {
       const message = e.message || 'Connection interrupted';
       showToast('Generation interrupted: ' + message);
       assistantMsg.streamError = message;
@@ -1568,14 +2598,19 @@ async function sendMessage() {
   if (!session) return;
 
   if (session.generating) {
-    if (!session.promptQueue) {
-      session.promptQueue = [];
+    if (!session.promptQueue) session.promptQueue = [];
+    if (session.promptQueue.length > 0) {
+      session.promptQueue[session.promptQueue.length - 1] += '\n' + text;
+      showToast('Prompt merged into queued message');
+    } else {
+      session.promptQueue.push(text);
+      showToast('Prompt queued');
     }
-    session.promptQueue.push(text);
     promptInput.value = '';
     resizePromptInput();
-    showToast('Prompt queued');
     updateQueueIndicator();
+    renderMessages();
+    scrollToBottom();
     return;
   }
 
@@ -1612,11 +2647,15 @@ function handleEvent(evt, msg, session) {
       break;
     case 'backend.token.usage.updated': {
       const parts = [];
-      if (evt.prompt_tokens != null) parts.push('prompt ' + evt.prompt_tokens);
-      if (evt.completion_tokens != null) parts.push('completion ' + evt.completion_tokens);
-      if (evt.total_tokens != null) parts.push('total ' + evt.total_tokens);
-      msg.usage = parts.length ? 'Tokens — ' + parts.join(' · ') : '';
-      if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+      if (evt.prompt_tokens != null && evt.prompt_tokens > 0) parts.push('prompt ' + evt.prompt_tokens);
+      if (evt.completion_tokens != null && evt.completion_tokens > 0) parts.push('completion ' + evt.completion_tokens);
+      if (evt.total_tokens != null && evt.total_tokens > 0) parts.push('total ' + evt.total_tokens);
+      if (evt.cached_prompt_tokens != null && evt.cached_prompt_tokens > 0) parts.push('cached ' + evt.cached_prompt_tokens);
+      if (evt.reasoning_tokens != null && evt.reasoning_tokens > 0) parts.push('thinking ' + evt.reasoning_tokens);
+      if (parts.length > 0) {
+        msg.usage = 'Tokens — ' + parts.join(' · ');
+        if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+      }
       break;
     }
     case 'backend.tool.call.started':
@@ -2354,6 +3393,177 @@ async function closeOpenFile() {
   setFsMobileView('browser');
 }
 
+async function openChildSession(sid) {
+  if (!sid) return;
+  if (state.sessionId && state.sessionId !== sid) {
+    state.parentSessionId = state.sessionId;
+    try { sessionStorage.setItem('qcode-parent-session', state.sessionId); } catch (_) {}
+  }
+  await loadSessionById(sid);
+  switchTab('chat');
+  showToast('Opened child session');
+}
+
+async function returnToParentSession() {
+  let pid = state.parentSessionId;
+  if (!pid) {
+    try { pid = sessionStorage.getItem('qcode-parent-session'); } catch (_) {}
+  }
+  if (!pid) {
+    const parentSession = state.openSessions.find(s => s.agentMode !== 'subagent' && !s.id.startsWith('ses_'));
+    if (parentSession) pid = parentSession.id;
+  }
+  if (!pid) {
+    try {
+      const res = await fetch('/session/last');
+      if (res.ok) {
+        const last = await res.json();
+        if (last && last.id && last.id !== state.sessionId) pid = last.id;
+      }
+    } catch (_) {}
+  }
+  if (!pid) {
+    showToast('No parent session to return to');
+    return;
+  }
+  state.parentSessionId = null;
+  try { sessionStorage.removeItem('qcode-parent-session'); } catch (_) {}
+  await loadSessionById(pid);
+  switchTab('chat');
+  showToast('Returned to parent session');
+}
+
+async function toggleAgentMode() {
+  if (!state.sessionId || state.agentMode === 'subagent') return;
+  const next = state.agentMode === 'plan' ? 'orchestrator' : 'plan';
+  await toggleAgentModeTo(next);
+}
+
+async function loadDelegatedSessionsTab() {
+  if (!sessionsContent) return;
+  sessionsContent.innerHTML = '<div class="delegated-empty">Loading child sessions…</div>';
+  try {
+    let tasks = [];
+    try {
+      const res = await fetch('/tasks');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.metadata && Array.isArray(data.metadata.tasks)) {
+          tasks = data.metadata.tasks;
+        }
+      }
+    } catch (_) {}
+
+    let savedSubagents = [];
+    try {
+      const resSub = await fetch('/sessions?include_subagents=1');
+      if (resSub.ok) {
+        const all = await resSub.json();
+        if (Array.isArray(all)) {
+          savedSubagents = all.filter(s => (s.agent_mode === 'subagent' || (s.id && s.id.startsWith('ses_'))));
+        }
+      }
+    } catch (_) {}
+
+    const seenSids = new Set();
+    const combined = [];
+
+    // Active / recent tasks from in-memory registry first
+    for (const task of tasks) {
+      const sid = task.task_id || task.sessionId || '';
+      if (sid) seenSids.add(sid);
+      combined.push({
+        sid,
+        bg: task.background_task_id || '',
+        status: task.status || 'running',
+        agent: task.agent || 'general',
+        mode: task.mode || '',
+        model: task.model || '',
+        description: task.description || sid
+      });
+    }
+
+    // Persisted subagent sessions from database
+    for (const sub of savedSubagents) {
+      if (!sub.id || seenSids.has(sub.id)) continue;
+      seenSids.add(sub.id);
+      combined.push({
+        sid: sub.id,
+        bg: '',
+        status: 'saved',
+        agent: sub.provider || 'subagent',
+        mode: sub.agent_mode || 'subagent',
+        model: sub.model || '',
+        description: sub.title || sub.id
+      });
+    }
+
+    const totalCount = combined.length;
+    let filtered = combined;
+    if (state.sessionsFilterText) {
+      filtered = combined.filter(c => {
+        const text = `${c.sid} ${c.bg} ${c.status} ${c.agent} ${c.mode} ${c.model} ${c.description}`.toLowerCase();
+        return text.includes(state.sessionsFilterText);
+      });
+    }
+
+    if (totalCount === 0) {
+      sessionsContent.innerHTML = '<div class="delegated-empty">No delegated child sessions.<br>Spawn with the task tool. Saved parent sessions stay in the session picker.</div>';
+      return;
+    }
+
+    sessionsContent.innerHTML = '';
+    const heading = document.createElement('div');
+    heading.className = 'delegated-empty';
+    heading.textContent = state.sessionsFilterText
+      ? `CHILDREN (${filtered.length} of ${totalCount}) — click to open in chat`
+      : `CHILDREN (${totalCount}) — click to open in chat`;
+    sessionsContent.appendChild(heading);
+
+    if (filtered.length === 0) {
+      const noMatch = document.createElement('div');
+      noMatch.className = 'delegated-empty';
+      noMatch.textContent = 'No child sessions match your filter.';
+      sessionsContent.appendChild(noMatch);
+      return;
+    }
+
+    for (const item of filtered) {
+      const sid = item.sid;
+      const row = document.createElement('div');
+      row.className = 'delegated-row';
+      const isCurrent = sid && sid === state.sessionId;
+      if (isCurrent) row.classList.add('current');
+      const bg = item.bg;
+      const model = item.model;
+      const status = item.status;
+      row.innerHTML = (isCurrent ? '<span class="child-marker">●</span>' : '')
+        + (bg ? '<span class="child-bg">' + esc(bg) + '</span>' : '')
+        + '<span class="child-status ' + esc(status) + '">[' + esc(status) + ']</span>'
+        + '<span class="child-meta">(' + esc(item.agent) + (item.mode ? ' · ' + esc(item.mode) : '') + ')</span>'
+        + (model ? '<span class="child-model">{' + esc(model) + '}</span>' : '')
+        + '<span class="child-desc">' + esc(item.description) + '</span>'
+        + (isCurrent ? '<span class="child-open">[open]</span>' : '<span class="child-action">↗</span>');
+
+      if (sid) {
+        row.setAttribute('role', 'button');
+        row.setAttribute('tabindex', '0');
+        row.title = 'Open child session ' + sid;
+        row.addEventListener('click', () => openChildSession(sid));
+        row.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openChildSession(sid); }
+        });
+      } else {
+        row.classList.add('no-open');
+        row.title = 'No session id for this task';
+      }
+      sessionsContent.appendChild(row);
+    }
+  } catch (e) {
+    sessionsContent.innerHTML = '<div class="delegated-empty">Failed to load children: ' + esc(e.message) + '</div>';
+  }
+}
+
 async function loadStatsTab() {
   if (!state.sessionId) {
     statsContent.innerHTML = '<div class="stats-empty">No active session.</div>';
@@ -2419,37 +3629,68 @@ function renderMessages() {
   messagesEl.innerHTML = '';
   const session = state.openSessions.find(s => s.id === state.sessionId);
   if (!session) return;
-  if (session.messages.length === 0) {
+
+  const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
+  if (isSub) {
+    const banner = document.createElement('div');
+    banner.className = 'subagent-session-banner';
+    const modelLabel = session.model ? `${session.provider ? session.provider + ' / ' : ''}${session.model}` : '';
+    banner.innerHTML = `
+      <div class="subagent-banner-info">
+        <span class="subagent-banner-icon">🤖</span>
+        <span class="subagent-banner-title">Delegated Child Session</span>
+        <span class="subagent-banner-id">${esc(session.id)}</span>
+        ${modelLabel ? `<span class="subagent-banner-model">${esc(modelLabel)}</span>` : ''}
+      </div>
+      <button type="button" class="subagent-banner-back-btn" title="Return to parent session (Esc or b)">← Back to Parent</button>
+    `;
+    const backBtn = banner.querySelector('.subagent-banner-back-btn');
+    if (backBtn) backBtn.addEventListener('click', returnToParentSession);
+    messagesEl.appendChild(banner);
+  }
+
+  const queue = session.promptQueue || [];
+  if (session.messages.length === 0 && queue.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-chat';
     empty.innerHTML = '<div class="empty-chat-mark">Q</div>'
       + '<h2>What are we building?</h2>'
       + '<p>Ask QCode to explore the workspace, write code, or run a command.</p>'
-      + '<div class="empty-chat-hint"><kbd>/</kbd> Browse commands <span>•</span> <kbd>Enter</kbd> Send</div>';
+      + '<div class="empty-chat-hint"><kbd>/</kbd> Commands <span>•</span> <kbd>Ctrl</kbd>+<kbd>P</kbd> Palette <span>•</span> <kbd>Enter</kbd> Send</div>';
     messagesEl.appendChild(empty);
     return;
   }
   for (const msg of session.messages) {
     messagesEl.appendChild(renderMessage(msg));
   }
+  if (queue.length > 0) messagesEl.appendChild(renderQueuedBlock(queue));
 }
 
 function renderMessage(msg) {
   const div = document.createElement('div'); div.className = 'message ' + msg.role;
-  const header = document.createElement('div'); header.className = 'message-header';
-  const icons = { user: SVG_ICONS.user, assistant: SVG_ICONS.assistant, system: SVG_ICONS.system, tool: SVG_ICONS.tool };
-  header.innerHTML = '<span class="role-icon">' + (icons[msg.role] || '') + '</span> ' + capitalize(msg.role);
-  div.appendChild(header);
   const content = document.createElement('div'); content.className = 'message-content';
+  if (msg.role !== 'user') {
+    const header = document.createElement('div'); header.className = 'message-header';
+    const icons = { user: SVG_ICONS.user, assistant: SVG_ICONS.assistant, system: SVG_ICONS.system, tool: SVG_ICONS.tool };
+    header.innerHTML = '<span class="role-icon">' + (icons[msg.role] || '') + '</span> ' + capitalize(msg.role);
+    div.appendChild(header);
+  }
   if (msg.toolEvents && msg.toolEvents.length > 0) {
     const tc = document.createElement('div'); tc.className = 'tool-events';
     for (const t of msg.toolEvents) tc.appendChild(renderToolBlock(t));
     content.appendChild(tc);
   }
-  if (msg.reasoning) {
-    const rc = document.createElement('div'); rc.className = 'reasoning-block';
-    const rl = document.createElement('div'); rl.className = 'reasoning-label'; rl.innerHTML = SVG_ICONS.reasoning + ' Thinking';
+  if (msg.reasoning && state.showThinking) {
+    const rc = document.createElement('div'); rc.className = 'reasoning-block collapsed';
+    const rl = document.createElement('div'); rl.className = 'reasoning-label';
+    const est = Math.max(1, Math.floor((msg.reasoning.length + 3) / 4));
+    const compact = est >= 1000 ? Math.round(est / 1000) + 'k' : String(est);
+    rl.innerHTML = '+ Thought <span class="thought-tokens">· ' + compact + '</span>';
     const rt = document.createElement('div'); rt.className = 'reasoning-text'; rt.innerHTML = renderMarkdown(msg.reasoning); tagMarkdownLinks(rt);
+    rl.addEventListener('click', () => {
+      const open = rc.classList.toggle('collapsed');
+      rl.innerHTML = (open ? '+ Thought' : '- Thought') + ' <span class="thought-tokens">· ' + compact + '</span>';
+    });
     rc.appendChild(rl); rc.appendChild(rt);
     content.appendChild(rc);
   }
@@ -2471,9 +3712,11 @@ function renderMessage(msg) {
     content.appendChild(textEl);
   }
   if (msg.streamError) {
+    const isInterrupted = /interrupted|stream ended|abort|cancel/i.test(msg.streamError);
+    const title = isInterrupted ? 'Response interrupted' : 'Generation error';
     const error = document.createElement('div');
     error.className = 'stream-error';
-    error.innerHTML = '<span>!</span><div><strong>Response interrupted</strong><br>'
+    error.innerHTML = '<span>!</span><div><strong>' + title + '</strong><br>'
       + esc(msg.streamError) + '</div>';
     content.appendChild(error);
   }
@@ -2487,6 +3730,48 @@ function parseToolValue(value) {
   } catch (error) {
     return { raw: value };
   }
+}
+
+function sessionIdFromTaskResult(result) {
+  if (result == null) return '';
+  let obj = result;
+  if (typeof result === 'string') {
+    try { obj = JSON.parse(result); } catch (e) {
+      const m = result.match(/task_id:\s*(\S+)/);
+      return (m && m[1].indexOf('bg_') !== 0) ? m[1] : '';
+    }
+  }
+  if (typeof obj !== 'object') return '';
+  if (obj.result && typeof obj.result === 'object') {
+    const nested = sessionIdFromTaskResult(obj.result);
+    if (nested) return nested;
+  }
+  const meta = obj.metadata || {};
+  let sid = meta.sessionId || meta.task_id || obj.sessionId || obj.task_id || '';
+  if (sid && String(sid).indexOf('bg_') !== 0) return String(sid);
+  if (typeof obj.output === 'string') {
+    const m = obj.output.match(/task_id:\s*(\S+)/);
+    if (m && m[1].indexOf('bg_') !== 0) return m[1];
+  }
+  return '';
+}
+
+function extractChildSessionId(tc) {
+  if (!tc) return '';
+  const toolName = (tc.tool_name || '').toLowerCase();
+  if (toolName !== 'task' && toolName !== 'dispatch_agent') return '';
+  let sid = sessionIdFromTaskResult(tc.result);
+  if (sid) return sid;
+  if (tc.arguments) {
+    const args = parseToolValue(tc.arguments);
+    if (args && typeof args === 'object') {
+      const candidate = args.sessionId || args.task_id || '';
+      if (candidate && String(candidate).startsWith('ses_')) {
+        return String(candidate);
+      }
+    }
+  }
+  return '';
 }
 
 function renderToolBlock(tc) {
@@ -2551,6 +3836,11 @@ function renderToolBlock(tc) {
 
   const block = document.createElement('div');
   block.className = 'tool-block ' + tc.status; // success, error, running
+  const childSid = extractChildSessionId(tc);
+  if (childSid) {
+    block.classList.add('task-openable');
+    block.dataset.childSession = childSid;
+  }
   
   const header = document.createElement('div');
   header.className = 'tool-header';
@@ -2579,6 +3869,18 @@ function renderToolBlock(tc) {
 
   header.appendChild(chevron);
   header.appendChild(heading);
+  if (childSid) {
+    const openEl = document.createElement('button');
+    openEl.type = 'button';
+    openEl.className = 'task-open-child';
+    openEl.textContent = '↗ open child';
+    openEl.title = 'Open delegated child session in chat (' + childSid + ')';
+    openEl.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openChildSession(childSid);
+    });
+    header.appendChild(openEl);
+  }
   header.appendChild(timing);
   header.appendChild(statusEl);
 
@@ -2615,8 +3917,26 @@ function renderToolBlock(tc) {
     body.appendChild(exitRow);
   }
 
+  if (childSid) {
+    const childActionRow = document.createElement('div');
+    childActionRow.className = 'tool-child-action-row';
+    childActionRow.innerHTML = `<button type="button" class="tool-open-child-btn"><span>🤖 Open child session (${esc(childSid)})</span> <span>→</span></button>`;
+    const openBtn = childActionRow.querySelector('.tool-open-child-btn');
+    if (openBtn) {
+      openBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openChildSession(childSid);
+      });
+    }
+    body.appendChild(childActionRow);
+  }
+
   let expanded = false;
-  header.addEventListener('click', () => {
+  header.addEventListener('click', (ev) => {
+    if (childSid && ev.target.classList && ev.target.classList.contains('task-open-child')) {
+      openChildSession(childSid);
+      return;
+    }
     expanded = !expanded;
     body.classList.toggle('collapsed', !expanded);
     chevron.textContent = expanded ? '▾' : '▸';
@@ -3183,6 +4503,7 @@ function setGenerating(on) {
   document.body.classList.toggle('is-generating', Boolean(on));
   sendBtn.setAttribute('aria-label', on ? 'Queue prompt' : 'Send message');
   if (pauseBtn) pauseBtn.classList.toggle('hidden', !on);
+  if (typeof retryBtn !== 'undefined' && retryBtn) retryBtn.disabled = Boolean(on);
 }
 function scrollToBottom() { document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight; }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -3300,6 +4621,11 @@ async function switchSession(id) {
   state.sessionId = id;
   state.sessionTitle = session.title || '';
   state.sessionWorkspace = session.workspace || '';
+  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+  if (session.reasoning) {
+    state.reasoning = session.reasoning;
+    if (reasoningSelect) reasoningSelect.value = session.reasoning;
+  }
   // Reset file browser/editor when switching sessions (discard unsaved).
   state.fsDir = '';
   state.fsOpenPath = null;
@@ -3342,6 +4668,27 @@ async function switchSession(id) {
   // Refresh the auxiliary tabs for the newly active session.
   if (state.activeTab === 'files') loadFilesTab();
   else if (state.activeTab === 'stats') loadStatsTab();
+  else if (state.activeTab === 'sessions') loadDelegatedSessionsTab();
+}
+
+function closeSessionTab(id) {
+  const index = state.openSessions.findIndex(s => s.id === id);
+  if (index === -1) return;
+  const wasActive = state.sessionId === id;
+  state.openSessions.splice(index, 1);
+  if (wasActive) {
+    if (state.parentSessionId && state.openSessions.some(s => s.id === state.parentSessionId)) {
+      returnToParentSession();
+    } else if (state.openSessions.length > 0) {
+      const nextIndex = Math.min(index, state.openSessions.length - 1);
+      switchSession(state.openSessions[nextIndex].id);
+    } else {
+      state.sessionId = null;
+      createNewSession();
+    }
+  } else {
+    renderSessionTabs();
+  }
 }
 
 async function deleteSessionPermanently(id) {
@@ -3383,17 +4730,23 @@ function renderSessionTabs() {
     const genIndicator = session.generating ? '<span class="session-gen-indicator">⏳</span> ' : '';
     const ws = session.workspace ? shortPath(session.workspace) : '';
     
+    const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
+    const iconHtml = isSub ? '<span class="session-subagent-icon">🤖</span>' : SVG_ICONS.chat;
+    const subPill = isSub ? '<span class="session-subagent-pill">child</span>' : '';
     return `
-      <div class="session-item-wrapper ${activeClass ? 'active' : ''}" data-id="${session.id}">
+      <div class="session-item-wrapper ${activeClass ? 'active' : ''} ${isSub ? 'is-subagent' : ''}" data-id="${session.id}">
         <div class="session-item-main" data-id="${session.id}">
           <div class="session-item-title-row">
-            <span class="session-icon">${SVG_ICONS.chat}</span>
+            <span class="session-icon">${iconHtml}</span>
             <span class="session-title-text" title="${esc(title)}">${genIndicator}${esc(title)}</span>
+            ${subPill}
           </div>
           ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">📁 ${esc(ws)}</div>` : ''}
         </div>
         <div class="session-item-actions">
-          <button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">${SVG_ICONS.rename}</button>
+          ${isSub
+            ? `<button class="session-action-btn close-session-tab-btn" data-id="${session.id}" title="Close tab (keeps saved session)">&times;</button>`
+            : `<button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">${SVG_ICONS.rename}</button>`}
           <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently">${SVG_ICONS.delete}</button>
         </div>
       </div>
@@ -3410,6 +4763,13 @@ function renderSessionTabs() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       showRenameModal(btn.dataset.id, btn.dataset.title);
+    });
+  });
+
+  sessionTabsContainer.querySelectorAll('.close-session-tab-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeSessionTab(btn.dataset.id);
     });
   });
 

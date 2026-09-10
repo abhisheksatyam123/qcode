@@ -3,10 +3,10 @@
 
 add_executable(qcode-tui
     src/main.cpp
-    src/tui_overlays.cpp
-    src/tui_git_monitor.cpp
+    src/overlays.cpp
+    src/git_monitor.cpp
     src/views.cpp
-    src/views_pickers.cpp
+    src/pickers.cpp
     src/views_toast.cpp
     src/file_diff_preview.cpp
 )
@@ -17,5 +17,4 @@ target_link_libraries(qcode-tui PRIVATE
 
 target_include_directories(qcode-tui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )

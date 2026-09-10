@@ -51,7 +51,7 @@ add_subdirectory("${QCODE_ROOT}" qcode_build)
 add_library(qcode_jni SHARED
     qcode_jni.cpp
     "${QCODE_ROOT}/apps/server/src/server_routes.cpp"
-    "${QCODE_ROOT}/apps/server/src/json_codec.cpp"
+    "${QCODE_ROOT}/apps/server/src/bus_json_codec.cpp"
     "${QCODE_ROOT}/apps/server/src/http_utils.cpp"
     "${QCODE_ROOT}/apps/server/src/workspace_fs.cpp"
     "${QCODE_ROOT}/apps/server/src/terminal_pty.cpp"

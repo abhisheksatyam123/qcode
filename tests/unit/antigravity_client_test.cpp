@@ -83,6 +83,58 @@ TEST(AntigravityClientTest, Gemini38FlashDefaultsToMediumSku) {
   EXPECT_EQ(req["model"].get<std::string>(), "gemini-3.8-flash-medium");
 }
 
+TEST(AntigravityClientTest, FunctionCallReplaysThoughtSignature) {
+  AntigravityRequestBuilder builder("project-1");
+  GenerateOptions opts;
+  opts.model = "gemini-3.8-flash";
+  opts.messages = {
+      Message::user("lookup x"),
+      Message::assistant_with_tools(
+          "", {ToolCallContentPart("call-1", "lookup",
+                                   nlohmann::json::parse("{\"q\":\"x\"}"),
+                                   "real-sig")}),
+      Message::tool_results(
+          {ToolResultContentPart("call-1", nlohmann::json::parse("{\"v\":1}"))}),
+  };
+
+  const auto req = builder.build_request_json(opts);
+  const auto& parts = req["request"]["contents"][1]["parts"];
+  bool saw_fn = false;
+  for (const auto& part : parts) {
+    if (!part.contains("functionCall")) continue;
+    saw_fn = true;
+    EXPECT_EQ(part["thoughtSignature"].get<std::string>(), "real-sig")
+        << part.dump();
+  }
+  EXPECT_TRUE(saw_fn) << req.dump();
+}
+
+TEST(AntigravityClientTest, UnsignedFunctionCallGetsDummyThoughtSignature) {
+  AntigravityRequestBuilder builder("project-1");
+  GenerateOptions opts;
+  opts.model = "gemini-3.8-flash";
+  opts.messages = {
+      Message::user("lookup x"),
+      Message::assistant_with_tools(
+          "", {ToolCallContentPart("call-1", "lookup",
+                                   nlohmann::json::parse("{\"q\":\"x\"}"))}),
+      Message::tool_results(
+          {ToolResultContentPart("call-1", nlohmann::json::parse("{\"v\":1}"))}),
+  };
+
+  const auto req = builder.build_request_json(opts);
+  const auto& parts = req["request"]["contents"][1]["parts"];
+  bool saw_fn = false;
+  for (const auto& part : parts) {
+    if (!part.contains("functionCall")) continue;
+    saw_fn = true;
+    EXPECT_EQ(part["thoughtSignature"].get<std::string>(),
+              "skip_thought_signature_validator")
+        << part.dump();
+  }
+  EXPECT_TRUE(saw_fn) << req.dump();
+}
+
 TEST(AntigravityClientTest, EmbeddingsFailWithoutNetworkRequest) {
   auto client = create_client("dummy-token");
   const auto result = client.embeddings(

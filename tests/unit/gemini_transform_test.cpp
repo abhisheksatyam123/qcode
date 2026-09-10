@@ -374,6 +374,63 @@ TEST(GeminiTransformTest, NormalizeExtractsThoughtsTokenCount) {
   EXPECT_EQ(normalized["usage"]["reasoning_tokens"], 28);
 }
 
+TEST(GeminiTransformTest, ConvertDropsUnsignedReasoningThoughts) {
+  json request = parsed(R"({
+    "messages": [
+      {"role":"assistant","content":"ok","reasoning":"grok private thoughts"}
+    ]
+  })");
+  const auto gemini = convert_openai_to_gemini(request);
+  ASSERT_EQ(gemini["contents"].size(), 1u);
+  for (const auto& part : gemini["contents"][0]["parts"]) {
+    EXPECT_FALSE(part.value("thought", false))
+        << part.dump();
+  }
+}
+
+TEST(GeminiTransformTest, ConvertFunctionCallAlwaysHasThoughtSignature) {
+  json signed_req = parsed(R"({
+    "messages": [
+      {"role":"assistant","tool_calls":[{"id":"call-1","type":"function",
+       "thought_signature":"real-sig",
+       "function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]}
+    ]
+  })");
+  const auto signed_gemini = convert_openai_to_gemini(signed_req);
+  ASSERT_EQ(signed_gemini["contents"][0]["parts"][0]["thoughtSignature"],
+            "real-sig");
+
+  json unsigned_req = parsed(R"({
+    "messages": [
+      {"role":"assistant","tool_calls":[{"id":"call-1","type":"function",
+       "function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]}
+    ]
+  })");
+  const auto unsigned_gemini = convert_openai_to_gemini(unsigned_req);
+  ASSERT_EQ(unsigned_gemini["contents"][0]["parts"][0]["thoughtSignature"],
+            "skip_thought_signature_validator")
+      << unsigned_gemini.dump();
+}
+
+TEST(GeminiTransformTest, ConvertKeepsSignedReasoningThoughts) {
+  json request = parsed(R"({
+    "messages": [
+      {"role":"assistant","content":"ok","reasoning":"plan",
+       "reasoning_signature":"sig"}
+    ]
+  })");
+  const auto gemini = convert_openai_to_gemini(request);
+  bool saw_thought = false;
+  for (const auto& part : gemini["contents"][0]["parts"]) {
+    if (part.value("thought", false)) {
+      saw_thought = true;
+      EXPECT_EQ(part["thoughtSignature"], "sig");
+    }
+  }
+  EXPECT_TRUE(saw_thought);
+}
+
+
 }  // namespace
 }  // namespace gemini
 }  // namespace qcode

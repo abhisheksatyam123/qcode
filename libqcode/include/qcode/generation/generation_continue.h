@@ -25,14 +25,36 @@ inline bool looks_like_task_completion(std::string_view text) {
   const auto lower = ascii_lower(text);
   static constexpr std::string_view kDone[] = {
       "done.",
+      "done!",
+      "done:",
+      "done —",
+      "done -",
+      "\ndone",
+      "**done",
+      "## done",
+      "done this run",
       "all set",
       "task is complete",
+      "task complete",
+      "task completed",
       "i've updated",
       "i have updated",
       "i've implemented",
       "i have implemented",
+      "i've finished",
+      "i have finished",
       "changes made",
       "finished.",
+      "finished!",
+      "finished:",
+      "all tests green",
+      "tests green",
+      "tests pass",
+      "tests passed",
+      "summary:",
+      "summary of changes",
+      "here is a summary",
+      "here's a summary",
   };
   return std::ranges::any_of(kDone, [&](std::string_view phrase) {
     return lower.find(phrase) != std::string::npos;
@@ -42,22 +64,34 @@ inline bool looks_like_task_completion(std::string_view text) {
 inline bool looks_like_task_stall(std::string_view text) {
   const auto lower = ascii_lower(text);
   static constexpr std::string_view kStall[] = {
+      "need your call",
+      "need your confirmation",
+      "need your input",
+      "need your decision",
       "need your",
       "your call",
       "before i change",
-      "before i ",
+      "before i proceed",
+      "before i make",
       "now i need",
-      "one more",
-      "confirm",
+      "one more round",
+      "one more step",
+      "one more turn",
+      "please confirm",
+      "confirm whether",
+      "confirm if",
+      "to confirm, should i",
       "which option",
-      "should i",
+      "should i ",
+      "should we ",
       "need the exact",
       "need the css",
-      "need more",
+      "need more information",
+      "need more details",
+      "need more context",
       "i need the",
       "wait —",
       "wait -",
-      "need your call",
   };
   return std::ranges::any_of(kStall, [&](std::string_view phrase) {
     return lower.find(phrase) != std::string::npos;
@@ -69,8 +103,8 @@ inline bool looks_like_task_stall(std::string_view text) {
 inline bool should_auto_continue_build(bool plan_mode,
                                        int continue_count,
                                        std::string_view assistant_text) {
-  constexpr int kMaxContinues = 6;
-  constexpr int kMaxEmptyContinues = 3;
+  constexpr int kMaxContinues = 3;
+  constexpr int kMaxEmptyContinues = 2;
   if (plan_mode) return false;
   if (continue_count >= kMaxContinues) return false;
   if (assistant_text.empty()) return continue_count < kMaxEmptyContinues;

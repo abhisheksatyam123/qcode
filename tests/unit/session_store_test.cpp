@@ -86,6 +86,70 @@ TEST_F(SessionStoreTest, InvalidSessionIdRejected) {
     EXPECT_TRUE(is_valid_session_id("plain-id"));
 }
 
+
+TEST_F(SessionStoreTest, RoundTripToolTurnKeepsTextAndThoughtSignature) {
+    const std::string sid = create_new_session("google", "gemini-3.1-pro", "/ws");
+    qcode::Messages original;
+    original.push_back(qcode::Message::user("list files"));
+    qcode::ToolCallContentPart call{"call_1", "bash",
+                                    nlohmann::json{{"command", "ls"}},
+                                    "thought-sig"};
+    original.push_back(qcode::Message::assistant_with_tools("I'll list them", {call}));
+    original.push_back(qcode::Message::tool_results(
+        {{"call_1", nlohmann::json{{"output", "a.cpp"}}, false}}));
+    overwrite_session_history(sid, original);
+
+    auto parsed = load_session_history_parsed(sid);
+    ASSERT_EQ(parsed.size(), 3u);
+    EXPECT_EQ(parsed[0].get_text(), "list files");
+    EXPECT_EQ(parsed[1].get_text(), "I'll list them");
+    ASSERT_TRUE(parsed[1].has_tool_calls());
+    ASSERT_EQ(parsed[1].get_tool_calls().size(), 1u);
+    EXPECT_EQ(parsed[1].get_tool_calls()[0].id, "call_1");
+    EXPECT_EQ(parsed[1].get_tool_calls()[0].thought_signature, "thought-sig");
+    ASSERT_TRUE(parsed[2].has_tool_results());
+    EXPECT_EQ(parsed[2].get_tool_results()[0].tool_call_id, "call_1");
+}
+
+TEST_F(SessionStoreTest, MergesParallelToolCallsIntoOneAssistantTurn) {
+    const std::string sid = create_new_session("opencode", "muse-spark", "/ws");
+    qcode::Messages original;
+    original.push_back(qcode::Message::user("do both"));
+    original.push_back(qcode::Message::assistant_with_tools(
+        "", {{"c1", "bash", nlohmann::json{{"command", "ls"}}}}));
+    original.push_back(qcode::Message::assistant_with_tools(
+        "", {{"c2", "bash", nlohmann::json{{"command", "pwd"}}}}));
+    overwrite_session_history(sid, original);
+    auto parsed = load_session_history_parsed(sid);
+    ASSERT_EQ(parsed.size(), 2u);
+    ASSERT_TRUE(parsed[1].has_tool_calls());
+    EXPECT_EQ(parsed[1].get_tool_calls().size(), 2u);
+}
+
+TEST_F(SessionStoreTest, SubagentSessionsAreFilteredFromInteractiveLists) {
+    const std::string sid1 = create_new_session("prov", "model", "/ws", "Main Chat");
+    ensure_session_row("ses_subagent_123", "Subagent Task", "prov", "model", "/ws");
+
+    // get_last_active_session should ignore subagents
+    EXPECT_EQ(get_last_active_session(), sid1);
+
+    // list_sessions should exclude subagents by default
+    auto primary = list_sessions_full(false);
+    ASSERT_EQ(primary.size(), 1u);
+    EXPECT_EQ(primary[0].id, sid1);
+    EXPECT_EQ(primary[0].title, "Main Chat");
+
+    // list_sessions(true) includes subagents
+    auto all = list_sessions_full(true);
+    ASSERT_EQ(all.size(), 2u);
+
+    // subagent message history is still loadable
+    save_message("ses_subagent_123", "Assistant", "done");
+    auto msgs = load_session_messages("ses_subagent_123");
+    ASSERT_EQ(msgs.size(), 1u);
+    EXPECT_EQ(msgs[0].second, "done");
+}
+
 }  // namespace
 }  // namespace session
 }  // namespace qcode

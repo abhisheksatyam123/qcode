@@ -60,10 +60,12 @@ nlohmann::json error_occurred_to_json(const ErrorOccurred::Payload& p) {
 nlohmann::json token_usage_to_json(const TokenUsageUpdated::Payload& p) {
     return {
         {"type", TokenUsageUpdated::type},
+        {"session_id", p.session_id},
         {"prompt_tokens", p.prompt_tokens},
         {"completion_tokens", p.completion_tokens},
         {"total_tokens", p.total_tokens},
-        {"cached_prompt_tokens", p.cached_prompt_tokens}
+        {"cached_prompt_tokens", p.cached_prompt_tokens},
+        {"reasoning_tokens", p.reasoning_tokens}
     };
 }
 

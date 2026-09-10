@@ -5,6 +5,7 @@
 #include <qcode/core/generate_options.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/tool.h>
+#include <qcode/core/utf8.h>
 #include <qcode/tools/bash_tool.h>
 #include <qcode/tools/task_tool.h>
 
@@ -17,6 +18,22 @@
 namespace qcode {
 namespace cursor {
 namespace {
+
+static bool is_clean_id(const std::string& s) {
+  if (s.empty() || s.size() > 128) return false;
+  for (unsigned char c : s) {
+    if (!std::isalnum(c) && c != '-' && c != '_' && c != ':') return false;
+  }
+  return true;
+}
+
+static bool is_clean_text(const std::string& s) {
+  if (s.empty() || s.size() > 500) return false;
+  for (unsigned char c : s) {
+    if (c < 32 && c != '\t' && c != '\n' && c != '\r') return false;
+  }
+  return true;
+}
 
 // ExecServerMessage oneof -> ExecClientMessage oneof. Pi args are +1.
 uint32_t result_field_for(uint32_t args_field) {
@@ -145,6 +162,8 @@ CursorExecReply finish(CursorExecReply reply, const CursorExecRequest& req,
     reply.tool_name = CursorExec::tool_name_for_field(req.args_field);
   }
   if (reply.tool_call_id.empty()) reply.tool_call_id = req.exec_id;
+  utils::sanitize_json_strings(reply.arguments);
+  utils::sanitize_json_strings(reply.result);
   return reply;
 }
 
@@ -165,17 +184,30 @@ CursorExecReply handle_shell(const CursorExecRequest& req,
                              std::shared_ptr<std::atomic<bool>> abort_flag,
                              bool stream) {
   const auto fields = proto::parse_fields(req.args);
-  const auto command = proto::field_string(fields, 1);
-  auto cwd = proto::field_string(fields, 2);
+  const auto command = utils::sanitize_utf8(proto::field_string(fields, 1));
+  auto cwd = utils::sanitize_utf8(proto::field_string(fields, 2));
   if (cwd.empty()) cwd = workspace;
   // Builds (cmake/ninja) routinely exceed 2 minutes. A 120s default used to
   // SIGTERM them (exit 15) and then curl killed RunSSE at 300s.
   constexpr int kDefaultShellTimeoutMs = 15 * 60 * 1000;
   int timeout_ms = static_cast<int>(proto::field_varint(fields, 3, 0));
+  if (timeout_ms <= 0) {
+    timeout_ms = static_cast<int>(proto::field_varint(fields, 14, 0));
+  }
   if (timeout_ms > 0 && timeout_ms < 1000) timeout_ms *= 1000;
   if (timeout_ms < kDefaultShellTimeoutMs) timeout_ms = kDefaultShellTimeoutMs;
-  const auto tool_call_id = proto::field_string(fields, 4);
-  const auto description = proto::field_string(fields, 15);
+  auto tool_call_id = proto::field_string(fields, 4);
+  if (tool_call_id.empty() || !is_clean_id(tool_call_id)) {
+    tool_call_id = proto::field_string(fields, 15);
+    if (!is_clean_id(tool_call_id)) tool_call_id = req.exec_id;
+  }
+  tool_call_id = utils::sanitize_utf8(tool_call_id);
+  auto description = proto::field_string(fields, 15);
+  if (description.empty() || !is_clean_text(description)) {
+    description = proto::field_string(fields, 7);
+    if (!is_clean_text(description)) description.clear();
+  }
+  description = utils::sanitize_utf8(description);
 
   CursorExecReply reply;
   reply.tool_name = stream ? "bash" : "bash";
@@ -346,6 +378,14 @@ JsonValue flatten_proto_args(const std::string& data, int depth = 0) {
   if (depth > 4 || data.empty()) return out;
   const auto fields = proto::parse_fields(data);
   if (fields.empty()) return out;
+  auto store_string = [&](const std::string& key, const std::string& bytes) {
+    if (out.contains(key) && out[key].is_string()) {
+      out[key] = out[key].get<std::string>() + bytes;
+    } else if (!out.contains(key)) {
+      out[key] = bytes;
+    }
+  };
+
   for (const auto& f : fields) {
     const std::string key = std::to_string(f.num);
     if (f.wire == 2) {
@@ -356,17 +396,25 @@ JsonValue flatten_proto_args(const std::string& data, int depth = 0) {
         }
         continue;
       }
+      // English/tool prompt text is valid protobuf-looking bytes; do not
+      // recurse or we shred it into numbered leftovers (field 10 cut at 69).
+      const bool prose =
+          is_printable_text(f.bytes) &&
+          (f.bytes.find(' ') != std::string::npos ||
+           f.bytes.find('\n') != std::string::npos);
+      if (prose) {
+        store_string(key, f.bytes);
+        continue;
+      }
       JsonValue inner = flatten_proto_args(f.bytes, depth + 1);
       if (!inner.empty()) {
         for (auto it = inner.begin(); it != inner.end(); ++it) {
           if (!out.contains(it.key())) out[it.key()] = it.value();
         }
-        if (is_printable_text(f.bytes) && !out.contains(key)) {
-          out[key] = f.bytes;
-        }
+        if (is_printable_text(f.bytes)) store_string(key, f.bytes);
         continue;
       }
-      if (is_printable_text(f.bytes)) out[key] = f.bytes;
+      if (is_printable_text(f.bytes)) store_string(key, f.bytes);
     } else if (f.wire == 0) {
       out[key] = f.varint;
     }
@@ -402,38 +450,42 @@ void promote_task_fields(JsonValue& args) {
     }
   }
   if ((!args.contains("prompt") || args.value("prompt", "").empty()) &&
+      (args.contains("subagent_type") || args.contains("agent") || args.contains("op")) &&
       args.contains("description") && args["description"].is_string()) {
     args["prompt"] = args["description"];
   }
+  // Only protobuf boolean true (1). Values like 68/115 are leftover lengths
+  // from shredded Task prompts, not a background flag.
   if (args.contains("4") && args["4"].is_number_unsigned() &&
-      args["4"].get<uint64_t>() > 0 && !args.contains("run_in_background")) {
+      args["4"].get<uint64_t>() == 1 && !args.contains("run_in_background") &&
+      !args.contains("background")) {
     args["run_in_background"] = true;
   }
 }
 
 JsonValue parse_task_args_from_exec(const CursorExecRequest& req) {
+  if (req.args_field == 11) {
+    const auto fields = proto::parse_fields(req.args);
+    const std::string mcp_name = proto::field_string(fields, 1);
+    if (mcp_name != "task" && mcp_name != "Task") {
+      return JsonValue();
+    }
+    const std::string mcp_args = proto::field_string(fields, 2);
+    if (!mcp_args.empty()) {
+      JsonValue from_mcp = try_parse_json_object(mcp_args);
+      if (from_mcp.is_null()) {
+        from_mcp = flatten_proto_args(mcp_args);
+        promote_task_fields(from_mcp);
+      }
+      return from_mcp;
+    }
+    return JsonValue();
+  }
+
   JsonValue parsed = try_parse_json_object(req.args);
   if (!parsed.is_null() && looks_like_task_args(parsed)) return parsed;
 
   const auto fields = proto::parse_fields(req.args);
-  std::string mcp_name = proto::field_string(fields, 1);
-  std::string mcp_args = proto::field_string(fields, 2);
-  if (!mcp_args.empty()) {
-    JsonValue from_mcp = try_parse_json_object(mcp_args);
-    if (from_mcp.is_null()) {
-      from_mcp = flatten_proto_args(mcp_args);
-      promote_task_fields(from_mcp);
-    }
-    const bool named_task = mcp_name == "task" || mcp_name == "Task";
-    if (!from_mcp.is_null() && from_mcp.is_object() &&
-        (named_task || looks_like_task_args(from_mcp))) {
-      if (named_task && !looks_like_task_args(from_mcp) &&
-          from_mcp.contains("1")) {
-        promote_task_fields(from_mcp);
-      }
-      if (named_task || looks_like_task_args(from_mcp)) return from_mcp;
-    }
-  }
 
   for (const auto& f : fields) {
     if (f.wire != 2 || f.bytes.empty()) continue;
@@ -458,6 +510,7 @@ bool maybe_task_exec_field(uint32_t args_field) {
     case 9:
     case 10:
     case 14:
+    case 16:
     case 20:
     case 27:
     case 29:
@@ -564,6 +617,7 @@ const char* CursorExec::tool_name_for_field(uint32_t args_field) {
   switch (args_field) {
     case 2:
     case 14:
+    case 16:
     case 46:
     case 52:
       return "bash";
@@ -626,6 +680,7 @@ CursorExecReply CursorExec::handle(
   }
   switch (request.args_field) {
     case 2:
+    case 16:
     case 52:
       return handle_shell(request, workspace, abort_flag, /*stream=*/false);
     case 14:

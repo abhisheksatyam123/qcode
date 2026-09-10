@@ -39,7 +39,7 @@ add_executable(qcode_tests
     unit/workspace_fs_test.cpp
     unit/study_assistant_test.cpp
     unit/commands_test.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/json_codec.cpp
+    ${CMAKE_SOURCE_DIR}/apps/server/src/bus_json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/workspace_fs.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/http_utils.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/terminal_pty.cpp

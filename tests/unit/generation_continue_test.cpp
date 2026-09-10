@@ -22,9 +22,22 @@ TEST(GenerationContinueTest, AutoContinuesBuildStallsButNotPlanOrDone) {
   EXPECT_FALSE(should_auto_continue_build(
       true, 0, "Now I need the CSS values + the marked parser rules."));
   EXPECT_FALSE(should_auto_continue_build(false, 0, "Done. Header is updated."));
+  EXPECT_FALSE(should_auto_continue_build(
+      false, 0, "Theme propagation done — 7 static tests green, new chrome now follows /theme."));
+  EXPECT_FALSE(should_auto_continue_build(
+      false, 0, "Done this run:\n- updated styles\n- all tests green"));
   EXPECT_TRUE(should_auto_continue_build(false, 0, ""));
   EXPECT_FALSE(should_auto_continue_build(false, 3, ""));
   EXPECT_FALSE(should_auto_continue_build(false, 6, "one more round"));
+}
+
+TEST(GenerationContinueTest, DoesNotFalselyStallOnNormalExplanations) {
+  EXPECT_FALSE(looks_like_task_stall(
+      "Before I explain the implementation, here is what changed."));
+  EXPECT_FALSE(looks_like_task_stall(
+      "Tests confirm that all edge cases pass."));
+  EXPECT_FALSE(looks_like_task_stall(
+      "I added one more unit test for coverage."));
 }
 
 }  // namespace

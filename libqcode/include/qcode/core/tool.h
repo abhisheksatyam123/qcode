@@ -36,6 +36,8 @@ struct ToolExecutionContext {
   // result. Args: {prompt, subagent_type, description...}; returns JSON with
   // "output" / "error".
   SubagentRunner subagent_runner{nullptr};
+  // When false, bash refuses workspace-mutating commands (explore subagents).
+  bool can_edit{true};
 };
 
 /// Tool execution function signature

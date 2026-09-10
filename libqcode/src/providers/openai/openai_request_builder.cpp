@@ -139,6 +139,9 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
               {"function",
                {{"name", tool_call.tool_name},
                 {"arguments", tool_call.arguments.dump()}}}};
+          // normalize_messages already drops signatures the target family
+          // cannot replay. Encoding only when schema==google hid them from
+          // Antigravity (inner builder stays openai, then convert_openai_to_gemini).
           if (!tool_call.thought_signature.empty()) {
             encoded_call["thought_signature"] =
                 tool_call.thought_signature;

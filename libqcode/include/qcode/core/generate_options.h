@@ -48,6 +48,7 @@ struct GenerateOptions {
   // with "output" (final subagent text) or "error".
   SubagentRunner subagent_runner;
   std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
+  bool can_edit{true};
   // When true, ServerSideDuplex streams (Cursor/Grok) yield so a queued
   // follow-up can start without the user having to Esc-abort the turn.
   std::function<bool()> has_queued_work;

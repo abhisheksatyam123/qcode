@@ -266,8 +266,8 @@ svr.Get("/session/([^/]+)/stats", [](const httplib::Request& req, httplib::Respo
         std::lock_guard<std::mutex> lock(g_sessions_mutex);
         auto it = g_sessions.find(sid);
         if (it != g_sessions.end()) {
-            live_tool_calls = it->second->ctx.tool_call_count;
-            live_tool_time_ms = it->second->ctx.total_tool_time_ms;
+            live_tool_calls = it->second->tool_call_count.load();
+            live_tool_time_ms = it->second->total_tool_time_ms.load();
         }
     }
     auto st = qcode::session::get_session_stats(sid, live_tool_calls, live_tool_time_ms,

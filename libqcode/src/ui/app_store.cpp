@@ -413,13 +413,34 @@ void AppStore::remove_callback(uint64_t id) {
 void AppStore::wire() {
     using namespace contract;
     subs_.push_back(bus_.subscribe<MessageDelta>([this](const MessageDelta::Payload& p) {
-        if (!is_live_session(p.session_id)) return;
-        append_assistant_chunk(p.text);
+        if (!p.text.empty() && !p.session_id.empty()) {
+            std::lock_guard<std::mutex> lock(session_texts_mutex_);
+            session_assistant_texts_[p.session_id] += p.text;
+        }
+        if (is_live_session(p.session_id)) {
+            append_assistant_chunk(p.text);
+        }
         if (p.done) {
-            set_generating(false);
-            clear_retry();
-            const auto final_text = latest_assistant_text();
-            qcode::session::save_message(p.session_id, "Assistant", final_text);
+            std::string final_text;
+            if (!p.session_id.empty()) {
+                std::lock_guard<std::mutex> lock(session_texts_mutex_);
+                auto it = session_assistant_texts_.find(p.session_id);
+                if (it != session_assistant_texts_.end()) {
+                    final_text = std::move(it->second);
+                    session_assistant_texts_.erase(it);
+                }
+            }
+            if (final_text.empty() && is_live_session(p.session_id)) {
+                final_text = latest_assistant_text();
+            }
+            if (!final_text.empty()) {
+                qcode::session::save_message(p.session_id.empty() ? session_id() : p.session_id,
+                                            "Assistant", final_text);
+            }
+            if (is_live_session(p.session_id)) {
+                set_generating(false);
+                clear_retry();
+            }
         }
     }));
     subs_.push_back(bus_.subscribe<ReasoningDelta>([this](const ReasoningDelta::Payload& p) {
@@ -520,6 +541,15 @@ void AppStore::wire() {
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
+        std::string sid = p.session_id.empty() ? session_id() : p.session_id;
+        // Structured JSON so session reload can rebuild pretty tool blocks.
+        nlohmann::json call_json = {
+            {"id", p.tool_call_id},
+            {"name", p.tool_name},
+            {"arguments", p.arguments},
+        };
+        qcode::session::save_message(sid, "ToolCall", call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+
         if (!is_live_session(p.session_id)) return;
         // Embed the unique tool_call_id so ToolCallCompleted can pair the result
         // with the exact started entry. Matching by tool_name alone is fragile
@@ -527,23 +557,11 @@ void AppStore::wire() {
         qcode::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
         state_.messages_history->emplace_back(
             qcode::Message::assistant_with_tools("", {tc_part}));
-        // Structured JSON so session reload can rebuild pretty tool blocks.
-        nlohmann::json call_json = {
-            {"id", p.tool_call_id},
-            {"name", p.tool_name},
-            {"arguments", p.arguments},
-        };
-        qcode::session::save_message(p.session_id, "ToolCall", call_json.dump());
         notify();
     }));
 
     subs_.push_back(bus_.subscribe<ToolCallCompleted>([this](const ToolCallCompleted::Payload& p) {
-        if (!is_live_session(p.session_id)) return;
-        state_.messages_history->emplace_back(
-            qcode::Message::tool_results(
-                {{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
-        ++*state_.tool_call_count;
-        *state_.total_tool_time_ms += p.duration_ms;
+        std::string sid = p.session_id.empty() ? session_id() : p.session_id;
         nlohmann::json result_json = {
             {"tool_call_id", p.tool_call_id},
             {"tool_name", p.tool_name},
@@ -551,7 +569,14 @@ void AppStore::wire() {
             {"is_error", p.is_error},
             {"duration_ms", p.duration_ms},
         };
-        qcode::session::save_message(p.session_id, "ToolResult", result_json.dump());
+        qcode::session::save_message(sid, "ToolResult", result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+
+        if (!is_live_session(p.session_id)) return;
+        state_.messages_history->emplace_back(
+            qcode::Message::tool_results(
+                {{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
+        ++*state_.tool_call_count;
+        *state_.total_tool_time_ms += p.duration_ms;
         notify();
     }));
 
@@ -601,7 +626,12 @@ void AppStore::wire() {
                 mark_retry_available(*state_.last_user_prompt);
             }
             std::string chat = msg;
-            if (!chat.starts_with("Error:") && !chat.starts_with("Exception:")) {
+            while (chat.starts_with("Error: Error")) {
+                chat.erase(0, 7);
+            }
+            if (chat == "Error" || chat == "error" || chat.empty()) {
+                chat = "Error: Upstream request failed";
+            } else if (!chat.starts_with("Error:") && !chat.starts_with("Exception:")) {
                 chat = "Error: " + chat;
             }
             append_chat_message("System", chat);
@@ -621,8 +651,9 @@ void AppStore::wire() {
         // Cache-hit + thinking-token mirrors for the header (latest turn).
         *state_.last_cached_prompt_tokens = p.cached_prompt_tokens;
         *state_.last_reasoning_tokens = p.reasoning_tokens;
+        std::string sid = p.session_id.empty() ? session_id() : p.session_id;
         qcode::session::persist_session_token_stats(
-            session_id(), p.prompt_tokens, p.completion_tokens, p.total_tokens);
+            sid, p.prompt_tokens, p.completion_tokens, p.total_tokens);
         // Calibration anchor: remember the actual prompt token count so the
         // next heuristic estimate can be corrected against ground truth.
         *state_.last_actual_prompt_tokens = p.prompt_tokens;

@@ -1,5 +1,6 @@
 #include <qcode/transform/provider_transform.h>
 #include <qcode/core/logger.h>
+#include <qcode/core/utf8.h>
 #include <qcode/providers/zen_route.h>
 
 #include <algorithm>
@@ -239,6 +240,10 @@ std::string chat_wire_model_id(ChatTransport transport, std::string model_id) {
 
 std::string cursor_family_id(std::string_view model_id) {
   const std::string id = to_lower(model_id);
+  if (id == "auto" || id == "default" || id == "cursor-auto" ||
+      id == "cursor-default") {
+    return "auto";
+  }
   if (id.find("grok-4.6") != std::string::npos ||
       id.find("grok-4-6") != std::string::npos) {
     // Live GetUsableModels lists only cursor- prefixed Grok SKUs
@@ -278,6 +283,11 @@ std::string cursor_wire_model_id(std::string_view model_id,
   const std::string family = cursor_family_id(model_id);
   const std::string base = family.empty() ? cursor_picker_id(model_id)
                                           : family;
+
+  if (base == "auto" || base == "default" || base == "cursor-auto" ||
+      base == "cursor-default") {
+    return "default";
+  }
 
   std::string level = effort.value_or("");
   if (level == "off") level.clear();
@@ -390,28 +400,6 @@ std::optional<int> top_k(const Model& model) {
 
 static const std::set<std::string> UNSUPPORTED_ROLES = {"tool"};
 
-// Mirrors upstream sanitizeSurrogates: lone surrogates \uD800-\uDBFF -> \uFFFD.
-// In UTF-8, surrogates appear as overlong 3-byte sequences ED A0 80 - ED BF BF;
-// replace those bytes with the UTF-8 replacement character EF BF BD.
-static std::string sanitize_surrogates(std::string s) {
-  std::string out;
-  out.reserve(s.size());
-  for (size_t i = 0; i < s.size();) {
-    unsigned char c = static_cast<unsigned char>(s[i]);
-    // Check for 3-byte surrogate range ED A0 80 .. ED BF BF
-    if (c == 0xED && i + 2 < s.size()) {
-      unsigned char c1 = static_cast<unsigned char>(s[i + 1]);
-      unsigned char c2 = static_cast<unsigned char>(s[i + 2]);
-      if (c1 >= 0xA0 && c1 <= 0xBF && (c2 & 0xC0) == 0x80) {
-        out += "\xEF\xBF\xBD";
-        i += 3;
-        continue;
-      }
-    }
-    out.push_back(s[i++]);
-  }
-  return out;
-}
 
 static std::string hex_u64(uint64_t v) {
   static const char kHex[] = "0123456789abcdef";
@@ -460,20 +448,19 @@ static bool is_empty_text(const std::string& t) {
 }
 
 // Tool call arguments and tool results are often JSON objects (bash output,
-// file reads). nlohmann throws type_error.302 if those are passed to a
-// std::string helper — sanitize by dumping, then re-parse.
+// file reads). Recursively sanitize strings in place to replace any invalid UTF-8
+// or lone surrogates, preventing type_error.316 and type_error.302.
 static JsonValue sanitize_json_value(JsonValue value) {
-  if (value.is_string()) {
-    return sanitize_surrogates(value.get<std::string>());
-  }
-  if (value.is_object() || value.is_array()) {
-    std::string dumped = value.dump();
-    dumped = sanitize_surrogates(dumped);
-    try {
-      return nlohmann::json::parse(dumped);
-    } catch (...) {
+  try {
+    if (value.is_string()) {
+      return utils::sanitize_utf8(value.get<std::string>());
+    }
+    if (value.is_object() || value.is_array()) {
+      utils::sanitize_json_strings(value);
       return value;
     }
+  } catch (...) {
+    return value;
   }
   return value;
 }
@@ -484,37 +471,66 @@ static bool is_empty_json_text(const JsonValue& value) {
   return false;
 }
 
-Messages normalize_messages(const Messages& messages, const Model& model) {
-  Messages result;
+static bool is_claude_family(const Model& model) {
   const std::string prov = to_lower(model.provider);
   const std::string mid = to_lower(model.name);
-  const bool is_claude = prov == "anthropic" || contains(mid, "claude");
-  const bool is_bedrock = prov == "bedrock" || prov == "amazon" || contains(mid, "bedrock");
+  return prov == "anthropic" || prov == "bedrock" || prov == "amazon" ||
+         contains(mid, "claude") || contains(mid, "bedrock");
+}
+
+static bool is_gemini_family(const Model& model) {
+  const std::string prov = to_lower(model.provider);
+  const std::string mid = to_lower(model.name);
+  return prov == "google" || prov == "gemini" || prov == "antigravity" ||
+         contains(mid, "gemini");
+}
+
+static bool keep_thought_signature(const Model& model) {
+  return is_gemini_family(model);
+}
+
+// Reasoning is provider-specific ciphertext or a thought dump. Replaying it on
+// a different family 400s (Gemini thought without thoughtSignature, Claude
+// thinking without signature, OpenAI-compat rejecting Gemini blobs).
+static bool keep_reasoning_part(const Model& model, const ReasoningContentPart& rp) {
+  if (is_empty_text(rp.text) && rp.signature.empty()) return false;
+  if (is_claude_family(model) || is_gemini_family(model)) {
+    return !rp.signature.empty();
+  }
+  // Muse Spark / Ox Alpha / Grok interleaved: unsigned text only.
+  return rp.signature.empty();
+}
+
+Messages normalize_messages(const Messages& messages, const Model& model) {
+  Messages result;
+  const bool claude_like = is_claude_family(model);
+  const bool keep_sig = keep_thought_signature(model);
 
   for (const auto& msg : messages) {
     MessageContent filtered_content;
     for (const auto& part : msg.content) {
       if (std::holds_alternative<TextContentPart>(part)) {
         auto tp = std::get<TextContentPart>(part);
-        tp.text = sanitize_surrogates(tp.text);
+        tp.text = utils::sanitize_utf8(tp.text);
         // Anthropic/Bedrock empty-filter: drop empty text parts
-        if ((is_claude || is_bedrock) && is_empty_text(tp.text)) continue;
+        if (claude_like && is_empty_text(tp.text)) continue;
         filtered_content.push_back(std::move(tp));
       } else if (std::holds_alternative<ToolCallContentPart>(part)) {
         auto tc = std::get<ToolCallContentPart>(part);
         tc.id = canonicalize_tool_call_id(tc.id);
         tc.arguments = sanitize_json_value(std::move(tc.arguments));
+        if (!keep_sig) tc.thought_signature.clear();
         filtered_content.push_back(std::move(tc));
       } else if (std::holds_alternative<ToolResultContentPart>(part)) {
         auto tr = std::get<ToolResultContentPart>(part);
         tr.tool_call_id = canonicalize_tool_call_id(tr.tool_call_id);
         tr.result = sanitize_json_value(std::move(tr.result));
-        if ((is_claude || is_bedrock) && is_empty_json_text(tr.result)) continue;
+        if (claude_like && is_empty_json_text(tr.result)) continue;
         filtered_content.push_back(std::move(tr));
       } else if (std::holds_alternative<ReasoningContentPart>(part)) {
         auto rp = std::get<ReasoningContentPart>(part);
-        rp.text = sanitize_surrogates(rp.text);
-        if ((is_claude || is_bedrock) && is_empty_text(rp.text) && rp.signature.empty()) continue;
+        rp.text = utils::sanitize_utf8(rp.text);
+        if (!keep_reasoning_part(model, rp)) continue;
         filtered_content.push_back(std::move(rp));
       }
     }

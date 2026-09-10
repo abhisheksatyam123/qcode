@@ -1,7 +1,9 @@
 #include <qcode/tools/task_target.h>
+#include <qcode/transform/provider_transform.h>
 
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 
 namespace qcode {
 namespace {
@@ -30,7 +32,40 @@ const ModelInfo* find_model(const ProviderInfo& provider, std::string_view query
   for (const auto& m : provider.models) {
     if (m.id == query || m.name == query) return &m;
   }
+  // Cursor wire slugs encode effort (`cursor-grok-4.6-medium`). Catalog ids
+  // are picker ids (`cursor-grok-4.6`) after remap_cursor_picker_ids.
+  const std::string picked = ProviderTransform::cursor_picker_id(query);
+  if (picked != query) {
+    for (const auto& m : provider.models) {
+      if (m.id == picked || m.name == picked) return &m;
+    }
+  }
+  // Older Cursor wire slugs (cursor-grok-4.5-high) are not in the live catalog.
+  // Bind to the current Grok picker id on this provider instead of failing spawn.
+  const std::string q = std::string(query);
+  if (q.rfind("cursor-grok", 0) == 0 || picked.rfind("cursor-grok", 0) == 0) {
+    for (const auto& m : provider.models) {
+      if (m.id.rfind("cursor-grok", 0) == 0) return &m;
+    }
+  }
   return nullptr;
+}
+
+std::string first_catalog_combo(const std::vector<ProviderInfo>& providers) {
+  for (const auto& p : providers) {
+    for (const auto& m : p.models) {
+      if (!m.id.empty()) return p.id + ":" + m.id;
+    }
+  }
+  return "openrouter:deepseek/foo";
+}
+
+std::string with_catalog_hint(std::string message,
+                              const std::vector<ProviderInfo>& providers) {
+  const std::string catalog = format_provider_catalog_for_error(providers);
+  if (catalog.empty()) return message;
+  if (!message.empty() && message.back() != '\n') message.push_back('\n');
+  return message + catalog;
 }
 
 struct Spec {
@@ -76,8 +111,10 @@ SubagentTarget bind_spec(const Spec& spec,
   SubagentTarget out;
   out.provider = find_provider(providers, spec.provider);
   if (!spec.provider.empty() && !out.provider) {
-    out.error = "Unknown provider '" + spec.provider +
-                "' (use provider:model from the catalog)";
+    out.error = with_catalog_hint(
+        "Unknown provider '" + spec.provider +
+            "' (use provider:model from opencode.json)",
+        providers);
     return out;
   }
 
@@ -85,7 +122,8 @@ SubagentTarget bind_spec(const Spec& spec,
     out.provider_id = out.provider->id;
     if (spec.model.empty()) {
       if (out.provider->models.empty()) {
-        out.error = "Provider '" + out.provider_id + "' has no models";
+        out.error = with_catalog_hint(
+            "Provider '" + out.provider_id + "' has no models", providers);
         return out;
       }
       out.model_info = &out.provider->models.front();
@@ -107,8 +145,10 @@ SubagentTarget bind_spec(const Spec& spec,
         return out;
       }
     }
-    out.error = "Unknown model '" + spec.model +
-                "' (pass provider:model, e.g. openrouter:deepseek/foo)";
+    out.error = with_catalog_hint(
+        "Unknown model '" + spec.model +
+            "' (pass provider:model, e.g. " + first_catalog_combo(providers) + ")",
+        providers);
     return out;
   }
 

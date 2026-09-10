@@ -8,7 +8,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://raw.githubusercontent.com/ryanoasis/nerd-fonts/master/css/nerd-fonts-generated.min.css">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/styles/github-dark.min.css">
@@ -47,6 +46,9 @@
         </button>
         <button class="sidebar-nav-btn" id="tab-stats-btn" type="button">
           <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span> Session Stats
+        </button>
+        <button class="sidebar-nav-btn" id="tab-sessions-btn" type="button">
+          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span> Sessions
         </button>
       </nav>
     </div>
@@ -102,6 +104,9 @@
         <div class="header-session-title" id="header-session-title">No session</div>
         <div class="header-session-workspace" id="header-session-workspace"></div>
       </div>
+      <button type="button" id="parent-back-btn" class="parent-back-btn hidden" title="Return to parent session">← parent</button>
+      <span id="subagent-badge" class="subagent-badge hidden">subagent</span>
+      <button type="button" id="agent-mode-btn" class="agent-mode-btn" title="Toggle plan / orchestrator">Orchestrator</button>
       <div class="header-actions">
         <button class="layout-toggle-btn" id="layout-toggle-btn" title="Toggle Split View">
           <span class="layout-icon"><svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg></span> Split View
@@ -122,7 +127,8 @@
           <div class="input-wrapper">
             <textarea id="prompt-input" placeholder="Ask QCode anything…" rows="1" aria-label="Message QCode"></textarea>
             <div class="input-actions">
-              <span class="input-info"><kbd>Esc</kbd> to pause &middot; <kbd>Shift</kbd>+<kbd>Enter</kbd> newline</span>
+              <span class="input-info"><kbd>Esc</kbd> pause &middot; <kbd>Ctrl</kbd>+<kbd>P</kbd> commands &middot; <kbd>Shift</kbd>+<kbd>Enter</kbd> newline</span>
+              <button id="retry-btn" class="retry-btn" type="button" aria-label="Retry last prompt" title="Retry last prompt (/retry)">Retry</button>
               <button id="pause-btn" class="pause-btn hidden" type="button" aria-label="Pause generation" title="Pause (Esc)">
                 <span class="pause-icon"><svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span><span>Pause</span>
               </button>
@@ -263,6 +269,16 @@
           <button id="stats-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
         </div>
         <div id="stats-content"></div>
+      </div>
+      <div id="sessions-panel" class="side-tab-panel hidden">
+        <div class="side-tab-header">
+          <span>Delegated child sessions</span>
+          <div class="sessions-header-actions">
+            <input type="text" id="sessions-filter-input" class="sessions-filter-input" placeholder="Filter child sessions…" aria-label="Filter child sessions">
+            <button id="sessions-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+          </div>
+        </div>
+        <div id="sessions-content"></div>
       </div>
     </div>
   </div>

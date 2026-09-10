@@ -131,6 +131,7 @@ struct TokenUsageUpdated {
         // Thinking/reasoning output tokens this turn
         // (completion_tokens_details.reasoning_tokens) when reported.
         int reasoning_tokens = 0;
+        std::string session_id = "";
     };
 };
 

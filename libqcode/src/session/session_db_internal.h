@@ -17,8 +17,12 @@ namespace session {
 inline std::string get_db_path() {
     if (const char* p = std::getenv("QCODE_DB_PATH")) return p;
     if (const char* p = std::getenv("OPENCODE_DB_PATH")) return p;
+#if defined(QCODE_TESTING) && QCODE_TESTING
+    return "/tmp/qcode_test_fallback.db";
+#else
     const char* home = std::getenv("HOME");
     return home ? std::string(home) + "/.qcode.db" : ".qcode.db";
+#endif
 }
 
 inline sqlite3* open_database(std::string& out_path) {

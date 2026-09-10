@@ -492,6 +492,15 @@ TEST(CursorProviderTest, RemapsAndResolvesCursorModelSlugs) {
   EXPECT_EQ(ProviderTransform::cursor_wire_model_id("composer-2.5", "high"), "composer-2.5-high");
 }
 
+TEST(CursorProviderTest, RemapsAndResolvesAutoAndDefaultModelSlugs) {
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("auto"), "auto");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("default"), "auto");
+  EXPECT_EQ(ProviderTransform::cursor_picker_id("cursor-auto"), "auto");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("auto", "medium"), "default");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("default", "high"), "default");
+  EXPECT_EQ(ProviderTransform::cursor_wire_model_id("auto", std::nullopt), "default");
+}
+
 TEST(CursorProviderTest, ExecGrepIsDisabled) {
   CursorExecRequest req;
   req.id = 2;
@@ -602,7 +611,7 @@ TEST(CursorProviderTest, ExecUnknownFieldProtobufTaskDoesNotReturnEmptyError) {
   CursorExecRequest req;
   req.id = 11;
   req.exec_id = "task-unknown";
-  req.args_field = 16;  // not a mapped bash/file tool
+  req.args_field = 99;  // unknown task oneof (field 16 is now recognized as bash)
   req.args = proto::bytes_field(1, "cmake") +
              proto::bytes_field(2, "list cmake targets") +
              proto::bytes_field(3, "explore");
@@ -613,6 +622,23 @@ TEST(CursorProviderTest, ExecUnknownFieldProtobufTaskDoesNotReturnEmptyError) {
   EXPECT_EQ(reply.tool_name, "task");
   EXPECT_NE(reply.result.value("output", "").find("libqcode"),
             std::string::npos);
+}
+
+TEST(CursorProviderTest, ExecField16RunsBashShellInsteadOfTask) {
+  CursorExecRequest req;
+  req.id = 15;
+  req.exec_id = "terminal-cmd";
+  req.args_field = 16;
+  req.args = proto::bytes_field(1, "echo cursor_field_16_bash_ok") +
+             proto::bytes_field(2, "/tmp") +
+             proto::bytes_field(7, "run echo");
+
+  const auto reply = CursorExec::handle(req, "/tmp");
+  EXPECT_FALSE(reply.is_error);
+  EXPECT_EQ(reply.tool_name, "bash");
+  EXPECT_NE(reply.result.value("output", "").find("cursor_field_16_bash_ok"),
+            std::string::npos);
+  EXPECT_EQ(reply.result.value("exit", -1), 0);
 }
 
 TEST(CursorProviderTest, ExecTaskEmptyRunnerErrorIsNonEmpty) {
@@ -635,6 +661,45 @@ TEST(CursorProviderTest, ExecTaskEmptyRunnerErrorIsNonEmpty) {
   EXPECT_FALSE(reply.result.value("error", "").empty());
 }
 
+TEST(CursorProviderTest, ShreddedPromptFieldsAreJoinedAndField4LengthIsNotBackground) {
+  bool called = false;
+  GenerateOptions options;
+  options.subagent_runner = [&](const nlohmann::json& args,
+                                std::shared_ptr<std::atomic<bool>>) {
+    called = true;
+    EXPECT_NE(args.value("prompt", "").find("/home/ai/project/qcode"),
+              std::string::npos)
+        << args.dump();
+    EXPECT_NE(args.value("prompt", "").find("TaskTool"), std::string::npos)
+        << args.dump();
+    EXPECT_FALSE(args.value("run_in_background", false)) << args.dump();
+    EXPECT_FALSE(args.value("background", false)) << args.dump();
+    return nlohmann::json{{"output", "joined-ok"}};
+  };
+
+  const std::string f10 =
+      "AD-ONLY large nested session. Do not edit any files.\n\nInspect /home/a";
+  const std::string f12 =
+      "i/project/qcode with bash. Produce a LONG factual report covering TaskTool.";
+  const std::string task_args =
+      proto::bytes_field(1, "large-session") +
+      proto::bytes_field(2, "generalPurpose") +
+      proto::bytes_field(3, "composer-2.5-fast") + proto::varint_field(4, 68) +
+      proto::bytes_field(10, f10) + proto::bytes_field(12, f12);
+
+  CursorExecRequest req;
+  req.id = 21;
+  req.exec_id = "task-shred";
+  req.args_field = 11;
+  req.args = proto::bytes_field(1, "task") + proto::bytes_field(2, task_args);
+
+  const auto reply = CursorExec::handle(req, "/tmp", nullptr, &options);
+  EXPECT_TRUE(called);
+  EXPECT_FALSE(reply.is_error) << reply.result.dump();
+  EXPECT_NE(reply.result.value("output", "").find("joined-ok"),
+            std::string::npos);
+}
+
 TEST(CursorProviderTest, ExecWriteIsNotStolenAsTask) {
   bool called = false;
   GenerateOptions options;
@@ -654,6 +719,25 @@ TEST(CursorProviderTest, ExecWriteIsNotStolenAsTask) {
   EXPECT_FALSE(called);
   EXPECT_TRUE(reply.is_error);
   EXPECT_EQ(reply.tool_name, "write");
+}
+
+TEST(CursorProviderTest, ExecWithInvalidUtf8BytesDoesNotThrowOnDump) {
+  CursorExecRequest req;
+  req.id = 55;
+  req.exec_id = "exec-invalid-utf8";
+  req.args_field = 16;
+  std::string binary_junk(113, '\x01');
+  binary_junk.push_back(static_cast<char>(0xB6));
+  binary_junk += "more junk";
+
+  req.args = proto::bytes_field(1, "echo safe") +
+             proto::bytes_field(2, "/tmp") +
+             proto::bytes_field(7, binary_junk);
+
+  CursorExecReply reply;
+  EXPECT_NO_THROW(reply = CursorExec::handle(req, "/tmp"));
+  EXPECT_NO_THROW(reply.arguments.dump());
+  EXPECT_NO_THROW(reply.result.dump());
 }
 
 }  // namespace

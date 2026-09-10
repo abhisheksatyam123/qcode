@@ -19,7 +19,7 @@ std::vector<qcode::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<MessageDelta>(
         [session](const MessageDelta::Payload& p) {
-            if (p.session_id != session->ctx.session_id) return;
+            if (!p.session_id.empty() && p.session_id != session->id) return;
             auto j = qcode::server::message_delta_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
@@ -28,13 +28,14 @@ std::vector<qcode::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<ToolCallStarted>(
         [session](const ToolCallStarted::Payload& p) {
-            if (p.session_id != session->ctx.session_id) return;
+            if (!p.session_id.empty() && p.session_id != session->id) return;
+            session->tool_call_count++;
             nlohmann::json call_json = {
                 {"id", p.tool_call_id},
                 {"name", p.tool_name},
                 {"arguments", p.arguments},
             };
-            qcode::session::save_message(p.session_id, "ToolCall", call_json.dump());
+            qcode::session::save_message(p.session_id, "ToolCall", call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
 
             auto j = qcode::server::tool_call_started_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
@@ -44,7 +45,8 @@ std::vector<qcode::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<ToolCallCompleted>(
         [session](const ToolCallCompleted::Payload& p) {
-            if (p.session_id != session->ctx.session_id) return;
+            if (!p.session_id.empty() && p.session_id != session->id) return;
+            session->total_tool_time_ms += static_cast<int>(p.duration_ms);
             nlohmann::json result_json = {
                 {"tool_call_id", p.tool_call_id},
                 {"tool_name", p.tool_name},
@@ -52,7 +54,7 @@ std::vector<qcode::bus::Subscription> subscribe_session(
                 {"is_error", p.is_error},
                 {"duration_ms", p.duration_ms},
             };
-            qcode::session::save_message(p.session_id, "ToolResult", result_json.dump());
+            qcode::session::save_message(p.session_id, "ToolResult", result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
 
             auto j = qcode::server::tool_call_completed_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
@@ -62,7 +64,7 @@ std::vector<qcode::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<SessionStatusChanged>(
         [session](const SessionStatusChanged::Payload& p) {
-            if (p.session_id != session->ctx.session_id) return;
+            if (!p.session_id.empty() && p.session_id != session->id) return;
             auto j = qcode::server::session_status_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
@@ -71,7 +73,10 @@ std::vector<qcode::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<ErrorOccurred>(
         [session](const ErrorOccurred::Payload& p) {
-            if (p.session_id != session->ctx.session_id) return;
+            if (!p.session_id.empty() && p.session_id != session->id) return;
+            if (p.severity == "error" || p.severity == "fatal") {
+                session->error = p.message;
+            }
             auto j = qcode::server::error_occurred_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
@@ -80,7 +85,7 @@ std::vector<qcode::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<ReasoningDelta>(
         [session](const ReasoningDelta::Payload& p) {
-            if (p.session_id != session->ctx.session_id) return;
+            if (!p.session_id.empty() && p.session_id != session->id) return;
             auto j = qcode::server::reasoning_delta_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->event_queue.push_back(std::move(j));
@@ -89,6 +94,7 @@ std::vector<qcode::bus::Subscription> subscribe_session(
 
     subs.push_back(bus.subscribe<TokenUsageUpdated>(
         [session](const TokenUsageUpdated::Payload& p) {
+            if (!p.session_id.empty() && p.session_id != session->id) return;
             // Persist per-turn deltas into the session row (the DB is the
             // cumulative source of truth across restarts / session switches).
             // The in-memory live_* are kept only for any consumer that wants the

@@ -5,6 +5,7 @@
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/event.h>
 #include <qcode/session/session_store.h>
+#include <qcode/tools/task_tool.h>
 #include "server_routes.h"
 
 #include <chrono>
@@ -344,3 +345,67 @@ TEST_F(ServerRoutesTest, TerminalLifecycleAndResize) {
     ASSERT_TRUE(res_bad_resize != nullptr);
     EXPECT_EQ(res_bad_resize->status, 404);
 }
+
+TEST_F(ServerRoutesTest, TasksAndSubagentSessionLookup) {
+    auto res_tasks = client_->Get("/tasks");
+    ASSERT_TRUE(res_tasks);
+    EXPECT_EQ(res_tasks->status, 200);
+    auto tasks_json = nlohmann::json::parse(res_tasks->body);
+    ASSERT_TRUE(tasks_json.contains("metadata"));
+    ASSERT_TRUE(tasks_json["metadata"].contains("tasks"));
+    EXPECT_TRUE(tasks_json["metadata"]["tasks"].is_array());
+
+    qcode::session::ensure_session_row(
+        "ses_child_webui_test", "Child explore", "mock-provider", "mock-model",
+        test_workspace_dir_);
+
+    auto res_parents = client_->Get("/sessions");
+    ASSERT_TRUE(res_parents);
+    EXPECT_EQ(res_parents->status, 200);
+    auto parents = nlohmann::json::parse(res_parents->body);
+    bool parent_has_child = false;
+    for (const auto& s : parents) {
+        if (s.value("id", "") == "ses_child_webui_test") parent_has_child = true;
+    }
+    EXPECT_FALSE(parent_has_child);
+
+    auto res_all = client_->Get("/sessions?include_subagents=1");
+    ASSERT_TRUE(res_all);
+    EXPECT_EQ(res_all->status, 200);
+    auto all = nlohmann::json::parse(res_all->body);
+    bool listed = false;
+    for (const auto& s : all) {
+        if (s.value("id", "") == "ses_child_webui_test") {
+            listed = true;
+            EXPECT_EQ(s.value("agent_mode", ""), "subagent");
+        }
+    }
+    EXPECT_TRUE(listed);
+
+    auto res_get = client_->Get("/session/ses_child_webui_test");
+    ASSERT_TRUE(res_get);
+    EXPECT_EQ(res_get->status, 200);
+    auto info = nlohmann::json::parse(res_get->body);
+    EXPECT_EQ(info.value("agent_mode", ""), "subagent");
+    EXPECT_EQ(info.value("title", ""), "Child explore");
+
+    auto res_create = client_->Post(
+        "/sessions",
+        nlohmann::json({{"provider", "mock-provider"}, {"model", "mock-model"}}).dump(),
+        "application/json");
+    ASSERT_TRUE(res_create);
+    ASSERT_EQ(res_create->status, 200);
+    std::string sid = nlohmann::json::parse(res_create->body).value("id", "");
+    ASSERT_FALSE(sid.empty());
+
+    auto res_mode = client_->Post(
+        "/session/" + sid + "/mode",
+        nlohmann::json({{"agent_mode", "plan"}}).dump(),
+        "application/json");
+    ASSERT_TRUE(res_mode);
+    EXPECT_EQ(res_mode->status, 200);
+    auto after = nlohmann::json::parse(client_->Get("/session/" + sid)->body);
+    EXPECT_EQ(after.value("agent_mode", ""), "plan");
+    EXPECT_TRUE(after.contains("reasoning_mode"));
+}
+

@@ -56,7 +56,7 @@ static std::string tool_calls_fingerprint(
   for (const auto& call : calls) {
     fp += call.tool_name;
     fp += ':';
-    fp += call.arguments.dump();
+    fp += call.arguments.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     fp += '|';
   }
   return fp;
@@ -71,7 +71,7 @@ static std::string tool_results_fingerprint(
     fp += res.tool_name;
     fp += ':';
     fp += res.is_success() ? "ok:" : "err:";
-    fp += res.result.dump();
+    fp += res.result.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     if (res.error) {
       fp += ':';
       fp += *res.error;
@@ -234,13 +234,42 @@ static JsonValue run_subagent_turn_multi(
     sub_sys << "- Conclude with a clear, concise, structured summary detailing findings, changes, or test outcomes.\n\n";
     sub_sys << ToolCatalog::build_tool_section(ToolConfig::subagent());
 
+    std::string sub_session_id =
+        args.value("sessionId", args.value("session_id", args.value("task_id", "")));
+
     int max_steps = 25;
     qcode::GenerateOptions sub_opts(wire_model, sub_sys.str(), "");
     sub_opts.tools = ToolCatalog::build_definitions(ToolConfig::subagent());
     sub_opts.max_steps = max_steps;
     sub_opts.workspace = workspace;
     sub_opts.abort_flag = combined_abort;
+    sub_opts.session_id = sub_session_id;
+    bool can_edit = args.value("can_edit", false);
+    if (mode == "explore") can_edit = false;
+    if (mode == "implement") can_edit = true;
+    sub_opts.can_edit = can_edit;
     sub_opts.messages.push_back(Message::user(prompt_text));
+
+    if (!sub_session_id.empty()) {
+      sub_opts.on_tool_call_start = [sub_session_id](const ToolCall& call) {
+        nlohmann::json call_json = {
+            {"id", call.id},
+            {"name", call.tool_name},
+            {"arguments", call.arguments},
+        };
+        qcode::session::save_message(sub_session_id, "ToolCall", call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+      };
+      sub_opts.on_tool_call_finish = [sub_session_id](const ToolResult& res) {
+        nlohmann::json result_json = {
+            {"tool_call_id", res.tool_call_id},
+            {"tool_name", res.tool_name},
+            {"result", res.result},
+            {"is_error", !res.is_success()},
+            {"duration_ms", 0},
+        };
+        qcode::session::save_message(sub_session_id, "ToolResult", result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+      };
+    }
 
     qcode::GenerateResult res = MultiStepCoordinator::execute_multi_step(
         sub_opts, [&subagent_client](const GenerateOptions& step_opts) {
@@ -555,6 +584,7 @@ static void run_tools_generation_bus(
             .total_tokens = 0,
             .cached_prompt_tokens = step_res.usage.cached_prompt_tokens,
             .reasoning_tokens = gen_result.usage.reasoning_completion_tokens,
+            .session_id = ctx.session_id,
         });
       }
       gen_result.finish_reason = step_res.finish_reason;
@@ -603,7 +633,7 @@ static void run_tools_generation_bus(
           last_progress_fp = progress_fp;
           no_progress_repeat = 1;
         }
-        constexpr int kMaxNoProgressRepeats = 25;
+        constexpr int kMaxNoProgressRepeats = 4;
         if (no_progress_repeat >= kMaxNoProgressRepeats) {
           LOG_WARN(
               "run_tools_generation_bus: no-progress tool loop detected "
@@ -688,6 +718,42 @@ static void run_tools_generation_bus(
            step, gen_result.text.size(), gen_result.tool_calls.size(), aborted, stuck);
   gen_result.response_messages = response_messages;
 
+  // If we reached the tool step limit without producing any text, synthesize a
+  // final textual summary of the findings with tools disabled so the turn completes
+  // naturally instead of leaving the user with an empty error.
+  if (!aborted && !stuck && !finished && step >= options.max_steps &&
+      (assistant_text->empty() || *assistant_text == "  \u23f3 Working...") &&
+      (gen_result.text.empty() || gen_result.text == "  \u23f3 Working...")) {
+    LOG_INFO("run_tools_generation_bus: step cap reached ({} steps); synthesizing final response without tools",
+             options.max_steps);
+    qcode::GenerateOptions synth_opts = options;
+    synth_opts.tools.clear();
+    synth_opts.max_steps = 1;
+    qcode::Messages synth_messages = options.messages;
+    synth_messages.insert(synth_messages.end(), response_messages.begin(), response_messages.end());
+    synth_messages.push_back(qcode::Message::user(
+        "[System Note: You have reached the maximum tool steps for this turn. Please summarize your progress, key findings, what changes were made, and your next recommended steps directly to the user now without requesting any further tools.]"
+    ));
+    synth_opts.messages = std::move(synth_messages);
+
+    auto synth_res = client.generate_text(synth_opts);
+    if (synth_res.is_success() && !synth_res.text.empty()) {
+      finished = true;
+      gen_result.text = synth_res.text;
+      *assistant_text = synth_res.text;
+      gen_result.usage.prompt_tokens += synth_res.usage.prompt_tokens;
+      gen_result.usage.completion_tokens += synth_res.usage.completion_tokens;
+      gen_result.usage.total_tokens += synth_res.usage.total_tokens;
+      response_messages.push_back(qcode::Message::assistant(synth_res.text));
+      gen_result.response_messages = response_messages;
+      bus.publish<MessageDelta>({
+          .session_id = ctx.session_id,
+          .text = synth_res.text,
+          .done = false
+      });
+    }
+  }
+
   if (aborted) {
     flush_inflight_tools();
     bus.publish<ErrorOccurred>({
@@ -743,7 +809,7 @@ static void run_tools_generation_bus(
     }
     bus.publish<ErrorOccurred>({
         .session_id = ctx.session_id,
-        .message = format_user_facing_error("Error: " + raw),
+        .message = format_user_facing_error(raw),
         .severity = "error"
     });
     bus.publish<MessageDelta>({
@@ -760,23 +826,23 @@ static void run_tools_generation_bus(
              assistant_text->empty(), gen_result.text.empty());
     bool is_placeholder = (final_text == "  \u23f3 Working...");
     if (!finished && step >= options.max_steps) {
-      // Tool loop hit the actual step cap without a natural finish
-      std::string limit_msg = "Stopped: tool loop reached maximum limit ("
-          + std::to_string(options.max_steps)
-          + " steps) without producing a final response. The model may be stuck requesting tools.";
-      LOG_WARN("run_tools_generation_bus: {}", limit_msg);
-      bus.publish<ErrorOccurred>({
-          .session_id = ctx.session_id,
-          .message = limit_msg,
-          .severity = "warning"
-      });
-      if (!is_placeholder && !final_text.empty()) {
+      if (final_text.empty() || is_placeholder) {
+        final_text = "I reached the tool execution limit (" + std::to_string(options.max_steps) +
+                     " steps) for this turn while working on your request. Send 'continue' to proceed with the next steps.";
+        if (assistant_text) *assistant_text = final_text;
+        gen_result.text = final_text;
+        is_placeholder = false;
         bus.publish<MessageDelta>({
             .session_id = ctx.session_id,
-            .text = assistant_text->empty() ? final_text : std::string{},
-            .done = true
+            .text = final_text,
+            .done = false
         });
       }
+      bus.publish<MessageDelta>({
+          .session_id = ctx.session_id,
+          .text = "",
+          .done = true
+      });
     } else if (!final_text.empty() && !is_placeholder) {
       LOG_DEBUG("run_tools_generation_bus: publishing final MessageDelta text_len={}", final_text.size());
       bus.publish<MessageDelta>({
@@ -805,10 +871,14 @@ static void run_tools_generation_bus(
 
   } else {
     fatal_error = true;
-    std::string err_str = format_user_facing_error(
-        "Error: " + gen_result.error_message());
-    if (err_str == "Error:" || err_str == "Error: ") {
+    std::string err_str = format_user_facing_error(gen_result.error_message());
+    while (err_str.starts_with("Error: Error")) {
+      err_str.erase(0, 7);
+    }
+    if (err_str.empty() || err_str == "Error" || err_str == "Error:" || err_str == "Error: Error") {
       err_str = "Error: Model generation failed (unknown error)";
+    } else if (!err_str.starts_with("Error:") && !err_str.starts_with("Exception:")) {
+      err_str = "Error: " + err_str;
     }
     if (gen_result.provider_metadata.has_value() &&
         !gen_result.provider_metadata->empty()) {
@@ -827,7 +897,8 @@ static void run_tools_generation_bus(
       .completion_tokens = gen_result.usage.completion_tokens,
       .total_tokens = gen_result.usage.total_tokens,
       .cached_prompt_tokens = gen_result.usage.cached_prompt_tokens,
-      .reasoning_tokens = gen_result.usage.reasoning_completion_tokens
+      .reasoning_tokens = gen_result.usage.reasoning_completion_tokens,
+      .session_id = ctx.session_id,
   });
   if (!fatal_error) {
     bus.publish<SessionStatusChanged>({
@@ -995,7 +1066,8 @@ static void run_stream_generation_bus(qcode::Client& client,
           .completion_tokens = event.usage->completion_tokens,
           .total_tokens = event.usage->total_tokens,
           .cached_prompt_tokens = event.usage->cached_prompt_tokens,
-          .reasoning_tokens = think_tokens
+          .reasoning_tokens = think_tokens,
+          .session_id = ctx.session_id,
       });
     }
   }
@@ -1269,8 +1341,14 @@ void run_generation_with_bus(
       qcode::ToolSet tools =
           ToolCatalog::build_definitions(enable_task_tool ? ToolConfig::orchestrator() : ToolConfig::subagent());
       base_opts.tools = std::move(tools);
-      constexpr int kMaxToolSteps = 100000;
-      base_opts.max_steps = kMaxToolSteps;
+      int max_tool_steps = 30;
+      if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
+        try {
+          const int v = std::stoi(env_steps);
+          if (v > 0) max_tool_steps = v;
+        } catch (...) {}
+      }
+      base_opts.max_steps = max_tool_steps;
 
       auto providers_ptr = std::make_shared<std::vector<ProviderInfo>>(providers);
       std::string current_prov_id = provider_id;

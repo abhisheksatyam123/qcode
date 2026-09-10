@@ -373,7 +373,7 @@ static void remap_cursor_picker_ids(ProviderInfo& provider) {
         ModelInfo model = configured;
         model.id = picker_id;
         if (model.name.empty() || model.name == configured.id) {
-            model.name = picker_id;
+            model.name = (picker_id == "auto") ? "Auto" : picker_id;
         }
         models.push_back(std::move(model));
     }
@@ -590,6 +590,30 @@ std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& 
        << "- Match tasks to model strengths (e.g. fast models for search/inspection, reasoning models for architecture/refactoring).\n"
        << "- Collect results with `task` operation `result` and `background_task_id`.\n";
 
+    return ss.str();
+}
+
+std::string format_provider_catalog_for_error(const std::vector<ProviderInfo>& providers) {
+    std::ostringstream ss;
+    int count = 0;
+    for (const auto& provider : providers) {
+        for (const auto& model : provider.models) {
+            if (model.id.empty()) continue;
+            if (count == 0) {
+                ss << "Available models from opencode.json (use provider:model):\n";
+            }
+            ss << "- `" << provider.id << ":" << model.id << "`";
+            if (!model.name.empty() && model.name != model.id) {
+                ss << " (" << model.name << ")";
+            }
+            ss << "\n";
+            ++count;
+            if (count >= 64) {
+                ss << "- ...\n";
+                return ss.str();
+            }
+        }
+    }
     return ss.str();
 }
 

@@ -457,5 +457,20 @@ TEST(ErrorClassificationTest, KeepsErrorPrefixOnPlainMessages) {
             "Error: Upstream request failed");
 }
 
+TEST(ErrorClassificationTest, FormatsCursorNestedErrorDetails) {
+  const std::string raw =
+      R"({"error":{"code":"resource_exhausted","message":"Error","details":[{"type":"aiserver.v1.ErrorDetails","debug":{"error":"ERROR_RATE_LIMITED_CHANGEABLE","details":{"title":"Named models unavailable","detail":"Free plans can only use Auto. Switch to Auto or upgrade plans to continue.","isRetryable":false}}}]}})";
+  const auto shown = format_user_facing_error(raw);
+  EXPECT_EQ(shown,
+            "Named models unavailable: Free plans can only use Auto. Switch to Auto or upgrade plans to continue.");
+}
+
+TEST(ErrorClassificationTest, AvoidsDoubleErrorPrefix) {
+  EXPECT_EQ(format_user_facing_error("Error: Error"), "Error: Upstream request failed");
+  EXPECT_EQ(format_user_facing_error("Error: Error: Something went wrong"),
+            "Error: Something went wrong");
+  EXPECT_EQ(format_user_facing_error("Error"), "Upstream request failed");
+}
+
 }  // namespace test
 }  // namespace qcode

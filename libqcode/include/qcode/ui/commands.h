@@ -44,6 +44,7 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"agent",       "Agent mode",     "Switch between build and plan",             "Agent"},
         {"queue",       "Prompt queue",   "/queue [rm <n>] — list or drop queued prompts", "Session"},
         {"clear-queue", "Clear queue",    "Clear all queued prompts",                  "Session"},
+        {"stop",        "Stop generation", "Abort active turn or clear queued prompts", "Session"},
         {"retry",       "Retry prompt",   "/retry - resend last prompt",               "Session"},
         {"help",        "Help",           "Show help and keyboard shortcuts",          "General"},
     };
@@ -66,6 +67,7 @@ inline std::vector<PaletteCommand> builtin_palette_commands() {
         {"session_rename",     "Rename Session",           "Rename current chat session",         "Session",     "/rename"},
         {"session_compact",    "Compact Context",          "Summarize history to free context",   "Session",     "/compact"},
         {"session_clear_queue","Clear Prompt Queue",       "Remove all queued prompts",           "Session",     "/clear-queue"},
+        {"session_stop",       "Stop Generation",          "Abort running generation or clear queue", "Session", "Esc / /stop"},
         {"session_retry",      "Retry Last Prompt",        "Re-send the last user prompt",        "Session",     "r / /retry"},
         {"model_select",       "Select Model",             "Switch AI model and provider",        "Model",       "/model"},
         {"model_variant",      "Select Reasoning Variant", "Switch reasoning effort / thinking",  "Model",       "/variant"},

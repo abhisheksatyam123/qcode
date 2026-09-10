@@ -1,5 +1,6 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -24,6 +25,102 @@ namespace qcode {
   std::string s{raw};
   const bool had_error_prefix =
       s.rfind("Error:", 0) == 0 || s.rfind("Exception:", 0) == 0;
+
+  auto peel_json_error = [](const std::string& blob) -> std::string {
+    const auto brace = blob.find('{');
+    const auto end = blob.rfind('}');
+    if (brace == std::string::npos || end == std::string::npos || end <= brace) {
+      return {};
+    }
+    const std::string json_str = blob.substr(brace, end - brace + 1);
+    nlohmann::json j = nlohmann::json::parse(json_str, nullptr, false);
+    if (!j.is_object() && !j.is_array()) {
+      return {};
+    }
+
+    // 1. Check nested details array (Cursor, Google Connect-RPC, Vertex)
+    const nlohmann::json* details_ptr = nullptr;
+    if (j.contains("error") && j["error"].is_object() && j["error"].contains("details")) {
+      details_ptr = &j["error"]["details"];
+    } else if (j.contains("details")) {
+      details_ptr = &j["details"];
+    }
+
+    if (details_ptr && details_ptr->is_array()) {
+      for (const auto& item : *details_ptr) {
+        if (!item.is_object()) continue;
+        if (item.contains("debug") && item["debug"].is_object()) {
+          const auto& debug = item["debug"];
+          if (debug.contains("details") && debug["details"].is_object()) {
+            const auto& d = debug["details"];
+            std::string title = d.value("title", "");
+            std::string detail = d.value("detail", "");
+            if (!title.empty() && !detail.empty()) {
+              return title + ": " + detail;
+            }
+            if (!detail.empty()) return detail;
+            if (!title.empty()) return title;
+          }
+          if (debug.contains("error") && debug["error"].is_string()) {
+            std::string err = debug["error"].get<std::string>();
+            if (!err.empty() && err != "Error" && err != "error") return err;
+          }
+        }
+        if (item.contains("detail") && item["detail"].is_string()) {
+          std::string d = item["detail"].get<std::string>();
+          if (!d.empty() && d != "Error" && d != "error") return d;
+        }
+        if (item.contains("message") && item["message"].is_string()) {
+          std::string m = item["message"].get<std::string>();
+          if (!m.empty() && m != "Error" && m != "error") return m;
+        }
+      }
+    }
+
+    // 2. Check error object
+    if (j.contains("error")) {
+      if (j["error"].is_string()) {
+        std::string e = j["error"].get<std::string>();
+        if (!e.empty() && e != "Error" && e != "error") return e;
+      } else if (j["error"].is_object()) {
+        const auto& err = j["error"];
+        if (err.contains("message") && err["message"].is_string()) {
+          std::string msg = err["message"].get<std::string>();
+          if (!msg.empty() && msg != "Error" && msg != "error") return msg;
+        }
+        if (err.contains("detail") && err["detail"].is_string()) {
+          return err["detail"].get<std::string>();
+        }
+        if (err.contains("description") && err["description"].is_string()) {
+          return err["description"].get<std::string>();
+        }
+        if (err.contains("code") && err["code"].is_string()) {
+          std::string code = err["code"].get<std::string>();
+          if (code == "resource_exhausted") return "Resource exhausted (rate limit or quota reached)";
+          return code;
+        }
+      }
+    }
+
+    // 3. Check top-level message / detail / description
+    if (j.contains("message") && j["message"].is_string()) {
+      std::string msg = j["message"].get<std::string>();
+      if (!msg.empty() && msg != "Error" && msg != "error") return msg;
+    }
+    if (j.contains("detail") && j["detail"].is_string()) {
+      return j["detail"].get<std::string>();
+    }
+    if (j.contains("error_description") && j["error_description"].is_string()) {
+      return j["error_description"].get<std::string>();
+    }
+    if (j.contains("code") && j["code"].is_string()) {
+      std::string code = j["code"].get<std::string>();
+      if (code == "resource_exhausted") return "Resource exhausted (rate limit or quota reached)";
+      return code;
+    }
+
+    return {};
+  };
 
   auto peel_message = [](const std::string& blob) -> std::string {
     const auto brace = blob.find('{');
@@ -59,11 +156,14 @@ namespace qcode {
       if (json[i] == '"') break;
       out.push_back(json[i]);
     }
+    if (out == "Error" || out == "error") return {};
     return out;
   };
 
-  if (auto peeled = peel_message(s); !peeled.empty()) {
+  if (auto peeled = peel_json_error(s); !peeled.empty()) {
     s = std::move(peeled);
+  } else if (auto peeled_msg = peel_message(s); !peeled_msg.empty()) {
+    s = std::move(peeled_msg);
   }
 
   static constexpr std::string_view kWrappers[] = {
@@ -97,6 +197,10 @@ namespace qcode {
   }
   while (!compact.empty() && compact.back() == ' ') compact.pop_back();
 
+  if (compact.empty() || compact == "Error" || compact == "error" || compact == "Error: Error") {
+    compact = "Upstream request failed";
+  }
+
   if (compact.size() > max_chars) {
     if (max_chars <= 3) {
       compact.resize(max_chars);
@@ -108,6 +212,12 @@ namespace qcode {
   if (had_error_prefix && compact.rfind("Error:", 0) != 0 &&
       compact.rfind("Exception:", 0) != 0) {
     compact = "Error: " + compact;
+  }
+  while (compact.starts_with("Error: Error: ")) {
+    compact.erase(0, 7);
+  }
+  if (compact == "Error: Error") {
+    compact = "Error: Upstream request failed";
   }
   return compact;
 }

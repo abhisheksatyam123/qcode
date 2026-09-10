@@ -104,6 +104,46 @@ TEST(TaskTargetTest, UnknownProviderIsAnError) {
       catalog, "cursor", "cursor-grok-4.6");
   EXPECT_EQ(t.provider, nullptr);
   EXPECT_THAT(t.error, testing::HasSubstr("Unknown provider"));
+  EXPECT_THAT(t.error, testing::HasSubstr("opencode.json"));
+  EXPECT_THAT(t.error, testing::HasSubstr("`cursor:cursor-grok-4.6`"));
+  EXPECT_THAT(t.error, testing::HasSubstr("`openrouter:deepseek/deepseek-v4-flash-0731`"));
+}
+
+TEST(TaskTargetTest, CursorEffortSlugResolvesToCatalogPickerId) {
+  const auto catalog = sample_catalog();
+  const auto t = resolve_subagent_target(
+      nlohmann::json{{"model", "cursor-grok-4.6-medium"}},
+      catalog, "opencode", "big-pickle");
+  EXPECT_TRUE(t.error.empty()) << t.error;
+  ASSERT_NE(t.provider, nullptr);
+  EXPECT_EQ(t.provider_id, "cursor");
+  EXPECT_EQ(t.model_id, "cursor-grok-4.6");
+}
+
+TEST(TaskTargetTest, OlderCursorGrokSlugFallsBackToCatalogGrok) {
+  const auto catalog = sample_catalog();
+  const auto t = resolve_subagent_target(
+      nlohmann::json{{"model", "cursor-grok-4.5-high"}},
+      catalog, "opencode", "big-pickle");
+  EXPECT_TRUE(t.error.empty()) << t.error;
+  ASSERT_NE(t.provider, nullptr);
+  EXPECT_EQ(t.provider_id, "cursor");
+  EXPECT_EQ(t.model_id, "cursor-grok-4.6");
+}
+
+TEST(TaskTargetTest, UnknownModelListsCatalogFromOpencodeJson) {
+  const auto catalog = sample_catalog();
+  const auto t = resolve_subagent_target(
+      nlohmann::json{{"model", "totally-unknown-model-xyz"}},
+      catalog, "cursor", "cursor-grok-4.6");
+  EXPECT_EQ(t.provider, nullptr);
+  EXPECT_THAT(t.error, testing::HasSubstr("Unknown model"));
+  EXPECT_THAT(t.error, testing::HasSubstr("totally-unknown-model-xyz"));
+  EXPECT_THAT(t.error, testing::HasSubstr("e.g. cursor:cursor-grok-4.6"));
+  EXPECT_THAT(t.error, testing::HasSubstr("Available models from opencode.json"));
+  EXPECT_THAT(t.error, testing::HasSubstr("`cursor:cursor-grok-4.6`"));
+  EXPECT_THAT(t.error, testing::HasSubstr("`opencode:big-pickle`"));
+  EXPECT_THAT(t.error, testing::Not(testing::HasSubstr("openrouter:deepseek/foo")));
 }
 
 TEST(TaskTargetTest, ModelsFallbackList) {

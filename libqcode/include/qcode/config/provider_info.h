@@ -39,4 +39,7 @@ struct ProviderInfo {
 // Format a clean Markdown section of available providers and models for the system prompt.
 std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& providers);
 
+// Compact `provider:model_id` list for task-tool error payloads (from opencode.json).
+std::string format_provider_catalog_for_error(const std::vector<ProviderInfo>& providers);
+
 }  // namespace qcode

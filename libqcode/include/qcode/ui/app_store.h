@@ -1,3 +1,4 @@
+#include <unordered_map>
 #pragma once
 #include <qcode/core/bus_port.h>
 #include <qcode/core/event.h>
@@ -86,6 +87,9 @@ private:
     std::string last_error_;
     std::vector<Toast> toasts_;
     mutable std::mutex toast_mutex_;
+
+    std::unordered_map<std::string, std::string> session_assistant_texts_;
+    mutable std::mutex session_texts_mutex_;
 
     std::deque<std::string> prompt_queue_; // Changed to deque for append access
     mutable std::mutex queue_mutex_;

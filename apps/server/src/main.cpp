@@ -19,8 +19,14 @@
 
 static std::atomic<bool> g_running{true};
 static std::shared_ptr<qcode::bus::BusRuntime> g_bus;
+static httplib::Server* g_svr = nullptr;
 
-void handle_signal(int) { g_running = false; }
+void handle_signal(int) {
+    g_running = false;
+    if (g_svr) {
+        g_svr->stop();
+    }
+}
 
 int main(int argc, char* argv[]) {
     qcode::install_file_logger("/tmp/qcode-server.log", qcode::logger::LogLevel::kLogLevelDebug);
@@ -57,6 +63,7 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, handle_signal);
 
     httplib::Server svr;
+    g_svr = &svr;
 
     qcode::server::ServerSetupOptions options;
     {
@@ -66,6 +73,9 @@ int main(int argc, char* argv[]) {
         webui_path += "/webui";
         if (access(webui_path.c_str(), F_OK) != 0) {
             webui_path = QCODE_SERVER_WEBUI_DIR;
+        }
+        if (access(webui_path.c_str(), F_OK) != 0) {
+            webui_path = "apps/webui/src";
         }
         options.webui_dir = webui_path;
     }
@@ -79,6 +89,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Generate:  POST /generate (body: {\"text\":\"...\", \"provider\":\"...\", \"model\":\"...\"})\n";
     std::cout << "    Response is NDJSON stream of events\n";
     svr.listen("0.0.0.0", port);
+    g_svr = nullptr;
 
     LOG_INFO("Server shutting down");
     return 0;

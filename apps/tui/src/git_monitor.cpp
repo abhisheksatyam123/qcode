@@ -1,4 +1,4 @@
-#include "tui_git_monitor.h"
+#include "git_monitor.h"
 
 #include <qcode/session/git_workspace.h>
 

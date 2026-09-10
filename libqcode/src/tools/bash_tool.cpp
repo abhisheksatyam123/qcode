@@ -2,8 +2,10 @@
 #include <csignal>
 #include <qcode/tools/bash_tool.h>
 #include <qcode/core/logger.h>
+#include <qcode/core/utf8.h>
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -17,6 +19,7 @@
 #include <regex>
 #include <sstream>
 #include <thread>
+#include <utility>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/select.h>
@@ -259,6 +262,105 @@ static std::string android_shell_prelude() {
 #else
   return "";
 #endif
+}
+
+
+static bool is_dev_null_target(const std::string& command, size_t i) {
+  while (i < command.size() && (command[i] == ' ' || command[i] == '\t')) ++i;
+  return command.compare(i, 9, "/dev/null") == 0;
+}
+
+static bool looks_like_mutating_command(const std::string& command) {
+  // Unquoted redirects (except >/dev/null and 2>/dev/null).
+  bool in_single = false, in_double = false;
+  for (size_t i = 0; i < command.size(); ++i) {
+    char c = command[i];
+    if (!in_single && c == '\\' && i + 1 < command.size()) {
+      ++i;
+      continue;
+    }
+    if (c == '\'' && !in_double) {
+      in_single = !in_single;
+      continue;
+    }
+    if (c == '"' && !in_single) {
+      in_double = !in_double;
+      continue;
+    }
+    if (in_single || in_double) continue;
+    if (c == '>') {
+      size_t t = i + 1;
+      if (t < command.size() && command[t] == '>') ++t;
+      if (!is_dev_null_target(command, t)) return true;
+    }
+  }
+
+  auto first_word = [](const std::string& s, size_t start) {
+    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
+    size_t end = start;
+    while (end < s.size() && !std::isspace(static_cast<unsigned char>(s[end])) &&
+           s[end] != '|' && s[end] != ';' && s[end] != '&' && s[end] != '<' &&
+           s[end] != '>') {
+      ++end;
+    }
+    return std::make_pair(s.substr(start, end - start), end);
+  };
+
+  static const char* kMutating[] = {
+      "rm", "mv", "cp", "mkdir", "rmdir", "touch", "tee", "chmod", "chown",
+      "ln", "dd", "install", "truncate", "shred", "mkfifo", "unlink", "patch",
+      "sed", "perl", "ruby"};
+
+  size_t i = 0;
+  while (i < command.size()) {
+    auto [word, after] = first_word(command, i);
+    if (word.empty()) break;
+    if (word == "sudo" || word == "env" || word == "command" || word == "nice") {
+      i = after;
+      continue;
+    }
+    std::string lower = word;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (lower == "git") {
+      auto [sub, sub_after] = first_word(command, after);
+      (void)sub_after;
+      std::string sl = sub;
+      std::transform(sl.begin(), sl.end(), sl.begin(),
+                     [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+      if (sl == "add" || sl == "commit" || sl == "checkout" || sl == "reset" ||
+          sl == "rebase" || sl == "stash" || sl == "rm" || sl == "mv" ||
+          sl == "clean" || sl == "restore" || sl == "switch" || sl == "merge" ||
+          sl == "cherry-pick" || sl == "revert" || sl == "tag" || sl == "push" ||
+          sl == "apply" || sl == "am") {
+        return true;
+      }
+    } else {
+      for (const char* verb : kMutating) {
+        if (lower == verb) {
+          if (lower == "sed" || lower == "perl" || lower == "ruby") {
+            if (command.find(" -i") != std::string::npos ||
+                command.find(" -i'") != std::string::npos ||
+                command.find(" -i\"") != std::string::npos) {
+              return true;
+            }
+            break;
+          }
+          return true;
+        }
+      }
+    }
+    size_t next = command.find_first_of("|&;\n", after);
+    if (next == std::string::npos) break;
+    if (command[next] == '&' && next + 1 < command.size() && command[next + 1] == '&') {
+      i = next + 2;
+    } else if (command[next] == '|' && next + 1 < command.size() && command[next + 1] == '|') {
+      i = next + 2;
+    } else {
+      i = next + 1;
+    }
+  }
+  return false;
 }
 
 static bool is_safe_command(const std::string& command, std::string& warning) {
@@ -624,16 +726,16 @@ std::string BashTool::run_shell(const std::string& command,
   output_file.close();
 
   if (is_aborted) {
-    return inline_output + "\n\n[Tool execution aborted]";
+    return utils::sanitize_utf8(inline_output + "\n\n[Tool execution aborted]");
   }
   if (timed_out) {
-    return inline_output + "\n\n[Tool execution timed out after " +
-           std::to_string(timeout_ms) + "ms]";
+    return utils::sanitize_utf8(inline_output + "\n\n[Tool execution timed out after " +
+           std::to_string(timeout_ms) + "ms]");
   }
 
   if (!truncate_index.has_value()) {
     std::filesystem::remove(file_path, ec);
-    return inline_output;
+    return utils::sanitize_utf8(inline_output);
   }
 
   trim_incomplete_utf8_suffix(inline_output);
@@ -641,12 +743,12 @@ std::string BashTool::run_shell(const std::string& command,
     LOG_ERROR("BashTool: failed to write full output to {}", file_path);
   }
 
-  return inline_output + "\n\n" +
+  return utils::sanitize_utf8(inline_output + "\n\n" +
       "[Output truncated at " + std::to_string(truncate_index.value()) +
       " characters (total " + std::to_string(total_size) +
       "). Full output saved to " + file_path + "]\n" +
       "Inspect the saved output with targeted range reads (for example: nl -ba " + file_path + " | sed -n '<start>,<end>p') or a one-pass rg/python summarizer; avoid raw full-file dumps. " +
-      "If you truly need more inline text, request the smallest useful output budget (for bash, max_output_chars); large values can bloat context.";
+      "If you truly need more inline text, request the smallest useful output budget (for bash, max_output_chars); large values can bloat context.");
 }
 
 static std::mutex g_bash_exec_mutex;
@@ -688,6 +790,13 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
     err["error"] = warning;
     return err;
   }
+  if (!context.can_edit && looks_like_mutating_command(command)) {
+    JsonValue err;
+    err["error"] =
+        "Read-only subagent (explore) cannot mutate the workspace. "
+        "Refused command. Use ls, cat, rg, git status/diff/log, or similar.";
+    return err;
+  }
 
   std::string cwd = resolve_cwd(args.value("workdir", ""), context.workspace);
   int timeout = args.value("timeout", 120000);
@@ -710,7 +819,6 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
 }
 
 JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionContext& context) {
-  (void)context;
   std::string command = args.value("command", "");
   if (command.empty()) {
     JsonValue err;
@@ -729,6 +837,13 @@ JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionCo
   if (!is_safe_command(command, warning)) {
     JsonValue err;
     err["error"] = warning;
+    return err;
+  }
+  if (!context.can_edit && looks_like_mutating_command(command)) {
+    JsonValue err;
+    err["error"] =
+        "Read-only subagent (explore) cannot mutate the workspace. "
+        "Refused command. Use ls, cat, rg, git status/diff/log, or similar.";
     return err;
   }
 
@@ -880,13 +995,17 @@ JsonValue BashTool::execute(const JsonValue& args, const ToolExecutionContext& c
   if (args.contains("mode")) mode = args["mode"].get<std::string>();
   else if (args.value("run_in_background", false)) mode = "background";
 
-  if (mode == "list") return exec_list();
-  if (mode == "status") return exec_status(args);
-  if (mode == "kill") return exec_kill(args);
-  if (mode == "remove") return exec_remove(args);
-  if (mode == "cleanup") return exec_cleanup(args);
-  if (mode == "background") return exec_background(args, context);
-  return exec_run(args, context);
+  JsonValue result;
+  if (mode == "list") result = exec_list();
+  else if (mode == "status") result = exec_status(args);
+  else if (mode == "kill") result = exec_kill(args);
+  else if (mode == "remove") result = exec_remove(args);
+  else if (mode == "cleanup") result = exec_cleanup(args);
+  else if (mode == "background") result = exec_background(args, context);
+  else result = exec_run(args, context);
+
+  utils::sanitize_json_strings(result);
+  return result;
 }
 
 Tool BashTool::definition() {
