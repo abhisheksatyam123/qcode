@@ -173,5 +173,15 @@ TEST(TaskTargetTest, SpawnNormalizesColonModelIntoProvider) {
   EXPECT_THAT(out.value("output", ""), testing::HasSubstr("ok"));
 }
 
+
+TEST(TaskTargetTest, ExplicitCursorStillBinds) {
+  const auto catalog = sample_catalog();
+  const auto t = resolve_subagent_target(
+      nlohmann::json{{"model", "cursor:cursor-grok-4.6"}},
+      catalog, "opencode", "big-pickle");
+  EXPECT_TRUE(t.error.empty()) << t.error;
+  EXPECT_EQ(t.provider_id, "cursor");
+}
+
 }  // namespace
 }  // namespace qcode

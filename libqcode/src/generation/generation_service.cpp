@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <random>
 #include <chrono>
 #include <cstdlib>
 #include <functional>
@@ -84,6 +85,33 @@ static std::string tool_results_fingerprint(
 // ──────────────────────────────────────────────────────────────
 //  Multi-agent: nested subagent turn (parallel multi-provider & multi-model)
 // ──────────────────────────────────────────────────────────────
+namespace {
+// P0.2: random-model fallback across working providers (zen + antigravity
+// preferred, openrouter shuffled best-effort). Cursor only when explicit.
+constexpr int kSubagentFallbackMaxAttempts = 4;
+
+bool subagent_wants_cursor(const nlohmann::json& args) {
+  auto has = [](const std::string& v) {
+    std::string l = v;
+    std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+    return l.find("cursor") != std::string::npos;
+  };
+  if (has(args.value("provider", "")) || has(args.value("model", ""))) return true;
+  if (args.contains("models") && args["models"].is_array())
+    for (const auto& m : args["models"])
+      if (m.is_string() && has(m.get<std::string>())) return true;
+  return false;
+}
+
+bool subagent_failover_worthy(const std::string& msg, const GenerateResult& res) {
+  if (res.is_retryable.value_or(false)) return true;
+  if (msg.find("ModelError") != std::string::npos) return true;
+  if (msg.find("is not supported") != std::string::npos) return true;
+  if (msg.find("Failed to resolve subagent client") != std::string::npos) return true;
+  return is_error_message_retryable(msg);
+}
+}  // namespace
+
 static JsonValue run_subagent_turn_multi(
     std::shared_ptr<std::vector<ProviderInfo>> providers,
     const std::string& default_provider_id,
@@ -154,8 +182,52 @@ static JsonValue run_subagent_turn_multi(
     return JsonValue{{"error", "No available AI provider configured for subagent"}};
   }
 
+  // P0.2 fallback chain: explicit target, then working-set pool (zen,
+  // antigravity preferred; openrouter tier shuffled; cursor only if explicit).
+  struct FallbackCand { const ProviderInfo* p; const ModelInfo* m; std::string model_id; };
+  std::vector<FallbackCand> chain;
+  chain.push_back({target_provider, target_model_info, target_model_id});
+  {
+    const bool allow_cursor = subagent_wants_cursor(args);
+    std::vector<FallbackCand> rest;
+    for (const auto& pr : *providers) {
+      const bool is_cursor = pr.id == "cursor" || pr.id.find("cursor") != std::string::npos;
+      if (is_cursor && !allow_cursor) continue;
+      for (const auto& mo : pr.models) {
+        if (mo.id.empty()) continue;
+        if (pr.id == target_provider->id && mo.id == target_model_id) continue;
+        rest.push_back({&pr, &mo, mo.id});
+      }
+    }
+    auto prio = [](const ProviderInfo* q) {
+      return (q->id == "opencode") ? 0 : (q->id.find("antigravity") != std::string::npos ? 1 : 2);
+    };
+    std::stable_sort(rest.begin(), rest.end(),
+                     [&](const FallbackCand& a, const FallbackCand& b) { return prio(a.p) < prio(b.p); });
+    auto oit = std::find_if(rest.begin(), rest.end(),
+                            [](const FallbackCand& c) { return c.p->id == "openrouter"; });
+    if (oit != rest.end()) {
+      std::random_device rd;
+      std::mt19937 g(rd());
+      std::shuffle(oit, rest.end(), g);
+    }
+    for (auto& c : rest) chain.push_back(c);
+  }
+  const int max_attempts = std::min<int>(kSubagentFallbackMaxAttempts, (int)chain.size());
+
   JsonValue out;
   try {
+  std::string fb_last_error;
+  for (int fb_attempt = 0; fb_attempt < max_attempts; ++fb_attempt) {
+    const auto& fb = chain[(size_t)fb_attempt];
+    target_provider = fb.p;
+    target_model_info = fb.m;
+    target_model_id = fb.model_id;
+    if (fb_attempt > 0) {
+      LOG_WARN("subagent fallback attempt {}/{}: {}:{} (prev: {})", fb_attempt + 1, max_attempts,
+               target_provider->id, target_model_id, fb_last_error);
+    }
+
     qcode::providers::ProviderOptions prov_opts;
     prov_opts.base_url = target_provider->api_url;
     prov_opts.api_key = target_provider->api_key;
@@ -184,8 +256,10 @@ static JsonValue run_subagent_turn_multi(
     auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
         target_provider->id, prov_opts);
     if (!resolution.ok()) {
-      return JsonValue{{"error", "Failed to resolve subagent client for provider '" +
-                                 target_provider->id + "': " + resolution.error}};
+      fb_last_error = "Failed to resolve subagent client for provider '" +
+                      target_provider->id + "': " + resolution.error;
+      LOG_WARN("subagent fallback: {}", fb_last_error);
+      continue;
     }
     qcode::Client subagent_client = std::move(resolution.client);
 
@@ -281,14 +355,29 @@ static JsonValue run_subagent_turn_multi(
       return out;
     }
     if (!res.is_success()) {
-      out["error"] = !res.error_message().empty() ? res.error_message()
-                                                  : "subagent generation failed";
+      const std::string emsg = !res.error_message().empty() ? res.error_message()
+                                                            : "subagent generation failed";
+      if (fb_attempt + 1 < max_attempts && subagent_failover_worthy(emsg, res)) {
+        fb_last_error = emsg;
+        LOG_WARN("subagent attempt {}/{} failed on {}:{}: {}", fb_attempt + 1, max_attempts,
+                 target_provider->id, target_model_id, emsg);
+        continue;
+      }
+      out["error"] = emsg;
       return out;
     }
 
     std::string final_text = res.text;
     if (final_text.empty()) final_text = "(subagent finished without output)";
     out["output"] = final_text;
+    if (fb_attempt > 0) {
+      out["fallback_used"] = true;
+      out["fallback_attempts"] = fb_attempt + 1;
+      out["fallback_model"] = target_provider->id + ":" + target_model_id;
+    }
+    return out;
+  }  // end fallback loop
+  out["error"] = fb_last_error.empty() ? "subagent generation failed" : fb_last_error;
   } catch (const std::exception& e) {
     out["error"] = std::string("subagent crashed: ") + e.what();
   }
