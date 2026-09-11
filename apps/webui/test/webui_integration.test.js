@@ -13,9 +13,15 @@ test('WebUI static source files exist and are populated', () => {
   const requiredFiles = [
     'index.html',
     'app.js',
+    'utils.js',
     'style.css',
     'vendor-marked.min.js',
-    'vendor-jsyaml.min.js'
+    'vendor-jsyaml.min.js',
+    'vendor-xterm.min.js',
+    'vendor-addon-fit.min.js',
+    'vendor-hljs.min.js',
+    'vendor-xterm.min.css',
+    'vendor-hljs-github-dark.min.css'
   ];
 
   for (const file of requiredFiles) {
@@ -35,7 +41,10 @@ test('index.html references all required scripts and styles', () => {
   // Verify scripts
   assert.match(indexHtml, /src="\/vendor-marked\.min\.js"/, 'Missing vendor-marked.min.js');
   assert.match(indexHtml, /src="\/vendor-jsyaml\.min\.js"/, 'Missing vendor-jsyaml.min.js');
+  assert.match(indexHtml, /src="\/vendor-hljs\.min\.js"/, 'Missing vendor-hljs.min.js (T8.3)');
+  assert.match(indexHtml, /src="\/vendor-xterm\.min\.js"/, 'Missing vendor-xterm.min.js (T8.3)');
   assert.match(indexHtml, /src="\/app\.js"/, 'Missing app.js module');
+  assert.match(indexHtml, /href="\/vendor-hljs-github-dark\.min\.css"/, 'Missing vendored hljs css (T8.3)');
 
   // Verify brand and status elements
   assert.match(indexHtml, /id="brand-sub"/, 'Missing #brand-sub element for version');
@@ -216,6 +225,8 @@ test('WebUI child session view enhancements: close tab, live filter, model banne
   assert.match(appJs, /subagent-banner-model/, 'subagent banner should show model');
   assert.match(styleCss, /\.subagent-banner-model/, 'missing .subagent-banner-model in style.css');
 
-  // extractChildSessionId
-  assert.match(appJs, /function extractChildSessionId/, 'missing extractChildSessionId in app.js');
+  // extractChildSessionId (lives in utils.js since T4.1a split, imported by app.js)
+  const utilsJs = fs.readFileSync(path.join(srcDir, 'utils.js'), 'utf8');
+  assert.match(utilsJs, /function extractChildSessionId/, 'missing extractChildSessionId in utils.js');
+  assert.match(appJs, /extractChildSessionId/, 'app.js should import/use extractChildSessionId');
 });

@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/styles/github-dark.min.css">
+<link rel="stylesheet" href="/vendor-xterm.min.css">
+<link rel="stylesheet" href="/vendor-hljs-github-dark.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@3.4.0/css/nerd-fonts-generated.min.css">
 </head>
 <body>
@@ -287,17 +287,11 @@
 
   <div id="modal-overlay" role="dialog" aria-modal="true" tabindex="-1"></div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="/vendor-xterm.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js';document.head.appendChild(s)"></script>
+<script src="/vendor-addon-fit.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js';document.head.appendChild(s)"></script>
 <script src="/vendor-marked.min.js"></script>
 <script src="/vendor-jsyaml.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>
-<!-- Extra languages used by the file editor (not in the common bundle). -->
-<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/cmake.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/dockerfile.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/protobuf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/vim.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/languages/fsharp.min.js"></script>
+<script src="/vendor-hljs.min.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

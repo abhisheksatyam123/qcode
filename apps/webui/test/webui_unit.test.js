@@ -4,31 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'app.js'), 'utf8');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-function extract(name) {
-  const i = src.indexOf('function ' + name + '(');
-  assert.ok(i >= 0, 'missing function ' + name);
-  let depth = 0, j = src.indexOf('{', i);
-  const start = j;
-  for (; j < src.length; j++) {
-    if (src[j] === '{') depth++;
-    else if (src[j] === '}') { depth--; if (!depth) break; }
-  }
-  return src.slice(i, j + 1);
-}
-// sessionIdFromTaskResult needed by extractChildSessionId
-const helpers = extract('sessionIdFromTaskResult') + '\n' + extract('parseToolValue');
-const fns = ['fuzzyScore', 'fuzzyFilter', 'shortPath', 'formatBytes', 'formatMs', 'detectFsLanguage', 'extractChildSessionId'];
-let bundle = helpers;
-for (const n of fns) bundle += '\n' + extract(n);
-// ESM-safe: expose extracted fns via Function constructor (eval scope is block-local in modules)
-const __make = new Function(bundle + '\nreturn { ' + fns.join(', ') + ' };');
-const __f = __make();
-const fuzzyScore = __f.fuzzyScore, fuzzyFilter = __f.fuzzyFilter, shortPath = __f.shortPath,
-  formatBytes = __f.formatBytes, formatMs = __f.formatMs,
-  detectFsLanguage = __f.detectFsLanguage, extractChildSessionId = __f.extractChildSessionId;
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, detectFsLanguage, extractChildSessionId } from '../src/utils.js';
 
 test('fuzzyScore: subsequence + ordering', () => {
   assert.equal(fuzzyScore('', 'anything'), 0);
@@ -93,12 +72,47 @@ test('renderMarkdown: tables + task lists (marked fixture)', () => {
   assert.match(html, /getMarkedRenderer/, 'custom renderer present');
 });
 
+test('markdown fixtures: tables + task lists render', () => {
+  const appjs = fs.readFileSync(path.join(__dirname, '..', 'src', 'app.js'), 'utf8');
+  const i = appjs.indexOf('function renderMarkdown(');
+  assert.ok(i >= 0);
+  let depth = 0, j = appjs.indexOf('{', i);
+  const start = j;
+  for (; j < appjs.length; j++) {
+    if (appjs[j] === '{') depth++;
+    else if (appjs[j] === '}') { depth--; if (!depth) break; }
+  }
+  const fnSrc = appjs.slice(i, j + 1);
+  // minimal marked stub capturing options
+  let seenOpts = null;
+  const marked = { parse: (md, opts) => { seenOpts = opts; return 'TABLE:' + md.slice(0, 20); } };
+  const esc = (t) => t;
+  const prepareMarkdownBody = (t) => ({ frontmatter: null, md: t });
+  const getMarkedRenderer = () => ({});
+  const renderFrontmatterBox = () => '';
+  const render = new Function('marked', 'esc', 'prepareMarkdownBody', 'getMarkedRenderer', 'renderFrontmatterBox',
+    fnSrc + '\nreturn renderMarkdown;')(marked, esc, prepareMarkdownBody, getMarkedRenderer, renderFrontmatterBox);
+  const tableMd = '| a | b |\n|---|---|\n| 1 | 2 |';
+  const taskMd = '- [ ] todo\n- [x] done';
+  assert.ok(render(tableMd).startsWith('TABLE:'));
+  assert.ok(render(taskMd).startsWith('TABLE:'));
+  assert.equal(seenOpts.gfm, true, 'gfm must be on for tables/task-lists');
+  assert.equal(seenOpts.breaks, true);
+});
+
 test('new UI classes have CSS', () => {
   const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'style.css'), 'utf8');
   for (const c of ['.stopped-early', '.thinking-hint', '.msg-actions', '.msg-action-btn', '.copy-code-btn', '.jump-latest', '.diff-view', '.open-tabs', '.msg-ts', '.error-panel']) {
     assert.ok(css.includes(c), 'missing CSS ' + c);
   }
+  assert.ok(appjsIncludes('data-retry="stats"'), 'stats panel needs Retry');
+  assert.ok(appjsIncludes('data-retry="sessions"'), 'sessions panel needs Retry');
+  assert.ok(appjsIncludes('data-retry="term"'), 'terminal panel needs Retry');
 });
+
+function appjsIncludes(t) {
+  return fs.readFileSync(path.join(__dirname, '..', 'src', 'app.js'), 'utf8').includes(t);
+}
 
 test('a11y hooks present', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
