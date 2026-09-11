@@ -1,4 +1,4 @@
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -139,6 +139,7 @@ let fsLang = '';
 const statsPanel = document.getElementById('stats-panel');
 const statsContent = document.getElementById('stats-content');
 const statsRefreshBtn = document.getElementById('stats-refresh-btn');
+const statsCopyBtn = document.getElementById('stats-copy-btn');
 const tabFilesBtn = document.getElementById('tab-files-btn');
 const tabStatsBtn = document.getElementById('tab-stats-btn');
 const tabSessionsBtn = document.getElementById('tab-sessions-btn');
@@ -1242,6 +1243,9 @@ function setupEventListeners() {
   }
   if (statsRefreshBtn) {
     statsRefreshBtn.addEventListener('click', () => loadStatsTab());
+  }
+  if (statsCopyBtn) {
+    statsCopyBtn.addEventListener('click', copyStatsSummary);
   }
   if (layoutToggleBtn) {
     layoutToggleBtn.addEventListener('click', toggleLayoutMode);
@@ -3694,18 +3698,62 @@ async function loadDelegatedSessionsTab() {
   }
 }
 
-async function loadStatsTab() {
-  if (!state.sessionId) {
-    statsContent.innerHTML = '<div class="stats-empty">No active session.</div>';
+let lastStatsData = null;
+
+function copyStatsSummary() {
+  if (!lastStatsData) {
+    showToast('No stats loaded to copy');
     return;
   }
-  statsContent.innerHTML = '<div class="stats-empty">Loading stats…</div>';
+  const d = lastStatsData;
+  const promptTok = d.prompt_tokens || 0;
+  const compTok = d.completion_tokens || 0;
+  const totTok = d.total_tokens || 0;
+  const toolCalls = d.tool_calls || 0;
+  const toolTime = d.total_tool_time_ms || 0;
+  const avgToolMs = toolCalls > 0 ? (toolTime / toolCalls).toFixed(0) + ' ms' : '0 ms';
+  const md = [
+    `# Session Stats: ${d.title || d.id || 'Active Session'}`,
+    `- **Session ID:** \`${d.id || state.sessionId || '—'}\``,
+    `- **Provider / Model:** ${d.provider || '—'} / \`${d.model || '—'}\``,
+    `- **Workspace:** \`${d.workspace || '—'}\``,
+    `- **Messages:** ${d.message_count || 0} (${d.user_messages || 0} user, ${d.assistant_messages || 0} assistant)`,
+    `- **Tokens:** ${formatNumber(totTok)} total (${formatNumber(promptTok)} prompt, ${formatNumber(compTok)} completion)`,
+    `- **Tool Invocations:** ${toolCalls} calls across ${formatMs(toolTime)} (avg ${avgToolMs}/call)`,
+  ].join('\n');
+  copyText(md, 'Stats summary copied to clipboard');
+}
+
+async function loadStatsTab() {
+  if (!state.sessionId) {
+    lastStatsData = null;
+    statsContent.innerHTML = `
+      <div class="stats-empty-container">
+        <div class="stats-empty-icon">📊</div>
+        <div class="stats-empty-title">No Active Session</div>
+        <div class="stats-empty-desc">Open or create a session to view real-time token usage, message activity, and tool execution metrics.</div>
+      </div>`;
+    return;
+  }
+  statsContent.innerHTML = `
+    <div class="stats-loading">
+      <div class="stats-skeleton-banner"></div>
+      <div class="stats-skeleton-grid">
+        <div class="stats-skeleton-card"></div>
+        <div class="stats-skeleton-card"></div>
+        <div class="stats-skeleton-card"></div>
+        <div class="stats-skeleton-card"></div>
+      </div>
+      <div class="stats-skeleton-card tall"></div>
+    </div>`;
   try {
     const res = await fetch('/session/' + state.sessionId + '/stats');
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
+    lastStatsData = data;
     renderStatsTab(data);
   } catch (e) {
+    lastStatsData = null;
     statsContent.innerHTML = '<div class="error-panel">Failed to load stats: ' + esc(e.message)
       + '<br><button type="button" class="msg-action-btn" data-retry="stats">Retry</button></div>';
     const b = statsContent.querySelector('[data-retry="stats"]');
@@ -3714,39 +3762,229 @@ async function loadStatsTab() {
 }
 
 function renderStatsTab(data) {
-  const cards = [];
-  const card = (label, value, accent) =>
-    '<div class="stat-card"><div class="stat-label">' + esc(label) + '</div>'
-    + '<div class="stat-value' + (accent ? ' accent' : '') + '">' + esc(String(value)) + '</div></div>';
+  const promptTokens = Number(data.prompt_tokens) || 0;
+  const completionTokens = Number(data.completion_tokens) || 0;
+  const totalTokens = Number(data.total_tokens) || (promptTokens + completionTokens);
+  const toolCalls = Number(data.tool_calls) || 0;
+  const totalToolTimeMs = Number(data.total_tool_time_ms) || 0;
+  const msgCount = Number(data.message_count) || 0;
+  const userMsgs = Number(data.user_messages) || 0;
+  const assistantMsgs = Number(data.assistant_messages) || 0;
+  const avgToolTime = toolCalls > 0 ? (totalToolTimeMs / toolCalls) : 0;
 
-  cards.push(card('Title', data.title || '—'));
-  cards.push(card('Provider', data.provider || '—'));
-  cards.push(card('Model', data.model || '—', true));
+  // Percentage calculations
+  const promptPct = totalTokens > 0 ? Math.round((promptTokens / totalTokens) * 100) : 0;
+  const compPct = totalTokens > 0 ? Math.max(0, 100 - promptPct) : 0;
+  const totalDialogue = (userMsgs + assistantMsgs);
+  const userPct = totalDialogue > 0 ? Math.round((userMsgs / totalDialogue) * 100) : 50;
+  const asstPct = totalDialogue > 0 ? Math.max(0, 100 - userPct) : 50;
 
-  let created = '—';
+  let createdFormatted = '—';
+  let createdRelative = '';
   if (data.created_at) {
-    try { created = new Date(data.created_at * 1000).toLocaleString(); } catch (e) {}
+    try {
+      const d = new Date(data.created_at * 1000);
+      createdFormatted = d.toLocaleString(undefined, {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+      createdRelative = relTime(data.created_at * 1000);
+    } catch (_) {}
   }
-  cards.push(card('Created', created));
 
-  cards.push(card('Messages', data.message_count || 0));
-  cards.push(card('User / Assistant', (data.user_messages || 0) + ' / ' + (data.assistant_messages || 0)));
-  cards.push(card('Tool Calls', data.tool_calls || 0));
-  cards.push(card('Total Tool Time', formatMs(data.total_tool_time_ms || 0)));
+  const sid = data.id || state.sessionId || '';
+  const title = data.title || 'Untitled Session';
+  const provider = data.provider || '—';
+  const model = data.model || '—';
+  const workspace = data.workspace || '';
 
-  cards.push(card('Prompt Tokens', data.prompt_tokens || 0));
-  cards.push(card('Completion Tokens', data.completion_tokens || 0));
-  cards.push(card('Total Tokens', data.total_tokens || 0, true));
+  const html = `
+    <div class="stats-container">
+      <!-- Session Header & Identity Card -->
+      <div class="stats-session-hero">
+        <div class="stats-hero-top">
+          <div class="stats-hero-title-group">
+            <span class="stats-hero-badge">Active Session</span>
+            <h3 class="stats-hero-title" title="${esc(title)}">${esc(title)}</h3>
+          </div>
+          <div class="stats-hero-id-badge" title="Click to copy Session ID" data-copy-sid="${esc(sid)}">
+            <span class="stats-hero-id-label">ID:</span>
+            <code class="stats-hero-id-val">${esc(sid || '—')}</code>
+            <svg class="ui-icon stats-copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </div>
+        </div>
 
-  let html = '<div class="stat-grid">' + cards.join('') + '</div>';
+        <div class="stats-hero-meta-row">
+          <div class="stats-hero-pill" title="Inference Provider">
+            <span class="stats-pill-icon">⚡</span>
+            <span class="stats-pill-label">Provider:</span>
+            <strong class="stats-pill-value">${esc(provider)}</strong>
+          </div>
+          <div class="stats-hero-pill accent" title="Active Model">
+            <span class="stats-pill-icon">🧠</span>
+            <span class="stats-pill-label">Model:</span>
+            <strong class="stats-pill-value">${esc(model)}</strong>
+          </div>
+          ${createdFormatted !== '—' ? `
+            <div class="stats-hero-pill" title="Created on ${esc(createdFormatted)}">
+              <span class="stats-pill-icon">🕒</span>
+              <span class="stats-pill-label">Started:</span>
+              <strong class="stats-pill-value">${esc(createdRelative || createdFormatted)}</strong>
+            </div>
+          ` : ''}
+        </div>
 
-  const ws = data.workspace || '';
-  if (ws) {
-    html += '<div class="stat-section-title">Workspace</div>';
-    html += '<div class="stat-card"><div class="stat-label">Directory</div><div class="stat-value">' + esc(ws) + '</div></div>';
-  }
+        ${workspace ? `
+          <div class="stats-hero-workspace-row" title="${esc(workspace)}">
+            <span class="stats-ws-icon"><svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+            <span class="stats-ws-label">Workspace:</span>
+            <code class="stats-ws-path">${esc(workspace)}</code>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- KPI Summary Cards Grid -->
+      <div class="stat-grid stats-kpi-grid">
+        <div class="stat-card kpi-card tokens">
+          <div class="stat-card-header">
+            <span class="stat-card-icon tokens">🪙</span>
+            <span class="stat-label">Total Tokens</span>
+          </div>
+          <div class="stat-value accent">${esc(formatNumber(totalTokens))}</div>
+          <div class="stat-subtext">${esc(formatNumber(promptTokens))} in / ${esc(formatNumber(completionTokens))} out</div>
+        </div>
+
+        <div class="stat-card kpi-card messages">
+          <div class="stat-card-header">
+            <span class="stat-card-icon messages">💬</span>
+            <span class="stat-label">Messages</span>
+          </div>
+          <div class="stat-value">${esc(formatNumber(msgCount))}</div>
+          <div class="stat-subtext">${esc(formatNumber(userMsgs))} user • ${esc(formatNumber(assistantMsgs))} assistant</div>
+        </div>
+
+        <div class="stat-card kpi-card tools">
+          <div class="stat-card-header">
+            <span class="stat-card-icon tools">🛠️</span>
+            <span class="stat-label">Tool Calls</span>
+          </div>
+          <div class="stat-value">${esc(formatNumber(toolCalls))}</div>
+          <div class="stat-subtext">${toolCalls > 0 ? (toolCalls / Math.max(1, userMsgs)).toFixed(1) + ' calls/prompt' : 'No tools run'}</div>
+        </div>
+
+        <div class="stat-card kpi-card duration">
+          <div class="stat-card-header">
+            <span class="stat-card-icon duration">⏱️</span>
+            <span class="stat-label">Tool Execution</span>
+          </div>
+          <div class="stat-value">${esc(formatMs(totalToolTimeMs))}</div>
+          <div class="stat-subtext">${toolCalls > 0 ? 'avg ' + esc(formatMs(avgToolTime)) + '/call' : '0 ms latency'}</div>
+        </div>
+      </div>
+
+      <!-- Token Distribution Breakdown Card -->
+      <div class="stat-card section-card">
+        <div class="stat-section-header">
+          <div class="stat-section-title-wrap">
+            <span class="stat-section-icon">📈</span>
+            <span class="stat-section-title">Token Economy Breakdown</span>
+          </div>
+          <span class="stat-section-badge">${totalTokens > 0 ? 'Active' : 'Idle'}</span>
+        </div>
+
+        <div class="stat-progress-container">
+          <div class="stat-progress-bar" role="progressbar" aria-valuenow="${promptPct}" aria-valuemin="0" aria-valuemax="100">
+            <div class="stat-progress-segment prompt" style="width: ${promptPct}%" title="Prompt Tokens: ${promptPct}%"></div>
+            <div class="stat-progress-segment completion" style="width: ${compPct}%" title="Completion Tokens: ${compPct}%"></div>
+          </div>
+          <div class="stat-progress-legend">
+            <div class="stat-legend-item">
+              <span class="legend-dot prompt"></span>
+              <span class="legend-label">Prompt Tokens:</span>
+              <strong class="legend-val">${esc(formatNumber(promptTokens))}</strong>
+              <span class="legend-pct">(${promptPct}%)</span>
+            </div>
+            <div class="stat-legend-item">
+              <span class="legend-dot completion"></span>
+              <span class="legend-label">Completion Tokens:</span>
+              <strong class="legend-val">${esc(formatNumber(completionTokens))}</strong>
+              <span class="legend-pct">(${compPct}%)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dialogue & Tool Activity Breakdown Cards -->
+      <div class="stats-two-col-grid">
+        <!-- Dialogue Balance -->
+        <div class="stat-card section-card">
+          <div class="stat-section-header">
+            <div class="stat-section-title-wrap">
+              <span class="stat-section-icon">🗣️</span>
+              <span class="stat-section-title">Conversation Balance</span>
+            </div>
+          </div>
+          <div class="stat-progress-container">
+            <div class="stat-progress-bar small">
+              <div class="stat-progress-segment user-segment" style="width: ${userPct}%" title="User msgs: ${userPct}%"></div>
+              <div class="stat-progress-segment asst-segment" style="width: ${asstPct}%" title="Assistant msgs: ${asstPct}%"></div>
+            </div>
+            <div class="stat-progress-legend">
+              <div class="stat-legend-item">
+                <span class="legend-dot user-segment"></span>
+                <span class="legend-label">User:</span>
+                <strong class="legend-val">${esc(formatNumber(userMsgs))}</strong>
+              </div>
+              <div class="stat-legend-item">
+                <span class="legend-dot asst-segment"></span>
+                <span class="legend-label">Assistant:</span>
+                <strong class="legend-val">${esc(formatNumber(assistantMsgs))}</strong>
+              </div>
+            </div>
+          </div>
+          <div class="stat-detail-item">
+            <span class="detail-label">Avg Tokens / Message:</span>
+            <span class="detail-val">${msgCount > 0 ? esc(formatNumber(Math.round(totalTokens / msgCount))) : 0} tok</span>
+          </div>
+        </div>
+
+        <!-- Tool Performance Details -->
+        <div class="stat-card section-card">
+          <div class="stat-section-header">
+            <div class="stat-section-title-wrap">
+              <span class="stat-section-icon">⚙️</span>
+              <span class="stat-section-title">Tool Execution Stats</span>
+            </div>
+          </div>
+          <div class="stat-details-list">
+            <div class="stat-detail-item">
+              <span class="detail-label">Total Invocations:</span>
+              <span class="detail-val">${esc(formatNumber(toolCalls))}</span>
+            </div>
+            <div class="stat-detail-item">
+              <span class="detail-label">Accumulated Runtime:</span>
+              <span class="detail-val">${esc(formatMs(totalToolTimeMs))}</span>
+            </div>
+            <div class="stat-detail-item">
+              <span class="detail-label">Mean Latency per Tool:</span>
+              <span class="detail-val">${esc(formatMs(avgToolTime))}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 
   statsContent.innerHTML = html;
+
+  // Add click to copy session id
+  const copySidBtn = statsContent.querySelector('[data-copy-sid]');
+  if (copySidBtn) {
+    copySidBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const s = copySidBtn.getAttribute('data-copy-sid');
+      if (s) copyText(s, 'Session ID copied to clipboard');
+    });
+  }
 }
 
 

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, detectFsLanguage, extractChildSessionId, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from '../src/utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, detectFsLanguage, extractChildSessionId, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from '../src/utils.js';
 
 test('fuzzyScore: subsequence + ordering', () => {
   assert.equal(fuzzyScore('', 'anything'), 0);
@@ -48,6 +48,12 @@ test('formatMs boundaries', () => {
   assert.equal(formatMs(500), '500 ms');
   assert.equal(formatMs(1500), '1.5 s');
   assert.match(formatMs(90000), /1m/);
+});
+
+test('formatNumber formatting', () => {
+  assert.equal(formatNumber(0), '0');
+  assert.equal(formatNumber(1000), (1000).toLocaleString());
+  assert.equal(formatNumber(1234567), (1234567).toLocaleString());
 });
 
 test('detectFsLanguage extensions', () => {

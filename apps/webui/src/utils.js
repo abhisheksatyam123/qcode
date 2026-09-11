@@ -50,6 +50,11 @@ export function formatMs(ms) {
   return m + 'm ' + (s % 60).toFixed(0) + 's';
 }
 
+export function formatNumber(n) {
+  const num = Number(n) || 0;
+  return num.toLocaleString();
+}
+
 export function detectFsLanguage(path) {
   const name = (path || '').split('/').pop() || '';
   const lower = name.toLowerCase();

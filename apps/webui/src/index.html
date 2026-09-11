@@ -268,7 +268,13 @@
       <div id="stats-panel" class="side-tab-panel hidden">
         <div class="side-tab-header">
           <span>📊 Session Stats</span>
-          <button id="stats-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+          <div class="stats-header-actions">
+            <button id="stats-copy-btn" class="stats-action-btn" type="button" title="Copy stats markdown summary">
+              <svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span>Copy</span>
+            </button>
+            <button id="stats-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+          </div>
         </div>
         <div id="stats-content"></div>
       </div>
