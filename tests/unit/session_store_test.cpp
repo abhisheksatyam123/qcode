@@ -126,6 +126,40 @@ TEST_F(SessionStoreTest, MergesParallelToolCallsIntoOneAssistantTurn) {
     EXPECT_EQ(parsed[1].get_tool_calls().size(), 2u);
 }
 
+TEST_F(SessionStoreTest, SubagentsAreScopedToParentSession) {
+    const std::string parent = create_new_session("prov", "model", "/ws", "Parent Main");
+    ensure_session_row("ses_child_one", "Child One", "prov", "model", "/ws", parent);
+    ensure_session_row("ses_child_two", "Child Two", "prov", "model", "/ws", parent);
+    ensure_session_row("ses_orphan", "Orphan", "prov", "model", "/ws", "deadbeef-dead-beef-dead-deadbeefdead");
+
+    auto all = list_sessions_full(true);
+    ASSERT_EQ(all.size(), 4u);
+
+    auto scoped = list_sessions_full(true, parent);
+    ASSERT_EQ(scoped.size(), 2u);
+    for (const auto& s : scoped) {
+        EXPECT_EQ(s.parent_session_id, parent);
+    }
+
+    auto children = get_child_session_ids(parent);
+    ASSERT_EQ(children.size(), 2u);
+}
+
+TEST_F(SessionStoreTest, DeleteParentCascadesToChildSessions) {
+    const std::string parent = create_new_session("prov", "model", "/ws", "Cascade Parent");
+    ensure_session_row("ses_cascade_a", "Cascade A", "prov", "model", "/ws", parent);
+    ensure_session_row("ses_cascade_b", "Cascade B", "prov", "model", "/ws", parent);
+    save_message("ses_cascade_a", "User", "hello child");
+
+    ASSERT_EQ(list_sessions_full(true).size(), 3u);
+
+    delete_session(parent);
+
+    auto remaining = list_sessions_full(true);
+    EXPECT_TRUE(remaining.empty());
+    EXPECT_TRUE(load_session_messages("ses_cascade_a").empty());
+}
+
 TEST_F(SessionStoreTest, SubagentSessionsAreFilteredFromInteractiveLists) {
     const std::string sid1 = create_new_session("prov", "model", "/ws", "Main Chat");
     ensure_session_row("ses_subagent_123", "Subagent Task", "prov", "model", "/ws");

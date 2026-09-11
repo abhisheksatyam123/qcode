@@ -25,7 +25,8 @@ void ensure_session_row(const std::string& id,
                         const std::string& title,
                         const std::string& provider = "",
                         const std::string& model = "",
-                        const std::string& workspace = "");
+                        const std::string& workspace = "",
+                        const std::string& parent_session_id = "");
 
 // Retrieve the last active session ID from the database, or empty if none
 std::string get_last_active_session();
@@ -79,10 +80,11 @@ struct SessionInfo {
     std::string workspace;
     std::string provider;
     std::string model;
+    std::string parent_session_id;
     long long last_active_at = 0;
     int message_count = 0;
 };
-std::vector<SessionInfo> list_sessions_full(bool include_subagents = false);
+std::vector<SessionInfo> list_sessions_full(bool include_subagents = false, const std::string& parent_session_id = "");
 
 // Rename a session title
 void rename_session(const std::string& session_id, const std::string& new_title);
@@ -135,6 +137,7 @@ void persist_session_token_stats(const std::string& session_id,
                                  int total_tokens_delta);
 
 // Delete a session and its associated messages
+std::vector<std::string> get_child_session_ids(const std::string& parent_session_id);
 void delete_session(const std::string& session_id);
 
 // ── Model Capabilities & Performance Telemetry ─────────────────────────

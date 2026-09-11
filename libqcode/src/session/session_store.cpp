@@ -114,7 +114,8 @@ void init_database() {
             "  provider TEXT,"
             "  model TEXT,"
             "  created_at INTEGER,"
-            "  workspace TEXT DEFAULT ''"
+            "  workspace TEXT DEFAULT '',"
+            "  parent_session_id TEXT DEFAULT ''"
             ");";
         if (sqlite3_exec(db, schema_sessions, nullptr, nullptr, &err_msg) != SQLITE_OK) {
             LOG_ERROR("SQLite: create sessions table error: {}", err_msg ? err_msg : "unknown");
@@ -285,6 +286,16 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
+    // ── Migration v7 → v8: track parent session ID for subagents ──
+    if (user_version < 8) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT DEFAULT '';",
+            nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 8;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    }
+
     LOG_INFO("SQLite: database opened successfully at {}", get_db_path());
 }
 
@@ -388,21 +399,38 @@ void ensure_session_row(const std::string& id,
                         const std::string& title,
                         const std::string& provider,
                         const std::string& model,
-                        const std::string& workspace) {
+                        const std::string& workspace,
+                        const std::string& parent_session_id) {
     if (id.empty() || !is_valid_session_id(id)) return;
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
     if (!db) return;
 
-    const char* check_sql = "SELECT 1 FROM sessions WHERE id = ? LIMIT 1;";
+    const char* check_sql = "SELECT COALESCE(parent_session_id, '') FROM sessions WHERE id = ? LIMIT 1;";
     sqlite3_stmt* check_stmt = nullptr;
     bool exists = false;
+    std::string existing_parent;
     if (prepare_stmt(db, check_sql, &check_stmt)) {
         sqlite3_bind_text(check_stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
-        exists = sqlite3_step(check_stmt) == SQLITE_ROW;
+        if (sqlite3_step(check_stmt) == SQLITE_ROW) {
+            exists = true;
+            const auto* p = sqlite3_column_text(check_stmt, 0);
+            if (p) existing_parent = reinterpret_cast<const char*>(p);
+        }
         sqlite3_finalize(check_stmt);
     }
-    if (exists) return;
+    if (exists) {
+        if (!parent_session_id.empty() && existing_parent.empty()) {
+            sqlite3_stmt* upd_stmt = nullptr;
+            if (prepare_stmt(db, "UPDATE sessions SET parent_session_id = ? WHERE id = ?;", &upd_stmt)) {
+                sqlite3_bind_text(upd_stmt, 1, parent_session_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(upd_stmt, 2, id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_step(upd_stmt);
+                sqlite3_finalize(upd_stmt);
+            }
+        }
+        return;
+    }
 
     auto now = std::chrono::system_clock::now();
     long long created_at = std::chrono::duration_cast<std::chrono::seconds>(
@@ -410,8 +438,8 @@ void ensure_session_row(const std::string& id,
                                .count();
     std::string use_title = title.empty() ? ("Subagent " + id) : title;
     const char* sql =
-        "INSERT INTO sessions (id, title, provider, model, created_at, workspace, agent_mode) "
-        "VALUES (?, ?, ?, ?, ?, ?, 'subagent');";
+        "INSERT INTO sessions (id, title, provider, model, created_at, workspace, agent_mode, parent_session_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'subagent', ?);";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
         sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
@@ -420,6 +448,7 @@ void ensure_session_row(const std::string& id,
         sqlite3_bind_text(stmt, 4, model.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int64(stmt, 5, created_at);
         sqlite3_bind_text(stmt, 6, workspace.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 7, parent_session_id.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
@@ -945,7 +974,7 @@ std::vector<std::pair<std::string, std::string>> list_sessions(bool include_suba
     return sessions;
 }
 
-std::vector<SessionInfo> list_sessions_full(bool include_subagents) {
+std::vector<SessionInfo> list_sessions_full(bool include_subagents, const std::string& parent_session_id) {
     std::vector<SessionInfo> sessions;
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
@@ -957,7 +986,8 @@ std::vector<SessionInfo> list_sessions_full(bool include_subagents) {
         "SELECT sessions.id, sessions.title, COALESCE(sessions.workspace, ''), "
         "       COALESCE(sessions.provider, ''), COALESCE(sessions.model, ''), "
         "       COALESCE(m.last_msg_time, sessions.created_at) AS last_active, "
-        "       COALESCE(m.msg_count, 0) AS msg_count "
+        "       COALESCE(m.msg_count, 0) AS msg_count, "
+        "       COALESCE(sessions.parent_session_id, '') AS parent_id "
         "FROM sessions "
         "LEFT JOIN ( "
         "    SELECT session_id, MAX(created_at) AS last_msg_time, COUNT(*) AS msg_count "
@@ -967,10 +997,15 @@ std::vector<SessionInfo> list_sessions_full(bool include_subagents) {
     if (!include_subagents) {
         sql += "WHERE COALESCE(sessions.agent_mode, '') != 'subagent' "
                "  AND sessions.id NOT LIKE 'ses_%' ";
+    } else if (!parent_session_id.empty()) {
+        sql += "WHERE COALESCE(sessions.parent_session_id, '') = ? ";
     }
     sql += "ORDER BY last_active DESC;";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql.c_str(), &stmt)) {
+        if (include_subagents && !parent_session_id.empty()) {
+            sqlite3_bind_text(stmt, 1, parent_session_id.c_str(), -1, SQLITE_TRANSIENT);
+        }
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             SessionInfo info;
             const unsigned char* id_txt = sqlite3_column_text(stmt, 0);
@@ -978,6 +1013,7 @@ std::vector<SessionInfo> list_sessions_full(bool include_subagents) {
             const unsigned char* ws_txt = sqlite3_column_text(stmt, 2);
             const unsigned char* prov_txt = sqlite3_column_text(stmt, 3);
             const unsigned char* model_txt = sqlite3_column_text(stmt, 4);
+            const unsigned char* pid_txt = sqlite3_column_text(stmt, 7);
             info.id = id_txt ? reinterpret_cast<const char*>(id_txt) : "";
             info.title = title_txt ? reinterpret_cast<const char*>(title_txt) : "";
             info.workspace = ws_txt ? reinterpret_cast<const char*>(ws_txt) : "";
@@ -985,6 +1021,7 @@ std::vector<SessionInfo> list_sessions_full(bool include_subagents) {
             info.model = model_txt ? reinterpret_cast<const char*>(model_txt) : "";
             info.last_active_at = sqlite3_column_int64(stmt, 5);
             info.message_count = sqlite3_column_int(stmt, 6);
+            info.parent_session_id = pid_txt ? reinterpret_cast<const char*>(pid_txt) : "";
             sessions.push_back(std::move(info));
         }
         sqlite3_finalize(stmt);
@@ -1279,10 +1316,36 @@ void set_session_modes(const std::string& session_id,
 
 }
 
+std::vector<std::string> get_child_session_ids(const std::string& parent_session_id) {
+    std::vector<std::string> children;
+    if (parent_session_id.empty() || !is_valid_session_id(parent_session_id)) return children;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return children;
+
+    const char* sql = "SELECT id FROM sessions WHERE parent_session_id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, parent_session_id.c_str(), -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* txt = sqlite3_column_text(stmt, 0);
+            if (txt) children.emplace_back(reinterpret_cast<const char*>(txt));
+        }
+        sqlite3_finalize(stmt);
+    }
+    return children;
+}
+
 void delete_session(const std::string& session_id) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
         return;
+    }
+
+    // First find any child sessions belonging to this session and delete them recursively
+    auto children = get_child_session_ids(session_id);
+    for (const auto& child_id : children) {
+        delete_session(child_id);
     }
 
     auto db_lock = SharedDbHandle::instance().acquire();
@@ -1291,17 +1354,16 @@ void delete_session(const std::string& session_id) {
         return;
     }
 
-    // Enable foreign keys to cascade deletes
+    // Enable foreign keys to cascade deletes of messages / queued_prompts
     sqlite3_exec(db, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
 
     const char* sql = "DELETE FROM sessions WHERE id = ?;";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql, &stmt)) {
-        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
-
 }
 
 

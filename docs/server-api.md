@@ -20,8 +20,8 @@ Unversioned JSON API served by `qcode-server` (default port 9080). WebUI static 
 |--------|------|--------|
 | POST | `/generate` | body must include `session_id` and `text` (legacy) |
 | POST | `/session/:id/generate` | NDJSON stream of bus events |
-| GET | `/sessions` | list parent sessions; `?include_subagents=1` includes child rows |
-| GET | `/tasks` | live `TaskTool` delegated-child registry (`metadata.tasks`) |
+| GET | `/sessions` | list parent sessions; `?include_subagents=1` includes child rows; `&parent_session_id=<id>` scopes subagents to a parent |
+| GET | `/tasks` | live `TaskTool` subagent registry (`metadata.tasks`); `?parent_session_id=<id>` scopes to a parent session |
 | POST | `/sessions` | create; requires `provider`, `model` |
 | POST | `/rename` | `{session_id, title}` |
 | POST | `/session/cancel` | `{session_id}` |

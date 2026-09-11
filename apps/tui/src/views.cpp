@@ -1073,16 +1073,17 @@ ftxui::Element render_view(
             text("")
         }) | borderRounded | color(accent(theme)) | size(WIDTH, LESS_THAN, 80) | hcenter | flex;
     }
-    // ── Tab 3: delegated child sessions only ──
+    // ── Tab 3: Subagents for current session only ──
     else {
-        auto subagent_data = TaskTool::list_tasks();
+        const std::string curr_sid = state.session_id ? *state.session_id : "";
+        auto subagent_data = TaskTool::list_tasks(curr_sid);
         if (state.session_row_boxes) state.session_row_boxes->clear();
         if (state.subagent_row_boxes) state.subagent_row_boxes->clear();
 
         Elements content_rows;
 
         content_rows.push_back(hbox(
-            text(" DELEGATED CHILD SESSIONS ") | bold | color(accent2(theme)),
+            text(" SUBAGENTS ") | bold | color(accent2(theme)),
             filler(),
             text("↑↓ select   Enter/click open in chat   b parent   r refresh") | dim
         ));
@@ -1092,13 +1093,13 @@ ftxui::Element render_view(
                              subagent_data["metadata"].contains("tasks") &&
                              !subagent_data["metadata"]["tasks"].empty();
         if (!has_subagents) {
-            content_rows.push_back(text("  No delegated child sessions.") | dim);
+            content_rows.push_back(text("  No subagents run for this session.") | dim);
             content_rows.push_back(
-                text("  Spawn with the task tool. Saved parent sessions stay in the session picker.") | dim);
+                text("  Spawn subagents using the task tool. They will appear here for the active session.") | dim);
         } else {
             const auto& tasks = subagent_data["metadata"]["tasks"];
             content_rows.push_back(hbox(
-                text("▶ CHILDREN (" + std::to_string(tasks.size()) + ")") | bold | color(Color::CyanLight)
+                text("▶ SUBAGENTS (" + std::to_string(tasks.size()) + ")") | bold | color(Color::CyanLight)
             ));
             int row_i = 0;
             for (const auto& t : tasks) {

@@ -47,8 +47,8 @@
         <button class="sidebar-nav-btn" id="tab-stats-btn" type="button">
           <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span> Session Stats
         </button>
-        <button class="sidebar-nav-btn" id="tab-sessions-btn" type="button">
-          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span> Sessions
+        <button class="sidebar-nav-btn" id="tab-sessions-btn" type="button" title="Subagents for active session">
+          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span> Subagents
         </button>
       </nav>
     </div>
@@ -280,9 +280,9 @@
       </div>
       <div id="sessions-panel" class="side-tab-panel hidden">
         <div class="side-tab-header">
-          <span>Delegated child sessions</span>
+          <span>🤖 Subagents</span>
           <div class="sessions-header-actions">
-            <input type="text" id="sessions-filter-input" class="sessions-filter-input" placeholder="Filter child sessions…" aria-label="Filter child sessions">
+            <input type="text" id="sessions-filter-input" class="sessions-filter-input" placeholder="Filter subagents…" aria-label="Filter subagents">
             <button id="sessions-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
           </div>
         </div>

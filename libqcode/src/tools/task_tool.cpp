@@ -88,6 +88,7 @@ static void persist_subagent_output(const std::string& session_id,
 struct SubagentTaskEntry {
   std::string background_task_id;
   std::string session_id;
+  std::string parent_session_id;
   std::string description;
   std::string subagent_type;
   std::string mode;
@@ -109,6 +110,7 @@ class SubagentRegistry {
 
   void register_task(const std::string& bg_id,
                      const std::string& session_id,
+                     const std::string& parent_session_id,
                      const std::string& description,
                      const std::string& subagent_type,
                      const std::string& mode,
@@ -119,6 +121,7 @@ class SubagentRegistry {
     auto entry = std::make_shared<SubagentTaskEntry>();
     entry->background_task_id = bg_id;
     entry->session_id = session_id;
+    entry->parent_session_id = parent_session_id;
     entry->description = description;
     entry->subagent_type = subagent_type;
     entry->mode = mode;
@@ -133,6 +136,7 @@ class SubagentRegistry {
 
   void register_completed(const std::string& bg_id,
                           const std::string& session_id,
+                          const std::string& parent_session_id,
                           const std::string& description,
                           const std::string& subagent_type,
                           const std::string& mode,
@@ -142,6 +146,7 @@ class SubagentRegistry {
     auto entry = std::make_shared<SubagentTaskEntry>();
     entry->background_task_id = bg_id;
     entry->session_id = session_id;
+    entry->parent_session_id = parent_session_id;
     entry->description = description;
     entry->subagent_type = subagent_type;
     entry->mode = mode;
@@ -329,17 +334,22 @@ class SubagentRegistry {
     }
   }
 
-  JsonValue list() const {
+  JsonValue list(const std::string& parent_session_id = "") const {
     std::lock_guard<std::mutex> lock(mutex_);
     JsonValue res;
     res["title"] = "subagent tasks";
     JsonValue list_arr = JsonValue::array();
     std::stringstream ss;
     ss << "Active & Recent Subagent Tasks:\n";
+    int count = 0;
     for (const auto& [id, t] : tasks_) {
+      if (!parent_session_id.empty() && t->parent_session_id != parent_session_id) {
+        continue;
+      }
       JsonValue item;
       item["background_task_id"] = t->background_task_id;
       item["task_id"] = t->session_id;
+      item["parent_session_id"] = t->parent_session_id;
       item["description"] = t->description;
       item["agent"] = t->subagent_type;
       item["mode"] = t->mode;
@@ -347,10 +357,33 @@ class SubagentRegistry {
       item["status"] = t->status;
       list_arr.push_back(item);
       ss << "- " << t->background_task_id << " [" << t->status << "] (" << t->subagent_type << " / " << t->mode << "): " << t->description << "\n";
+      count++;
     }
-    res["output"] = tasks_.empty() ? "No background tasks registered." : ss.str();
+    res["output"] = (count == 0) ? "No background tasks registered." : ss.str();
     res["metadata"] = {{"tasks", list_arr}};
     return res;
+  }
+
+  void delete_session_tasks(const std::string& session_id) {
+    if (session_id.empty()) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> to_remove_bg;
+    for (const auto& [bg_id, entry] : tasks_) {
+      if (entry->session_id == session_id || entry->parent_session_id == session_id) {
+        if (entry->abort_flag) {
+          entry->abort_flag->store(true);
+        }
+        entry->status = "killed";
+        to_remove_bg.push_back(bg_id);
+      }
+    }
+    for (const auto& bg_id : to_remove_bg) {
+      auto it = tasks_.find(bg_id);
+      if (it != tasks_.end()) {
+        by_session_.erase(it->second->session_id);
+        tasks_.erase(it);
+      }
+    }
   }
 
   bool is_session_running(const std::string& session_id) {
@@ -379,9 +412,13 @@ void TaskTool::clear_background_tasks() {
   SubagentRegistry::instance().clear();
 }
 
-JsonValue TaskTool::list_tasks() {
+JsonValue TaskTool::list_tasks(const std::string& parent_session_id) {
   SubagentRegistry::instance().harvest_ready();
-  return SubagentRegistry::instance().list();
+  return SubagentRegistry::instance().list(parent_session_id);
+}
+
+void TaskTool::delete_session_tasks(const std::string& session_id) {
+  SubagentRegistry::instance().delete_session_tasks(session_id);
 }
 
 bool TaskTool::is_session_running(const std::string& session_id) {
@@ -661,10 +698,12 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
   }
 
   std::string session_id = generate_session_id();
+  std::string parent_session_id = context.session_id;
   {
     std::string title = description.empty() ? subagent_type : description;
     qcode::session::ensure_session_row(session_id, title, args.value("provider", ""),
-                                       args.value("model", ""), context.workspace);
+                                       args.value("model", ""), context.workspace,
+                                       parent_session_id);
     qcode::session::save_message(session_id, "User", prompt_text);
   }
   bool is_background = args.value("background", args.value("run_in_background", false));
@@ -776,7 +815,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
       return runner(sub_args, sub_abort);
     });
     SubagentRegistry::instance().register_task(
-        bg_id, session_id, description, subagent_type, mode, chosen_model, sub_abort, std::move(fut));
+        bg_id, session_id, parent_session_id, description, subagent_type, mode, chosen_model, sub_abort, std::move(fut));
   } else {
     // Direct or mock invocation without runner: register completed template
     std::stringstream fallback;
@@ -788,7 +827,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
     fallback << "Prompt: " << prompt_text << "\n";
     fallback << "</task_result>";
     SubagentRegistry::instance().register_completed(
-        bg_id, session_id, description, subagent_type, mode, chosen_model, fallback.str());
+        bg_id, session_id, parent_session_id, description, subagent_type, mode, chosen_model, fallback.str());
   }
 
   JsonValue result;
@@ -823,7 +862,8 @@ JsonValue TaskTool::exec_lifecycle(const JsonValue& args, const std::string& op)
     return SubagentRegistry::instance().kill(id, reason);
   }
   if (op == "status" || op == "list") {
-    return SubagentRegistry::instance().list();
+    std::string parent_sid = args.value("parent_session_id", args.value("session_id", ""));
+    return SubagentRegistry::instance().list(parent_sid);
   }
 
   JsonValue err;

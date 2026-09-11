@@ -132,7 +132,8 @@ class TaskTool {
   static JsonValue execute(const JsonValue& args, const ToolExecutionContext& context);
   static Tool definition();
   static void clear_background_tasks();
-  static JsonValue list_tasks();
+  static JsonValue list_tasks(const std::string& parent_session_id = "");
+  static void delete_session_tasks(const std::string& session_id);
   static bool is_session_running(const std::string& session_id);
   static JsonValue normalize_spawn_args(JsonValue args);
   static std::string session_id_from_result(const JsonValue& result);

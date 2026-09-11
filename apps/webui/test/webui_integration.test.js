@@ -232,3 +232,21 @@ test('WebUI child session view enhancements: close tab, live filter, model banne
   assert.match(utilsJs, /function extractChildSessionId/, 'missing extractChildSessionId in utils.js');
   assert.match(appJs, /extractChildSessionId/, 'app.js should import/use extractChildSessionId');
 });
+
+test('WebUI subagents tab: named Subagents, scoped to parent session, cascade delete', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+
+  // Naming checks
+  assert.match(indexHtml, /Subagents\s*<\/button>/, 'navigation tab button should be named Subagents');
+  assert.match(indexHtml, /<span>🤖 Subagents<\/span>/, 'panel header should display Subagents');
+  assert.match(indexHtml, /placeholder="Filter subagents…"|placeholder="Filter subagents\.\.\."/, 'filter input placeholder should reference subagents');
+
+  // Scoping checks
+  assert.match(appJs, /parent_session_id=/, 'loadDelegatedSessionsTab should query with parent_session_id');
+  assert.match(appJs, /s\.parent_session_id === state\.sessionId/, 'loadDelegatedSessionsTab should filter by parent_session_id');
+
+  // Cascade delete
+  assert.match(appJs, /deleteSessionPermanently/, 'deleteSessionPermanently present');
+  assert.match(appJs, /removedIds\.has/, 'deleteSessionPermanently should remove child sessions');
+});

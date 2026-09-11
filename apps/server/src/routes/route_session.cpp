@@ -39,6 +39,7 @@ nlohmann::json session_public_json(const qcode::session::SessionInfo& s) {
         {"model", s.model},
         {"agent_mode", agent},
         {"reasoning_mode", modes.second},
+        {"parent_session_id", s.parent_session_id}
     };
 }
 
@@ -527,7 +528,8 @@ svr.Post("/session/([^/]+)/generate", [handle_generate](const httplib::Request& 
 
 // ── List sessions ──
 svr.Get("/sessions", [](const httplib::Request& req, httplib::Response& res) {
-    auto list = qcode::session::list_sessions_full(query_flag_true(req, "include_subagents"));
+    std::string parent_sid = req.has_param("parent_session_id") ? req.get_param_value("parent_session_id") : "";
+    auto list = qcode::session::list_sessions_full(query_flag_true(req, "include_subagents"), parent_sid);
     nlohmann::json j = nlohmann::json::array();
     for (const auto& s : list) {
         j.push_back(session_public_json(s));
@@ -536,8 +538,11 @@ svr.Get("/sessions", [](const httplib::Request& req, httplib::Response& res) {
 });
 
 // ── Live delegated child sessions (TaskTool registry) ──
-svr.Get("/tasks", [](const httplib::Request&, httplib::Response& res) {
-    res.set_content(qcode::TaskTool::list_tasks().dump(2), "application/json");
+svr.Get("/tasks", [](const httplib::Request& req, httplib::Response& res) {
+    std::string parent_sid = req.has_param("parent_session_id")
+                                 ? req.get_param_value("parent_session_id")
+                                 : (req.has_param("session_id") ? req.get_param_value("session_id") : "");
+    res.set_content(qcode::TaskTool::list_tasks(parent_sid).dump(2), "application/json");
 });
 
 // ── Create session ──
@@ -718,20 +723,34 @@ svr.Delete("/session/([^/]+)", [](const httplib::Request& req, httplib::Response
         return;
     }
 
-    // Cancel any active generation on that session first
+    // Find any child sessions so we can cancel active generations on them too
+    auto children = qcode::session::get_child_session_ids(sid);
+
+    // Cancel any active generation on that session and child sessions
     {
         std::lock_guard<std::mutex> lock(g_sessions_mutex);
-        auto it = g_sessions.find(sid);
-        if (it != g_sessions.end()) {
-            auto session = it->second;
-            if (session->abort_flag) {
-                session->abort_flag->store(true);
+        auto cancel_gen = [](const std::string& target_id) {
+            auto it = g_sessions.find(target_id);
+            if (it != g_sessions.end()) {
+                if (it->second->abort_flag) {
+                    it->second->abort_flag->store(true);
+                }
+                g_sessions.erase(it);
             }
-            g_sessions.erase(it);
+        };
+        cancel_gen(sid);
+        for (const auto& child_id : children) {
+            cancel_gen(child_id);
         }
     }
 
-    // Delete from database
+    // Prune and abort any in-memory tasks belonging to this session or its children
+    qcode::TaskTool::delete_session_tasks(sid);
+    for (const auto& child_id : children) {
+        qcode::TaskTool::delete_session_tasks(child_id);
+    }
+
+    // Delete from database (cascades to children)
     qcode::session::delete_session(sid);
 
     res.set_content(R"({"ok":true})", "application/json");

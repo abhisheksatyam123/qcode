@@ -1954,7 +1954,7 @@ function handleHelpCommand() {
         <div class="help-row"><kbd>Esc</kbd><span>Stop generation</span></div>
         <div class="help-row"><kbd>/retry</kbd><span>Retry last prompt</span></div>
         <div class="help-row"><kbd>F2</kbd><span>Toggle thinking</span></div>
-        <div class="help-row"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd><span>Chat / Files / Stats / Sessions</span></div>
+        <div class="help-row"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd><span>Chat / Files / Stats / Subagents</span></div>
         <div class="help-row"><kbd>/theme</kbd><span>Switch theme</span></div>
         <div class="help-row"><kbd>/queue</kbd><span>List or drop queued prompts</span></div>
         <div class="help-row"><kbd>/clear-queue</kbd><span>Clear all queued prompts</span></div>
@@ -2365,6 +2365,7 @@ async function loadSessionData(id) {
       session.model = info.model || '';
       session.agentMode = info.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
       session.reasoning = info.reasoning_mode || session.reasoning || 'off';
+      session.parentSessionId = info.parent_session_id || state.parentSessionId || '';
     }
   } catch (e) {}
 
@@ -3572,11 +3573,15 @@ async function toggleAgentMode() {
 
 async function loadDelegatedSessionsTab() {
   if (!sessionsContent) return;
-  sessionsContent.innerHTML = '<div class="delegated-empty">Loading child sessions…</div>';
+  if (!state.sessionId) {
+    sessionsContent.innerHTML = '<div class="delegated-empty">No active session.<br>Select or create a parent session to view its subagents.</div>';
+    return;
+  }
+  sessionsContent.innerHTML = '<div class="delegated-empty">Loading subagents…</div>';
   try {
     let tasks = [];
     try {
-      const res = await fetch('/tasks');
+      const res = await fetch('/tasks?parent_session_id=' + encodeURIComponent(state.sessionId));
       if (res.ok) {
         const data = await res.json();
         if (data.metadata && Array.isArray(data.metadata.tasks)) {
@@ -3587,11 +3592,14 @@ async function loadDelegatedSessionsTab() {
 
     let savedSubagents = [];
     try {
-      const resSub = await fetch('/sessions?include_subagents=1');
+      const resSub = await fetch('/sessions?include_subagents=1&parent_session_id=' + encodeURIComponent(state.sessionId));
       if (resSub.ok) {
         const all = await resSub.json();
         if (Array.isArray(all)) {
-          savedSubagents = all.filter(s => (s.agent_mode === 'subagent' || (s.id && s.id.startsWith('ses_'))));
+          savedSubagents = all.filter(s => {
+            if (s.parent_session_id) return s.parent_session_id === state.sessionId;
+            return (s.agent_mode === 'subagent' || (s.id && s.id.startsWith('ses_')));
+          });
         }
       }
     } catch (_) {}
@@ -3599,8 +3607,11 @@ async function loadDelegatedSessionsTab() {
     const seenSids = new Set();
     const combined = [];
 
-    // Active / recent tasks from in-memory registry first
+    // Active / recent tasks for this session from in-memory registry first
     for (const task of tasks) {
+      if (task.parent_session_id && task.parent_session_id !== state.sessionId) {
+        continue;
+      }
       const sid = task.task_id || task.sessionId || '';
       if (sid) seenSids.add(sid);
       combined.push({
@@ -3614,7 +3625,7 @@ async function loadDelegatedSessionsTab() {
       });
     }
 
-    // Persisted subagent sessions from database
+    // Persisted subagent sessions belonging to this parent session
     for (const sub of savedSubagents) {
       if (!sub.id || seenSids.has(sub.id)) continue;
       seenSids.add(sub.id);
@@ -3639,7 +3650,7 @@ async function loadDelegatedSessionsTab() {
     }
 
     if (totalCount === 0) {
-      sessionsContent.innerHTML = '<div class="delegated-empty">No delegated child sessions.<br>Spawn with the task tool. Saved parent sessions stay in the session picker.</div>';
+      sessionsContent.innerHTML = '<div class="delegated-empty">No subagents run for this session.<br>Spawn subagents using the task tool to run parallel explore/implement/verify work.</div>';
       return;
     }
 
@@ -3647,14 +3658,14 @@ async function loadDelegatedSessionsTab() {
     const heading = document.createElement('div');
     heading.className = 'delegated-empty';
     heading.textContent = state.sessionsFilterText
-      ? `CHILDREN (${filtered.length} of ${totalCount}) — click to open in chat`
-      : `CHILDREN (${totalCount}) — click to open in chat`;
+      ? `SUBAGENTS (${filtered.length} of ${totalCount}) — click to open in chat`
+      : `SUBAGENTS (${totalCount}) — click to open in chat`;
     sessionsContent.appendChild(heading);
 
     if (filtered.length === 0) {
       const noMatch = document.createElement('div');
       noMatch.className = 'delegated-empty';
-      noMatch.textContent = 'No child sessions match your filter.';
+      noMatch.textContent = 'No subagents match your filter.';
       sessionsContent.appendChild(noMatch);
       return;
     }
@@ -3679,7 +3690,7 @@ async function loadDelegatedSessionsTab() {
       if (sid) {
         row.setAttribute('role', 'button');
         row.setAttribute('tabindex', '0');
-        row.title = 'Open child session ' + sid;
+        row.title = 'Open subagent session ' + sid;
         row.addEventListener('click', () => openChildSession(sid));
         row.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openChildSession(sid); }
@@ -3691,7 +3702,7 @@ async function loadDelegatedSessionsTab() {
       sessionsContent.appendChild(row);
     }
   } catch (e) {
-    sessionsContent.innerHTML = '<div class="error-panel">Failed to load children: ' + esc(e.message)
+    sessionsContent.innerHTML = '<div class="error-panel">Failed to load subagents: ' + esc(e.message)
       + '<br><button type="button" class="msg-action-btn" data-retry="sessions">Retry</button></div>';
     const rb = sessionsContent.querySelector('[data-retry="sessions"]');
     if (rb) rb.addEventListener('click', loadDelegatedSessionsTab);
@@ -5058,14 +5069,18 @@ async function deleteSessionPermanently(id) {
     if (!res.ok) {
       throw new Error(await res.text());
     }
-    const index = state.openSessions.findIndex(s => s.id === id);
-    if (index !== -1) {
-      state.openSessions.splice(index, 1);
+    // Remove deleted session and any child sessions linked to it
+    const removedIds = new Set([id]);
+    for (const s of state.openSessions) {
+      if (s.parentSessionId === id || (s.id && s.id.startsWith('ses_') && state.parentSessionId === id)) {
+        removedIds.add(s.id);
+      }
     }
-    if (state.sessionId === id) {
+    state.openSessions = state.openSessions.filter(s => !removedIds.has(s.id));
+
+    if (removedIds.has(state.sessionId)) {
       if (state.openSessions.length > 0) {
-        const nextIndex = Math.min(index, state.openSessions.length - 1);
-        switchSession(state.openSessions[nextIndex].id);
+        switchSession(state.openSessions[0].id);
       } else {
         state.sessionId = null;
         await createNewSession();
@@ -5073,7 +5088,10 @@ async function deleteSessionPermanently(id) {
     } else {
       renderSessionTabs();
     }
-    showToast("Session permanently deleted.");
+    if (state.activeTab === 'sessions') {
+      loadDelegatedSessionsTab();
+    }
+    showToast("Session and child subagents deleted.");
   } catch (e) {
     showToast("Failed to delete session: " + e.message);
   }

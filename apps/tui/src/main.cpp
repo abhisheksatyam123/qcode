@@ -214,7 +214,7 @@ int main(int argc, char* argv[]) {
     overlays.slash_commands = qcode::builtin_slash_commands();
 
     // ── TUI Components ──
-    std::vector<std::string> tab_values = {"Chat", "Files", "Stats", "Sessions"};
+    std::vector<std::string> tab_values = {"Chat", "Files", "Stats", "Subagents"};
     Component tab_toggle = Toggle(&tab_values, &state.tab_selected);
 
     InputOption input_opts = InputOption::Default();
@@ -903,6 +903,7 @@ int main(int argc, char* argv[]) {
                 store.add_toast("Switched to: " + picked.title, "info", 1500);
             },
             [&](const std::string& sid) {
+                qcode::TaskTool::delete_session_tasks(sid);
                 qcode::session::delete_session(sid);
             })) return true;
 
@@ -1297,9 +1298,10 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // ── Sessions tab: delegated children only (open in chat tab) ──
+        // ── Subagents tab: delegated children for current session only ──
         if (state.tab_selected == 3 && !any_overlay()) {
-            auto listed = qcode::TaskTool::list_tasks();
+            const std::string curr_sid = state.session_id ? *state.session_id : "";
+            auto listed = qcode::TaskTool::list_tasks(curr_sid);
             const auto& tasks =
                 (listed.contains("metadata") && listed["metadata"].contains("tasks"))
                     ? listed["metadata"]["tasks"]
@@ -1307,7 +1309,7 @@ int main(int argc, char* argv[]) {
             int child_count = static_cast<int>(tasks.size());
 
             if (e == Event::Character('r') || e == Event::Character('R')) {
-                store.add_toast("Refreshed child sessions", "info", 1000);
+                store.add_toast("Refreshed subagents", "info", 1000);
                 screen.Post(Event::Custom);
                 return true;
             }
@@ -1427,7 +1429,8 @@ int main(int argc, char* argv[]) {
                     if (return_to_parent_session()) return true;
                 }
                 if (state.tab_selected == 3 && state.subagent_row_boxes) {
-                    auto listed = qcode::TaskTool::list_tasks();
+                    const std::string curr_sid = state.session_id ? *state.session_id : "";
+                    auto listed = qcode::TaskTool::list_tasks(curr_sid);
                     const auto& tasks =
                         (listed.contains("metadata") &&
                          listed["metadata"].contains("tasks"))
