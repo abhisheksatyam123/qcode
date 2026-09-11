@@ -1,7 +1,20 @@
-# WebUI — enhancements (T0–T9 + R1–R4)
+# WebUI — enhancements (T0–T9 + R1–R4 + T4.1b)
 
-Stack: `apps/webui/src/` — `app.js` (~5k lines), `index.html`, `style.css`.
-Build: `cd apps/webui && npm run build`. Tests: `node --test test/webui_unit.test.js test/webui_integration.test.js` (19 tests).
+Stack: `apps/webui/src/` — `app.js` (~4950 lines), `utils.js` (~284 lines,
+17 pure exports), `index.html`, `style.css`.
+Build: `cd apps/webui && npm run build`.
+Tests: `node --test test/webui_unit.test.js test/webui_integration.test.js`
+(24 tests: 9 integration + 15 unit).
+
+## Modules
+- `utils.js` (pure, no DOM): fuzzyScore/Filter, shortPath, formatBytes/Ms,
+  detectFsLanguage, parseToolValue, sessionIdFromTaskResult,
+  extractChildSessionId, esc, capitalize, relTime, extractFrontmatter,
+  stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS.
+  `app.js` imports all 17; unit tests import `utils.js` directly.
+- Kept in `app.js` (stateful): parseFrontmatter (`window.jsyaml`),
+  renderMarkdown/getMarkedRenderer/renderFrontmatterBox/tagMarkdownLinks/
+  bindFrontmatterToggles/navigateMarkdownLink (need `marked`/DOM/session).
 
 ## Streaming + honest states (T1, T7)
 - `runGeneration` streams NDJSON `POST /session/:id/generate` via `getReader`.
@@ -28,13 +41,24 @@ Restored in `init()` / `switchSession()`.
   every `pre code` (clipboard + fallback). Relative `.msg-ts` timestamps
   (`createdAt`, `relTime`). Smart autoscroll (`nearBottom`) + `#jump-latest`
   pill. `#messages` has `aria-live="polite"`; modal has dialog role.
+- Markdown: `marked` gfm+breaks; tables/task-lists covered by fixture tests;
+  frontmatter/wikilink text transforms unit-tested via `utils.js`.
 
-## Files / Sessions / Terminal (T5–T6)
-- Explorer + sessions live filters; collapsible `.diff-view`; `.open-tabs` bar
-  with dirty-agnostic close; session pin (`★/☆`, `qcode-pinned`) + sort pinned-first.
+## Files / Sessions / Terminal (T5–T7.2)
+- Explorer + sessions live filters; collapsible `.diff-view`; `.open-tabs` bar;
+  session pin (`★/☆`, `qcode-pinned`) + sort pinned-first.
 - Terminal: xterm poll auto-reconnects (12 fails → `startTerminal`).
+- T7.2: stats/sessions/terminal failures render `.error-panel` with Retry.
 
-## Tests (R3)
-`test/webui_unit.test.js` extracts pure fns from `app.js` source and checks:
-`fuzzyScore/Filter`, `shortPath`, `formatBytes/Ms`, `detectFsLanguage`,
-`extractChildSessionId`, gfm markdown flags, new CSS classes, a11y hooks.
+## Vendoring (T8.3)
+xterm/xterm-css/fit-addon/hljs(+32 langs)/hljs-css vendored under `src/`
+as `vendor-*` (local-first, CDN `onerror` fallback). Recipe:
+`src/vendor/hljs-entry.js` (`esbuild --bundle --minify --format=iife`).
+Fonts + nerd-fonts remain CDN.
+
+## Subagent fallback (P0.2, backend)
+`run_subagent_turn_multi` retries failover-worthy errors (retryable flag,
+ModelError/unsupported-model, resolve failures, transient 429/5xx) across up
+to 4 candidates: explicit target, then Zen → Antigravity → shuffled
+OpenRouter. Cursor excluded unless explicitly requested.
+Success-after-retry reports `fallback_used/attempts/model`.
