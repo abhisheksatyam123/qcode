@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, detectFsLanguage, extractChildSessionId } from '../src/utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, detectFsLanguage, extractChildSessionId, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from '../src/utils.js';
 
 test('fuzzyScore: subsequence + ordering', () => {
   assert.equal(fuzzyScore('', 'anything'), 0);
@@ -118,4 +118,35 @@ test('a11y hooks present', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
   assert.match(html, /aria-live="polite"/, 'messages needs aria-live');
   assert.match(html, /role="dialog"/, 'modal needs dialog role');
+});
+
+test('extractFrontmatter: fence parsing', () => {
+  const r1 = extractFrontmatter('---\ntitle: hi\n---\nbody text');
+  assert.equal(r1.frontmatter.trim(), 'title: hi');
+  assert.equal(r1.body, 'body text');
+  const r2 = extractFrontmatter('no fence here');
+  assert.equal(r2.frontmatter, null);
+  assert.equal(r2.body, 'no fence here');
+  const r3 = extractFrontmatter('---\njust a rule\n---\nmore');
+  assert.equal(r3.frontmatter, null, 'separator without keys is not frontmatter');
+});
+
+test('stripFrontmatter delegates', () => {
+  const r = stripFrontmatter('---\na: 1\n---\nx');
+  assert.equal(r.body, 'x');
+});
+
+test('transformWikilinks: links + code fences', () => {
+  const out = transformWikilinks('see [[target|Alias]] now');
+  assert.match(out, /Alias/, 'alias preserved');
+  assert.ok(!out.includes('[['), 'wikilinks consumed');
+  const fenced = transformWikilinks('```\n[[keep]]\n```');
+  assert.match(fenced, /\[\[keep\]\]/, 'fenced wikilinks untouched');
+});
+
+test('command catalogs: data present', () => {
+  assert.ok(SLASH_COMMANDS.length >= 8, 'slash commands present');
+  assert.ok(SLASH_COMMANDS.some(c => c.name === '/model'));
+  assert.ok(PALETTE_COMMANDS.length >= 10, 'palette commands present');
+  assert.ok(PALETTE_COMMANDS.some(c => c.id === 'thinking_toggle'));
 });

@@ -108,10 +108,12 @@ test('WebUI includes TUI command palette, slash commands, and session chrome', (
   const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
   const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
 
+  const utilsJs = fs.readFileSync(path.join(srcDir, 'utils.js'), 'utf8');
   for (const cmd of ['/theme', '/agent', '/queue', '/clear-queue', '/retry', '/help', '/model', '/variant', '/session', '/compact']) {
-    assert.ok(appJs.includes("name: '" + cmd + "'") || appJs.includes('case \'' + cmd.slice(1) + '\''), 'missing slash ' + cmd);
+    assert.ok(utilsJs.includes("name: '" + cmd + "'") || appJs.includes('case \'' + cmd.slice(1) + '\''), 'missing slash ' + cmd);
   }
-  assert.match(appJs, /const PALETTE_COMMANDS = \[/, 'missing PALETTE_COMMANDS');
+  assert.match(utilsJs, /PALETTE_COMMANDS = \[/, 'missing PALETTE_COMMANDS in utils.js (T4.1b)');
+  assert.match(appJs, /PALETTE_COMMANDS/, 'app.js should import PALETTE_COMMANDS');
   assert.match(appJs, /function showCommandPalette/, 'missing showCommandPalette');
   assert.match(appJs, /function applyTheme/, 'missing applyTheme');
   assert.match(appJs, /const THEMES =/, 'missing THEMES');
@@ -123,11 +125,11 @@ test('WebUI includes TUI command palette, slash commands, and session chrome', (
   assert.match(appJs, /key\.toLowerCase\(\) === 'p'/, 'missing Ctrl+P palette shortcut');
   assert.match(appJs, /key\.toLowerCase\(\) === 'n'/, 'missing Ctrl+N new session shortcut');
   assert.match(appJs, /key === 'F2'/, 'missing F2 thinking toggle');
-  assert.match(appJs, /id: 'chat_open'/, 'missing chat_open palette command');
+  assert.ok(appJs.includes("id: 'chat_open'") || utilsJs.includes("id: 'chat_open'"), 'missing chat_open palette command');
   assert.match(appJs, /case 'chat_open'/, 'missing chat_open palette dispatch');
   assert.match(appJs, /key === '1'/, 'missing Alt+1 chat shortcut');
   assert.match(appJs, /key === '4'/, 'missing Alt+4 sessions shortcut');
-  assert.match(appJs, /name: '\/tools'/, 'WebUI-extra /tools slash should remain');
+  assert.ok(appJs.includes("name: '/tools'") || utilsJs.includes("name: '/tools'"), 'WebUI-extra /tools slash should remain');
 
   assert.match(indexHtml, /id="tab-sessions-btn"/, 'missing Sessions tab');
   assert.match(indexHtml, /id="parent-back-btn"/, 'missing parent back');

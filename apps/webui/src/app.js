@@ -1,4 +1,4 @@
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -169,40 +169,9 @@ let termPollFails = 0; // T6.1 consecutive stream failures
 let termPollTimer = null;
 
 // ── Slash commands ──
-const SLASH_COMMANDS = [
-  { name: '/help',        desc: 'Show help and keyboard shortcuts' },
-  { name: '/model',       desc: 'Select a model from any provider' },
-  { name: '/variant',     desc: 'Select thinking / reasoning effort' },
-  { name: '/theme',       desc: 'Select a UI theme color' },
-  { name: '/new',         desc: 'Start a new session' },
-  { name: '/rename',      desc: 'Rename current session' },
-  { name: '/session',     desc: 'Manage and load saved sessions' },
-  { name: '/compact',     desc: 'Summarize conversation to save context' },
-  { name: '/agent',       desc: 'Switch between orchestrator and plan' },
-  { name: '/queue',       desc: 'List or drop queued prompts (/queue rm <n>)' },
-  { name: '/clear-queue', desc: 'Clear all queued prompts' },
-  { name: '/retry',       desc: 'Resend the last user prompt' },
-  { name: '/tools',       desc: 'Toggle tool use: on|off' },
-];
 
-const PALETTE_COMMANDS = [
-  { id: 'session_new',         label: 'New Session',              sublabel: 'Ctrl+N',        category: 'Session' },
-  { id: 'session_list',        label: 'Switch Session',           sublabel: '/session',      category: 'Session' },
-  { id: 'session_rename',      label: 'Rename Session',           sublabel: '/rename',       category: 'Session' },
-  { id: 'session_compact',     label: 'Compact Context',          sublabel: '/compact',      category: 'Session' },
-  { id: 'session_clear_queue', label: 'Clear Prompt Queue',       sublabel: '/clear-queue',  category: 'Session' },
-  { id: 'session_retry',       label: 'Retry Last Prompt',        sublabel: '/retry',        category: 'Session' },
-  { id: 'model_select',        label: 'Select Model',             sublabel: '/model',        category: 'Model' },
-  { id: 'model_variant',       label: 'Select Reasoning Variant', sublabel: '/variant',      category: 'Model' },
-  { id: 'agent_mode_toggle',   label: 'Toggle Agent Mode',        sublabel: '/agent',        category: 'Agent' },
-  { id: 'thinking_toggle',     label: 'Toggle Thinking Trace',    sublabel: 'F2',            category: 'View' },
-  { id: 'chat_open',           label: 'Chat',                    sublabel: 'Alt+1',         category: 'View' },
-  { id: 'files_open',          label: 'Changed Files',            sublabel: 'Alt+2',         category: 'View' },
-  { id: 'stats_open',          label: 'Session Stats',            sublabel: 'Alt+3',         category: 'View' },
-  { id: 'sessions_open',       label: 'Sessions & Subagents',     sublabel: 'Alt+4',         category: 'View' },
-  { id: 'theme_select',        label: 'Switch Theme',             sublabel: '/theme',        category: 'Appearance' },
-  { id: 'help',                label: 'Help & Shortcuts',         sublabel: '/help',         category: 'General' },
-];
+
+
 
 const THEMES = {
   "qcode": {
@@ -4133,47 +4102,9 @@ function addMessage(role, content) { const div = renderMessage({ role, content }
 
 // ── Markdown helpers: frontmatter + link navigation (inspired by Markdown-Oxide) ──────────────
 
-function extractFrontmatter(src) {
-  if (typeof src !== 'string') return { frontmatter: null, body: src || '' };
-  const trimmed = src.replace(/^[\uFEFF\r\n\s]+/, '');
-  if (!trimmed.startsWith('---')) {
-    return { frontmatter: null, body: src };
-  }
 
-  // Opening fence: require the `---` line to end OR be followed by a
-  // YAML-ish `key:`/`key :` line — avoids treating a horizontal rule or an
-  // arbitrary separator as frontmatter.
-  const fenceEnd = trimmed.indexOf('\n');
-  const openLine = fenceEnd >= 0 ? trimmed.slice(0, fenceEnd) : trimmed;
-  if (!/^---[ \t]*$/.test(openLine)) {
-    return { frontmatter: null, body: src };
-  }
-  const tail = fenceEnd >= 0 ? trimmed.slice(fenceEnd + 1) : '';
-  const keyLine = /^([ \t]*[A-Za-z0-9_][\w.-]*[ \t]*:[ \t]*(?:[^\n]*|$))/.exec(tail);
-  const closeOnly = /^([ \t]*---[ \t]*|\r?\n[ \t]*\.\.\.[ \t]*)/.exec(tail);
-  // Plain closing fence with no keys is still valid YAML (empty map).
-  if (!keyLine && !closeOnly) {
-    return { frontmatter: null, body: src };
-  }
 
-  const contentStart = fenceEnd + 1;
-  const closeRegex = /\r?\n(---|...)[ \t]*(?=\r?\n|$)/g;
-  closeRegex.lastIndex = contentStart;
-  const matchClose = closeRegex.exec(trimmed);
-  if (!matchClose) return { frontmatter: null, body: src };
 
-  const frontmatter = trimmed.slice(contentStart, matchClose.index);
-  const bodyStart = matchClose.index + matchClose[0].length;
-  let body = trimmed.slice(bodyStart);
-  if (body.startsWith('\n')) body = body.slice(1);
-  else if (body.startsWith('\r\n')) body = body.slice(2);
-
-  return { frontmatter, body };
-}
-
-function stripFrontmatter(text) {
-  return extractFrontmatter(text);
-}
 
 function parseFrontmatter(raw) {
   if (!raw || typeof raw !== 'string') return null;
@@ -4299,59 +4230,7 @@ function renderFrontmatterBox(raw) {
   return html;
 }
 
-function transformWikilinks(src) {
-  if (typeof src !== 'string') return src;
-  const lines = src.split('\n');
-  let inFence = false;
-  const out = [];
 
-  const pattern = /(!?)\[\[\s*([^\]|#]*?)\s*(?:#([^\]|]+))?\s*(?:\|([^\]]+))?\s*\]\]/g;
-
-  for (const line of lines) {
-    if (/^\s*```/.test(line)) { inFence = !inFence; out.push(line); continue; }
-    if (inFence) { out.push(line); continue; }
-
-    const parts = line.split(/(`[^`]+`)/);
-    for (let i = 0; i < parts.length; i++) {
-      if (!parts[i].startsWith('`')) {
-        parts[i] = parts[i].replace(pattern, (_, isEmbedStr, targetRaw, headingRaw, aliasRaw) => {
-          const isEmbed = Boolean(isEmbedStr);
-          const target = (targetRaw || '').trim();
-          const heading = (headingRaw || '').trim();
-          const alias = (aliasRaw || '').trim();
-          const hasExt = /\.[a-zA-Z0-9]+$/.test(target);
-
-          let headingSlug = '';
-          if (heading) {
-            headingSlug = '#' + heading.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
-          }
-
-          if (isEmbed) {
-            if (hasExt && /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(target)) {
-              const alt = alias || target;
-              return '![' + alt + '](<' + target + '>)';
-            } else {
-              const display = alias || (target + (heading ? ' > ' + heading : ''));
-              const noteTarget = target ? (target + (target && !hasExt ? '.md' : '') + headingSlug) : headingSlug;
-              return '<div class="md-transclusion-card" data-href="' + esc(noteTarget) + '">📄 <strong>' + esc(display) + '</strong></div>';
-            }
-          }
-
-          if (!target && heading) {
-            const disp = alias || ('#' + heading);
-            return '[' + disp + '](<' + headingSlug + '>)';
-          }
-
-          const noteTarget = target + (target && !hasExt ? '.md' : '') + headingSlug;
-          const disp = alias || (target + (heading ? ' > ' + heading : ''));
-          return '[' + disp + '](<' + noteTarget + '>)';
-        });
-      }
-    }
-    out.push(parts.join(''));
-  }
-  return out.join('\n');
-}
 
 function normalizeRelPath(baseDir, rel) {
   if (!rel) return '';
