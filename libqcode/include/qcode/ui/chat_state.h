@@ -62,9 +62,11 @@ struct ChatState {
     std::shared_ptr<size_t> history_window_start = std::make_shared<size_t>(0);
     std::shared_ptr<bool> show_thinking = std::make_shared<bool>(true);
     // Per-message thinking trace expansion, toggled by CLICKING the
-    // "+/- Thought" header (opencode behaviour). Keyed by the assistant
-    // message's address; entries are rebuilt every frame alongside tool
-    // arrow boxes. Reasoning stays captured/replayed regardless of this.
+    // "+/- Thought" header (opencode behaviour). Keyed by the history row
+    // index (views pass `i`); unit tests fall back to message address.
+    // Header boxes are rebuilt every frame; expand state persists across
+    // frames and is cleared on session switch. Reasoning stays
+    // captured/replayed regardless of this.
     std::shared_ptr<std::unordered_map<unsigned long, bool>>
         thinking_expand_state =
             std::make_shared<std::unordered_map<unsigned long, bool>>();

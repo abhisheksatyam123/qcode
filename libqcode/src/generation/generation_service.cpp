@@ -311,7 +311,13 @@ static JsonValue run_subagent_turn_multi(
     std::string sub_session_id =
         args.value("sessionId", args.value("session_id", args.value("task_id", "")));
 
-    int max_steps = 25;
+    int max_steps = 100;
+    if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
+      try {
+        const int v = std::stoi(env_steps);
+        if (v > 0) max_steps = v;
+      } catch (...) {}
+    }
     qcode::GenerateOptions sub_opts(wire_model, sub_sys.str(), "");
     sub_opts.tools = ToolCatalog::build_definitions(ToolConfig::subagent());
     sub_opts.max_steps = max_steps;
@@ -1430,7 +1436,7 @@ void run_generation_with_bus(
       qcode::ToolSet tools =
           ToolCatalog::build_definitions(enable_task_tool ? ToolConfig::orchestrator() : ToolConfig::subagent());
       base_opts.tools = std::move(tools);
-      int max_tool_steps = 30;
+      int max_tool_steps = 100;
       if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
         try {
           const int v = std::stoi(env_steps);

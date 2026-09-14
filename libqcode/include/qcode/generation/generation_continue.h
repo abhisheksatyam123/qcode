@@ -92,6 +92,33 @@ inline bool looks_like_task_stall(std::string_view text) {
       "i need the",
       "wait —",
       "wait -",
+      "next, i will",
+      "next i will",
+      "i will now",
+      "i'll now",
+      "let me check",
+      "let me inspect",
+      "let me verify",
+      "let me test",
+      "let me run",
+      "let me look",
+      "let me find",
+      "let me investigate",
+      "let me update",
+      "let's check",
+      "let's inspect",
+      "let's verify",
+      "let's test",
+      "let's run",
+      "proceeding to",
+      "continuing to",
+      "moving on to",
+      "now checking",
+      "now verifying",
+      "now testing",
+      "now running",
+      "now inspecting",
+      "now updating",
   };
   return std::ranges::any_of(kStall, [&](std::string_view phrase) {
     return lower.find(phrase) != std::string::npos;
@@ -103,7 +130,7 @@ inline bool looks_like_task_stall(std::string_view text) {
 inline bool should_auto_continue_build(bool plan_mode,
                                        int continue_count,
                                        std::string_view assistant_text) {
-  constexpr int kMaxContinues = 3;
+  constexpr int kMaxContinues = 6;
   constexpr int kMaxEmptyContinues = 2;
   if (plan_mode) return false;
   if (continue_count >= kMaxContinues) return false;

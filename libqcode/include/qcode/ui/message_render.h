@@ -35,12 +35,16 @@ ftxui::Element BlockTool(const std::string& title, ftxui::Element content,
                           ftxui::Color border_color = ftxui::Color::GrayDark);
 
 // ── Render a complete message (user/assistant/system) ──
+// message_index is the stable row in messages_history (views loop `i`); it
+// keys the per-message Thought expand state so vector reallocs can't orphan
+// the toggle. Defaults to -1 (address fallback) for unit tests.
 ftxui::Element render_message(const qcode::Message& msg,
                                const ChatState& state,
                                const std::vector<ProviderInfo>& providers_list,
                                int selected_provider, int selected_model,
                                const std::string& theme,
-                               const qcode::Message* adjacent_tool_results = nullptr);
+                               const qcode::Message* adjacent_tool_results = nullptr,
+                               int message_index = -1);
 
 // Colored, truncated shell-style stdout/stderr.
 ftxui::Element render_truncated_output(const std::string& output,

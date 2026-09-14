@@ -240,6 +240,40 @@ TEST(MarkdownTest, RendersHeadingsListsLinksAndImages) {
   EXPECT_NE(clean.find("Blockquote line"), std::string::npos);
 }
 
+TEST(MessageRenderTest, ThoughtCollapsedByDefaultExpandableByIndex) {
+  // Thinking stays hidden behind "+ Thought" until the per-message index key
+  // is expanded — the click handler in main.cpp toggles the same map.
+  qcode::Message thinking =
+      qcode::Message::assistant_with_reasoning("", "plan the refactor");
+  qcode::ChatState collapsed_state;
+  std::vector<qcode::ProviderInfo> providers;
+
+  auto collapsed_el = qcode::render_message(thinking, collapsed_state,
+                                            providers, -1, -1, "opencode",
+                                            nullptr, 3);
+  auto collapsed_screen = ftxui::Screen::Create(
+      ftxui::Dimension::Fixed(120), ftxui::Dimension::Fit(collapsed_el));
+  ftxui::Render(collapsed_screen, collapsed_el);
+  std::string collapsed_clean = strip_ansi(collapsed_screen.ToString());
+  EXPECT_NE(collapsed_clean.find("+ Thought"), std::string::npos);
+  EXPECT_EQ(collapsed_clean.find("plan the refactor"), std::string::npos);
+  // Header-only hit box registered for the stable index key.
+  EXPECT_NE(collapsed_state.thinking_header_boxes->find(3),
+            collapsed_state.thinking_header_boxes->end());
+
+  qcode::ChatState expanded_state;
+  (*expanded_state.thinking_expand_state)[3] = true;
+  auto expanded_el = qcode::render_message(thinking, expanded_state,
+                                           providers, -1, -1, "opencode",
+                                           nullptr, 3);
+  auto expanded_screen = ftxui::Screen::Create(
+      ftxui::Dimension::Fixed(120), ftxui::Dimension::Fit(expanded_el));
+  ftxui::Render(expanded_screen, expanded_el);
+  std::string expanded_clean = strip_ansi(expanded_screen.ToString());
+  EXPECT_NE(expanded_clean.find("- Thought"), std::string::npos);
+  EXPECT_NE(expanded_clean.find("plan the refactor"), std::string::npos);
+}
+
 TEST(MarkdownTest, SyntaxHighlightingPythonAndBash) {
   std::string md =
       "```python\n"

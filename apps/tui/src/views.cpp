@@ -718,7 +718,7 @@ ftxui::Element render_view(
                     auto rendered = render_message(
                         msg, state, providers_list, selected_provider,
                         selected_model, *state.theme,
-                        adjacent_tool_results);
+                        adjacent_tool_results, static_cast<int>(i));
                     if (cacheable) message_cache[i] = rendered;
                     msgs.push_back(std::move(rendered));
                 }

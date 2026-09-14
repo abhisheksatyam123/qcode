@@ -542,15 +542,18 @@ static Element render_tool_result(const qcode::ToolResultContentPart& part,
 
 // Opencode-style reasoning header: warning-coloured "+/- Thought" toggle
 // (collapsed by default; static while busy — footer owns the spinner).
+// Header-only click box: only the "+/- Thought" line toggles (body clicks
+// pass through). Collapsed + expanded share the existing panel_bg + rail
+// so Thought matches ToolBlock/User rows — no new palette entries.
 static Element render_reasoning(const qcode::ReasoningContentPart& rp,
                                  const std::string& theme,
                                  bool expanded = true,
-                                 bool busy = false) {
+                                 bool busy = false,
+                                 HitBox* header_box = nullptr) {
     if (rp.text.empty()) return emptyElement();
 
     auto thought_line = [&](const char* marker) {
         return hbox({
-            text("   ") ,
             text(marker) | bold | color(theme_warning(theme)),
             text(" Thought") | color(theme_warning(theme)),
         });
@@ -563,37 +566,55 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
         (void)busy;
         // Token estimate (chars/4, same estimator as generation_service) so
         // the collapsed line carries its cost like upstream usage totals.
-        Elements bits = {thought_line("+ ")};
+        Elements bits = {thought_line("+")};
         if (!rp.text.empty()) {
             const long long est = (long long)(rp.text.size() + 3) / 4;
             bits.push_back(text(" · " + format_compact_tokens(est)) |
                            dim | color(Color::GrayDark));
         }
         bits.push_back(text(" · click to expand") | dim | color(Color::GrayDark));
-        return hbox(std::move(bits));
+        Element header = hbox(std::move(bits));
+        if (header_box) header = std::move(header) | reflect_simple(*header_box);
+        // Same existing background + rail as ToolBlock/User rows.
+        return hbox({
+                   text("┃") | color(theme_warning(theme)),
+                   text(" "),
+                   std::move(header) | flex,
+               }) |
+               bgcolor(panel_bg(theme));
     }
 
     Elements md = render_markdown(rp.text, theme);
     Elements indented;
     for (auto& el : md) {
         indented.push_back(
-            hbox({text("     "), std::move(el) | flex}) | dim);
+            hbox({text("  "), std::move(el) | flex}) | dim);
     }
 
-    return vbox({
-        hbox({
-            thought_line("- "),
-            text(" · click to collapse") | dim | color(Color::GrayDark),
-        }),
+    Element header_row = hbox({
+        thought_line("-"),
+        text(" · click to collapse") | dim | color(Color::GrayDark),
+    });
+    if (header_box) header_row = std::move(header_row) | reflect_simple(*header_box);
+    Element content = vbox({
+        std::move(header_row),
         vbox(std::move(indented)),
     });
+    // One continuous rail + existing panel_bg for the whole Thought card.
+    return hbox({
+               text("┃") | color(theme_warning(theme)),
+               text(" "),
+               std::move(content) | flex,
+           }) |
+           bgcolor(panel_bg(theme));
 }
 
 Element render_message(const qcode::Message& msg, const ChatState& state,
                         const std::vector<ProviderInfo>& providers_list,
                         int selected_provider, int selected_model,
                         const std::string& theme,
-                        const qcode::Message* adjacent_tool_results) {
+                        const qcode::Message* adjacent_tool_results,
+                        int message_index) {
     Elements parts;
 
     const bool has_text = msg.has_text();
@@ -656,10 +677,13 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
 
     // Thinking traces toggle by CLICKING the "+/- Thought" header (mirrors
     // opencode's onMouseUp toggle); per-message state, default collapsed.
+    // Stable key: history row index when the view provides it, otherwise the
+    // message address (unit tests render standalone messages).
     const bool turn_busy =
         state.is_generating && state.is_generating->load();
     const unsigned long thinking_key =
-        reinterpret_cast<unsigned long>(&msg);
+        message_index >= 0 ? static_cast<unsigned long>(message_index)
+                           : reinterpret_cast<unsigned long>(&msg);
     bool thinking_expanded = false;
     if (state.thinking_expand_state) {
         auto it = state.thinking_expand_state->find(thinking_key);
@@ -671,14 +695,16 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
         if (const auto* reasoning_part =
                        std::get_if<qcode::ReasoningContentPart>(&part)) {
             if (*state.show_thinking) {
-                Element block = render_reasoning(*reasoning_part, theme,
-                                                 thinking_expanded, turn_busy);
-                // Make the header line clickable for the NEXT frame (same
-                // hit-testing approach as tool-call arrows).
+                // Header-only hit box: only the "+/- Thought" line toggles
+                // (body clicks pass through). Box is filled for next frame.
+                HitBox* header_box = nullptr;
                 if (state.thinking_header_boxes) {
-                    HitBox& box = (*state.thinking_header_boxes)[thinking_key];
-                    block = block | reflect_simple(box);
+                    header_box =
+                        &(*state.thinking_header_boxes)[thinking_key];
                 }
+                Element block = render_reasoning(*reasoning_part, theme,
+                                                 thinking_expanded, turn_busy,
+                                                 header_box);
                 parts.push_back(std::move(block));
             }
         } else if (const auto* tool_part =
