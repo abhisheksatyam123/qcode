@@ -28,7 +28,7 @@
           <span id="brand-sub">AI workspace</span>
         </div>
       </div>
-      <button id="sidebar-close-btn" class="sidebar-close-btn" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar">&times;</button>
+      <button id="sidebar-close-btn" class="sidebar-close-btn" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar" aria-expanded="true">&times;</button>
     </div>
 
     <!-- Views Selection -->
@@ -76,9 +76,9 @@
         </div>
         <div class="control-group">
           <label for="reasoning-select">Reasoning</label>
-          <select id="reasoning-select">
+          <select id="reasoning-select" title="Reasoning effort. Off hides the thinking trace.">
             <option value="off">Off</option>
-            <option value="low">Low</option>
+            <option value="low" selected>Low</option>
             <option value="medium">Medium</option>
             <option value="high">High</option>
           </select>
@@ -99,14 +99,17 @@
   <div id="main-area">
     <!-- Header replacing the old main-tabs -->
     <header id="main-header">
-      <button id="menu-toggle-btn" class="menu-toggle-btn" title="Toggle sidebar (Ctrl+B)" aria-label="Toggle sidebar"><svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
-      <div class="header-session-info">
-        <div class="header-session-title" id="header-session-title">No session</div>
-        <div class="header-session-workspace" id="header-session-workspace"></div>
+      <div class="header-left">
+        <button id="menu-toggle-btn" class="menu-toggle-btn" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar" aria-expanded="true"><svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+        <div class="header-session-info">
+          <div class="header-session-title" id="header-session-title">No session</div>
+          <div class="header-session-workspace" id="header-session-workspace"></div>
+        </div>
       </div>
       <button type="button" id="parent-back-btn" class="parent-back-btn hidden" title="Return to parent session">← parent</button>
       <span id="subagent-badge" class="subagent-badge hidden">subagent</span>
       <button type="button" id="agent-mode-btn" class="agent-mode-btn" title="Toggle plan / orchestrator">Orchestrator</button>
+      <button type="button" id="thinking-toggle-btn" class="thinking-toggle-btn" title="Hide thinking trace (F2)" aria-pressed="true">Thinking</button>
       <div class="header-actions">
         <button class="layout-toggle-btn hidden" id="layout-toggle-btn" style="display: none !important;" title="Terminal Tab View"></button>
       </div>

@@ -282,3 +282,113 @@ test('WebUI collapsible navigation, file tree, clean title, and dedicated termin
   assert.match(styleCss, /\.layout-toggle-btn\s*\{\s*display:\s*none\s*!important;\s*\}/, 'layout-toggle-btn should be permanently hidden');
   assert.doesNotMatch(appJs, /state\.layoutMode\s*=\s*'split'/, 'app.js should not enter split mode');
 });
+
+test('WebUI tool calls use a single background color', () => {
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+  const expected = '#0d131f';
+  const blocks = {};
+  for (const sel of ['.tool-block:hover', '.tool-header', '.tool-header:hover', '.tool-body']) {
+    const m = styleCss.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{[^}]*?background:\\s*([^;]+);'));
+    assert.ok(m, sel + ' should declare a background');
+    blocks[sel] = m[1].trim();
+    assert.equal(blocks[sel], expected, sel + ' background should be ' + expected + ' (got ' + blocks[sel] + ')');
+  }
+  // Both desktop base and mobile/unified override of .tool-output must match.
+  const outBgs = [...styleCss.matchAll(/\.tool-output\s*\{[^}]*?background:\s*([^;]+);/g)].map(m => m[1].trim());
+  assert.ok(outBgs.length >= 2, 'expected desktop + unified .tool-output rules');
+  for (const bg of outBgs) assert.equal(bg, expected, '.tool-output background should be ' + expected + ' (got ' + bg + ')');
+  const errM = styleCss.match(/\.tool-output\.error\s*\{[^}]*?background:\s*([^;]+);/);
+  assert.ok(errM, '.tool-output.error should declare a background');
+  assert.equal(errM[1].trim(), expected, '.tool-output.error background should be ' + expected);
+});
+
+test('WebUI background message sync heals stale lists without clobbering streams', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+
+  // Sync function exists and targets the active session's /messages endpoint
+  assert.match(appJs, /function syncActiveSessionMessages/, 'missing syncActiveSessionMessages');
+  assert.match(appJs, /\/session\/' \+ session\.id \+ '\/messages'/, 'sync should refetch /session/:id/messages');
+
+  // Must never interrupt streaming: skip on generating / reader / cancelRequested
+  assert.match(appJs, /session\.generating \|\| session\.reader \|\| session\.cancelRequested/, 'sync must skip while streaming');
+  assert.match(appJs, /if \(!state\.sessionId\) return/, 'sync must skip with no active session');
+
+  // Change detection: only render when count/signature differs
+  assert.match(appJs, /messageSignature/, 'sync should compare message signatures before rendering');
+  assert.match(appJs, /syncActiveSessionMessages\(\{ ?silent/, 'sync calls should pass {silent:true}');
+
+  // Scroll preservation: never force-scroll a user who scrolled up
+  assert.match(appJs, /nearBottom\(\)/, 'sync should check nearBottom before scrolling');
+
+  // Event wiring: visibility + focus + online
+  assert.match(appJs, /document\.addEventListener\('visibilitychange'/, 'missing visibilitychange listener');
+  assert.match(appJs, /window\.addEventListener\('focus'/, 'missing focus listener');
+  assert.match(appJs, /window\.addEventListener\('online'/, 'missing online listener');
+
+  // 15s interval guarded by document.hidden / generating
+  assert.match(appJs, /setInterval\(\(\) => \{\s*\n?\s*if \(document\.hidden/, 'missing guarded interval sync');
+  assert.match(appJs, /active\.generating/, 'interval sync must skip while generating');
+  assert.match(appJs, /, 15000\)/, 'interval sync should run every 15s');
+
+  // Overlap guard + post-stream reconciliation
+  assert.match(appJs, /syncingMessages/, 'missing overlapping-sync guard flag');
+  assert.match(appJs, /schedulePostStreamSync/, 'missing post-stream reconcile trigger');
+});
+
+test('WebUI thinking visibility: low default, open-param thought block, header toggle pill', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // 1. Client default reasoning must not be 'off' (state init + select default)
+  assert.match(appJs, /reasoning:\s*'low'/, 'state init reasoning default should be low');
+  assert.doesNotMatch(appJs, /reasoning:\s*'off'/, 'state init must not default to off');
+  assert.match(indexHtml, /<option value="low" selected>/, 'reasoning-select should default to Low');
+  assert.match(indexHtml, /id="reasoning-select"[^>]*title=/, 'reasoning-select should have tooltip title');
+
+  // 2. renderThoughtBlock supports {open:true} expanded param
+  assert.match(appJs, /function renderThoughtBlock\(text,\s*opts\)/, 'renderThoughtBlock should accept opts param');
+  assert.match(appJs, /opts && opts\.open/, 'renderThoughtBlock should check opts.open');
+  assert.match(appJs, /liveThoughtOpen/, 'renderMessage should auto-open latest thought while generating');
+  assert.match(appJs, /lastThoughtIdx/, 'renderMessage should track last thought index');
+
+  // 3. Visible thinking toggle pill in header, wired to toggleThinking
+  assert.match(indexHtml, /id="thinking-toggle-btn"/, 'missing #thinking-toggle-btn in index.html');
+  assert.match(indexHtml, /aria-pressed/, 'thinking toggle should expose aria-pressed');
+  assert.match(appJs, /thinkingToggleBtn/, 'app.js should reference thinkingToggleBtn');
+  assert.match(appJs, /thinkingToggleBtn\.addEventListener\('click', \(\) => toggleThinking\(\)\)/, 'thinking pill should be wired to toggleThinking');
+  assert.match(appJs, /function syncThinkingToggleBtn/, 'missing syncThinkingToggleBtn');
+  assert.match(styleCss, /\.thinking-toggle-btn/, 'missing .thinking-toggle-btn CSS');
+});
+
+test('WebUI sidebar expand affordance: anchored toggle, aria state, collapsed highlight', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // 1. menu-toggle-btn lives inside #main-header (the always-visible expand control)
+  const headerBlock = indexHtml.slice(indexHtml.indexOf('<header id="main-header">'), indexHtml.indexOf('</header>'));
+  assert.match(headerBlock, /id="menu-toggle-btn"/, 'menu-toggle-btn must exist inside #main-header');
+  // toggle + session info wrapped in a left group so it stays anchored left after collapse
+  assert.match(headerBlock, /class="header-left"/, 'header should wrap toggle + session info in .header-left');
+  assert.match(styleCss, /\.header-left/, 'style.css should define .header-left');
+  assert.match(indexHtml, /id="menu-toggle-btn"[^>]*aria-expanded/, 'menu-toggle-btn should expose aria-expanded');
+
+  // 2. app.js syncs toggle state (aria + label + collapsed class) from all entry points
+  assert.match(appJs, /function syncSidebarToggleState/, 'missing syncSidebarToggleState in app.js');
+  assert.match(appJs, /syncSidebarToggleState\(true\)/, 'closeSidebar should sync collapsed state');
+  assert.match(appJs, /syncSidebarToggleState\(false\)/, 'openSidebar should sync expanded state');
+  assert.match(appJs, /syncSidebarToggleState\(collapsed\)/, 'restoreSidebarState should sync persisted state');
+  assert.match(appJs, /aria-expanded/, 'app.js should set aria-expanded on sidebar toggles');
+  assert.match(appJs, /Expand sidebar \(Ctrl\+B\)/, 'toggle tooltip should offer Expand when collapsed');
+  assert.match(appJs, /sidebar-collapsed/, 'app.js should toggle a sidebar-collapsed class');
+
+  // 3. collapsed-state affordance selector highlights the toggle when collapsed
+  assert.match(styleCss, /#sidebar\.collapsed/, 'style.css should keep #sidebar.collapsed rule');
+  assert.match(styleCss, /#main-area\.sidebar-collapsed #menu-toggle-btn/, 'style.css should highlight the toggle when collapsed');
+
+  // 4. collapse geometry must match the effective desktop sidebar width (no sliver/gap)
+  assert.match(styleCss, /--sidebar-width:\s*276px/, 'collapse offset var should match themed sidebar width');
+  assert.match(styleCss, /margin-left:\s*calc\(-1 \* var\(--sidebar-width/, 'collapsed margin should derive from --sidebar-width');
+  assert.doesNotMatch(styleCss, /margin-left:\s*-276px/, 'stale hardcoded -276px offset should be gone');
+});

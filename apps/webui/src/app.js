@@ -26,15 +26,37 @@ function isMobileLayout() {
   return window.innerWidth <= 1024;
 }
 
+function syncSidebarToggleState(collapsed) {
+  const menuToggleBtn = document.getElementById('menu-toggle-btn');
+  const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
+  const mainArea = document.getElementById('main-area');
+  const label = collapsed ? 'Expand sidebar (Ctrl+B)' : 'Collapse sidebar (Ctrl+B)';
+  if (menuToggleBtn) {
+    menuToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    menuToggleBtn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    menuToggleBtn.setAttribute('title', label);
+  }
+  if (sidebarCloseBtn) {
+    sidebarCloseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+  if (mainArea) {
+    mainArea.classList.toggle('sidebar-collapsed', collapsed);
+  } else {
+    document.body.classList.toggle('sidebar-collapsed', collapsed);
+  }
+}
+
 function openSidebar() {
   const sidebar = document.getElementById('sidebar');
   const overlay = document.getElementById('sidebar-overlay');
   if (isMobileLayout()) {
     if (sidebar) sidebar.classList.add('active');
     if (overlay) overlay.classList.add('active');
+    syncSidebarToggleState(false);
   } else {
     if (sidebar) sidebar.classList.remove('collapsed');
     try { localStorage.setItem('qcode-sidebar-collapsed', 'false'); } catch (_) {}
+    syncSidebarToggleState(false);
   }
   handleSidebarResize();
 }
@@ -45,9 +67,11 @@ function closeSidebar() {
   if (isMobileLayout()) {
     if (sidebar) sidebar.classList.remove('active');
     if (overlay) overlay.classList.remove('active');
+    syncSidebarToggleState(true);
   } else {
     if (sidebar) sidebar.classList.add('collapsed');
     try { localStorage.setItem('qcode-sidebar-collapsed', 'true'); } catch (_) {}
+    syncSidebarToggleState(true);
   }
   handleSidebarResize();
 }
@@ -71,11 +95,7 @@ function toggleSidebar() {
 
 function openMobileSidebar() { openSidebar(); }
 function closeMobileSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  if (sidebar) sidebar.classList.remove('active');
-  if (overlay) overlay.classList.remove('active');
-  handleSidebarResize();
+  closeSidebar();
 }
 
 function handleSidebarResize() {
@@ -91,9 +111,11 @@ function restoreSidebarState() {
   try {
     const saved = localStorage.getItem('qcode-sidebar-collapsed');
     const sidebar = document.getElementById('sidebar');
-    if (sidebar && saved === 'true') {
+    const collapsed = saved === 'true';
+    if (sidebar && collapsed) {
       sidebar.classList.add('collapsed');
     }
+    syncSidebarToggleState(collapsed);
   } catch (_) {}
 }
 
@@ -130,7 +152,7 @@ function resizePromptInput() {
 const state = {
   provider: '',
   model: '',
-  reasoning: 'off',
+  reasoning: 'low',
   toolsEnabled: true,
   openSessions: [], // Array of { id, title, workspace, messages, generating, reader, provider, model }
   providers: [],
@@ -239,6 +261,7 @@ const sessionsRefreshBtn = document.getElementById('sessions-refresh-btn');
 const parentBackBtn = document.getElementById('parent-back-btn');
 const subagentBadge = document.getElementById('subagent-badge');
 const agentModeBtn = document.getElementById('agent-mode-btn');
+const thinkingToggleBtn = document.getElementById('thinking-toggle-btn');
 
 // New DOM refs for tabs & layout toggle
 const mainEl = document.getElementById('main');
@@ -1232,6 +1255,10 @@ function setupEventListeners() {
   if (agentModeBtn) {
     agentModeBtn.addEventListener('click', () => toggleAgentMode());
   }
+  if (thinkingToggleBtn) {
+    thinkingToggleBtn.addEventListener('click', () => toggleThinking());
+  }
+  syncThinkingToggleBtn();
   if (retryBtn) {
     retryBtn.addEventListener('click', () => handleRetryCommand());
   }
@@ -1445,6 +1472,20 @@ function setupEventListeners() {
   window.addEventListener('offline', updateConnectionStatus);
   updateConnectionStatus();
   setInterval(updateConnectionStatus, 30000);
+  // Background message sync: heal stale lists when the tab becomes visible,
+  // the window regains focus, the browser comes back online, or (every 15s)
+  // while the tab is visible and no stream is active.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) syncActiveSessionMessages({ silent: true });
+  });
+  window.addEventListener('focus', () => { syncActiveSessionMessages({ silent: true }); });
+  window.addEventListener('online', () => { syncActiveSessionMessages({ silent: true }); });
+  setInterval(() => {
+    if (document.hidden || !state.sessionId) return;
+    const active = state.openSessions.find(s => s.id === state.sessionId);
+    if (!active || active.generating) return;
+    syncActiveSessionMessages({ silent: true });
+  }, 15000);
 }
 
 // ── Status Bar ──
@@ -1478,6 +1519,7 @@ function updateStatusBar() {
       agentModeBtn.disabled = !state.sessionId;
     }
   }
+  syncThinkingToggleBtn();
 }
 
 async function updateConnectionStatus() {
@@ -2234,8 +2276,17 @@ async function handleRetryCommand() {
 function toggleThinking() {
   state.showThinking = !state.showThinking;
   persistPrefs();
+  syncThinkingToggleBtn();
   renderMessages();
   showToast(state.showThinking ? 'Thinking: shown' : 'Thinking: hidden');
+}
+
+function syncThinkingToggleBtn() {
+  if (!thinkingToggleBtn) return;
+  const on = !!state.showThinking;
+  thinkingToggleBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  thinkingToggleBtn.classList.toggle('off', !on);
+  thinkingToggleBtn.title = on ? 'Hide thinking trace (F2)' : 'Show thinking trace (F2)';
 }
 
 function showCommandPalette(initialQuery) {
@@ -2355,17 +2406,18 @@ function closeOpenThought(msg) {
   if (last && last.kind === 'thought') last.closed = true;
 }
 
-function renderThoughtBlock(text) {
-  const rc = document.createElement('div'); rc.className = 'reasoning-block collapsed';
+function renderThoughtBlock(text, opts) {
+  const open = !!(opts && opts.open);
+  const rc = document.createElement('div'); rc.className = 'reasoning-block' + (open ? '' : ' collapsed');
   const rl = document.createElement('div'); rl.className = 'reasoning-label';
   const est = Math.max(1, Math.floor((text.length + 3) / 4));
   const compact = est >= 1000 ? Math.round(est / 1000) + 'k' : String(est);
-  rl.innerHTML = '+ Thought <span class="thought-tokens">· ' + compact + '</span>';
+  rl.innerHTML = (open ? '- Thought' : '+ Thought') + ' <span class="thought-tokens">· ' + compact + '</span>';
   const rt = document.createElement('div'); rt.className = 'reasoning-text';
   rt.innerHTML = renderMarkdown(text); tagMarkdownLinks(rt);
   rl.addEventListener('click', () => {
-    const open = rc.classList.toggle('collapsed');
-    rl.innerHTML = (open ? '+ Thought' : '- Thought') + ' <span class="thought-tokens">· ' + compact + '</span>';
+    const collapsed = rc.classList.toggle('collapsed');
+    rl.innerHTML = (collapsed ? '+ Thought' : '- Thought') + ' <span class="thought-tokens">· ' + compact + '</span>';
   });
   rc.appendChild(rl); rc.appendChild(rt);
   return rc;
@@ -2445,7 +2497,13 @@ function parseMessages(msgs, session) {
       let text = '';
       try {
         const r = JSON.parse(m.content);
-        text = r.text || '';
+        if (r && typeof r === 'object') {
+          text = r.text || r.reasoning || r.content || '';
+        } else if (typeof r === 'string') {
+          text = r;
+        } else {
+          text = String(m.content);
+        }
       } catch (e) {
         text = m.content;
       }
@@ -2499,6 +2557,60 @@ async function loadSessionData(id) {
     session.title = (session.agentMode === 'subagent' ? 'Subagent ' : 'Session ') + session.id.substring(0, 8);
   }
   return session;
+}
+
+// ── Background message sync ──
+// Reconciles the active session's message list with the server so the UI
+// does not go stale when the SSE stream drops silently or updates land
+// from another client/retry path. NEVER interrupts a live stream: skips
+// while the session is generating, has an open reader, or was cancelled.
+let syncingMessages = false;
+function messageSignature(msgs) {
+  if (!Array.isArray(msgs) || msgs.length === 0) return '0|empty';
+  const last = msgs[msgs.length - 1] || {};
+  const content = (last.content || '').slice(-240);
+  const timelineLen = (last.timeline || []).length;
+  const tools = (last.toolEvents || []).map(t => (t.tool_call_id || '') + ':' + (t.status || '')).join(',');
+  return msgs.length + '|' + (last.role || '') + '|' + content.length + ':' + content + '|' + timelineLen + '|' + tools;
+}
+async function syncActiveSessionMessages(opts) {
+  const silent = !!(opts && opts.silent);
+  void silent; // syncs never toast; the flag only documents intent
+  if (!state.sessionId) return false;
+  if (syncingMessages) return false;
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (!session) return false;
+  if (session.generating || session.reader || session.cancelRequested) return false;
+  syncingMessages = true;
+  try {
+    const res = await fetch('/session/' + session.id + '/messages');
+    if (!res.ok) return false;
+    const msgs = await res.json();
+    if (!Array.isArray(msgs)) return false;
+    const tmp = { messages: [] };
+    parseMessages(msgs, tmp);
+    if (messageSignature(tmp.messages) === messageSignature(session.messages)) return false;
+    const stickToBottom = nearBottom();
+    session.messages = tmp.messages;
+    if (session.id === state.sessionId) {
+      renderMessages();
+      // Subtle, non-blocking: only follow new messages when the user was
+      // already near the bottom; otherwise leave scroll alone (the jump
+      // pill refreshed below is the affordance). No toast on sync.
+      if (stickToBottom) scrollToBottom(true);
+      else updateJumpPill();
+    }
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    syncingMessages = false;
+  }
+}
+function schedulePostStreamSync() {
+  // Reconcile any deltas the stream missed. syncActiveSessionMessages
+  // still skips if a new generation started in the meantime.
+  setTimeout(() => { syncActiveSessionMessages({ silent: true }); }, 800);
 }
 
 async function loadSessionById(id) {
@@ -2721,6 +2833,7 @@ async function runGeneration(session, text) {
         scrollToBottom();
       }
       updateQueueIndicator();
+      schedulePostStreamSync();
     }
   }
 }
@@ -2788,6 +2901,7 @@ async function runGenerationResume(session, assistantMsg) {
       scrollToBottom();
     }
     updateQueueIndicator();
+    schedulePostStreamSync();
   }
 }
 
@@ -2875,7 +2989,7 @@ function handleEvent(evt, msg, session) {
         appendThoughtChunk(msg, evt.text);
         msg.streamError = null;
       }
-      if (session.id === state.sessionId && !evt.done) { renderMessages(); scrollToBottom(); }
+      if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
       break;
     case 'backend.token.usage.updated': {
       const parts = [];
@@ -2940,6 +3054,7 @@ function handleEvent(evt, msg, session) {
         msg.stoppedEarly = false;
       }
       if (session.id === state.sessionId) renderMessages();
+      schedulePostStreamSync();
       break;
   }
 }
@@ -4178,10 +4293,20 @@ function renderMessage(msg) {
   }
   // Interleaved thinking/tool timeline: each thought renders adjacent to the
   // tool call it preceded. Falls back to legacy order when no timeline exists.
+  // The latest thought in the actively generating message stays expanded so
+  // live thinking is visible; older thoughts stay collapsed.
+  const liveSession = state.openSessions.find(s => s.id === state.sessionId);
+  const liveThoughtOpen = !!(liveSession && liveSession.generating
+    && liveSession.messages[liveSession.messages.length - 1] === msg);
   if (msg.timeline && msg.timeline.length > 0) {
     const byId = {};
     if (msg.toolEvents) for (const t of msg.toolEvents) byId[t.tool_call_id] = t;
-    for (const entry of msg.timeline) {
+    let lastThoughtIdx = -1;
+    for (let ti = 0; ti < msg.timeline.length; ti++) {
+      if (msg.timeline[ti].kind === 'thought' && msg.timeline[ti].text) lastThoughtIdx = ti;
+    }
+    for (let ti = 0; ti < msg.timeline.length; ti++) {
+      const entry = msg.timeline[ti];
       if (entry.kind === 'tool') {
         const t = byId[entry.tool_call_id];
         if (!t) continue;
@@ -4189,7 +4314,8 @@ function renderMessage(msg) {
         tc.appendChild(renderToolBlock(t));
         content.appendChild(tc);
       } else if (entry.kind === 'thought' && entry.text && state.showThinking) {
-        content.appendChild(renderThoughtBlock(entry.text));
+        const autoOpen = liveThoughtOpen && ti === lastThoughtIdx;
+        content.appendChild(renderThoughtBlock(entry.text, autoOpen ? { open: true } : undefined));
       }
     }
   } else {
@@ -4199,7 +4325,7 @@ function renderMessage(msg) {
       content.appendChild(tc);
     }
     if (msg.reasoning && state.showThinking) {
-      content.appendChild(renderThoughtBlock(msg.reasoning));
+      content.appendChild(renderThoughtBlock(msg.reasoning, liveThoughtOpen ? { open: true } : undefined));
     }
   }
   if (msg.usage) {
@@ -5157,6 +5283,7 @@ async function switchSession(id) {
   if (state.activeTab === 'files') loadFilesTab();
   else if (state.activeTab === 'stats') loadStatsTab();
   else if (state.activeTab === 'sessions') loadDelegatedSessionsTab();
+  syncActiveSessionMessages({ silent: true });
 }
 
 function closeSessionTab(id) {

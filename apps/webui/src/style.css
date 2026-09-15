@@ -402,8 +402,17 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 20px;
   flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
 }
 
 .menu-toggle-btn {
@@ -430,9 +439,32 @@ body {
   border-color: #475569;
 }
 
+.menu-toggle-btn:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+/* Collapsed-state affordance: when the sidebar is collapsed the toggle is
+   the only way back, so highlight it as an "expand" control. The
+   `sidebar-collapsed` class is set on #main-area by app.js
+   (openSidebar/closeSidebar/restoreSidebarState). */
+#main-area.sidebar-collapsed #menu-toggle-btn {
+  color: #7dd3fc;
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 12px rgba(56, 189, 248, 0.15);
+}
+
+#main-area.sidebar-collapsed #menu-toggle-btn:hover {
+  color: #f1f5f9;
+  background: rgba(56, 189, 248, 0.22);
+  border-color: #7dd3fc;
+}
+
 .header-session-info {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-width: 0;
 }
 
@@ -650,7 +682,7 @@ body {
 }
 
 .message.tool .message-content {
-  background: #111827;
+  background: #0d131f;
   color: #9ca3af;
   border: 1px solid #374151;
   font-size: 13px;
@@ -755,7 +787,7 @@ body {
 }
 
 .tool-block:hover {
-  background: #111a2a;
+  background: #0d131f;
 }
 
 .tool-header {
@@ -763,7 +795,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: transparent; /* Seamless with tool-block */
+  background: #0d131f; /* Same as tool-block */
   cursor: pointer;
   user-select: none;
   font-size: 13px;
@@ -771,7 +803,7 @@ body {
 }
 
 .tool-header:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: #0d131f;
 }
 
 .tool-chevron {
@@ -823,7 +855,7 @@ body {
 
 .tool-body {
   padding: 10px 16px 12px 16px;
-  background: rgba(0, 0, 0, 0.15);
+  background: #0d131f;
   border-top: 1px solid #1e293b;
 }
 
@@ -873,7 +905,7 @@ body {
 .tool-output {
   margin: 8px 0;
   padding: 8px 12px;
-  background: #050811;
+  background: #0d131f;
   border: 1px solid #1e293b;
   border-radius: 4px;
   font-family: 'Fira Code', 'SF Mono', monospace;
@@ -888,7 +920,7 @@ body {
 .tool-output.error {
   color: #f87171;
   border-color: rgba(248, 113, 113, 0.2);
-  background: rgba(248, 113, 113, 0.02);
+  background: #0d131f;
 }
 
 /* Exit status Row */
@@ -1928,12 +1960,12 @@ kbd {
   border: 1px solid var(--border);
   border-left-width: 3px;
   border-radius: 10px;
-  background: var(--surface);
+  background: #0d131f;
   box-shadow: none;
 }
 .tool-header { min-height: 42px; padding: 9px 12px; }
 .tool-heading { color: #aeb9c9; font-size: 12px; }
-.tool-output { max-height: 420px; border-color: var(--border); background: #070a10; }
+.tool-output { max-height: 420px; border-color: var(--border); background: #0d131f; }
 .reasoning-block { border-color: #818cf8; border-radius: 8px; background: rgba(99,102,241,.05); }
 .code-block-container { border-color: var(--border); border-radius: 11px; background: #070a10; box-shadow: none; }
 .code-block-header { border-bottom-color: var(--border); background: #0e141f; }
@@ -3768,6 +3800,16 @@ kbd {
   cursor: pointer;
 }
 .agent-mode-btn.plan { color: var(--warning); border-color: var(--warning); }
+.thinking-toggle-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.thinking-toggle-btn.off { opacity: 0.55; }
 .agent-mode-btn.subagent { color: var(--blue); border-color: var(--blue); }
 .subagent-badge {
   font-size: 11px;
@@ -4082,14 +4124,13 @@ kbd {
 /* ── Collapsible Desktop Sidebar ── */
 @media (min-width: 1025px) {
   #sidebar {
+    /* Must match the effective desktop width (theme override sets 276px). */
+    --sidebar-width: 276px;
     transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-                width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-                opacity 0.2s ease,
-                padding 0.25s ease;
+                opacity 0.2s ease;
   }
   #sidebar.collapsed {
-    margin-left: -276px;
-    width: 0 !important;
+    margin-left: calc(-1 * var(--sidebar-width, 260px));
     min-width: 0 !important;
     padding-left: 0 !important;
     padding-right: 0 !important;
