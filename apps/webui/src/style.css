@@ -86,20 +86,26 @@ body {
 }
 
 .sidebar-close-btn {
-  display: none;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: none;
-  border: none;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
   color: #94a3b8;
-  font-size: 24px;
+  font-size: 20px;
+  line-height: 1;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   cursor: pointer;
-  padding: 4px;
-  transition: color 0.15s;
+  padding: 0;
+  transition: all 0.15s ease;
 }
 
 .sidebar-close-btn:hover {
   color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #334155;
 }
 
 /* Sidebar Sectioning */
@@ -401,18 +407,27 @@ body {
 }
 
 .menu-toggle-btn {
-  display: none;
-  background: none;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #334155;
   color: #94a3b8;
-  font-size: 22px;
+  font-size: 20px;
   cursor: pointer;
-  padding: 4px;
-  transition: color 0.15s;
+  padding: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  margin-right: 12px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
 }
 
 .menu-toggle-btn:hover {
   color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #475569;
 }
 
 .header-session-info {
@@ -431,9 +446,25 @@ body {
 }
 
 .header-session-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: #64748b;
   font-family: 'Fira Code', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-session-workspace .ws-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #38bdf8;
+  flex-shrink: 0;
+}
+
+.header-session-workspace .ws-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -445,18 +476,7 @@ body {
 }
 
 .layout-toggle-btn {
-  background: #0f172a;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  color: #cbd5e1;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: all 0.15s;
+  display: none !important;
 }
 
 .layout-toggle-btn:hover {
@@ -4057,4 +4077,76 @@ kbd {
   .jump-latest { bottom: 110px; }
   .msg-actions { flex-wrap: wrap; }
   #terminal-panel { min-height: 40vh; }
+}
+
+/* ── Collapsible Desktop Sidebar ── */
+@media (min-width: 1025px) {
+  #sidebar {
+    transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.2s ease,
+                padding 0.25s ease;
+  }
+  #sidebar.collapsed {
+    margin-left: -276px;
+    width: 0 !important;
+    min-width: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    border-right-width: 0 !important;
+    opacity: 0;
+    pointer-events: none;
+    overflow: hidden;
+    visibility: hidden;
+  }
+}
+
+/* ── Collapsible File Tree in File View ── */
+.fs-browser-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.fs-browser-title-row .fs-breadcrumb {
+  flex: 1;
+  min-width: 0;
+}
+
+.fs-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #94a3b8;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.fs-collapse-btn:hover {
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #334155;
+}
+
+@media (min-width: 769px) {
+  .files-explorer.tree-collapsed .fs-browser {
+    display: none !important;
+  }
+  .files-explorer.tree-collapsed .fs-editor-pane {
+    width: 100% !important;
+    flex: 1 1 100% !important;
+  }
+  .files-explorer.tree-collapsed .fs-back-btn {
+    display: inline-flex !important;
+  }
 }

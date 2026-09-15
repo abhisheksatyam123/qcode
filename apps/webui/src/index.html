@@ -28,7 +28,7 @@
           <span id="brand-sub">AI workspace</span>
         </div>
       </div>
-      <button id="sidebar-close-btn" class="sidebar-close-btn" title="Close menu" aria-label="Close menu">&times;</button>
+      <button id="sidebar-close-btn" class="sidebar-close-btn" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar">&times;</button>
     </div>
 
     <!-- Views Selection -->
@@ -99,7 +99,7 @@
   <div id="main-area">
     <!-- Header replacing the old main-tabs -->
     <header id="main-header">
-      <button id="menu-toggle-btn" class="menu-toggle-btn" title="Open menu" aria-label="Open menu"><svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+      <button id="menu-toggle-btn" class="menu-toggle-btn" title="Toggle sidebar (Ctrl+B)" aria-label="Toggle sidebar"><svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <div class="header-session-info">
         <div class="header-session-title" id="header-session-title">No session</div>
         <div class="header-session-workspace" id="header-session-workspace"></div>
@@ -108,9 +108,7 @@
       <span id="subagent-badge" class="subagent-badge hidden">subagent</span>
       <button type="button" id="agent-mode-btn" class="agent-mode-btn" title="Toggle plan / orchestrator">Orchestrator</button>
       <div class="header-actions">
-        <button class="layout-toggle-btn" id="layout-toggle-btn" title="Toggle Split View">
-          <span class="layout-icon"><svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg></span> Split View
-        </button>
+        <button class="layout-toggle-btn hidden" id="layout-toggle-btn" style="display: none !important;" title="Terminal Tab View"></button>
       </div>
     </header>
 
@@ -178,7 +176,12 @@
           <div id="files-explorer" class="files-explorer">
             <div class="fs-browser" id="fs-browser-pane">
               <div class="fs-browser-header">
-                <div class="fs-breadcrumb" id="fs-breadcrumb"></div>
+                <div class="fs-browser-title-row">
+                  <div class="fs-breadcrumb" id="fs-breadcrumb"></div>
+                  <button type="button" id="fs-collapse-btn" class="fs-collapse-btn" title="Hide file tree (Alt+F)" aria-label="Hide file tree">
+                    <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
                 <div class="fs-filter-wrap">
                   <span class="fs-filter-icon"><svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                   <input type="search" id="fs-filter-input" class="fs-filter-input" placeholder="Filter files…" autocomplete="off" spellcheck="false">
@@ -190,8 +193,8 @@
             </div>
             <div class="fs-editor-pane" id="fs-editor-pane">
               <div class="fs-editor-toolbar">
-                <button type="button" id="fs-back-btn" class="fs-back-btn" title="Back to files" aria-label="Back to files">
-                  <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                <button type="button" id="fs-back-btn" class="fs-back-btn" title="Toggle file tree (Alt+F)" aria-label="Toggle file tree">
+                  <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                   <span>Files</span>
                 </button>
                 <div class="fs-file-info">

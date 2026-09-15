@@ -250,3 +250,35 @@ test('WebUI subagents tab: named Subagents, scoped to parent session, cascade de
   assert.match(appJs, /deleteSessionPermanently/, 'deleteSessionPermanently present');
   assert.match(appJs, /removedIds\.has/, 'deleteSessionPermanently should remove child sessions');
 });
+
+test('WebUI collapsible navigation, file tree, clean title, and dedicated terminal', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // Title / status bar cleanliness: stripTags used, no raw SVG injected into textContent
+  assert.match(appJs, /function stripTags/, 'app.js should include stripTags helper');
+  assert.doesNotMatch(appJs, /statusWorkspace\.textContent\s*=\s*state\.sessionWorkspace\s*\?\s*SVG_ICONS\.folder/, 'statusWorkspace must not assign raw SVG string to textContent');
+  assert.match(appJs, /statusWorkspace\.innerHTML\s*=/, 'statusWorkspace should render icon via innerHTML');
+
+  // Collapsible sidebar:
+  assert.match(indexHtml, /id="menu-toggle-btn"/, 'menu toggle button must exist');
+  assert.match(indexHtml, /id="sidebar-close-btn"/, 'sidebar close button must exist');
+  assert.match(appJs, /function toggleSidebar/, 'toggleSidebar function should exist in app.js');
+  assert.match(appJs, /function openSidebar/, 'openSidebar function should exist in app.js');
+  assert.match(appJs, /function closeSidebar/, 'closeSidebar function should exist in app.js');
+  assert.match(appJs, /key === 'b' \|\| key === 'B'/, 'Ctrl+B shortcut should toggle sidebar');
+  assert.match(styleCss, /#sidebar\.collapsed/, 'style.css should include #sidebar.collapsed rule');
+
+  // Collapsible file tree:
+  assert.match(indexHtml, /id="fs-collapse-btn"/, 'fs-collapse-btn should exist in index.html');
+  assert.match(indexHtml, /id="fs-back-btn"/, 'fs-back-btn should exist in index.html');
+  assert.match(appJs, /function toggleFsTree/, 'toggleFsTree function should exist in app.js');
+  assert.match(appJs, /key === 'f' \|\| key === 'F'/, 'Alt+F shortcut should toggle file tree');
+  assert.match(styleCss, /\.files-explorer\.tree-collapsed \.fs-browser/, 'style.css should hide file tree when collapsed');
+  assert.match(styleCss, /\.files-explorer\.tree-collapsed \.fs-editor-pane/, 'style.css should expand editor pane when tree is collapsed');
+
+  // Dedicated terminal without split view:
+  assert.match(styleCss, /\.layout-toggle-btn\s*\{\s*display:\s*none\s*!important;\s*\}/, 'layout-toggle-btn should be permanently hidden');
+  assert.doesNotMatch(appJs, /state\.layoutMode\s*=\s*'split'/, 'app.js should not enter split mode');
+});

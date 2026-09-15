@@ -557,10 +557,26 @@ function setupEventListeners() {
   updateConnectionStatus();
 }
 
+function stripTags(html) {
+  if (!html || typeof html !== 'string') return '';
+  return html.replace(/<[^>]*>/g, '').trim();
+}
+
 // ── Status Bar ──
 function updateStatusBar() {
-  statusSession.textContent = state.sessionTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
-  statusWorkspace.textContent = state.sessionWorkspace ? SVG_ICONS.folder + ' ' + state.sessionWorkspace : '';
+  const cleanTitle = stripTags(state.sessionTitle);
+  statusSession.textContent = cleanTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
+  if (statusWorkspace) {
+    if (state.sessionWorkspace) {
+      const cleanWs = stripTags(state.sessionWorkspace);
+      statusWorkspace.innerHTML = `<span class="ws-icon">${SVG_ICONS.folder}</span><span class="ws-path">${esc(shortPath(cleanWs))}</span>`;
+      statusWorkspace.title = cleanWs;
+    } else {
+      statusWorkspace.innerHTML = '';
+      statusWorkspace.title = '';
+    }
+  }
+  document.title = (cleanTitle ? cleanTitle + ' · ' : '') + 'QCode';
 }
 
 function updateConnectionStatus() {

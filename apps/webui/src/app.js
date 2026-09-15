@@ -17,18 +17,107 @@ const SVG_ICONS = {
 };
 
 
-function openMobileSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  if (sidebar) sidebar.classList.add('active');
-  if (overlay) overlay.classList.add('active');
+function stripTags(html) {
+  if (!html || typeof html !== 'string') return '';
+  return html.replace(/<[^>]*>/g, '').trim();
 }
 
+function isMobileLayout() {
+  return window.innerWidth <= 1024;
+}
+
+function openSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (isMobileLayout()) {
+    if (sidebar) sidebar.classList.add('active');
+    if (overlay) overlay.classList.add('active');
+  } else {
+    if (sidebar) sidebar.classList.remove('collapsed');
+    try { localStorage.setItem('qcode-sidebar-collapsed', 'false'); } catch (_) {}
+  }
+  handleSidebarResize();
+}
+
+function closeSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (isMobileLayout()) {
+    if (sidebar) sidebar.classList.remove('active');
+    if (overlay) overlay.classList.remove('active');
+  } else {
+    if (sidebar) sidebar.classList.add('collapsed');
+    try { localStorage.setItem('qcode-sidebar-collapsed', 'true'); } catch (_) {}
+  }
+  handleSidebarResize();
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  if (isMobileLayout()) {
+    if (sidebar && sidebar.classList.contains('active')) {
+      closeSidebar();
+    } else {
+      openSidebar();
+    }
+  } else {
+    if (sidebar && sidebar.classList.contains('collapsed')) {
+      openSidebar();
+    } else {
+      closeSidebar();
+    }
+  }
+}
+
+function openMobileSidebar() { openSidebar(); }
 function closeMobileSidebar() {
   const sidebar = document.getElementById('sidebar');
   const overlay = document.getElementById('sidebar-overlay');
   if (sidebar) sidebar.classList.remove('active');
   if (overlay) overlay.classList.remove('active');
+  handleSidebarResize();
+}
+
+function handleSidebarResize() {
+  if (term && fitAddon && state.terminalOpen && state.activeTab === 'terminal') {
+    setTimeout(() => {
+      try { fitAddon.fit(); } catch (_) {}
+    }, 260);
+  }
+}
+
+function restoreSidebarState() {
+  if (isMobileLayout()) return;
+  try {
+    const saved = localStorage.getItem('qcode-sidebar-collapsed');
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar && saved === 'true') {
+      sidebar.classList.add('collapsed');
+    }
+  } catch (_) {}
+}
+
+function toggleFsTree() {
+  if (window.innerWidth <= 768) {
+    setFsMobileView(state.fsMobileView === 'viewer' ? 'browser' : 'viewer');
+    return;
+  }
+  if (!filesExplorer) return;
+  const isCollapsed = filesExplorer.classList.toggle('tree-collapsed');
+  try {
+    localStorage.setItem('qcode-fs-tree-collapsed', isCollapsed ? 'true' : 'false');
+  } catch (_) {}
+}
+
+function restoreFsTreeState() {
+  if (window.innerWidth > 768 && filesExplorer) {
+    try {
+      const saved = localStorage.getItem('qcode-fs-tree-collapsed');
+      if (saved === 'true') {
+        filesExplorer.classList.add('tree-collapsed');
+      }
+    } catch (_) {}
+  }
 }
 
 function resizePromptInput() {
@@ -102,6 +191,7 @@ const fsListing = document.getElementById('fs-listing');
 const fsFilterInput = document.getElementById('fs-filter-input');
 const fsEditorPane = document.getElementById('fs-editor-pane');
 const fsBackBtn = document.getElementById('fs-back-btn');
+const fsCollapseBtn = document.getElementById('fs-collapse-btn');
 const fsFileIcon = document.getElementById('fs-file-icon');
 const fsEditorPath = document.getElementById('fs-editor-path');
 const fsFileBadge = document.getElementById('fs-file-badge');
@@ -894,6 +984,22 @@ async function init() {
 
   await loadProviders();
   setupEventListeners();
+  restoreSidebarState();
+  restoreFsTreeState();
+  window.addEventListener('resize', () => {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (!isMobileLayout()) {
+      if (sidebar) sidebar.classList.remove('active');
+      if (overlay) overlay.classList.remove('active');
+      restoreSidebarState();
+    } else {
+      if (sidebar) sidebar.classList.remove('collapsed');
+    }
+    if (term && fitAddon && state.terminalOpen && state.activeTab === 'terminal') {
+      try { fitAddon.fit(); } catch (_) {}
+    }
+  });
   updateStatusBar();
   
   try {
@@ -1151,7 +1257,13 @@ function setupEventListeners() {
     });
   }
   if (fsBackBtn) {
-    fsBackBtn.addEventListener('click', () => setFsMobileView('browser'));
+    fsBackBtn.addEventListener('click', () => {
+      if (window.innerWidth <= 768) {
+        setFsMobileView('browser');
+      } else {
+        toggleFsTree();
+      }
+    });
   }
   if (fsCopyPathBtn) {
     fsCopyPathBtn.addEventListener('click', () => {
@@ -1251,18 +1363,22 @@ function setupEventListeners() {
     layoutToggleBtn.addEventListener('click', toggleLayoutMode);
   }
 
-  // Mobile sidebar event listeners
+  // Sidebar event listeners
   const menuToggleBtn = document.getElementById('menu-toggle-btn');
   if (menuToggleBtn) {
-    menuToggleBtn.addEventListener('click', openMobileSidebar);
+    menuToggleBtn.addEventListener('click', toggleSidebar);
   }
   const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
   if (sidebarCloseBtn) {
-    sidebarCloseBtn.addEventListener('click', closeMobileSidebar);
+    sidebarCloseBtn.addEventListener('click', closeSidebar);
   }
   const sidebarOverlay = document.getElementById('sidebar-overlay');
   if (sidebarOverlay) {
     sidebarOverlay.addEventListener('click', closeMobileSidebar);
+  }
+  const fsCollapseBtn = document.getElementById('fs-collapse-btn');
+  if (fsCollapseBtn) {
+    fsCollapseBtn.addEventListener('click', toggleFsTree);
   }
 
   // Escape key pauses/cancels the active generation from anywhere
@@ -1278,6 +1394,16 @@ function setupEventListeners() {
     if (mod && key.toLowerCase() === 'n') {
       e.preventDefault();
       showNewSessionModal();
+      return;
+    }
+    if (mod && (key === 'b' || key === 'B')) {
+      e.preventDefault();
+      toggleSidebar();
+      return;
+    }
+    if (e.altKey && !mod && (key === 'f' || key === 'F')) {
+      e.preventDefault();
+      toggleFsTree();
       return;
     }
     if (key === 'F2') {
@@ -1323,8 +1449,19 @@ function setupEventListeners() {
 
 // ── Status Bar ──
 function updateStatusBar() {
-  statusSession.textContent = state.sessionTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
-  statusWorkspace.textContent = state.sessionWorkspace ? SVG_ICONS.folder + ' ' + state.sessionWorkspace : '';
+  const cleanTitle = stripTags(state.sessionTitle);
+  statusSession.textContent = cleanTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
+  if (statusWorkspace) {
+    if (state.sessionWorkspace) {
+      const cleanWs = stripTags(state.sessionWorkspace);
+      statusWorkspace.innerHTML = `<span class="ws-icon">${SVG_ICONS.folder}</span><span class="ws-path">${esc(shortPath(cleanWs))}</span>`;
+      statusWorkspace.title = cleanWs;
+    } else {
+      statusWorkspace.innerHTML = '';
+      statusWorkspace.title = '';
+    }
+  }
+  document.title = (cleanTitle ? cleanTitle + ' · ' : '') + 'QCode';
   const isSub = state.agentMode === 'subagent';
   if (subagentBadge) subagentBadge.classList.toggle('hidden', !isSub);
   if (parentBackBtn) {
@@ -1558,11 +1695,8 @@ async function closeTerminal() {
 
 function switchTab(tab) {
   state.activeTab = tab;
+  state.layoutMode = 'tab';
   persistPrefs();
-  if (state.layoutMode === 'split') {
-    state.layoutMode = 'tab';
-  }
-  state.activeTab = tab;
   if (tab === 'terminal' && !state.terminalOpen) {
     state.terminalOpen = true;
     const ws = state.sessionWorkspace || '';
@@ -1576,66 +1710,48 @@ function switchTab(tab) {
 }
 
 function toggleLayoutMode() {
-  state.layoutMode = state.layoutMode === 'tab' ? 'split' : 'tab';
-  if (state.layoutMode === 'split' && !state.terminalOpen) {
-    state.terminalOpen = true;
-    const ws = state.sessionWorkspace || '';
-    startTerminal(ws);
+  if (state.activeTab === 'terminal') {
+    switchTab('chat');
+  } else {
+    switchTab('terminal');
   }
-  updateLayoutUI();
 }
 
 function updateLayoutUI() {
-  if (state.layoutMode === 'split') {
-    if (mainContentWrapperEl) mainContentWrapperEl.classList.add('split-view');
+  state.layoutMode = 'tab';
+  if (mainContentWrapperEl) mainContentWrapperEl.classList.remove('split-view');
+  if (layoutToggleBtn) layoutToggleBtn.classList.add('hidden');
+
+  // Exclusive tab mode: hide every pane, then show only the active one.
+  if (mainEl) mainEl.classList.add('hidden');
+  if (terminalPanel) terminalPanel.classList.add('hidden');
+  if (filesPanel) filesPanel.classList.add('hidden');
+  if (statsPanel) statsPanel.classList.add('hidden');
+  if (sessionsPanel) sessionsPanel.classList.add('hidden');
+  [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
+    if (b) b.classList.remove('active');
+  });
+
+  if (state.activeTab === 'chat') {
     if (mainEl) mainEl.classList.remove('hidden');
-    if (terminalPanel) terminalPanel.classList.remove('hidden');
-    // Split is chat + terminal only — never stack files/stats alongside.
-    if (filesPanel) filesPanel.classList.add('hidden');
-    if (statsPanel) statsPanel.classList.add('hidden');
-    if (sessionsPanel) sessionsPanel.classList.add('hidden');
-
-    [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
-      if (b) b.classList.remove('active');
-    });
-    if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
     if (tabChatBtn) tabChatBtn.classList.add('active');
-    if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">' + SVG_ICONS.tab + '</span> Tab View';
-  } else {
-    if (mainContentWrapperEl) mainContentWrapperEl.classList.remove('split-view');
-    if (layoutToggleBtn) layoutToggleBtn.innerHTML = '<span class="layout-icon">' + SVG_ICONS.split + '</span> Split View';
-
-    // Exclusive tab mode: hide every pane, then show only the active one.
-    if (mainEl) mainEl.classList.add('hidden');
-    if (terminalPanel) terminalPanel.classList.add('hidden');
-    if (filesPanel) filesPanel.classList.add('hidden');
-    if (statsPanel) statsPanel.classList.add('hidden');
-    if (sessionsPanel) sessionsPanel.classList.add('hidden');
-    [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
-      if (b) b.classList.remove('active');
-    });
-
-    if (state.activeTab === 'chat') {
-      if (mainEl) mainEl.classList.remove('hidden');
-      if (tabChatBtn) tabChatBtn.classList.add('active');
-    } else if (state.activeTab === 'terminal') {
-      if (terminalPanel) terminalPanel.classList.remove('hidden');
-      if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
-    } else if (state.activeTab === 'files') {
-      if (filesPanel) filesPanel.classList.remove('hidden');
-      if (tabFilesBtn) tabFilesBtn.classList.add('active');
-    } else if (state.activeTab === 'stats') {
-      if (statsPanel) statsPanel.classList.remove('hidden');
-      if (tabStatsBtn) tabStatsBtn.classList.add('active');
-    } else if (state.activeTab === 'sessions') {
-      if (sessionsPanel) sessionsPanel.classList.remove('hidden');
-      if (tabSessionsBtn) tabSessionsBtn.classList.add('active');
-    }
+  } else if (state.activeTab === 'terminal') {
+    if (terminalPanel) terminalPanel.classList.remove('hidden');
+    if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
+  } else if (state.activeTab === 'files') {
+    if (filesPanel) filesPanel.classList.remove('hidden');
+    if (tabFilesBtn) tabFilesBtn.classList.add('active');
+  } else if (state.activeTab === 'stats') {
+    if (statsPanel) statsPanel.classList.remove('hidden');
+    if (tabStatsBtn) tabStatsBtn.classList.add('active');
+  } else if (state.activeTab === 'sessions') {
+    if (sessionsPanel) sessionsPanel.classList.remove('hidden');
+    if (tabSessionsBtn) tabSessionsBtn.classList.add('active');
   }
+
   renderSessionTabs();
 
-  if (term && fitAddon && state.terminalOpen &&
-      (state.layoutMode === 'split' || state.activeTab === 'terminal')) {
+  if (term && fitAddon && state.terminalOpen && state.activeTab === 'terminal') {
     setTimeout(() => {
       try {
         fitAddon.fit();
@@ -4844,7 +4960,7 @@ function updateJumpPill() {
 function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 4000); }
 
 // ── T2 Persistence (qcode.* localStorage) ──
-const PERSIST_KEYS = ['provider','model','reasoning','theme','activeTab','showThinking','layoutMode','filesSubtab','sessionId'];
+const PERSIST_KEYS = ['provider','model','reasoning','theme','activeTab','showThinking','filesSubtab','sessionId'];
 function persistPrefs() {
   try {
     const o = {};
@@ -4989,8 +5105,8 @@ async function switchSession(id) {
   if (!session) return;
 
   state.sessionId = id;
-  state.sessionTitle = session.title || '';
-  state.sessionWorkspace = session.workspace || '';
+  state.sessionTitle = stripTags(session.title || '');
+  state.sessionWorkspace = stripTags(session.workspace || '');
   state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
   if (session.reasoning) {
     state.reasoning = session.reasoning;
@@ -5114,7 +5230,7 @@ function renderSessionTabs() {
   sessionTabsContainer.innerHTML = list.map(session => {
     const isActive = session.id === state.sessionId;
     const pinned = (state.pinned||[]).includes(session.id) ? ' pinned' : '';
-    const activeClass = isActive && (state.layoutMode === 'split' || state.activeTab === 'chat') ? 'active' : '';
+    const activeClass = isActive && state.activeTab === 'chat' ? 'active' : '';
     const title = session.title || 'Session';
     const genIndicator = session.generating ? '<span class="session-gen-indicator">⏳</span> ' : '';
     const ws = session.workspace ? shortPath(session.workspace) : '';
