@@ -559,9 +559,9 @@ svr.Post("/sessions", [default_workspace](const httplib::Request& req, httplib::
     if (workspace.empty()) {
         workspace = default_workspace;
     }
-    std::string custom_id = body.value("custom_id", "");
+    std::string custom_id = body.value("title", "");
     if (custom_id.empty()) {
-        custom_id = body.value("title", "");
+        custom_id = body.value("custom_id", "");
     }
     if (provider.empty() || model.empty()) {
         res.status = 400;
@@ -569,7 +569,11 @@ svr.Post("/sessions", [default_workspace](const httplib::Request& req, httplib::
         return;
     }
     auto id = qcode::session::create_new_session(provider, model, workspace, custom_id);
-    res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}, {"title", id}}).dump(), "application/json");
+    std::string title = qcode::session::get_session_title(id);
+    if (title.empty()) {
+        title = custom_id.empty() ? ("Session - " + model) : custom_id;
+    }
+    res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}, {"title", title}}).dump(), "application/json");
 });
 
 // ── Rename session ──

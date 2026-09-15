@@ -392,3 +392,15 @@ test('WebUI sidebar expand affordance: anchored toggle, aria state, collapsed hi
   assert.match(styleCss, /margin-left:\s*calc\(-1 \* var\(--sidebar-width/, 'collapsed margin should derive from --sidebar-width');
   assert.doesNotMatch(styleCss, /margin-left:\s*-276px/, 'stale hardcoded -276px offset should be gone');
 });
+
+test('WebUI new session creation reflects title and workspace', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+
+  // Modal contains inputs for title and workspace directory
+  assert.match(appJs, /id="ns-title"/, 'missing ns-title input in new session modal');
+  assert.match(appJs, /id="ns-workspace"/, 'missing ns-workspace input in new session modal');
+
+  // createNewSession sends title and handles title resolution
+  assert.match(appJs, /title,\s*custom_id:\s*title/, 'createNewSession should send title to /sessions');
+  assert.match(appJs, /data\.title !== data\.id/, 'createNewSession should avoid clobbering title with id');
+});

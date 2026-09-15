@@ -186,6 +186,29 @@ TEST_F(ServerRoutesTest, SessionLifecycleAndStats) {
     auto j_created = nlohmann::json::parse(res_create->body);
     std::string session_id = j_created.value("id", "");
     ASSERT_FALSE(session_id.empty());
+    EXPECT_EQ(j_created.value("title", ""), "Session - mock-model");
+    EXPECT_NE(j_created.value("title", ""), session_id);
+
+    // Create session with custom title and workspace
+    nlohmann::json req_custom = {
+        {"provider", "mock-provider"},
+        {"model", "mock-model"},
+        {"workspace", test_workspace_dir_},
+        {"title", "My Custom Project"}
+    };
+    auto res_custom = client_->Post("/sessions", req_custom.dump(), "application/json");
+    ASSERT_TRUE(res_custom != nullptr);
+    EXPECT_EQ(res_custom->status, 200);
+    auto j_custom = nlohmann::json::parse(res_custom->body);
+    std::string custom_sid = j_custom.value("id", "");
+    ASSERT_FALSE(custom_sid.empty());
+    EXPECT_EQ(j_custom.value("title", ""), "My Custom Project");
+    EXPECT_EQ(j_custom.value("workspace", ""), test_workspace_dir_);
+
+    // Clean up the custom session so subsequent tests have single session
+    auto res_del_custom = client_->Delete("/session/" + custom_sid);
+    ASSERT_TRUE(res_del_custom != nullptr);
+    EXPECT_EQ(res_del_custom->status, 200);
 
     // Verify session in /sessions
     auto res_list = client_->Get("/sessions");

@@ -2613,14 +2613,23 @@ async function createNewSession(title = '', workspace = '') {
     const res = await fetch('/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: resolved.provider, model: resolved.model, workspace, custom_id: title })
+      body: JSON.stringify({
+        provider: resolved.provider,
+        model: resolved.model,
+        workspace,
+        title,
+        custom_id: title
+      })
     });
     if (res.ok) {
       const data = await res.json();
+      const resolvedTitle = (data.title && data.title !== data.id)
+        ? data.title
+        : (title || data.title || 'Session - ' + resolved.model);
       const newSession = {
         id: data.id,
-        title: data.title || title || 'Session - ' + resolved.model,
-        workspace: workspace || '',
+        title: resolvedTitle,
+        workspace: (data.workspace !== undefined ? data.workspace : workspace) || '',
         messages: [],
         generating: false,
         reader: null,
