@@ -1443,6 +1443,7 @@ async function runGeneration(session, text) {
       text,
       provider: resolved.provider,
       model: resolved.model,
+      agent_mode: session.agentMode || state.agentMode || "orchestrator",
       reasoning_mode: state.reasoning,
       session_id: session.id
     });

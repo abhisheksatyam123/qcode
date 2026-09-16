@@ -279,6 +279,14 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
         system_prompt = qcode::SystemPrompt::build_default();
     }
     std::string reasoning_mode = body.value("reasoning_mode", "off");
+    std::string agent_mode = body.value("agent_mode", "");
+    if (agent_mode.empty()) {
+        auto modes = qcode::session::get_session_modes(session_id);
+        agent_mode = modes.first;
+    }
+    if (agent_mode.empty()) {
+        agent_mode = (session_id.rfind("ses_", 0) == 0) ? "subagent" : "orchestrator";
+    }
 
     std::shared_ptr<GenSession> session;
     {
@@ -346,7 +354,7 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
     // ── Set up streaming response ──
     res.set_chunked_content_provider("application/x-ndjson; charset=utf-8",
         [bus, session, provider, model, system_prompt, messages = std::move(messages),
-         turn_id, ws, reasoning_mode, abort_flag,
+         turn_id, ws, reasoning_mode, agent_mode, abort_flag,
          last_write = std::chrono::steady_clock::now()](size_t /*offset*/, httplib::DataSink& sink) mutable -> bool
         {
             try {
@@ -363,10 +371,11 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
                     last_write = std::chrono::steady_clock::now();
 
                     std::thread gen_thread([session, provider, model, system_prompt,
-                                            messages = std::move(messages), turn_id, abort_flag, ws, reasoning_mode]() {
+                                            messages = std::move(messages), turn_id, abort_flag, ws, reasoning_mode, agent_mode]() {
                         qcode::GenerationContext ctx{
                             .session_id = session->id,
                             .reasoning_mode = reasoning_mode,
+                            .agent_mode = agent_mode,
                             .workspace = ws,
                             .abort_flag = abort_flag
                         };
@@ -446,11 +455,11 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
                     }
 
                     // Persist assistant reply so session is resumable
-                    if (!text_to_save.empty()) {
-                        qcode::session::save_message(session->id, "Assistant", text_to_save);
-                    }
                     if (!reasoning_to_save.empty()) {
                         qcode::session::save_message(session->id, "Reasoning", reasoning_to_save);
+                    }
+                    if (!text_to_save.empty()) {
+                        qcode::session::save_message(session->id, "Assistant", text_to_save);
                     }
 
                     nlohmann::json final_msg = {

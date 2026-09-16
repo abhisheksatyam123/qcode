@@ -619,12 +619,31 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
             std::string sender = sender_txt ? reinterpret_cast<const char*>(sender_txt) : "";
             std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
 
-            if (sender == "User") {
+            if (sender == "User" || sender == "user") {
                 history.push_back(qcode::Message::user(content));
                 continue;
             }
-            if (sender == "Assistant") {
-                history.push_back(qcode::Message::assistant(content));
+            if (sender == "Reasoning" || sender == "reasoning") {
+                if (!history.empty() &&
+                    history.back().role == qcode::kMessageRoleAssistant &&
+                    !history.back().has_tool_results()) {
+                    history.back().content.push_back(
+                        qcode::ReasoningContentPart{content, ""});
+                } else {
+                    history.push_back(
+                        qcode::Message::assistant_with_reasoning("", content));
+                }
+                continue;
+            }
+            if (sender == "Assistant" || sender == "assistant") {
+                if (!history.empty() &&
+                    history.back().role == qcode::kMessageRoleAssistant &&
+                    !history.back().has_text() &&
+                    !history.back().has_tool_results()) {
+                    history.back().content.push_back(qcode::TextContentPart{content});
+                } else {
+                    history.push_back(qcode::Message::assistant(content));
+                }
                 continue;
             }
 
@@ -808,100 +827,72 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
         long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
 
         for (const auto& m : messages) {
-            bool has_tools = false;
-            bool has_results = false;
             for (const auto& part : m.content) {
-                if (std::holds_alternative<qcode::ToolCallContentPart>(part)) {
-                    has_tools = true;
-                } else if (std::holds_alternative<qcode::ToolResultContentPart>(part)) {
-                    has_results = true;
-                }
-            }
-
-            if (has_tools) {
-                std::string assistant_text;
-                for (const auto& part : m.content) {
-                    if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
-                        assistant_text += tp->text;
-                    }
-                }
-                if (!assistant_text.empty()) {
+                if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
+                    if (rcp->text.empty()) continue;
                     sqlite3_reset(ins_stmt);
                     sqlite3_clear_bindings(ins_stmt);
                     sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 2, "Assistant", -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 3, assistant_text.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 2, "Reasoning", -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 3, rcp->text.c_str(), -1, SQLITE_TRANSIENT);
                     sqlite3_bind_int64(ins_stmt, 4, created_at);
                     if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                        LOG_ERROR("SQLite: overwrite insert Assistant text failed: {}", sqlite3_errmsg(db));
+                        LOG_ERROR("SQLite: overwrite insert Reasoning failed: {}", sqlite3_errmsg(db));
                     }
-                }
-                for (const auto& part : m.content) {
-                    if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
-                        nlohmann::json call_json = {
-                            {"id", tcp->id},
-                            {"name", tcp->tool_name},
-                            {"arguments", tcp->arguments},
-                        };
-                        if (!tcp->thought_signature.empty()) {
-                            call_json["thought_signature"] = tcp->thought_signature;
-                        }
-                        std::string content = call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-                        
-                        sqlite3_reset(ins_stmt);
-                        sqlite3_clear_bindings(ins_stmt);
-                        sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-                        sqlite3_bind_text(ins_stmt, 2, "ToolCall", -1, SQLITE_TRANSIENT);
-                        sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
-                        sqlite3_bind_int64(ins_stmt, 4, created_at);
-                        if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                            LOG_ERROR("SQLite: overwrite insert ToolCall failed: {}", sqlite3_errmsg(db));
-                        }
+                } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
+                    nlohmann::json call_json = {
+                        {"id", tcp->id},
+                        {"name", tcp->tool_name},
+                        {"arguments", tcp->arguments},
+                    };
+                    if (!tcp->thought_signature.empty()) {
+                        call_json["thought_signature"] = tcp->thought_signature;
                     }
-                }
-            } else if (has_results) {
-                for (const auto& part : m.content) {
-                    if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
-                        nlohmann::json result_json = {
-                            {"tool_call_id", trp->tool_call_id},
-                            {"result", trp->result},
-                            {"is_error", trp->is_error},
-                            {"duration_ms", trp->duration_ms},
-                        };
-                        std::string content = result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+                    std::string content = call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 
-                        sqlite3_reset(ins_stmt);
-                        sqlite3_clear_bindings(ins_stmt);
-                        sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-                        sqlite3_bind_text(ins_stmt, 2, "ToolResult", -1, SQLITE_TRANSIENT);
-                        sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
-                        sqlite3_bind_int64(ins_stmt, 4, created_at);
-                        if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                            LOG_ERROR("SQLite: overwrite insert ToolResult failed: {}", sqlite3_errmsg(db));
-                        }
+                    sqlite3_reset(ins_stmt);
+                    sqlite3_clear_bindings(ins_stmt);
+                    sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 2, "ToolCall", -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(ins_stmt, 4, created_at);
+                    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+                        LOG_ERROR("SQLite: overwrite insert ToolCall failed: {}", sqlite3_errmsg(db));
                     }
-                }
-            } else {
-                std::string sender;
-                if (m.role == qcode::kMessageRoleUser) sender = "User";
-                else if (m.role == qcode::kMessageRoleAssistant) sender = "Assistant";
-                else if (m.role == qcode::kMessageRoleSystem) sender = "System";
+                } else if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
+                    nlohmann::json result_json = {
+                        {"tool_call_id", trp->tool_call_id},
+                        {"result", trp->result},
+                        {"is_error", trp->is_error},
+                        {"duration_ms", trp->duration_ms},
+                    };
+                    std::string content = result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 
-                std::string content;
-                for (const auto& part : m.content) {
-                    if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
-                        content += tp->text;
+                    sqlite3_reset(ins_stmt);
+                    sqlite3_clear_bindings(ins_stmt);
+                    sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 2, "ToolResult", -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(ins_stmt, 4, created_at);
+                    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+                        LOG_ERROR("SQLite: overwrite insert ToolResult failed: {}", sqlite3_errmsg(db));
                     }
-                }
+                } else if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
+                    if (tp->text.empty() && m.content.size() > 1) continue;
+                    std::string sender = "Assistant";
+                    if (m.role == qcode::kMessageRoleUser) sender = "User";
+                    else if (m.role == qcode::kMessageRoleAssistant) sender = "Assistant";
+                    else if (m.role == qcode::kMessageRoleSystem) sender = "System";
 
-                sqlite3_reset(ins_stmt);
-                sqlite3_clear_bindings(ins_stmt);
-                sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(ins_stmt, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_int64(ins_stmt, 4, created_at);
-                if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                    LOG_ERROR("SQLite: overwrite insert regular failed: {}", sqlite3_errmsg(db));
+                    sqlite3_reset(ins_stmt);
+                    sqlite3_clear_bindings(ins_stmt);
+                    sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(ins_stmt, 3, tp->text.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(ins_stmt, 4, created_at);
+                    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+                        LOG_ERROR("SQLite: overwrite insert Text failed: {}", sqlite3_errmsg(db));
+                    }
                 }
             }
         }

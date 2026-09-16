@@ -28,7 +28,8 @@ TEST(GenerationContinueTest, AutoContinuesBuildStallsButNotPlanOrDone) {
       false, 0, "Done this run:\n- updated styles\n- all tests green"));
   EXPECT_TRUE(should_auto_continue_build(false, 0, ""));
   EXPECT_FALSE(should_auto_continue_build(false, 3, ""));
-  EXPECT_FALSE(should_auto_continue_build(false, 6, "one more round"));
+  EXPECT_TRUE(should_auto_continue_build(false, 6, "one more round"));
+  EXPECT_FALSE(should_auto_continue_build(false, 20, "one more round"));
 }
 
 TEST(GenerationContinueTest, DoesNotFalselyStallOnNormalExplanations) {

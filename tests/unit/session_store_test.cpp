@@ -126,6 +126,34 @@ TEST_F(SessionStoreTest, MergesParallelToolCallsIntoOneAssistantTurn) {
     EXPECT_EQ(parsed[1].get_tool_calls().size(), 2u);
 }
 
+TEST_F(SessionStoreTest, RoundTripAssistantReasoningPreserved) {
+    const std::string sid = create_new_session("opencode", "muse-spark", "/ws");
+    qcode::Messages original;
+    original.push_back(qcode::Message::user("solve this"));
+    original.push_back(qcode::Message::assistant_with_reasoning(
+        "42 is the answer", "deep thinking about life"));
+    overwrite_session_history(sid, original);
+
+    auto parsed = load_session_history_parsed(sid);
+    ASSERT_EQ(parsed.size(), 2u);
+    EXPECT_EQ(parsed[0].get_text(), "solve this");
+    EXPECT_EQ(parsed[1].get_text(), "42 is the answer");
+    EXPECT_TRUE(parsed[1].has_reasoning());
+    EXPECT_EQ(parsed[1].get_reasoning(), "deep thinking about life");
+    EXPECT_EQ(parsed[1].role, qcode::kMessageRoleAssistant);
+
+    auto msgs = load_session_messages(sid);
+    bool found_reasoning = false;
+    for (const auto& [sender, content] : msgs) {
+        if (sender == "Reasoning") {
+            found_reasoning = true;
+            EXPECT_EQ(content, "deep thinking about life");
+        }
+        EXPECT_NE(sender, "System");
+    }
+    EXPECT_TRUE(found_reasoning);
+}
+
 TEST_F(SessionStoreTest, SubagentsAreScopedToParentSession) {
     const std::string parent = create_new_session("prov", "model", "/ws", "Parent Main");
     ensure_session_row("ses_child_one", "Child One", "prov", "model", "/ws", parent);

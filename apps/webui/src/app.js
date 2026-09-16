@@ -2538,7 +2538,7 @@ async function loadSessionData(id) {
       session.provider = info.provider || '';
       session.model = info.model || '';
       session.agentMode = info.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
-      session.reasoning = info.reasoning_mode || session.reasoning || 'off';
+      session.reasoning = info.reasoning_mode || session.reasoning || state.reasoning || 'low';
       session.parentSessionId = info.parent_session_id || state.parentSessionId || '';
     }
   } catch (e) {}
@@ -2744,6 +2744,7 @@ async function runGeneration(session, text) {
       text,
       provider: resolved.provider,
       model: resolved.model,
+      agent_mode: session.agentMode || state.agentMode || "orchestrator",
       reasoning_mode: state.reasoning,
       session_id: session.id
     });
@@ -2786,10 +2787,12 @@ async function runGeneration(session, text) {
     }
   } catch (e) {
     // Automatic resume on transport abort (keeps same assistantMsg, no duplicate user prompt)
-    if ((e.name === 'AbortError' || /network|fetch|aborted|interrupted/i.test(e.message || '')) && !session.cancelRequested && !receivedComplete && (session._retries || 0) < 1) {
+    const maxRetries = 3;
+    if ((e.name === 'AbortError' || /network|fetch|aborted|interrupted/i.test(e.message || '')) && !session.cancelRequested && !receivedComplete && (session._retries || 0) < maxRetries) {
       session._retries = (session._retries || 0) + 1;
-      showToast('Connection dropped — reconnecting…');
-      await new Promise(r => setTimeout(r, 600));
+      const backoffMs = Math.min(1000 * Math.pow(1.5, session._retries - 1), 5000);
+      showToast(`Connection dropped — reconnecting (attempt ${session._retries}/${maxRetries})…`);
+      await new Promise(r => setTimeout(r, backoffMs));
       session.reader = null;
       return runGenerationResume(session, assistantMsg);
     }
@@ -2849,6 +2852,7 @@ async function runGenerationResume(session, assistantMsg) {
         resume: true,
         provider: session.provider,
         model: session.model,
+        agent_mode: session.agentMode || state.agentMode || "orchestrator",
         reasoning_mode: state.reasoning,
         session_id: session.id
       })
@@ -2885,6 +2889,15 @@ async function runGenerationResume(session, assistantMsg) {
       assistantMsg.stoppedEarly = false;
     }
   } catch (e2) {
+    const maxRetries = 3;
+    if ((e2.name === 'AbortError' || /network|fetch|aborted|interrupted/i.test(e2.message || '')) && !session.cancelRequested && !gotComplete && (session._retries || 0) < maxRetries) {
+      session._retries = (session._retries || 0) + 1;
+      const backoffMs = Math.min(1000 * Math.pow(1.5, session._retries - 1), 5000);
+      showToast(`Resume connection dropped — retrying (attempt ${session._retries}/${maxRetries})…`);
+      await new Promise(r => setTimeout(r, backoffMs));
+      session.reader = null;
+      return runGenerationResume(session, assistantMsg);
+    }
     assistantMsg.stoppedEarly = true;
     const isNet = /network|fetch|abort|interrupted|failed/i.test(e2.message || '');
     const msg = isNet ? 'Connection lost — click Retry to continue' : (e2.message || 'Connection interrupted');
