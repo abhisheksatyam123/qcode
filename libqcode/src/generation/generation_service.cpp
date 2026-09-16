@@ -311,11 +311,11 @@ static JsonValue run_subagent_turn_multi(
     std::string sub_session_id =
         args.value("sessionId", args.value("session_id", args.value("task_id", "")));
 
-    int max_steps = 100;
+    int max_steps = 0;
     if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
       try {
         const int v = std::stoi(env_steps);
-        if (v > 0) max_steps = v;
+        if (v >= 0) max_steps = v;
       } catch (...) {}
     }
     qcode::GenerateOptions sub_opts(wire_model, sub_sys.str(), "");
@@ -537,7 +537,7 @@ static void run_tools_generation_bus(
   std::string last_progress_fp;
 
   LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", options.max_steps);
-  while (step < options.max_steps && !finished) {
+  while (!finished && (options.max_steps <= 0 || step < options.max_steps)) {
     if (ctx.abort_flag && ctx.abort_flag->load()) {
       LOG_INFO("run_tools_generation_bus: abort requested at step={}", step);
       aborted = true;
@@ -718,7 +718,8 @@ static void run_tools_generation_bus(
 
         // Detect true no-progress wedges only: identical calls *and* identical
         // results. Do not stop on long tool-only streaks or same-args retries
-        // that return new data — max_steps remains the runaway cap.
+        // that return new data. Uncapped: instead of halting, inject a
+        // corrective nudge so the model breaks the repetition itself.
         const auto progress_fp =
             tool_calls_fingerprint(step_res.tool_calls) + "#" +
             tool_results_fingerprint(executed_results);
@@ -728,13 +729,18 @@ static void run_tools_generation_bus(
           last_progress_fp = progress_fp;
           no_progress_repeat = 1;
         }
-        constexpr int kMaxNoProgressRepeats = 4;
-        if (no_progress_repeat >= kMaxNoProgressRepeats) {
+        constexpr int kNoProgressNudgeAfter = 4;
+        if (no_progress_repeat >= kNoProgressNudgeAfter) {
           LOG_WARN(
-              "run_tools_generation_bus: no-progress tool loop detected "
-              "(no_progress_repeat={} step={})",
+              "run_tools_generation_bus: no-progress tool loop repeating "
+              "(no_progress_repeat={} step={}); nudging for a different approach",
               no_progress_repeat, step);
-          stuck = true;
+          no_progress_repeat = 0;
+          last_progress_fp.clear();
+          response_messages.push_back(qcode::Message::user(
+              "[System Note: Your last several tool calls were identical with "
+              "identical results. Try a different file, command, or approach to "
+              "make progress instead of repeating the same call.]"));
         }
 
         // Re-publish the live context size after each tool call so the TUI's
@@ -816,7 +822,8 @@ static void run_tools_generation_bus(
   // If we reached the tool step limit without producing any text, synthesize a
   // final textual summary of the findings with tools disabled so the turn completes
   // naturally instead of leaving the user with an empty error.
-  if (!aborted && !stuck && !finished && step >= options.max_steps &&
+  const bool capped = (options.max_steps > 0);
+  if (!aborted && !stuck && !finished && capped && step >= options.max_steps &&
       (assistant_text->empty() || *assistant_text == "  \u23f3 Working...") &&
       (gen_result.text.empty() || gen_result.text == "  \u23f3 Working...")) {
     LOG_INFO("run_tools_generation_bus: step cap reached ({} steps); synthesizing final response without tools",
@@ -920,7 +927,7 @@ static void run_tools_generation_bus(
     LOG_DEBUG("run_tools_generation_bus: final assistant_text empty={} gen_result.text empty={}",
              assistant_text->empty(), gen_result.text.empty());
     bool is_placeholder = (final_text == "  \u23f3 Working...");
-    if (!finished && step >= options.max_steps) {
+    if (!finished && capped && step >= options.max_steps) {
       if (final_text.empty() || is_placeholder) {
         final_text = "I reached the tool execution limit (" + std::to_string(options.max_steps) +
                      " steps) for this turn while working on your request. Send 'continue' to proceed with the next steps.";
@@ -1436,11 +1443,11 @@ void run_generation_with_bus(
       qcode::ToolSet tools =
           ToolCatalog::build_definitions(enable_task_tool ? ToolConfig::orchestrator() : ToolConfig::subagent());
       base_opts.tools = std::move(tools);
-      int max_tool_steps = 100;
+      int max_tool_steps = 0;
       if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
         try {
           const int v = std::stoi(env_steps);
-          if (v > 0) max_tool_steps = v;
+          if (v >= 0) max_tool_steps = v;
         } catch (...) {}
       }
       base_opts.max_steps = max_tool_steps;

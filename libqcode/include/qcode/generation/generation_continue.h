@@ -213,18 +213,22 @@ inline bool looks_like_task_stall(std::string_view text) {
   });
 }
 
-// Returns true when the tool loop should inject a continue nudge instead of
-// marking the turn finished.
+// Uncapped: build mode keeps nudging until task completion is detected.
+// There is intentionally no numeric cap — continue_count is accepted for
+// logging/telemetry only and never stops the turn. Empty text-only stops
+// always continue. Non-empty text stops only on explicit completion signals;
+// stall phrases are the primary signal, but any other non-completion text
+// also continues so novel phrasing never halts mid-task. The user abort,
+// queued-prompt yield, provider errors, and plan_mode remain the only stops.
 inline bool should_auto_continue_build(bool plan_mode,
                                        int continue_count,
                                        std::string_view assistant_text) {
-  constexpr int kMaxContinues = 20;
-  constexpr int kMaxEmptyContinues = 2;
+  (void)continue_count;
   if (plan_mode) return false;
-  if (continue_count >= kMaxContinues) return false;
-  if (assistant_text.empty()) return continue_count < kMaxEmptyContinues;
+  if (assistant_text.empty()) return true;
   if (looks_like_task_completion(assistant_text)) return false;
-  return looks_like_task_stall(assistant_text);
+  if (looks_like_task_stall(assistant_text)) return true;
+  return true;
 }
 
 inline constexpr std::string_view kBuildContinueNudge =

@@ -40,7 +40,7 @@ struct GenerateOptions {
   // across turns (e.g. Cursor). Usually the TUI/server session UUID.
   std::string session_id;
   ToolChoice tool_choice = ToolChoice::auto_choice();
-  int max_steps = 1;
+  int max_steps = 1;  // <=0 means uncapped (run until done/abort/error)
   std::vector<std::string> active_tools;
 
   // Multi-agent hook (opencode TaskTool parity): injected by the generation

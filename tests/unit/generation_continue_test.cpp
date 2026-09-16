@@ -27,9 +27,12 @@ TEST(GenerationContinueTest, AutoContinuesBuildStallsButNotPlanOrDone) {
   EXPECT_FALSE(should_auto_continue_build(
       false, 0, "Done this run:\n- updated styles\n- all tests green"));
   EXPECT_TRUE(should_auto_continue_build(false, 0, ""));
-  EXPECT_FALSE(should_auto_continue_build(false, 3, ""));
+  EXPECT_TRUE(should_auto_continue_build(false, 3, ""));
   EXPECT_TRUE(should_auto_continue_build(false, 6, "one more round"));
-  EXPECT_FALSE(should_auto_continue_build(false, 20, "one more round"));
+  EXPECT_TRUE(should_auto_continue_build(false, 20, "one more round"));
+  EXPECT_TRUE(should_auto_continue_build(false, 100000, "one more round"));
+  EXPECT_TRUE(should_auto_continue_build(
+      false, 0, "Moved model and context into the session header."));
 }
 
 TEST(GenerationContinueTest, DoesNotFalselyStallOnNormalExplanations) {

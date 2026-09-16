@@ -12,10 +12,14 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     const GenerateOptions& initial_options,
     const std::function<GenerateResult(const GenerateOptions&)>&
         generate_func) {
-  if (initial_options.max_steps <= 1) {
-    // Single step - just execute normally
+  if (initial_options.max_steps == 1) {
+    // Single step - just execute normally.
+    // max_steps <= 0 means uncapped: keep looping on tool calls until the
+    // provider stops requesting them (user abort / provider error still stop).
     return generate_func(initial_options);
   }
+  const int step_cap =
+      (initial_options.max_steps <= 0) ? -1 : initial_options.max_steps;
 
   // initial_messages is the user's original input, kept immutable across
   // steps; response_messages accumulates assistant turns and tool-result
@@ -37,7 +41,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
 
   GenerateResult final_result;
 
-  for (int step = 0; step < initial_options.max_steps; ++step) {
+  for (int step = 0; step_cap < 0 || step < step_cap; ++step) {
     // Truncate to the immutable prefix and re-append the running accumulator.
     // (vector::resize would require Message to be default-constructible.)
     step_messages.erase(std::next(step_messages.begin(), initial_count),
@@ -47,7 +51,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     step_options.messages = step_messages;
 
     LOG_DEBUG("Executing step {} of {}, messages={}", step + 1,
-                          initial_options.max_steps,
+                          (step_cap < 0 ? -1 : step_cap),
                           step_options.messages.size());
 
     GenerateResult step_result = generate_func(step_options);
@@ -155,11 +159,12 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
                                         response_messages.begin(),
                                         response_messages.end());
 
-  if (final_result.steps.size() ==
-          static_cast<size_t>(initial_options.max_steps) &&
+  if (step_cap > 0 &&
+      final_result.steps.size() ==
+          static_cast<size_t>(step_cap) &&
       final_result.finish_reason != kFinishReasonStop) {
     LOG_DEBUG("Reached max steps limit ({}) without completion",
-                          initial_options.max_steps);
+                          step_cap);
   }
 
   return final_result;
