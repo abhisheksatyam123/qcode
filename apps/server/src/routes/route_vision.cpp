@@ -15,8 +15,6 @@ namespace server {
 
 namespace {
 
-const char* kDefaultVertexUrl =
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 
 std::string get_vision_prompt(const std::string& mode) {
   const std::string base =
