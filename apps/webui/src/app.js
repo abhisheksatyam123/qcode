@@ -1,8 +1,22 @@
-function encodePlantUmlHex(text) {
+function formatPlantUmlTheme(text, theme = '') {
   let clean = (text || '').trim();
   if (!clean.startsWith('@start')) {
     clean = '@startuml\n' + clean + '\n@enduml';
   }
+  if (theme === 'cyborg' || theme === 'dark') {
+    if (/^!theme\s+\w+/m.test(clean)) {
+      clean = clean.replace(/^!theme\s+\w+/m, '!theme cyborg');
+    } else {
+      clean = clean.replace(/^(@start[a-z]*\b[^\n]*)/m, '$1\n!theme cyborg');
+    }
+  } else if (theme === 'light') {
+    clean = clean.replace(/^!theme\s+cyborg\r?\n?/m, '');
+  }
+  return clean;
+}
+
+function encodePlantUmlHex(text, theme = '') {
+  const clean = formatPlantUmlTheme(text, theme);
   let hex = '';
   const bytes = new TextEncoder().encode(clean);
   for (let i = 0; i < bytes.length; i++) {
@@ -10,6 +24,59 @@ function encodePlantUmlHex(text) {
   }
   return 'https://www.plantuml.com/plantuml/svg/~h' + hex;
 }
+
+window.togglePlantUmlDiagramMode = function(diagramId) {
+  const container = document.getElementById(diagramId);
+  if (!container) return;
+  const currentMode = container.getAttribute('data-puml-mode') || 'dark';
+  const newMode = currentMode === 'dark' ? 'light' : 'dark';
+  container.setAttribute('data-puml-mode', newMode);
+
+  const rawCode = decodeURIComponent(container.getAttribute('data-puml-code') || '');
+  const newUrl = encodePlantUmlHex(rawCode, newMode);
+
+  const img = container.querySelector('.plantuml-image-wrapper img');
+  if (img) {
+    img.src = newUrl;
+  }
+  const wrapper = container.querySelector('.plantuml-image-wrapper');
+  if (wrapper) {
+    if (newMode === 'dark') {
+      wrapper.classList.remove('light-mode');
+      wrapper.classList.add('dark-mode');
+    } else {
+      wrapper.classList.remove('dark-mode');
+      wrapper.classList.add('light-mode');
+    }
+  }
+
+  const modeBtnLabel = container.querySelector('.plantuml-mode-label');
+  if (modeBtnLabel) {
+    modeBtnLabel.innerText = newMode === 'dark' ? '☀️ Light' : '🌙 Dark';
+  }
+
+  const link = container.querySelector('.plantuml-link');
+  if (link) {
+    link.href = newUrl;
+  }
+};
+
+window.copyPlantUmlCode = function(diagramId, btn) {
+  const container = document.getElementById(diagramId);
+  if (!container) return;
+  const rawCode = decodeURIComponent(container.getAttribute('data-puml-code') || '');
+  const mode = container.getAttribute('data-puml-mode') || 'dark';
+  const codeToCopy = formatPlantUmlTheme(rawCode, mode);
+
+  navigator.clipboard.writeText(codeToCopy).then(() => {
+    const targetBtn = btn || (typeof event !== 'undefined' ? event.target.closest('button') : null);
+    if (targetBtn) {
+      const orig = targetBtn.innerText;
+      targetBtn.innerText = 'Copied!';
+      setTimeout(() => targetBtn.innerText = orig, 2000);
+    }
+  });
+};
 
 import { InfiniteCanvas } from "./canvas/infinite-canvas.js";
 import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
@@ -4935,18 +5002,23 @@ function getMarkedRenderer() {
     }
 
     if (displayLang === 'plantuml' || displayLang === 'puml') {
-      const pumlUrl = encodePlantUmlHex(cleanCode);
       const diagramId = 'plantuml-' + Math.random().toString(36).substring(2, 9);
+      const isDark = true;
+      const initialMode = isDark ? 'dark' : 'light';
+      const pumlUrl = encodePlantUmlHex(cleanCode, initialMode);
       const encodedCode = encodeURIComponent(cleanCode);
-      return `<div class="plantuml-diagram-container" id="${diagramId}">
+      return `<div class="plantuml-diagram-container" id="${diagramId}" data-puml-code="${encodedCode}" data-puml-mode="${initialMode}">
         <div class="code-block-header">
           <span class="code-block-lang">PlantUML Diagram</span>
           <div style="display:flex;gap:6px;align-items:center;">
-            <button type="button" class="copy-code-btn" onclick="navigator.clipboard.writeText(decodeURIComponent('${encodedCode}')).then(() => { this.innerText = 'Copied!'; setTimeout(() => this.innerText = 'Copy Code', 2000); })">Copy Code</button>
-            <a href="${pumlUrl}" target="_blank" rel="noopener noreferrer" class="copy-code-btn" style="text-decoration:none;display:inline-flex;align-items:center;">Open SVG ↗</a>
+            <button type="button" class="copy-code-btn plantuml-mode-btn" onclick="togglePlantUmlDiagramMode('${diagramId}')" title="Toggle between Dark and Light mode">
+              <span class="plantuml-mode-label">${isDark ? '☀️ Light' : '🌙 Dark'}</span>
+            </button>
+            <button type="button" class="copy-code-btn" onclick="copyPlantUmlCode('${diagramId}', this)">Copy Code</button>
+            <a href="${pumlUrl}" target="_blank" rel="noopener noreferrer" class="copy-code-btn plantuml-link" style="text-decoration:none;display:inline-flex;align-items:center;">Open SVG ↗</a>
           </div>
         </div>
-        <div class="plantuml-image-wrapper">
+        <div class="plantuml-image-wrapper ${isDark ? 'dark-mode' : 'light-mode'}">
           <img src="${pumlUrl}" alt="PlantUML Diagram" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\'plantuml-error\'>PlantUML render error. Check syntax.</div>'" />
         </div>
       </div>`;

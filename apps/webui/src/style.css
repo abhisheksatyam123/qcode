@@ -4737,9 +4737,18 @@ kbd {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: #ffffff;
+  background: #090d16;
   overflow-x: auto;
   min-height: 80px;
+  transition: background 0.2s ease;
+}
+
+.plantuml-image-wrapper.dark-mode {
+  background: #090d16;
+}
+
+.plantuml-image-wrapper.light-mode {
+  background: #ffffff;
 }
 
 .plantuml-image-wrapper img {
