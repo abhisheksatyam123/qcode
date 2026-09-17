@@ -1,3 +1,16 @@
+function encodePlantUmlHex(text) {
+  let clean = (text || '').trim();
+  if (!clean.startsWith('@start')) {
+    clean = '@startuml\n' + clean + '\n@enduml';
+  }
+  let hex = '';
+  const bytes = new TextEncoder().encode(clean);
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return 'https://www.plantuml.com/plantuml/svg/~h' + hex;
+}
+
 import { InfiniteCanvas } from "./canvas/infinite-canvas.js";
 import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
 // ── SVG Icons ──
@@ -4921,6 +4934,24 @@ function getMarkedRenderer() {
       return `<div class="mermaid-diagram-container"><div id="${diagramId}" class="mermaid-target">${esc(cleanCode)}</div></div>`;
     }
 
+    if (displayLang === 'plantuml' || displayLang === 'puml') {
+      const pumlUrl = encodePlantUmlHex(cleanCode);
+      const diagramId = 'plantuml-' + Math.random().toString(36).substring(2, 9);
+      const encodedCode = encodeURIComponent(cleanCode);
+      return `<div class="plantuml-diagram-container" id="${diagramId}">
+        <div class="code-block-header">
+          <span class="code-block-lang">PlantUML Diagram</span>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="copy-code-btn" onclick="navigator.clipboard.writeText(decodeURIComponent('${encodedCode}')).then(() => { this.innerText = 'Copied!'; setTimeout(() => this.innerText = 'Copy Code', 2000); })">Copy Code</button>
+            <a href="${pumlUrl}" target="_blank" rel="noopener noreferrer" class="copy-code-btn" style="text-decoration:none;display:inline-flex;align-items:center;">Open SVG ↗</a>
+          </div>
+        </div>
+        <div class="plantuml-image-wrapper">
+          <img src="${pumlUrl}" alt="PlantUML Diagram" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\'plantuml-error\'>PlantUML render error. Check syntax.</div>'" />
+        </div>
+      </div>`;
+    }
+
     if (displayLang === 'latex' || displayLang === 'katex' || displayLang === 'math') {
       if (typeof katex !== 'undefined' && katex.renderToString) {
         try {
@@ -5039,12 +5070,15 @@ function renderMarkdown(text) {
   const mathTokens = [];
   const codeBlocks = [];
 
-  // 1. Protect code fences so math syntax inside code blocks is never touched
+  // 1. Protect code fences
   let protectedText = text.replace(/(```[\s\S]*?```|`[^`\n]+`)/g, (match) => {
     const cid = '@@CODE_BLOCK_' + codeBlocks.length + '@@';
     codeBlocks.push(match);
     return cid;
   });
+
+  // Auto-wrap standalone @startuml ... @enduml into ```plantuml fences
+  protectedText = protectedText.replace(/(^|\n)(@(startuml|startmindmap|startwbs|startgantt)[\s\S]*?@(enduml|endmindmap|endwbs|endgantt))(\n|$)/g, '$1```plantuml\n$2\n```$5');
 
   // 2. Extract and protect display math ($$...$$)
   if (typeof katex !== 'undefined' && katex.renderToString) {
