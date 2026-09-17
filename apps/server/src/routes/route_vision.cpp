@@ -47,14 +47,336 @@ std::string get_vision_prompt(const std::string& mode) {
   return base + "\n\nFOCUS: AUTO-DETECT (Diagrams, notes, or equations).";
 }
 
+nlohmann::json get_provider_catalog() {
+  return nlohmann::json{
+      {"default_provider", "antigravity"},
+      {"default_model", "gemini-3.8-flash-medium"},
+      {"providers",
+       nlohmann::json::array({
+           {{"id", "antigravity"},
+            {"name", "Antigravity (Google Vertex)"},
+            {"description", "Ultra-fast SOTA Gemini & Claude vision models"},
+            {"models",
+             nlohmann::json::array({
+                 {{"id", "gemini-3.8-flash-medium"},
+                  {"name", "Gemini 3.8 Flash (Fast & Accurate)"}},
+                 {{"id", "gemini-3.1-pro-low"},
+                  {"name", "Gemini 3.1 Pro (Deep Reasoning)"}},
+                 {{"id", "claude-sonnet-4-6"},
+                  {"name", "Claude Sonnet 4.6 (Vision)"}},
+                 {{"id", "claude-opus-4-6-thinking"},
+                  {"name", "Claude Opus 4.6 Thinking"}}
+             })}},
+           {{"id", "openrouter"},
+            {"name", "OpenRouter"},
+            {"description", "Multimodal models via OpenRouter cloud API"},
+            {"models",
+             nlohmann::json::array({
+                 {{"id", "nex-agi/nex-n2.5-pro:free"},
+                  {"name", "Nex N2.5 Pro (Free Vision)"}},
+                 {{"id", "inclusionai/ling-3.0-flash-vl:free"},
+                  {"name", "Ling 3.0 Flash VL (Free)"}},
+                 {{"id", "google/gemini-2.0-flash-001"},
+                  {"name", "Gemini 2.0 Flash"}},
+                 {{"id", "deepseek/deepseek-v4.1-flash"},
+                  {"name", "DeepSeek V4.1 Flash"}}
+             })}},
+           {{"id", "opencode"},
+            {"name", "OpenCode Zen"},
+            {"description", "OpenCode Zen API endpoint models"},
+            {"models",
+             nlohmann::json::array({
+                 {{"id", "gemini-3.8-flash"},
+                  {"name", "Gemini 3.8 Flash"}},
+                 {{"id", "claude-sonnet-4-6"},
+                  {"name", "Claude Sonnet 4.6"}},
+                 {{"id", "deepseek-v4-flash-vision-exp"},
+                  {"name", "DeepSeek V4 Flash Vision Exp"}}
+             })}},
+           {{"id", "ollama"},
+            {"name", "Local Ollama"},
+            {"description", "100% private offline vision running on local host"},
+            {"models",
+             nlohmann::json::array({
+                 {{"id", "qwen2.5-vl"},
+                  {"name", "Qwen 2.5 VL (Local)"}},
+                 {{"id", "llama3.2-vision"},
+                  {"name", "Llama 3.2 Vision (Local)"}}
+             })}}
+       })}};
+}
+
+std::string clean_markdown_output(std::string text) {
+  while (!text.empty() && (text.front() == '\r' || text.front() == '\n' || text.front() == ' ')) {
+    text.erase(text.begin());
+  }
+  while (!text.empty() && (text.back() == '\r' || text.back() == '\n' || text.back() == ' ')) {
+    text.pop_back();
+  }
+  return text;
+}
+
+// 1. Antigravity execution
+bool execute_antigravity(const std::string& model, const std::string& prompt,
+                         const std::string& mime_type, const std::string& raw_base64,
+                         std::string& out_markdown, std::string& out_err) {
+  std::string token = qcode::get_antigravity_token();
+  if (token.empty()) {
+    out_err = "Antigravity OAuth token not found in ~/.gemini/antigravity-cli or environment";
+    return false;
+  }
+
+  nlohmann::json parts = nlohmann::json::array();
+  parts.push_back({{"text", prompt}});
+  parts.push_back({
+      {"inlineData", {{"mimeType", mime_type}, {"data", raw_base64}}}
+  });
+
+  std::string target_model = model.empty() ? "gemini-3.8-flash-medium" : model;
+
+  nlohmann::json envelope{
+      {"project", "rising-fact-p41fc"},
+      {"model", target_model},
+      {"request", {
+          {"contents", nlohmann::json::array({{{"role", "user"}, {"parts", parts}}})},
+          {"generationConfig", {{"temperature", 0.2}, {"maxOutputTokens", 4096}}}
+      }}
+  };
+
+  httplib::SSLClient client("daily-cloudcode-pa.sandbox.googleapis.com");
+  client.set_connection_timeout(15);
+  client.set_read_timeout(60);
+
+  httplib::Headers headers{
+      {"Authorization", "Bearer " + token},
+      {"Content-Type", "application/json"},
+      {"User-Agent", "antigravity/hub/2.8.0 (aidev_client; os_type=linux; arch=amd64)"}
+  };
+
+  auto vres = client.Post("/v1internal:generateContent", headers,
+                          envelope.dump(), "application/json");
+
+  if (!vres || vres->status < 200 || vres->status >= 300) {
+    out_err = "Antigravity HTTP error: " + std::to_string(vres ? vres->status : -1);
+    return false;
+  }
+
+  try {
+    auto vjson = nlohmann::json::parse(vres->body);
+    auto unwrapped = qcode::gemini::unwrap_envelope(vjson);
+
+    if (unwrapped.contains("candidates") && unwrapped["candidates"].is_array() &&
+        !unwrapped["candidates"].empty()) {
+      const auto& cand = unwrapped["candidates"][0];
+      if (cand.contains("content") && cand["content"].contains("parts")) {
+        for (const auto& p : cand["content"]["parts"]) {
+          if (p.value("thought", false)) continue;
+          if (p.contains("text") && p["text"].is_string()) {
+            out_markdown += p["text"].get<std::string>();
+          }
+        }
+      }
+    }
+  } catch (const std::exception& e) {
+    out_err = "Antigravity parse exception: " + std::string(e.what());
+    return false;
+  }
+
+  return !out_markdown.empty();
+}
+
+// 2. OpenRouter execution
+bool execute_openrouter(const std::string& model, const std::string& prompt,
+                        const std::string& full_data_url,
+                        std::string& out_markdown, std::string& out_err) {
+  std::string api_key;
+  if (const char* env_key = std::getenv("OPENROUTER_API_KEY")) {
+    api_key = env_key;
+  }
+  if (api_key.empty()) {
+    try {
+      auto provs = qcode::load_providers_from_config();
+      for (const auto& p : provs) {
+        if (p.id == "openrouter" && !p.api_key.empty()) {
+          api_key = p.api_key;
+          break;
+        }
+      }
+    } catch (...) {}
+  }
+  if (api_key.empty()) {
+    out_err = "OPENROUTER_API_KEY not found in env or opencode.json";
+    return false;
+  }
+
+  std::string target_model = model.empty() ? "nex-agi/nex-n2.5-pro:free" : model;
+
+  nlohmann::json req_body{
+      {"model", target_model},
+      {"messages", nlohmann::json::array({
+          {{"role", "user"},
+           {"content", nlohmann::json::array({
+               {{"type", "text"}, {"text", prompt}},
+               {{"type", "image_url"}, {"image_url", {{"url", full_data_url}}}}
+           })}}
+      })},
+      {"max_tokens", 4096},
+      {"temperature", 0.2}
+  };
+
+  httplib::SSLClient client("openrouter.ai");
+  client.set_connection_timeout(15);
+  client.set_read_timeout(60);
+
+  httplib::Headers headers{
+      {"Authorization", "Bearer " + api_key},
+      {"Content-Type", "application/json"},
+      {"X-Title", "qcode"}
+  };
+
+  auto res = client.Post("/api/v1/chat/completions", headers,
+                         req_body.dump(), "application/json");
+
+  if (!res || res->status < 200 || res->status >= 300) {
+    out_err = "OpenRouter HTTP error: " + std::to_string(res ? res->status : -1) +
+              (res ? " - " + res->body.substr(0, 150) : "");
+    return false;
+  }
+
+  try {
+    auto j = nlohmann::json::parse(res->body);
+    if (j.contains("choices") && j["choices"].is_array() && !j["choices"].empty()) {
+      const auto& choice = j["choices"][0];
+      if (choice.contains("message") && choice["message"].is_object()) {
+        const auto& msg = choice["message"];
+        if (msg.contains("content") && msg["content"].is_string()) {
+          out_markdown = msg["content"].get<std::string>();
+        } else if (msg.contains("reasoning") && msg["reasoning"].is_string()) {
+          out_markdown = msg["reasoning"].get<std::string>();
+        }
+      }
+    }
+  } catch (const std::exception& e) {
+    out_err = "OpenRouter parse error: " + std::string(e.what());
+    return false;
+  }
+
+  return !out_markdown.empty();
+}
+
+// 3. OpenCode Zen execution
+bool execute_opencode(const std::string& model, const std::string& prompt,
+                      const std::string& full_data_url,
+                      std::string& out_markdown, std::string& out_err) {
+  const char* env_key = std::getenv("OPENCODE_API_KEY");
+  std::string api_key = env_key ? env_key : "";
+
+  std::string target_model = model.empty() ? "gemini-3.8-flash" : model;
+
+  nlohmann::json req_body{
+      {"model", target_model},
+      {"messages", nlohmann::json::array({
+          {{"role", "user"},
+           {"content", nlohmann::json::array({
+               {{"type", "text"}, {"text", prompt}},
+               {{"type", "image_url"}, {"image_url", {{"url", full_data_url}}}}
+           })}}
+      })},
+      {"max_tokens", 4096},
+      {"temperature", 0.2}
+  };
+
+  httplib::SSLClient client("opencode.ai");
+  client.set_connection_timeout(15);
+  client.set_read_timeout(60);
+
+  httplib::Headers headers{
+      {"User-Agent", "opencode/1.18.18"},
+      {"x-opencode-client", "cli"},
+      {"Content-Type", "application/json"}
+  };
+  if (!api_key.empty()) {
+    headers.emplace("Authorization", "Bearer " + api_key);
+  }
+
+  auto res = client.Post("/zen/v1/chat/completions", headers,
+                         req_body.dump(), "application/json");
+
+  if (!res || res->status < 200 || res->status >= 300) {
+    out_err = "OpenCode Zen HTTP error: " + std::to_string(res ? res->status : -1) +
+              (res ? " - " + res->body.substr(0, 150) : "");
+    return false;
+  }
+
+  try {
+    auto j = nlohmann::json::parse(res->body);
+    if (j.contains("choices") && j["choices"].is_array() && !j["choices"].empty()) {
+      const auto& choice = j["choices"][0];
+      if (choice.contains("message") && choice["message"].is_object()) {
+        const auto& msg = choice["message"];
+        if (msg.contains("content") && msg["content"].is_string()) {
+          out_markdown = msg["content"].get<std::string>();
+        }
+      }
+    }
+  } catch (const std::exception& e) {
+    out_err = "OpenCode parse error: " + std::string(e.what());
+    return false;
+  }
+
+  return !out_markdown.empty();
+}
+
+// 4. Local Ollama execution
+bool execute_ollama(const std::string& model, const std::string& prompt,
+                    const std::string& raw_base64,
+                    std::string& out_markdown, std::string& out_err) {
+  std::string target_model = model.empty() ? "qwen2.5-vl" : model;
+
+  try {
+    httplib::Client client("127.0.0.1", 11434);
+    client.set_connection_timeout(3);
+    client.set_read_timeout(60);
+
+    nlohmann::json ollama_req{
+        {"model", target_model},
+        {"prompt", prompt},
+        {"images", {raw_base64}},
+        {"stream", false},
+        {"options", {{"temperature", 0.2}}}
+    };
+
+    auto res = client.Post("/api/generate", ollama_req.dump(), "application/json");
+    if (res && res->status == 200) {
+      auto ojson = nlohmann::json::parse(res->body);
+      if (ojson.contains("response") && ojson["response"].is_string()) {
+        out_markdown = ojson["response"].get<std::string>();
+        return true;
+      }
+    } else {
+      out_err = "Ollama returned status " + std::to_string(res ? res->status : -1);
+    }
+  } catch (const std::exception& e) {
+    out_err = "Ollama connection exception: " + std::string(e.what());
+  }
+
+  return false;
+}
+
 }  // namespace
 
 void register_vision_routes(
     httplib::Server& svr,
     std::shared_ptr<std::vector<qcode::ProviderInfo>> /*providers_list*/) {
 
-  svr.Post("/api/vision/ocr", [](const httplib::Request& req,
-                                 httplib::Response& res) {
+  // GET /api/vision/providers - returns catalog of available vision providers & models
+  svr.Get("/api/vision/providers", [](const httplib::Request&, httplib::Response& res) {
+    auto catalog = get_provider_catalog();
+    res.set_content(catalog.dump(2), "application/json");
+  });
+
+  // POST /api/vision/ocr - converts drawing image to markdown using selected provider & model
+  svr.Post("/api/vision/ocr", [](const httplib::Request& req, httplib::Response& res) {
     nlohmann::json body;
     try {
       body = nlohmann::json::parse(req.body.empty() ? "{}" : req.body);
@@ -71,125 +393,77 @@ void register_vision_routes(
       return;
     }
 
-    std::string mode = body.value("mode", "auto");
+    std::string provider = body.value("provider", "antigravity");
+    std::string model = body.value("model", "");
+    std::string mode = body.value("mode", "diagram");
     std::string custom_prompt = body.value("prompt", "");
     std::string prompt = custom_prompt.empty() ? get_vision_prompt(mode) : custom_prompt;
 
-    // Strip data:image/...;base64, prefix if present
+    // Separate raw base64 and data URL
+    std::string raw_base64 = image_data;
     std::string mime_type = "image/png";
+    std::string full_data_url;
+
     if (image_data.rfind("data:", 0) == 0) {
+      full_data_url = image_data;
       auto comma_pos = image_data.find(',');
       if (comma_pos != std::string::npos) {
         auto semi_pos = image_data.find(';');
         if (semi_pos != std::string::npos && semi_pos < comma_pos) {
           mime_type = image_data.substr(5, semi_pos - 5);
         }
-        image_data = image_data.substr(comma_pos + 1);
+        raw_base64 = image_data.substr(comma_pos + 1);
+      }
+    } else {
+      full_data_url = "data:image/png;base64," + image_data;
+    }
+
+    std::string extracted_markdown;
+    std::string last_error;
+    std::string used_provider = provider;
+    std::string used_model = model;
+
+    // Dispatch based on selected provider
+    if (provider == "antigravity" || provider == "auto") {
+      if (execute_antigravity(model, prompt, mime_type, raw_base64, extracted_markdown, last_error)) {
+        used_provider = "antigravity";
+        if (used_model.empty()) used_model = "gemini-3.8-flash-medium";
       }
     }
 
-    // 1. Antigravity Google Vertex provider (SOTA Gemini 3 Flash / 2.5 Flash)
-    std::string token = qcode::get_antigravity_token();
-
-    if (!token.empty()) {
-      nlohmann::json parts = nlohmann::json::array();
-      parts.push_back({{"text", prompt}});
-      parts.push_back({
-          {"inlineData", {{"mimeType", mime_type}, {"data", image_data}}}
-      });
-
-      std::string model = body.value("model", "gemini-3.8-flash-medium");
-
-      nlohmann::json envelope{
-          {"project", "rising-fact-p41fc"},
-          {"model", model},
-          {"request", {
-              {"contents", nlohmann::json::array({{{"role", "user"}, {"parts", parts}}})},
-              {"generationConfig", {{"temperature", 0.2}, {"maxOutputTokens", 4096}}}
-          }}
-      };
-
-      httplib::SSLClient client("daily-cloudcode-pa.sandbox.googleapis.com");
-      client.set_connection_timeout(15);
-      client.set_read_timeout(60);
-
-      httplib::Headers headers{
-          {"Authorization", "Bearer " + token},
-          {"Content-Type", "application/json"},
-          {"User-Agent", "antigravity/hub/2.8.0 (aidev_client; os_type=linux; arch=amd64)"}
-      };
-
-      auto vres = client.Post("/v1internal:generateContent", headers,
-                              envelope.dump(), "application/json");
-
-      if (vres && vres->status >= 200 && vres->status < 300) {
-        try {
-          auto vjson = nlohmann::json::parse(vres->body);
-          auto unwrapped = qcode::gemini::unwrap_envelope(vjson);
-          std::string extracted_text;
-
-          if (unwrapped.contains("candidates") && unwrapped["candidates"].is_array() &&
-              !unwrapped["candidates"].empty()) {
-            const auto& cand = unwrapped["candidates"][0];
-            if (cand.contains("content") && cand["content"].contains("parts")) {
-              for (const auto& p : cand["content"]["parts"]) {
-                if (p.value("thought", false)) continue;
-                if (p.contains("text") && p["text"].is_string()) {
-                  extracted_text += p["text"].get<std::string>();
-                }
-              }
-            }
-          }
-
-          if (!extracted_text.empty()) {
-            nlohmann::json out{
-                {"markdown", extracted_text},
-                {"provider", "antigravity"},
-                {"model", model}
-            };
-            res.set_content(out.dump(2), "application/json");
-            return;
-          }
-        } catch (const std::exception& e) {
-          LOG_WARN("Antigravity response parse failed: {}", e.what());
-        }
-      } else {
-        LOG_WARN("Antigravity call returned status {}", vres ? vres->status : -1);
+    if (extracted_markdown.empty() && (provider == "openrouter" || provider == "auto")) {
+      if (execute_openrouter(model, prompt, full_data_url, extracted_markdown, last_error)) {
+        used_provider = "openrouter";
+        if (used_model.empty()) used_model = "nex-agi/nex-n2.5-pro:free";
       }
     }
 
-    // 2. Local Ollama Vision fallback if available
-    try {
-      httplib::Client ollama_client("http://127.0.0.1:11434");
-      ollama_client.set_connection_timeout(2);
-      ollama_client.set_read_timeout(60);
-
-      nlohmann::json ollama_req{
-          {"model", "qwen2.5-vl"},
-          {"prompt", prompt},
-          {"images", {image_data}},
-          {"stream", false},
-          {"options", {{"temperature", 0.2}}}
-      };
-
-      auto ores = ollama_client.Post("/api/generate", ollama_req.dump(), "application/json");
-      if (ores && ores->status == 200) {
-        auto ojson = nlohmann::json::parse(ores->body);
-        if (ojson.contains("response") && ojson["response"].is_string()) {
-          nlohmann::json out{
-              {"markdown", ojson["response"].get<std::string>()},
-              {"provider", "ollama"},
-              {"model", "qwen2.5-vl"}
-          };
-          res.set_content(out.dump(2), "application/json");
-          return;
-        }
+    if (extracted_markdown.empty() && (provider == "opencode" || provider == "auto")) {
+      if (execute_opencode(model, prompt, full_data_url, extracted_markdown, last_error)) {
+        used_provider = "opencode";
+        if (used_model.empty()) used_model = "gemini-3.8-flash";
       }
-    } catch (...) {
-      // Ollama not running
     }
 
-    // 3. Built-in template simulation fallback
+    if (extracted_markdown.empty() && (provider == "ollama" || provider == "auto")) {
+      if (execute_ollama(model, prompt, raw_base64, extracted_markdown, last_error)) {
+        used_provider = "ollama";
+        if (used_model.empty()) used_model = "qwen2.5-vl";
+      }
+    }
+
+    // If successfully extracted
+    if (!extracted_markdown.empty()) {
+      nlohmann::json out{
+          {"markdown", clean_markdown_output(extracted_markdown)},
+          {"provider", used_provider},
+          {"model", used_model}
+      };
+      res.set_content(out.dump(2), "application/json");
+      return;
+    }
+
+    // Fallback template simulation
     std::string fallback_markdown;
     if (mode == "diagram") {
       fallback_markdown =
@@ -198,28 +472,43 @@ void register_vision_routes(
           "flowchart LR\n"
           "    UI[\"📱 Client / WebUI\"] --> Server[\"⚙️ QCode Server\"]\n"
           "    Server --> Bus[\"🚌 BusRuntime\"]\n"
-          "    Server --> VLM[\"🧠 Vision Model (Gemini / Ollama)\"]\n"
+          "    Server --> VLM[\"🧠 Vision Model\"]\n"
           "    VLM --> Markdown[\"📝 Structured Markdown\"]\n"
           "    Markdown --> Mermaid[\"📊 Mermaid & KaTeX Preview\"]\n"
-          "```";
+          "```\n\n"
+          "### Key Topology Nodes:\n"
+          "- **UI:** Infinite Canvas capturing vector strokes.\n"
+          "- **Server:** `/api/vision/ocr` endpoint.\n"
+          "- **Vision Model:** Synthesizes semantic arrows into valid Mermaid code.";
     } else if (mode == "math") {
       fallback_markdown =
           "# Mathematical Transcription\n\n"
           "Recognized equation:\n"
           "$$\n"
           "\\oint_C \\mathbf{B} \\cdot d\\boldsymbol{\\ell} = \\mu_0 I_{\\text{enc}} + \\mu_0 \\varepsilon_0 \\frac{d\\Phi_E}{dt}\n"
+          "$$\n\n"
+          "Euler-Lagrange Equation:\n"
+          "$$\n"
+          "\\frac{\\partial L}{\\partial q} - \\frac{d}{dt} \\left( \\frac{\\partial L}{\\partial \\dot{q}} \\right) = 0\n"
           "$$";
     } else {
       fallback_markdown =
           "# Transcribed Whiteboard Notes\n\n"
+          "## Action Items & Diagram\n"
           "- [x] Integrated Infinite Canvas into Markdown viewer\n"
-          "- [x] Connected Vision OCR pipeline";
+          "- [x] Multi-provider vision OCR (Antigravity, OpenRouter, OpenCode, Ollama)\n"
+          "- [x] Live preview with Mermaid and KaTeX\n\n"
+          "```mermaid\n"
+          "flowchart LR\n"
+          "    Sketch[\"✏️ Canvas Sketch\"] --> OCR[\"🔍 Vision Engine\"]\n"
+          "    OCR --> Output[\"📄 Markdown + Mermaid\"]\n"
+          "```";
     }
 
     nlohmann::json out{
         {"markdown", fallback_markdown},
         {"provider", "template-simulation"},
-        {"note", "Generated via built-in simulation."}
+        {"note", "All external vision providers failed or were unconfigured: " + last_error}
     };
     res.set_content(out.dump(2), "application/json");
   });

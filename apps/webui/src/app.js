@@ -5521,6 +5521,42 @@ window.addEventListener('resize', () => {
 // ── Infinite Canvas & Diagram/Math OCR Integration ──
 let activeInfiniteCanvas = null;
 
+const VISION_PROVIDERS_CONFIG = {
+  antigravity: {
+    name: 'Antigravity (Vertex)',
+    models: [
+      { id: 'gemini-3.8-flash-medium', name: 'Gemini 3.8 Flash (Latest)' },
+      { id: 'gemini-3.1-pro-low', name: 'Gemini 3.1 Pro (Deep Reasoning)' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Vision)' },
+      { id: 'claude-opus-4-6-thinking', name: 'Claude Opus 4.6 Thinking' }
+    ]
+  },
+  openrouter: {
+    name: 'OpenRouter',
+    models: [
+      { id: 'nex-agi/nex-n2.5-pro:free', name: 'Nex N2.5 Pro (Free Vision)' },
+      { id: 'inclusionai/ling-3.0-flash-vl:free', name: 'Ling 3.0 Flash VL (Free)' },
+      { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash' },
+      { id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' }
+    ]
+  },
+  opencode: {
+    name: 'OpenCode Zen',
+    models: [
+      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Zen)' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Zen)' },
+      { id: 'deepseek-v4-flash-vision-exp', name: 'DeepSeek V4 Flash Vision Exp' }
+    ]
+  },
+  ollama: {
+    name: 'Local Ollama',
+    models: [
+      { id: 'qwen2.5-vl', name: 'Qwen 2.5 VL (Local)' },
+      { id: 'llama3.2-vision', name: 'Llama 3.2 Vision (Local)' }
+    ]
+  }
+};
+
 function openCanvasModal() {
   let modal = document.getElementById('canvas-modal-root');
   if (!modal) {
@@ -5536,13 +5572,29 @@ function openCanvasModal() {
             <span class="badge">OCR & Diagram AI</span>
           </div>
           <div class="canvas-modal-actions">
-            <select id="canvas-ocr-mode" class="canvas-mode-select">
-              <option value="auto">Auto-Detect</option>
-              <option value="diagram" selected>Flowchart & Topology (Mermaid)</option>
-              <option value="plantuml">PlantUML Diagram</option>
-              <option value="math">Mathematics (LaTeX KaTeX)</option>
-              <option value="notes">Handwritten Notes</option>
-            </select>
+            <div class="canvas-selector-group">
+              <label class="canvas-sel-label" for="canvas-provider-select">Provider:</label>
+              <select id="canvas-provider-select" class="canvas-mode-select">
+                <option value="antigravity">Antigravity</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="opencode">OpenCode Zen</option>
+                <option value="ollama">Local Ollama</option>
+              </select>
+            </div>
+            <div class="canvas-selector-group">
+              <label class="canvas-sel-label" for="canvas-model-select">Model:</label>
+              <select id="canvas-model-select" class="canvas-mode-select"></select>
+            </div>
+            <div class="canvas-selector-group">
+              <label class="canvas-sel-label" for="canvas-ocr-mode">Output:</label>
+              <select id="canvas-ocr-mode" class="canvas-mode-select">
+                <option value="diagram" selected>Flowchart (Mermaid)</option>
+                <option value="plantuml">PlantUML Diagram</option>
+                <option value="math">Mathematics (LaTeX)</option>
+                <option value="notes">Notes / Text</option>
+                <option value="auto">Auto-Detect</option>
+              </select>
+            </div>
             <button id="canvas-do-convert-btn" class="canvas-convert-btn" type="button">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span>Convert to Text</span>
@@ -5571,7 +5623,7 @@ function openCanvasModal() {
             <button type="button" class="canvas-tool-btn" id="canvas-redo-btn" title="Redo">↷</button>
             <button type="button" class="canvas-tool-btn" id="canvas-clear-btn" title="Clear Canvas">🗑️</button>
           </div>
-          <div class="canvas-zoom-indicator" id="canvas-zoom-text">100% (Scroll to zoom, drag to draw)</div>
+          <div class="canvas-zoom-indicator" id="canvas-zoom-text">Scroll wheel / trackpad to zoom & pan · Drawing auto-scales</div>
         </div>
       </div>
     `;
@@ -5579,6 +5631,53 @@ function openCanvasModal() {
 
     const canvasEl = document.getElementById('infinite-canvas-el');
     activeInfiniteCanvas = new InfiniteCanvas(canvasEl);
+
+    const providerSelect = document.getElementById('canvas-provider-select');
+    const modelSelect = document.getElementById('canvas-model-select');
+
+    function populateModels(providerKey) {
+      modelSelect.innerHTML = '';
+      const cfg = VISION_PROVIDERS_CONFIG[providerKey] || VISION_PROVIDERS_CONFIG.antigravity;
+      cfg.models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name;
+        modelSelect.appendChild(opt);
+      });
+      const savedModel = localStorage.getItem('qcode_canvas_model_' + providerKey);
+      if (savedModel && Array.from(modelSelect.options).some(o => o.value === savedModel)) {
+        modelSelect.value = savedModel;
+      }
+    }
+
+    // Try fetching live provider catalog from server
+    fetch('/api/vision/providers').then(r => r.json()).then(data => {
+      if (data && data.providers) {
+        data.providers.forEach(p => {
+          if (!VISION_PROVIDERS_CONFIG[p.id]) {
+            VISION_PROVIDERS_CONFIG[p.id] = { name: p.name, models: p.models || [] };
+          } else {
+            VISION_PROVIDERS_CONFIG[p.id].models = p.models || VISION_PROVIDERS_CONFIG[p.id].models;
+          }
+        });
+        populateModels(providerSelect.value);
+      }
+    }).catch(() => {});
+
+    const savedProvider = localStorage.getItem('qcode_canvas_provider') || 'antigravity';
+    if (Array.from(providerSelect.options).some(o => o.value === savedProvider)) {
+      providerSelect.value = savedProvider;
+    }
+    populateModels(providerSelect.value);
+
+    providerSelect.addEventListener('change', () => {
+      populateModels(providerSelect.value);
+      localStorage.setItem('qcode_canvas_provider', providerSelect.value);
+    });
+
+    modelSelect.addEventListener('change', () => {
+      localStorage.setItem('qcode_canvas_model_' + providerSelect.value, modelSelect.value);
+    });
 
     // Bind toolbar buttons
     modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(btn => {
@@ -5636,14 +5735,22 @@ function openCanvasModal() {
       }
 
       const mode = document.getElementById('canvas-ocr-mode').value;
+      const chosenProvider = providerSelect.value;
+      const chosenModel = modelSelect.value;
+
       convertBtn.disabled = true;
-      convertBtn.innerHTML = '<span>Converting with AI...</span>';
+      convertBtn.innerHTML = '<span>Processing with AI...</span>';
 
       try {
         const res = await fetch('/api/vision/ocr', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64, mode: mode })
+          body: JSON.stringify({
+            image: base64,
+            mode: mode,
+            provider: chosenProvider,
+            model: chosenModel
+          })
         });
 
         if (!res.ok) {
@@ -5657,7 +5764,7 @@ function openCanvasModal() {
         if (markdown) {
           insertTextIntoFsEditor(markdown);
           modal.classList.add('hidden');
-          showToast('Inserted converted diagram / text into markdown document');
+          showToast('Converted via ' + (data.provider || chosenProvider) + ' (' + (data.model || chosenModel) + ')');
         } else {
           showToast('No text or diagram detected.');
         }

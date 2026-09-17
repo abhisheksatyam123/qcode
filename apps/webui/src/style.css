@@ -4442,3 +4442,26 @@ kbd {
   overflow-y: hidden;
   padding: 8px 0;
 }
+
+.canvas-selector-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.canvas-sel-label {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+@media (max-width: 900px) {
+  .canvas-sel-label {
+    display: none;
+  }
+  .canvas-modal-actions {
+    gap: 4px;
+  }
+}
