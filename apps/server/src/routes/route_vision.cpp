@@ -15,7 +15,6 @@ namespace server {
 
 namespace {
 
-
 std::string get_vision_prompt(const std::string& mode) {
   const std::string base =
       "You are an expert Vision OCR and Diagram-to-Markdown system.\n"
@@ -30,7 +29,7 @@ std::string get_vision_prompt(const std::string& mode) {
   if (mode == "diagram") {
     return base +
            "\n\nFOCUS: DIAGRAMS & FLOWCHARTS\n"
-           "- Transcribe shapes, boxes, databases, and arrows into Mermaid.js (graph TD, sequenceDiagram, classDiagram, etc.).\n"
+           "- Transcribe shapes, boxes, databases, and arrows into Mermaid.js (flowchart LR, graph TD, sequenceDiagram, etc.).\n"
            "- Provide concise descriptive markdown notes for the diagram components.";
   } else if (mode == "plantuml") {
     return base +
@@ -89,28 +88,29 @@ void register_vision_routes(
       }
     }
 
-    // Check if Antigravity token is available
+    // 1. Antigravity Google Vertex provider (SOTA Gemini 3 Flash / 2.5 Flash)
     std::string token = qcode::get_antigravity_token();
 
     if (!token.empty()) {
-      // Direct call to Gemini via Antigravity Vertex endpoint
       nlohmann::json parts = nlohmann::json::array();
       parts.push_back({{"text", prompt}});
       parts.push_back({
           {"inlineData", {{"mimeType", mime_type}, {"data", image_data}}}
       });
 
-      nlohmann::json gemini_req{
-          {"contents", nlohmann::json::array({{{"parts", parts}}})},
-          {"generationConfig", {{"temperature", 0.2}, {"maxOutputTokens", 4096}}}
+      std::string model = body.value("model", "gemini-3.8-flash-medium");
+
+      nlohmann::json envelope{
+          {"project", "rising-fact-p41fc"},
+          {"model", model},
+          {"request", {
+              {"contents", nlohmann::json::array({{{"role", "user"}, {"parts", parts}}})},
+              {"generationConfig", {{"temperature", 0.2}, {"maxOutputTokens", 4096}}}
+          }}
       };
 
-      std::string model = body.value("model", "gemini-2.0-flash");
-      nlohmann::json envelope = qcode::gemini::wrap_antigravity_envelope(
-          gemini_req, model);
-
-      httplib::Client client("https://daily-cloudcode-pa.sandbox.googleapis.com");
-      client.set_connection_timeout(10);
+      httplib::SSLClient client("daily-cloudcode-pa.sandbox.googleapis.com");
+      client.set_connection_timeout(15);
       client.set_read_timeout(60);
 
       httplib::Headers headers{
@@ -133,6 +133,7 @@ void register_vision_routes(
             const auto& cand = unwrapped["candidates"][0];
             if (cand.contains("content") && cand["content"].contains("parts")) {
               for (const auto& p : cand["content"]["parts"]) {
+                if (p.value("thought", false)) continue;
                 if (p.contains("text") && p["text"].is_string()) {
                   extracted_text += p["text"].get<std::string>();
                 }
@@ -157,7 +158,7 @@ void register_vision_routes(
       }
     }
 
-    // Local Ollama Vision fallback if available
+    // 2. Local Ollama Vision fallback if available
     try {
       httplib::Client ollama_client("http://127.0.0.1:11434");
       ollama_client.set_connection_timeout(2);
@@ -188,52 +189,37 @@ void register_vision_routes(
       // Ollama not running
     }
 
-    // Built-in intelligent template simulation if external providers are unconfigured
+    // 3. Built-in template simulation fallback
     std::string fallback_markdown;
     if (mode == "diagram") {
       fallback_markdown =
           "# Converted Architecture Diagram\n\n"
           "```mermaid\n"
-          "graph TD\n"
+          "flowchart LR\n"
           "    UI[\"📱 Client / WebUI\"] --> Server[\"⚙️ QCode Server\"]\n"
           "    Server --> Bus[\"🚌 BusRuntime\"]\n"
           "    Server --> VLM[\"🧠 Vision Model (Gemini / Ollama)\"]\n"
           "    VLM --> Markdown[\"📝 Structured Markdown\"]\n"
           "    Markdown --> Mermaid[\"📊 Mermaid & KaTeX Preview\"]\n"
-          "```\n\n"
-          "### Key Topology Nodes:\n"
-          "- **UI:** Infinite Canvas capturing vector strokes.\n"
-          "- **Server:** `/api/vision/ocr` endpoint.\n"
-          "- **Vision Model:** Synthesizes semantic arrows into valid Mermaid code.";
+          "```";
     } else if (mode == "math") {
       fallback_markdown =
           "# Mathematical Transcription\n\n"
           "Recognized equation:\n"
           "$$\n"
           "\\oint_C \\mathbf{B} \\cdot d\\boldsymbol{\\ell} = \\mu_0 I_{\\text{enc}} + \\mu_0 \\varepsilon_0 \\frac{d\\Phi_E}{dt}\n"
-          "$$\n\n"
-          "Euler-Lagrange Equation:\n"
-          "$$\n"
-          "\\frac{\\partial L}{\\partial q} - \\frac{d}{dt} \\left( \\frac{\\partial L}{\\partial \\dot{q}} \\right) = 0\n"
           "$$";
     } else {
       fallback_markdown =
           "# Transcribed Whiteboard Notes\n\n"
-          "## Action Items & Diagram\n"
           "- [x] Integrated Infinite Canvas into Markdown viewer\n"
-          "- [x] Connected Vision OCR pipeline\n"
-          "- [ ] Live preview with Mermaid and KaTeX\n\n"
-          "```mermaid\n"
-          "flowchart LR\n"
-          "    Sketch[\"✏️ Canvas Sketch\"] --> OCR[\"🔍 Vision Engine\"]\n"
-          "    OCR --> Output[\"📄 Markdown + Mermaid\"]\n"
-          "```";
+          "- [x] Connected Vision OCR pipeline";
     }
 
     nlohmann::json out{
         {"markdown", fallback_markdown},
         {"provider", "template-simulation"},
-        {"note", "Generated via built-in simulation. Configure Antigravity token or Ollama for live VLM inference."}
+        {"note", "Generated via built-in simulation."}
     };
     res.set_content(out.dump(2), "application/json");
   });
