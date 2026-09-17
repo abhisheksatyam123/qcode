@@ -5723,6 +5723,29 @@ function openCanvasModal() {
             </div>
           </div>
 
+          <!-- Result Review Drawer (Copy & Insert Controls) -->
+          <div class="canvas-result-drawer hidden" id="canvas-result-drawer">
+            <div class="canvas-result-header">
+              <span class="canvas-result-title" id="canvas-result-title">✨ Conversion Output</span>
+              <div class="canvas-result-actions">
+                <button type="button" class="canvas-action-chip primary" id="canvas-copy-result-btn" title="Copy output to system clipboard">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span id="canvas-copy-btn-text">Copy to Clipboard</span>
+                </button>
+                <button type="button" class="canvas-action-chip" id="canvas-insert-cursor-btn" title="Insert at current editor cursor">
+                  ✍️ Insert at Cursor
+                </button>
+                <button type="button" class="canvas-action-chip" id="canvas-append-end-btn" title="Append to the end of the markdown file">
+                  ➕ Append to End
+                </button>
+                <button type="button" class="canvas-action-chip close" id="canvas-dismiss-result-btn" title="Close review drawer">
+                  ✕
+                </button>
+              </div>
+            </div>
+            <textarea class="canvas-result-textarea" id="canvas-result-text" readonly spellcheck="false"></textarea>
+          </div>
+
           <!-- Bottom Action Dock -->
           <div class="canvas-bottom-dock">
             <button type="button" class="canvas-zoom-btn" id="canvas-undo-btn" title="Undo (Ctrl+Z)">↶</button>
@@ -5901,6 +5924,50 @@ function openCanvasModal() {
       modal.classList.add('hidden');
     });
 
+    // Result review drawer handlers
+    document.getElementById('canvas-copy-result-btn').addEventListener('click', async () => {
+      const text = document.getElementById('canvas-result-text').value;
+      if (text) {
+        await navigator.clipboard.writeText(text);
+        const copyBtnText = document.getElementById('canvas-copy-btn-text');
+        if (copyBtnText) copyBtnText.textContent = 'Copied!';
+        setTimeout(() => { if (copyBtnText) copyBtnText.textContent = 'Copy to Clipboard'; }, 2000);
+        showToast('Copied to clipboard!');
+      }
+    });
+
+    document.getElementById('canvas-insert-cursor-btn').addEventListener('click', () => {
+      const text = document.getElementById('canvas-result-text').value;
+      if (text) {
+        insertTextIntoFsEditor(text);
+        document.getElementById('canvas-result-drawer').classList.add('hidden');
+        modal.classList.add('hidden');
+        showToast('Inserted at cursor position');
+      }
+    });
+
+    document.getElementById('canvas-append-end-btn').addEventListener('click', () => {
+      const text = document.getElementById('canvas-result-text').value;
+      if (text && fsEditor) {
+        const orig = fsEditor.value || '';
+        const prefix = (orig.length > 0 && !orig.endsWith('\n\n')) ? '\n\n' : '';
+        const updated = orig + prefix + text + '\n';
+        fsEditor.value = updated;
+        setFsDirty(true);
+        if (state.fsViewMode !== 'editor') {
+          setFsViewMode('editor');
+        }
+        updateMarkdownViewer(updated);
+        document.getElementById('canvas-result-drawer').classList.add('hidden');
+        modal.classList.add('hidden');
+        showToast('Appended to end of markdown document');
+      }
+    });
+
+    document.getElementById('canvas-dismiss-result-btn').addEventListener('click', () => {
+      document.getElementById('canvas-result-drawer').classList.add('hidden');
+    });
+
     // Convert to Text / Markdown Trigger
     document.getElementById('canvas-do-convert-btn').addEventListener('click', async () => {
       const convertBtn = document.getElementById('canvas-do-convert-btn');
@@ -5938,9 +6005,30 @@ function openCanvasModal() {
         const markdown = data.markdown;
 
         if (markdown) {
-          insertTextIntoFsEditor(markdown);
-          modal.classList.add('hidden');
-          showToast('Converted via ' + (data.provider || chosenProvider) + ' (' + (data.model || chosenModel) + ')');
+          // 1. Copy directly to clipboard (copy-first workflow)
+          try {
+            await navigator.clipboard.writeText(markdown);
+          } catch (clipErr) {
+            console.warn('Clipboard write failed:', clipErr);
+          }
+
+          // 2. Populate and display Result Review Drawer
+          const drawer = document.getElementById('canvas-result-drawer');
+          const resultText = document.getElementById('canvas-result-text');
+          const resultTitle = document.getElementById('canvas-result-title');
+          const copyBtnText = document.getElementById('canvas-copy-btn-text');
+
+          if (resultText && drawer) {
+            resultText.value = markdown;
+            drawer.classList.remove('hidden');
+            if (resultTitle) {
+              resultTitle.textContent = '✨ Output from ' + (data.provider || chosenProvider) + ' (' + (data.model || chosenModel) + ') — Copied to Clipboard!';
+            }
+            if (copyBtnText) copyBtnText.textContent = 'Copied!';
+            setTimeout(() => { if (copyBtnText) copyBtnText.textContent = 'Copy to Clipboard'; }, 2500);
+          }
+
+          showToast('📋 Copied to clipboard! Ready to paste (Ctrl+V) into your markdown file');
         } else {
           showToast('No text or diagram detected.');
         }
