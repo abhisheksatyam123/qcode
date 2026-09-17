@@ -486,6 +486,7 @@ std::vector<ProviderInfo> load_providers_from_config() {
                             model.output_cost = cost.value("output", 0.0);
                         }
                         model.tool_call = model_data.value("tool_call", false);
+                        model.vision = model_data.value("vision", false);
                         if (model_data.contains("protocol") &&
                             model_data["protocol"].is_string()) {
                             model.protocol = model_data["protocol"].get<std::string>();

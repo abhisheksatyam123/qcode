@@ -15,6 +15,7 @@ struct ModelInfo {
     double output_cost = 0.0;  // USD per 1M output tokens
     bool reasoning = false;
     bool tool_call = false;
+    bool vision = false;
     int output_limit = 0;
     std::string protocol;
     // From opencode.json: reasoning_efforts / variants.

@@ -48,62 +48,53 @@ std::string get_vision_prompt(const std::string& mode) {
 }
 
 nlohmann::json get_provider_catalog() {
-  return nlohmann::json{
-      {"default_provider", "antigravity"},
-      {"default_model", "gemini-3.8-flash-medium"},
-      {"providers",
-       nlohmann::json::array({
-           {{"id", "antigravity"},
-            {"name", "Antigravity (Google Vertex)"},
-            {"description", "Ultra-fast SOTA Gemini & Claude vision models"},
-            {"models",
-             nlohmann::json::array({
-                 {{"id", "gemini-3.8-flash-medium"},
-                  {"name", "Gemini 3.8 Flash (Fast & Accurate)"}},
-                 {{"id", "gemini-3.1-pro-low"},
-                  {"name", "Gemini 3.1 Pro (Deep Reasoning)"}},
-                 {{"id", "claude-sonnet-4-6"},
-                  {"name", "Claude Sonnet 4.6 (Vision)"}},
-                 {{"id", "claude-opus-4-6-thinking"},
-                  {"name", "Claude Opus 4.6 Thinking"}}
-             })}},
-           {{"id", "openrouter"},
-            {"name", "OpenRouter"},
-            {"description", "Multimodal models via OpenRouter cloud API"},
-            {"models",
-             nlohmann::json::array({
-                 {{"id", "nex-agi/nex-n2.5-pro:free"},
-                  {"name", "Nex N2.5 Pro (Free Vision)"}},
-                 {{"id", "inclusionai/ling-3.0-flash-vl:free"},
-                  {"name", "Ling 3.0 Flash VL (Free)"}},
-                 {{"id", "google/gemini-2.0-flash-001"},
-                  {"name", "Gemini 2.0 Flash"}},
-                 {{"id", "deepseek/deepseek-v4.1-flash"},
-                  {"name", "DeepSeek V4.1 Flash"}}
-             })}},
-           {{"id", "opencode"},
-            {"name", "OpenCode Zen"},
-            {"description", "OpenCode Zen API endpoint models"},
-            {"models",
-             nlohmann::json::array({
-                 {{"id", "gemini-3.8-flash"},
-                  {"name", "Gemini 3.8 Flash"}},
-                 {{"id", "claude-sonnet-4-6"},
-                  {"name", "Claude Sonnet 4.6"}},
-                 {{"id", "deepseek-v4-flash-vision-exp"},
-                  {"name", "DeepSeek V4 Flash Vision Exp"}}
-             })}},
-           {{"id", "ollama"},
-            {"name", "Local Ollama"},
-            {"description", "100% private offline vision running on local host"},
-            {"models",
-             nlohmann::json::array({
-                 {{"id", "qwen2.5-vl"},
-                  {"name", "Qwen 2.5 VL (Local)"}},
-                 {{"id", "llama3.2-vision"},
-                  {"name", "Llama 3.2 Vision (Local)"}}
-             })}}
-       })}};
+  nlohmann::json catalog;
+  catalog["default_provider"] = "antigravity";
+  catalog["default_model"] = "gemini-3.8-flash";
+  nlohmann::json providers_arr = nlohmann::json::array();
+
+  try {
+    auto loaded = qcode::load_providers_from_config();
+    for (const auto& prov : loaded) {
+      nlohmann::json p_obj;
+      p_obj["id"] = prov.id;
+      p_obj["name"] = prov.name.empty() ? prov.id : prov.name;
+      p_obj["description"] = prov.id + " models";
+
+      nlohmann::json models_arr = nlohmann::json::array();
+      for (const auto& m : prov.models) {
+        if (m.vision) {
+          models_arr.push_back({
+              {"id", m.id},
+              {"name", m.name.empty() ? m.id : m.name},
+              {"vision", true}
+          });
+        }
+      }
+
+      // Only include providers that have working vision models configured
+      if (!models_arr.empty()) {
+        p_obj["models"] = std::move(models_arr);
+        providers_arr.push_back(std::move(p_obj));
+      }
+    }
+  } catch (const std::exception& e) {
+    LOG_WARN("Failed to load provider catalog from config: {}", e.what());
+  }
+
+  // Always offer Local Ollama if available
+  providers_arr.push_back({
+      {"id", "ollama"},
+      {"name", "Local Ollama"},
+      {"description", "100% private offline vision running on local host"},
+      {"models", nlohmann::json::array({
+          {{"id", "qwen2.5-vl"}, {"name", "Qwen 2.5 VL (Local)"}, {"vision", true}},
+          {{"id", "llama3.2-vision"}, {"name", "Llama 3.2 Vision (Local)"}, {"vision", true}}
+      })}
+  });
+
+  catalog["providers"] = std::move(providers_arr);
+  return catalog;
 }
 
 std::string clean_markdown_output(std::string text) {
@@ -133,6 +124,8 @@ bool execute_antigravity(const std::string& model, const std::string& prompt,
   });
 
   std::string target_model = model.empty() ? "gemini-3.8-flash-medium" : model;
+  if (target_model == "gemini-3.8-flash") target_model = "gemini-3.8-flash-medium";
+  else if (target_model == "gemini-3.1-pro") target_model = "gemini-3.1-pro-low";
 
   nlohmann::json envelope{
       {"project", "rising-fact-p41fc"},
