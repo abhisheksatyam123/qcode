@@ -3425,17 +3425,10 @@ function updateMarkdownViewer(content) {
   }
   setFsViewMode('markdown');
   if (!fsViewMarkdown) return;
-  if (typeof marked === 'undefined' || !marked.parse) {
-    fsViewMarkdown.textContent = content;
-    return;
-  }
   try {
-    const { frontmatter, md } = prepareMarkdownBody(content, { wikilinks: true });
-    const renderer = getMarkedRenderer();
-    let html = marked.parse(md, { renderer: renderer, gfm: true, breaks: true, headerIds: false, mangle: false });
-    if (frontmatter) html = renderFrontmatterBox(frontmatter) + html;
-    fsViewMarkdown.innerHTML = html;
+    fsViewMarkdown.innerHTML = renderMarkdown(content);
     bindFrontmatterToggles(fsViewMarkdown);
+    tagMarkdownLinks(fsViewMarkdown);
   } catch (err) {
     fsViewMarkdown.textContent = content;
   }
@@ -4928,6 +4921,17 @@ function getMarkedRenderer() {
       return `<div class="mermaid-diagram-container"><div id="${diagramId}" class="mermaid-target">${esc(cleanCode)}</div></div>`;
     }
 
+    if (displayLang === 'latex' || displayLang === 'katex' || displayLang === 'math') {
+      if (typeof katex !== 'undefined' && katex.renderToString) {
+        try {
+          const rendered = katex.renderToString(cleanCode, { displayMode: true, throwOnError: false });
+          return `<div class="katex-display">${rendered}</div>`;
+        } catch (e) {
+          // fall through to code block
+        }
+      }
+    }
+
     return `<div class="code-block-container">
       <div class="code-block-header">
         <span class="code-block-lang">${displayLang}</span>
@@ -5031,35 +5035,67 @@ function renderMarkdown(text) {
   if (typeof marked === 'undefined' || !marked.parse) {
     return esc(text).replace(/\n/g, '<br>');
   }
-  let processedText = text;
+
+  const mathTokens = [];
+  const codeBlocks = [];
+
+  // 1. Protect code fences so math syntax inside code blocks is never touched
+  let protectedText = text.replace(/(```[\s\S]*?```|`[^`\n]+`)/g, (match) => {
+    const cid = '@@CODE_BLOCK_' + codeBlocks.length + '@@';
+    codeBlocks.push(match);
+    return cid;
+  });
+
+  // 2. Extract and protect display math ($$...$$)
   if (typeof katex !== 'undefined' && katex.renderToString) {
-    // Replace display math $$...$$
-    processedText = processedText.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
+    protectedText = protectedText.replace(/\$\$([\s\S]*?)\$\$/g, (match, expr) => {
+      const tid = '@@KATEX_DISP_' + mathTokens.length + '@@';
       try {
-        return '<div class="katex-display">' + katex.renderToString(formula.trim(), { displayMode: true, throwOnError: false }) + '</div>';
+        const rendered = katex.renderToString(expr.trim(), { displayMode: true, throwOnError: false });
+        mathTokens.push({ id: tid, html: '<div class="katex-display">' + rendered + '</div>', isDisplay: true });
       } catch (e) {
-        return match;
+        mathTokens.push({ id: tid, html: match, isDisplay: true });
       }
+      return '\n\n' + tid + '\n\n';
     });
-    // Replace inline math $...$ (avoiding currency $10)
-    processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, formula) => {
+
+    // 3. Extract and protect inline math ($...$)
+    protectedText = protectedText.replace(/(^|[^\\\$])\$([^\$\n\r]+?)\$/g, (match, prefix, expr) => {
+      // Avoid converting common currency like $10 or $99.95
+      if (/^\s*\d+(\.\d+)?\s*$/.test(expr)) return match;
+      const tid = '@@KATEX_INL_' + mathTokens.length + '@@';
       try {
-        return '<span class="katex-inline">' + katex.renderToString(formula.trim(), { displayMode: false, throwOnError: false }) + '</span>';
+        const rendered = katex.renderToString(expr.trim(), { displayMode: false, throwOnError: false });
+        mathTokens.push({ id: tid, html: '<span class="katex-inline">' + rendered + '</span>', isDisplay: false });
+        return prefix + tid;
       } catch (e) {
         return match;
       }
     });
   }
-  const { frontmatter, md } = prepareMarkdownBody(processedText, { wikilinks: true });
+
+  // 4. Restore code blocks before marked parsing
+  protectedText = protectedText.replace(/@@CODE_BLOCK_(\d+)@@/g, (_, id) => codeBlocks[Number(id)]);
+
+  // 5. Run marked parsing with custom renderer
+  const { frontmatter, md } = prepareMarkdownBody(protectedText, { wikilinks: true });
   const renderer = getMarkedRenderer();
   const parseOptions = { renderer: renderer, gfm: true, breaks: true, headerIds: false, mangle: false };
   let html = marked.parse(md, parseOptions);
+
+  // 6. Substitute rendered KaTeX math tokens back
+  for (const item of mathTokens) {
+    if (item.isDisplay) {
+      html = html.replace(new RegExp('<p>\\s*' + item.id + '\\s*<\\/p>', 'g'), item.html);
+    }
+    html = html.replace(new RegExp(item.id, 'g'), item.html);
+  }
+
   if (frontmatter) {
     html = renderFrontmatterBox(frontmatter) + html;
   }
   return html;
 }
-
 
 function bindFrontmatterToggles(container) {
   if (!container) return;
