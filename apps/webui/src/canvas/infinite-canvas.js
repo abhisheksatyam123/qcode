@@ -1,7 +1,10 @@
 // Excalidraw-like Infinite Canvas Engine for QCode
-// Features: Rough.js hand-drawn sketching, selection/move/resize handles,
-// inline text editing, shapes (rect, diamond, circle, arrow, line, pen, text),
-// fill styles (hachure/solid/none), undo/redo, pan/zoom, and OCR bounding-box export.
+// Implements:
+// - Organic hand-drawn Rough.js shapes (rect, diamond, ellipse, arrow, line)
+// - Continuous smooth Bezier freedraw (pen stays active across multiple strokes)
+// - Excalidraw auto-expanding inline text editing & in-shape container text
+// - 8-point resize handles, dragging, marquee selection, duplicate, undo/redo
+// - High-resolution bounding-box export for Multimodal AI OCR
 
 import rough from './vendor-rough.esm.js';
 
@@ -17,17 +20,16 @@ export class InfiniteCanvas {
     this.panX = 0;
     this.panY = 0;
 
-    // Active tool state
-    // 'select' | 'rect' | 'diamond' | 'circle' | 'arrow' | 'line' | 'pen' | 'text' | 'eraser' | 'pan'
+    // Active tool: 'select' | 'rect' | 'diamond' | 'circle' | 'arrow' | 'line' | 'pen' | 'text' | 'eraser' | 'pan'
     this.tool = 'select';
 
     // Styling defaults
-    this.strokeColor = '#f8fafc'; // clean white
-    this.fillColor = 'transparent'; // transparent or hex
+    this.strokeColor = '#f8fafc';
+    this.fillColor = 'transparent';
     this.fillStyle = 'hachure'; // 'hachure' | 'solid' | 'none'
     this.lineWidth = 2.5; // 1.5 (thin) | 2.5 (medium) | 4.5 (bold)
     this.roughness = 1.2; // 0.5 (clean) | 1.2 (artist) | 2.2 (cartoon)
-    this.fontSize = 18;
+    this.fontSize = 20; // 14 (S) | 20 (M) | 28 (L) | 36 (XL)
 
     // Elements & selection
     this.elements = [];
@@ -35,36 +37,56 @@ export class InfiniteCanvas {
     this.history = [];
     this.redoList = [];
 
-    // Interaction states
+    // Interaction state
     this.isInteracting = false;
     this.isPanning = false;
     this.isDraggingSelected = false;
     this.isResizing = false;
-    this.activeResizeHandle = null; // 'nw'|'ne'|'se'|'sw'|'n'|'s'|'e'|'w'
+    this.activeResizeHandle = null;
     this.lastPointer = { x: 0, y: 0 };
     this.startPointer = { x: 0, y: 0 };
     this.currentElement = null;
-    this.selectionMarquee = null; // { startX, startY, currentX, currentY }
+    this.selectionMarquee = null;
 
-    // Text editing state
+    // Inline text editing
     this.activeTextarea = null;
     this.editingElement = null;
+    this.editingPos = { x: 0, y: 0 };
 
     // Callbacks
     this.onSelectionChange = options.onSelectionChange || null;
     this.onViewChange = options.onViewChange || null;
+    this.onToolChange = options.onToolChange || null;
 
     this._bindEvents();
     this.resize();
   }
 
   setTool(tool) {
+    this._commitTextIfEditing();
     this.tool = tool;
     if (tool !== 'select') {
       this.selectedIds.clear();
     }
-    this._commitTextIfEditing();
+    this._updateCursor();
+    if (this.onToolChange) this.onToolChange(tool);
     this.render();
+  }
+
+  _updateCursor() {
+    if (this.tool === 'pan') {
+      this.canvas.style.cursor = 'grab';
+    } else if (this.tool === 'pen') {
+      this.canvas.style.cursor = 'crosshair';
+    } else if (this.tool === 'text') {
+      this.canvas.style.cursor = 'text';
+    } else if (this.tool === 'eraser') {
+      this.canvas.style.cursor = 'cell';
+    } else if (this.tool === 'select') {
+      this.canvas.style.cursor = 'default';
+    } else {
+      this.canvas.style.cursor = 'crosshair';
+    }
   }
 
   setStrokeColor(color) {
@@ -115,6 +137,17 @@ export class InfiniteCanvas {
     this.render();
   }
 
+  setFontSize(size) {
+    this.fontSize = size;
+    if (this.selectedIds.size > 0) {
+      this.saveHistory();
+      for (const el of this.elements) {
+        if (this.selectedIds.has(el.id)) el.fontSize = size;
+      }
+    }
+    this.render();
+  }
+
   resize() {
     if (!this.canvas || !this.canvas.parentElement) return;
     const rect = this.canvas.parentElement.getBoundingClientRect();
@@ -148,7 +181,7 @@ export class InfiniteCanvas {
     };
   }
 
-  // --- Geometry & Hit Testing ---
+  // --- Geometry & Accurate Bounds Calculation ---
 
   getElementBounds(el) {
     if (!el.points || el.points.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
@@ -159,6 +192,7 @@ export class InfiniteCanvas {
       if (pt.x > maxX) maxX = pt.x;
       if (pt.y > maxY) maxY = pt.y;
     }
+
     if (el.type === 'circle') {
       const radius = Math.hypot(el.points[1].x - el.points[0].x, el.points[1].y - el.points[0].y);
       minX = el.points[0].x - radius;
@@ -166,16 +200,27 @@ export class InfiniteCanvas {
       minY = el.points[0].y - radius;
       maxY = el.points[0].y + radius;
     } else if (el.type === 'text') {
-      const approxW = Math.max(30, (el.text || '').length * (el.fontSize || 18) * 0.6);
-      const approxH = (el.text || '').split('\n').length * (el.fontSize || 18) * 1.3;
-      maxX = minX + approxW;
-      maxY = minY + approxH;
+      const fontSize = el.fontSize || this.fontSize;
+      const lines = (el.text || '').split('\n');
+      this.ctx.save();
+      this.ctx.font = `${fontSize}px 'Patrick Hand', 'Caveat', cursive, sans-serif`;
+      let maxW = 20;
+      for (const line of lines) {
+        const w = this.ctx.measureText(line).width;
+        if (w > maxW) maxW = w;
+      }
+      this.ctx.restore();
+      const lineH = fontSize * 1.3;
+      const totalH = Math.max(lineH, lines.length * lineH);
+      maxX = minX + maxW + 8;
+      maxY = minY + totalH;
     }
+
     return {
       x: minX,
       y: minY,
-      w: Math.max(1, maxX - minX),
-      h: Math.max(1, maxY - minY)
+      w: Math.max(4, maxX - minX),
+      h: Math.max(4, maxY - minY)
     };
   }
 
@@ -193,7 +238,7 @@ export class InfiniteCanvas {
   }
 
   isPointInElement(pt, el) {
-    const pad = Math.max(8, (el.lineWidth || 3) * 2);
+    const pad = Math.max(10, (el.lineWidth || 3) * 2);
     const bounds = this.getElementBounds(el);
 
     if (pt.x < bounds.x - pad || pt.x > bounds.x + bounds.w + pad ||
@@ -219,6 +264,9 @@ export class InfiniteCanvas {
     }
 
     if (el.type === 'pen' || el.type === 'eraser') {
+      if (el.points.length === 1) {
+        return Math.hypot(pt.x - el.points[0].x, pt.y - el.points[0].y) <= pad;
+      }
       for (let i = 0; i < el.points.length - 1; i++) {
         if (this._distToSegment(pt, el.points[i], el.points[i + 1]) <= pad) return true;
       }
@@ -238,7 +286,7 @@ export class InfiniteCanvas {
 
   getResizeHandleAtPoint(pt, bounds) {
     if (!bounds) return null;
-    const handleSize = 9 / this.scale;
+    const handleSize = 10 / this.scale;
     const handles = {
       nw: { x: bounds.x, y: bounds.y },
       ne: { x: bounds.x + bounds.w, y: bounds.y },
@@ -258,36 +306,60 @@ export class InfiniteCanvas {
     return null;
   }
 
-  // --- Inline Text Editing ---
+  // --- Excalidraw-Style Inline Text Editing ---
 
-  startInlineTextEditing(worldX, worldY, existingElement = null) {
+  startInlineTextEditing(worldX, worldY, existingElement = null, isContainer = false) {
     this._commitTextIfEditing();
 
+    const fontSize = existingElement?.fontSize || this.fontSize;
+    const color = existingElement?.strokeColor || this.strokeColor;
     const scr = this.worldToScreen(worldX, worldY);
+
     const textarea = document.createElement('textarea');
     textarea.className = 'canvas-inline-textarea';
     textarea.value = existingElement ? (existingElement.text || '') : '';
+    textarea.placeholder = 'Type text... (Ctrl+Enter to finish)';
     textarea.style.position = 'absolute';
-    textarea.style.left = `${scr.x}px`;
-    textarea.style.top = `${scr.y}px`;
-    textarea.style.fontSize = `${(existingElement?.fontSize || this.fontSize) * this.scale}px`;
-    textarea.style.color = existingElement ? existingElement.strokeColor : this.strokeColor;
-    textarea.style.fontFamily = 'Virgil, Comic Sans MS, -apple-system, sans-serif';
-    textarea.style.background = 'rgba(15, 23, 42, 0.9)';
-    textarea.style.border = '1px dashed #38bdf8';
-    textarea.style.borderRadius = '4px';
+    textarea.style.left = `${Math.round(scr.x)}px`;
+    textarea.style.top = `${Math.round(scr.y)}px`;
+    textarea.style.fontSize = `${Math.round(fontSize * this.scale)}px`;
+    textarea.style.color = color;
+    textarea.style.fontFamily = "'Patrick Hand', 'Caveat', cursive, sans-serif";
+    textarea.style.fontWeight = '500';
+    textarea.style.lineHeight = '1.25';
+    textarea.style.background = 'rgba(15, 23, 42, 0.95)';
+    textarea.style.border = '1.5px dashed #38bdf8';
+    textarea.style.borderRadius = '6px';
     textarea.style.outline = 'none';
     textarea.style.zIndex = '1000';
-    textarea.style.minWidth = '120px';
-    textarea.style.minHeight = '36px';
     textarea.style.padding = '4px 8px';
-    textarea.style.resize = 'both';
+    textarea.style.minWidth = isContainer ? '180px' : '140px';
+    textarea.style.minHeight = '36px';
+    textarea.style.overflow = 'hidden';
+    textarea.style.resize = 'none';
+    textarea.style.boxShadow = '0 10px 25px rgba(0, 0, 0, 0.6)';
+
+    if (isContainer) {
+      textarea.style.transform = 'translate(-50%, -50%)';
+      textarea.style.textAlign = 'center';
+    }
+
+    const autoResize = () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.max(36, textarea.scrollHeight + 4)}px`;
+      textarea.style.width = 'auto';
+      textarea.style.width = `${Math.max(isContainer ? 180 : 140, textarea.scrollWidth + 16)}px`;
+    };
+
+    textarea.addEventListener('input', autoResize);
 
     this.canvas.parentElement.appendChild(textarea);
+    autoResize();
     textarea.focus();
 
     this.activeTextarea = textarea;
     this.editingElement = existingElement;
+    this.isEditingContainer = isContainer;
     this.editingPos = { x: worldX, y: worldY };
 
     const commit = () => {
@@ -299,6 +371,7 @@ export class InfiniteCanvas {
       if (e.key === 'Escape') {
         commit();
       } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
         commit();
       }
     });
@@ -314,8 +387,12 @@ export class InfiniteCanvas {
     if (!text) {
       if (this.editingElement && this.editingElement.type === 'text') {
         this.deleteElements([this.editingElement.id]);
+      } else if (this.editingElement && this.isEditingContainer) {
+        this.saveHistory();
+        this.editingElement.text = '';
       }
       this.editingElement = null;
+      this.isEditingContainer = false;
       this.render();
       return;
     }
@@ -324,6 +401,7 @@ export class InfiniteCanvas {
 
     if (this.editingElement) {
       this.editingElement.text = text;
+      this.selectedIds = new Set([this.editingElement.id]);
     } else {
       const newEl = {
         id: Date.now().toString(),
@@ -339,10 +417,12 @@ export class InfiniteCanvas {
     }
 
     this.editingElement = null;
+    this.isEditingContainer = false;
+    this.setTool('select');
     this.render();
   }
 
-  // --- Interaction & Event Binding ---
+  // --- Interaction & Event Handlers ---
 
   _bindEvents() {
     this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
@@ -350,24 +430,37 @@ export class InfiniteCanvas {
     window.addEventListener('mouseup', (e) => this._onMouseUp(e));
     this.canvas.addEventListener('dblclick', (e) => this._onDoubleClick(e));
     this.canvas.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
-
-    // Keyboard shortcuts
     window.addEventListener('keydown', (e) => this._onKeyDown(e));
 
-    // Touch support for mobile/tablets
+    // Touch support
     this.canvas.addEventListener('touchstart', (e) => this._onTouchStart(e), { passive: false });
     this.canvas.addEventListener('touchmove', (e) => this._onTouchMove(e), { passive: false });
     this.canvas.addEventListener('touchend', (e) => this._onTouchEnd(e), { passive: false });
   }
 
   _onKeyDown(e) {
-    if (this.activeTextarea) return; // Typing inside text area
+    if (this.activeTextarea) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-    if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      this.setTool('select');
+      this.selectedIds.clear();
+      this.render();
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
       if (this.selectedIds.size > 0) {
         e.preventDefault();
         this.deleteElements(Array.from(this.selectedIds));
+      }
+    } else if (e.key === 'Enter') {
+      // If a shape container is selected, Enter triggers in-shape text editing
+      if (this.selectedIds.size === 1) {
+        const sel = this.elements.find(el => this.selectedIds.has(el.id));
+        if (sel && (sel.type === 'rect' || sel.type === 'diamond' || sel.type === 'circle')) {
+          e.preventDefault();
+          const bounds = this.getElementBounds(sel);
+          this.startInlineTextEditing(bounds.x + bounds.w / 2, bounds.y + bounds.h / 2, sel, true);
+        }
       }
     } else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -409,17 +502,24 @@ export class InfiniteCanvas {
 
   _onDoubleClick(e) {
     const pt = this.screenToWorld(e.clientX, e.clientY);
-    // Find top-most element clicked
+
+    // Check if double-clicked existing text or shape container
     for (let i = this.elements.length - 1; i >= 0; i--) {
       const el = this.elements[i];
       if (this.isPointInElement(pt, el)) {
-        const bounds = this.getElementBounds(el);
-        this.startInlineTextEditing(bounds.x + 8, bounds.y + 8, el);
-        return;
+        if (el.type === 'text') {
+          this.startInlineTextEditing(el.points[0].x, el.points[0].y, el, false);
+          return;
+        } else if (el.type === 'rect' || el.type === 'diamond' || el.type === 'circle') {
+          const bounds = this.getElementBounds(el);
+          this.startInlineTextEditing(bounds.x + bounds.w / 2, bounds.y + bounds.h / 2, el, true);
+          return;
+        }
       }
     }
-    // Double clicked empty canvas: create new text element
-    this.startInlineTextEditing(pt.x, pt.y);
+
+    // Double-clicked on empty canvas: spawn new text element
+    this.startInlineTextEditing(pt.x, pt.y, null, false);
   }
 
   _onMouseDown(e) {
@@ -437,20 +537,20 @@ export class InfiniteCanvas {
     this.startPointer = pt;
     this.lastPointer = { x: e.clientX, y: e.clientY };
 
-    // 1. Text Tool -> Spawn inline editor
+    // 1. Text Tool: spawn inline editor directly on click
     if (this.tool === 'text') {
-      this.startInlineTextEditing(pt.x, pt.y);
+      this.startInlineTextEditing(pt.x, pt.y, null, false);
       return;
     }
 
-    // 2. Eraser Tool -> Delete clicked element or start swipe erasing
+    // 2. Eraser Tool: delete clicked element or begin swipe erasing
     if (this.tool === 'eraser') {
       this.isInteracting = true;
       this._eraseAt(pt);
       return;
     }
 
-    // 3. Select Tool -> Check handles, element hit, or marquee selection
+    // 3. Selection Tool: handle resize, drag, or marquee selection
     if (this.tool === 'select') {
       const selectedElements = this.elements.filter(el => this.selectedIds.has(el.id));
       const combinedBounds = this.getCombinedBounds(selectedElements);
@@ -466,7 +566,7 @@ export class InfiniteCanvas {
         }
       }
 
-      // Check if clicked inside an already-selected element
+      // Check if clicked inside currently selected element
       let clickedInsideSelection = false;
       for (const el of selectedElements) {
         if (this.isPointInElement(pt, el)) {
@@ -481,7 +581,7 @@ export class InfiniteCanvas {
         return;
       }
 
-      // Check if clicked any other element on canvas
+      // Check if clicked any other element
       let clickedEl = null;
       for (let i = this.elements.length - 1; i >= 0; i--) {
         if (this.isPointInElement(pt, this.elements[i])) {
@@ -503,7 +603,7 @@ export class InfiniteCanvas {
         return;
       }
 
-      // Clicked on empty canvas -> Start marquee selection
+      // Clicked empty canvas: start marquee selection
       if (!e.shiftKey) this.selectedIds.clear();
       this.selectionMarquee = { startX: pt.x, startY: pt.y, currentX: pt.x, currentY: pt.y };
       this.isInteracting = true;
@@ -511,13 +611,15 @@ export class InfiniteCanvas {
       return;
     }
 
-    // 4. Shape & Pen Drawing Tools
+    // 4. Pen (Freedraw) & Shapes (Rect, Diamond, Ellipse, Arrow, Line)
     this.isInteracting = true;
+    this.selectedIds.clear();
+
     const seed = Math.floor(Math.random() * 200000);
     this.currentElement = {
       id: Date.now().toString(),
       type: this.tool,
-      points: [pt, { ...pt }],
+      points: this.tool === 'pen' ? [pt] : [pt, { ...pt }],
       strokeColor: this.strokeColor,
       fillColor: this.fillColor,
       fillStyle: this.fillStyle,
@@ -542,7 +644,7 @@ export class InfiniteCanvas {
       return;
     }
 
-    // Update cursor for handles when hovering in select mode
+    // Hover handle cursor in select mode
     if (this.tool === 'select' && !this.isInteracting && !this.isResizing) {
       const selected = this.elements.filter(el => this.selectedIds.has(el.id));
       if (selected.length === 1) {
@@ -559,19 +661,19 @@ export class InfiniteCanvas {
           return;
         }
       }
-      this.canvas.style.cursor = 'default';
+      this._updateCursor();
     }
 
     if (!this.isInteracting && !this.isResizing) return;
 
-    // Resizing single element
+    // Resizing
     if (this.isResizing && this.resizeInitialElement) {
       this._handleElementResize(pt);
       this.render();
       return;
     }
 
-    // Dragging selected elements
+    // Dragging selected
     if (this.isDraggingSelected) {
       const dx = pt.x - this.startPointer.x;
       const dy = pt.y - this.startPointer.y;
@@ -589,7 +691,7 @@ export class InfiniteCanvas {
       return;
     }
 
-    // Dragging selection marquee
+    // Marquee selection
     if (this.selectionMarquee) {
       this.selectionMarquee.currentX = pt.x;
       this.selectionMarquee.currentY = pt.y;
@@ -614,7 +716,7 @@ export class InfiniteCanvas {
       return;
     }
 
-    // Drawing shapes / pen
+    // Drawing: Pen (Freedraw) appends continuous points
     if (this.currentElement) {
       if (this.tool === 'pen') {
         this.currentElement.points.push(pt);
@@ -664,7 +766,7 @@ export class InfiniteCanvas {
   _onMouseUp(e) {
     if (this.isPanning) {
       this.isPanning = false;
-      this.canvas.style.cursor = 'default';
+      this._updateCursor();
     }
 
     if (this.isResizing) {
@@ -686,19 +788,28 @@ export class InfiniteCanvas {
     }
 
     if (this.currentElement) {
-      const p1 = this.currentElement.points[0];
-      const p2 = this.currentElement.points[this.currentElement.points.length - 1];
+      const pts = this.currentElement.points;
+      const p1 = pts[0];
+      const p2 = pts[pts.length - 1];
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
 
-      // Only save if element has noticeable dimension
-      if (this.tool === 'pen' || dist > 4) {
+      if (this.tool === 'pen') {
+        // Freedraw stroke finished: save stroke to elements
+        this.saveHistory();
+        this.elements.push(this.currentElement);
+        // CRITICAL EXCALIDRAW FIX: In pen mode, STAY IN PEN MODE!
+        // Do NOT switch to select, do NOT select the stroke with handles.
+        this.selectedIds.clear();
+      } else if (dist > 5) {
+        // Shape finished: save shape
         this.saveHistory();
         this.elements.push(this.currentElement);
         this.selectedIds = new Set([this.currentElement.id]);
+        // After drawing a shape, switch to select so user can immediately move/resize it
+        this.setTool('select');
       }
+
       this.currentElement = null;
-      // Revert to select tool after drawing shape for immediate manipulation (like Excalidraw)
-      this.tool = 'select';
     }
 
     this.isInteracting = false;
@@ -893,7 +1004,7 @@ export class InfiniteCanvas {
     ctx.translate(this.panX, this.panY);
     ctx.scale(this.scale, this.scale);
 
-    // Excalidraw grid dots
+    // Excalidraw dot-grid
     this._renderGrid(ctx);
 
     // Render committed elements
@@ -1041,18 +1152,31 @@ export class InfiniteCanvas {
 
       case 'pen':
       case 'eraser': {
-        if (el.points.length < 2) break;
+        if (!el.points || el.points.length === 0) break;
         ctx.save();
         ctx.strokeStyle = el.type === 'eraser' ? '#0f172a' : stroke;
+        ctx.fillStyle = el.type === 'eraser' ? '#0f172a' : stroke;
         ctx.lineWidth = strokeWidth;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        for (let i = 1; i < el.points.length; i++) {
-          ctx.lineTo(el.points[i].x, el.points[i].y);
+
+        // Single click draws dot
+        if (el.points.length === 1) {
+          ctx.beginPath();
+          ctx.arc(el.points[0].x, el.points[0].y, strokeWidth / 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Smooth Bezier curve through points
+          ctx.beginPath();
+          ctx.moveTo(el.points[0].x, el.points[0].y);
+          for (let i = 1; i < el.points.length - 1; i++) {
+            const xc = (el.points[i].x + el.points[i + 1].x) / 2;
+            const yc = (el.points[i].y + el.points[i + 1].y) / 2;
+            ctx.quadraticCurveTo(el.points[i].x, el.points[i].y, xc, yc);
+          }
+          ctx.lineTo(el.points[el.points.length - 1].x, el.points[el.points.length - 1].y);
+          ctx.stroke();
         }
-        ctx.stroke();
         ctx.restore();
         break;
       }
@@ -1060,11 +1184,12 @@ export class InfiniteCanvas {
       case 'text': {
         if (!el.text) break;
         ctx.save();
-        ctx.font = `${el.fontSize || this.fontSize}px Virgil, Comic Sans MS, -apple-system, sans-serif`;
+        const fontSize = el.fontSize || this.fontSize;
+        ctx.font = `${fontSize}px 'Patrick Hand', 'Caveat', cursive, sans-serif`;
         ctx.fillStyle = stroke;
         ctx.textBaseline = 'top';
         const lines = el.text.split('\n');
-        const lineHeight = (el.fontSize || this.fontSize) * 1.3;
+        const lineHeight = fontSize * 1.3;
         for (let i = 0; i < lines.length; i++) {
           ctx.fillText(lines[i], p1.x, p1.y + i * lineHeight);
         }
@@ -1076,12 +1201,13 @@ export class InfiniteCanvas {
 
   _renderTextLabel(ctx, cx, cy, text, el) {
     ctx.save();
-    ctx.font = `bold ${(el.fontSize || 16)}px Virgil, Comic Sans MS, -apple-system, sans-serif`;
+    const fontSize = el.fontSize || 18;
+    ctx.font = `${fontSize}px 'Patrick Hand', 'Caveat', cursive, sans-serif`;
     ctx.fillStyle = el.strokeColor || '#f8fafc';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const lines = text.split('\n');
-    const lineHeight = (el.fontSize || 16) * 1.25;
+    const lineHeight = fontSize * 1.25;
     const startY = cy - ((lines.length - 1) * lineHeight) / 2;
     for (let i = 0; i < lines.length; i++) {
       ctx.fillText(lines[i], cx, startY + i * lineHeight);
@@ -1158,7 +1284,6 @@ export class InfiniteCanvas {
     offCtx.save();
     offCtx.translate(-minX, -minY);
 
-    // Temporary swap rc to offscreen
     const originalRc = this.rc;
     this.rc = offRc;
 

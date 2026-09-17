@@ -5674,6 +5674,17 @@ function openCanvasModal() {
                 <button type="button" class="canvas-chip-btn" data-roughness="2.2">Cartoon</button>
               </div>
             </div>
+
+            <!-- Font Size -->
+            <div class="canvas-prop-group">
+              <span class="canvas-prop-label">Font Size</span>
+              <div class="canvas-btn-row">
+                <button type="button" class="canvas-chip-btn" data-size="14">S</button>
+                <button type="button" class="canvas-chip-btn active" data-size="20">M</button>
+                <button type="button" class="canvas-chip-btn" data-size="28">L</button>
+                <button type="button" class="canvas-chip-btn" data-size="36">XL</button>
+              </div>
+            </div>
           </div>
 
           <!-- Bottom Action Dock -->
@@ -5700,6 +5711,11 @@ function openCanvasModal() {
       onViewChange: (zoomPercent) => {
         const zEl = document.getElementById('canvas-zoom-text');
         if (zEl) zEl.textContent = `${zoomPercent}%`;
+      },
+      onToolChange: (tool) => {
+        modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(b => {
+          b.classList.toggle('active', b.getAttribute('data-tool') === tool);
+        });
       }
     });
 
@@ -5805,6 +5821,15 @@ function openCanvasModal() {
         modal.querySelectorAll('.canvas-chip-btn[data-roughness]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         activeInfiniteCanvas.setRoughness(parseFloat(btn.getAttribute('data-roughness')));
+      });
+    });
+
+    // Font size
+    modal.querySelectorAll('.canvas-chip-btn[data-size]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        modal.querySelectorAll('.canvas-chip-btn[data-size]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeInfiniteCanvas.setFontSize(parseFloat(btn.getAttribute('data-size')));
       });
     });
 
