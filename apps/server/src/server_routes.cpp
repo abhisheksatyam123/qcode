@@ -41,6 +41,7 @@ void setup_server_routes(
   register_terminal_routes(server);
   register_fs_routes(server);
   register_study_routes(server, providers);
+  register_vision_routes(server, providers);
 }
 
 }  // namespace server

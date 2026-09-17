@@ -1,3 +1,4 @@
+import { InfiniteCanvas } from "./canvas/infinite-canvas.js";
 import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
@@ -220,6 +221,8 @@ const fsFileBadge = document.getElementById('fs-file-badge');
 const fsCopyPathBtn = document.getElementById('fs-copy-path-btn');
 const fsCopyContentBtn = document.getElementById('fs-copy-content-btn');
 const fsMdToggle = document.getElementById('fs-md-toggle');
+const fsCanvasBtn = document.getElementById('fs-canvas-btn');
+
 const fsMdPreviewBtn = document.getElementById('fs-md-preview-btn');
 const fsMdCodeBtn = document.getElementById('fs-md-code-btn');
 const fsWrapBtn = document.getElementById('fs-wrap-btn');
@@ -1305,6 +1308,11 @@ function setupEventListeners() {
       if (!text) return;
       navigator.clipboard.writeText(text);
       showToast('Copied file content');
+    });
+  }
+    if (fsCanvasBtn) {
+    fsCanvasBtn.addEventListener('click', () => {
+      openCanvasModal();
     });
   }
   if (fsMdPreviewBtn) {
@@ -3648,6 +3656,7 @@ async function openFsFile(relPath, fragment = null) {
 
   if (fsMdToggle) {
     fsMdToggle.classList.toggle('hidden', !isMd);
+    if (fsCanvasBtn) fsCanvasBtn.classList.toggle('hidden', !isMd);
     if (isMd) {
       state.fsMdMode = 'preview';
       if (fsMdPreviewBtn) fsMdPreviewBtn.classList.add('active');
@@ -4898,9 +4907,27 @@ function getMarkedRenderer() {
     return `<h${level} id="${slug}">${text}</h${level}>`;
   };
   r.code = function (code, lang) {
-    const displayLang = lang || 'code';
+    const displayLang = (lang || 'code').trim();
     const codeStr = typeof code === 'object' ? code.text : code;
     const cleanCode = codeStr.replace(/\n$/, '');
+
+    if (displayLang === 'mermaid') {
+      const diagramId = 'mermaid-' + Math.random().toString(36).substring(2, 9);
+      setTimeout(() => {
+        if (typeof mermaid !== 'undefined' && mermaid.render) {
+          const el = document.getElementById(diagramId);
+          if (el) {
+            mermaid.render(diagramId + '-svg', cleanCode).then(({ svg }) => {
+              el.innerHTML = svg;
+            }).catch((err) => {
+              el.innerHTML = '<div style="color:#f87171;font-size:12px;padding:8px;">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
+            });
+          }
+        }
+      }, 50);
+      return `<div class="mermaid-diagram-container"><div id="${diagramId}" class="mermaid-target">${esc(cleanCode)}</div></div>`;
+    }
+
     return `<div class="code-block-container">
       <div class="code-block-header">
         <span class="code-block-lang">${displayLang}</span>
@@ -5004,7 +5031,26 @@ function renderMarkdown(text) {
   if (typeof marked === 'undefined' || !marked.parse) {
     return esc(text).replace(/\n/g, '<br>');
   }
-  const { frontmatter, md } = prepareMarkdownBody(text, { wikilinks: true });
+  let processedText = text;
+  if (typeof katex !== 'undefined' && katex.renderToString) {
+    // Replace display math $$...$$
+    processedText = processedText.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
+      try {
+        return '<div class="katex-display">' + katex.renderToString(formula.trim(), { displayMode: true, throwOnError: false }) + '</div>';
+      } catch (e) {
+        return match;
+      }
+    });
+    // Replace inline math $...$ (avoiding currency $10)
+    processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, formula) => {
+      try {
+        return '<span class="katex-inline">' + katex.renderToString(formula.trim(), { displayMode: false, throwOnError: false }) + '</span>';
+      } catch (e) {
+        return match;
+      }
+    });
+  }
+  const { frontmatter, md } = prepareMarkdownBody(processedText, { wikilinks: true });
   const renderer = getMarkedRenderer();
   const parseOptions = { renderer: renderer, gfm: true, breaks: true, headerIds: false, mangle: false };
   let html = marked.parse(md, parseOptions);
@@ -5470,3 +5516,181 @@ window.addEventListener('resize', () => {
     } catch (e) {}
   }
 });
+
+
+// ── Infinite Canvas & Diagram/Math OCR Integration ──
+let activeInfiniteCanvas = null;
+
+function openCanvasModal() {
+  let modal = document.getElementById('canvas-modal-root');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'canvas-modal-root';
+    modal.className = 'canvas-modal-overlay';
+    modal.innerHTML = `
+      <div class="canvas-modal-container">
+        <div class="canvas-modal-header">
+          <div class="canvas-modal-title">
+            <svg class="ui-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+            <span>Infinite Whiteboard Canvas</span>
+            <span class="badge">OCR & Diagram AI</span>
+          </div>
+          <div class="canvas-modal-actions">
+            <select id="canvas-ocr-mode" class="canvas-mode-select">
+              <option value="auto">Auto-Detect</option>
+              <option value="diagram" selected>Flowchart & Topology (Mermaid)</option>
+              <option value="plantuml">PlantUML Diagram</option>
+              <option value="math">Mathematics (LaTeX KaTeX)</option>
+              <option value="notes">Handwritten Notes</option>
+            </select>
+            <button id="canvas-do-convert-btn" class="canvas-convert-btn" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Convert to Text</span>
+            </button>
+            <button id="canvas-modal-close-btn" class="canvas-modal-close" type="button" title="Close">&times;</button>
+          </div>
+        </div>
+        <div class="canvas-modal-body">
+          <canvas id="infinite-canvas-el" class="canvas-viewport"></canvas>
+          <div class="canvas-floating-toolbar">
+            <button type="button" class="canvas-tool-btn active" data-tool="pen" title="Pen">✏️</button>
+            <button type="button" class="canvas-tool-btn" data-tool="line" title="Line">━</button>
+            <button type="button" class="canvas-tool-btn" data-tool="arrow" title="Arrow">➔</button>
+            <button type="button" class="canvas-tool-btn" data-tool="rect" title="Rectangle">▭</button>
+            <button type="button" class="canvas-tool-btn" data-tool="circle" title="Circle">◯</button>
+            <button type="button" class="canvas-tool-btn" data-tool="text" title="Text">T</button>
+            <button type="button" class="canvas-tool-btn" data-tool="eraser" title="Eraser">🧹</button>
+            <div class="canvas-divider"></div>
+            <div class="canvas-color-dot active" data-color="#38bdf8" style="background:#38bdf8" title="Cyan"></div>
+            <div class="canvas-color-dot" data-color="#f87171" style="background:#f87171" title="Red"></div>
+            <div class="canvas-color-dot" data-color="#4ade80" style="background:#4ade80" title="Green"></div>
+            <div class="canvas-color-dot" data-color="#fbbf24" style="background:#fbbf24" title="Yellow"></div>
+            <div class="canvas-color-dot" data-color="#ffffff" style="background:#ffffff" title="White"></div>
+            <div class="canvas-divider"></div>
+            <button type="button" class="canvas-tool-btn" id="canvas-undo-btn" title="Undo">↶</button>
+            <button type="button" class="canvas-tool-btn" id="canvas-redo-btn" title="Redo">↷</button>
+            <button type="button" class="canvas-tool-btn" id="canvas-clear-btn" title="Clear Canvas">🗑️</button>
+          </div>
+          <div class="canvas-zoom-indicator" id="canvas-zoom-text">100% (Scroll to zoom, drag to draw)</div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const canvasEl = document.getElementById('infinite-canvas-el');
+    activeInfiniteCanvas = new InfiniteCanvas(canvasEl);
+
+    // Bind toolbar buttons
+    modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeInfiniteCanvas.setTool(btn.getAttribute('data-tool'));
+      });
+    });
+
+    modal.querySelectorAll('.canvas-color-dot').forEach(dot => {
+      dot.addEventListener('click', () => {
+        modal.querySelectorAll('.canvas-color-dot').forEach(d => d.classList.remove('active'));
+        dot.classList.add('active');
+        activeInfiniteCanvas.setColor(dot.getAttribute('data-color'));
+      });
+    });
+
+    document.getElementById('canvas-undo-btn').addEventListener('click', () => {
+      if (activeInfiniteCanvas.history.length > 0) {
+        const prev = activeInfiniteCanvas.history.pop();
+        activeInfiniteCanvas.redoList.push(activeInfiniteCanvas.elements);
+        activeInfiniteCanvas.elements = prev;
+        activeInfiniteCanvas.render();
+      }
+    });
+
+    document.getElementById('canvas-redo-btn').addEventListener('click', () => {
+      if (activeInfiniteCanvas.redoList.length > 0) {
+        const next = activeInfiniteCanvas.redoList.pop();
+        activeInfiniteCanvas.history.push(activeInfiniteCanvas.elements);
+        activeInfiniteCanvas.elements = next;
+        activeInfiniteCanvas.render();
+      }
+    });
+
+    document.getElementById('canvas-clear-btn').addEventListener('click', () => {
+      if (confirm('Clear canvas?')) {
+        activeInfiniteCanvas.history.push(activeInfiniteCanvas.elements);
+        activeInfiniteCanvas.elements = [];
+        activeInfiniteCanvas.render();
+      }
+    });
+
+    document.getElementById('canvas-modal-close-btn').addEventListener('click', () => {
+      modal.classList.add('hidden');
+    });
+
+    document.getElementById('canvas-do-convert-btn').addEventListener('click', async () => {
+      const convertBtn = document.getElementById('canvas-do-convert-btn');
+      const base64 = activeInfiniteCanvas.exportImageBase64();
+      if (!base64) {
+        showToast('Canvas is empty. Draw a diagram or formula first.');
+        return;
+      }
+
+      const mode = document.getElementById('canvas-ocr-mode').value;
+      convertBtn.disabled = true;
+      convertBtn.innerHTML = '<span>Converting with AI...</span>';
+
+      try {
+        const res = await fetch('/api/vision/ocr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: base64, mode: mode })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || ('Server error ' + res.status));
+        }
+
+        const data = await res.json();
+        const markdown = data.markdown;
+
+        if (markdown) {
+          insertTextIntoFsEditor(markdown);
+          modal.classList.add('hidden');
+          showToast('Inserted converted diagram / text into markdown document');
+        } else {
+          showToast('No text or diagram detected.');
+        }
+      } catch (err) {
+        showToast('Conversion failed: ' + err.message);
+      } finally {
+        convertBtn.disabled = false;
+        convertBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>Convert to Text</span>';
+      }
+    });
+  }
+
+  modal.classList.remove('hidden');
+  if (activeInfiniteCanvas) {
+    setTimeout(() => activeInfiniteCanvas.resize(), 50);
+  }
+}
+
+function insertTextIntoFsEditor(textToInsert) {
+  if (!fsEditor) return;
+  const start = fsEditor.selectionStart || fsEditor.value.length;
+  const end = fsEditor.selectionEnd || fsEditor.value.length;
+  const original = fsEditor.value;
+
+  const prefix = (start > 0 && original[start - 1] !== '\n') ? '\n\n' : '';
+  const suffix = (end < original.length && original[end] !== '\n') ? '\n\n' : '';
+
+  const newContent = original.slice(0, start) + prefix + textToInsert + suffix + original.slice(end);
+  fsEditor.value = newContent;
+  setFsDirty(true);
+
+  if (state.fsViewMode !== 'editor') {
+    setFsViewMode('editor');
+  }
+  updateMarkdownViewer(newContent);
+}

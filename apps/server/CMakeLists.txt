@@ -12,6 +12,7 @@ add_executable(qcode-server
     src/routes/route_terminal.cpp
     src/routes/route_fs.cpp
     src/routes/route_study.cpp
+    src/routes/route_vision.cpp
     src/bus_json_codec.cpp
     src/http_utils.cpp
     src/workspace_fs.cpp

@@ -29,6 +29,10 @@ void register_terminal_routes(
 void register_fs_routes(
     httplib::Server& svr);
 
+void register_vision_routes(
+    httplib::Server& svr,
+    std::shared_ptr<std::vector<qcode::ProviderInfo>> providers);
+
 void register_study_routes(
     httplib::Server& svr,
     std::shared_ptr<std::vector<qcode::ProviderInfo>> providers);

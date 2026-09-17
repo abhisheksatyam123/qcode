@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/vendor-katex.min.css">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/vendor-xterm.min.css">
 <link rel="stylesheet" href="/vendor-hljs-github-dark.min.css">
@@ -217,6 +218,10 @@
                     <button type="button" class="fs-tab-btn active" id="fs-md-preview-btn">Preview</button>
                     <button type="button" class="fs-tab-btn" id="fs-md-code-btn">Code</button>
                   </div>
+                  <button type="button" id="fs-canvas-btn" class="fs-btn hidden" title="Open Drawing Canvas (Diagrams / Math / Notes)">
+                    <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                    <span>Canvas</span>
+                  </button>
                   <button type="button" id="fs-wrap-btn" class="fs-btn" disabled title="Toggle Line Wrap">Wrap</button>
                   <button type="button" id="fs-edit-btn" class="fs-btn" disabled title="Toggle Edit Mode">Edit</button>
                   <a id="fs-raw-btn" class="fs-btn hidden" target="_blank" rel="noopener" title="View Raw File">Raw</a>
@@ -304,6 +309,8 @@
 <script src="/vendor-marked.min.js"></script>
 <script src="/vendor-jsyaml.min.js"></script>
 <script src="/vendor-hljs.min.js"></script>
+<script src="/vendor-katex.min.js"></script>
+<script src="/vendor-mermaid.min.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
