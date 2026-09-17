@@ -5565,121 +5565,195 @@ function openCanvasModal() {
     modal.className = 'canvas-modal-overlay';
     modal.innerHTML = `
       <div class="canvas-modal-container">
+        <!-- Top Header Bar -->
         <div class="canvas-modal-header">
           <div class="canvas-modal-title">
             <svg class="ui-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-            <span>Infinite Whiteboard Canvas</span>
-            <span class="badge">OCR & Diagram AI</span>
+            <span>Excalidraw Whiteboard</span>
+            <span class="badge">AI Diagram & Math</span>
           </div>
           <div class="canvas-modal-actions">
             <div class="canvas-selector-group">
               <label class="canvas-sel-label" for="canvas-provider-select">Provider:</label>
-              <select id="canvas-provider-select" class="canvas-mode-select">
-                <option value="antigravity">Antigravity</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="opencode">OpenCode Zen</option>
-                <option value="ollama">Local Ollama</option>
-              </select>
+              <select id="canvas-provider-select" class="canvas-mode-select"></select>
             </div>
             <div class="canvas-selector-group">
               <label class="canvas-sel-label" for="canvas-model-select">Model:</label>
               <select id="canvas-model-select" class="canvas-mode-select"></select>
             </div>
             <div class="canvas-selector-group">
-              <label class="canvas-sel-label" for="canvas-ocr-mode">Output:</label>
+              <label class="canvas-sel-label" for="canvas-ocr-mode">Format:</label>
               <select id="canvas-ocr-mode" class="canvas-mode-select">
                 <option value="diagram" selected>Flowchart (Mermaid)</option>
                 <option value="plantuml">PlantUML Diagram</option>
                 <option value="math">Mathematics (LaTeX)</option>
-                <option value="notes">Notes / Text</option>
+                <option value="notes">Notes / Markdown</option>
                 <option value="auto">Auto-Detect</option>
               </select>
             </div>
-            <button id="canvas-do-convert-btn" class="canvas-convert-btn" type="button">
+            <button id="canvas-do-convert-btn" class="canvas-convert-btn" type="button" title="Transcribe canvas drawing into markdown">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span>Convert to Text</span>
             </button>
             <button id="canvas-modal-close-btn" class="canvas-modal-close" type="button" title="Close">&times;</button>
           </div>
         </div>
+
+        <!-- Canvas Body -->
         <div class="canvas-modal-body">
           <canvas id="infinite-canvas-el" class="canvas-viewport"></canvas>
+
+          <!-- Top Excalidraw Tool Palette -->
           <div class="canvas-floating-toolbar">
-            <button type="button" class="canvas-tool-btn active" data-tool="pen" title="Pen">✏️</button>
-            <button type="button" class="canvas-tool-btn" data-tool="line" title="Line">━</button>
-            <button type="button" class="canvas-tool-btn" data-tool="arrow" title="Arrow">➔</button>
-            <button type="button" class="canvas-tool-btn" data-tool="rect" title="Rectangle">▭</button>
-            <button type="button" class="canvas-tool-btn" data-tool="circle" title="Circle">◯</button>
-            <button type="button" class="canvas-tool-btn" data-tool="text" title="Text">T</button>
-            <button type="button" class="canvas-tool-btn" data-tool="eraser" title="Eraser">🧹</button>
-            <div class="canvas-divider"></div>
-            <div class="canvas-color-dot active" data-color="#38bdf8" style="background:#38bdf8" title="Cyan"></div>
-            <div class="canvas-color-dot" data-color="#f87171" style="background:#f87171" title="Red"></div>
-            <div class="canvas-color-dot" data-color="#4ade80" style="background:#4ade80" title="Green"></div>
-            <div class="canvas-color-dot" data-color="#fbbf24" style="background:#fbbf24" title="Yellow"></div>
-            <div class="canvas-color-dot" data-color="#ffffff" style="background:#ffffff" title="White"></div>
-            <div class="canvas-divider"></div>
-            <button type="button" class="canvas-tool-btn" id="canvas-undo-btn" title="Undo">↶</button>
-            <button type="button" class="canvas-tool-btn" id="canvas-redo-btn" title="Redo">↷</button>
-            <button type="button" class="canvas-tool-btn" id="canvas-clear-btn" title="Clear Canvas">🗑️</button>
+            <button type="button" class="canvas-tool-btn active" data-tool="select" title="Selection (1 / V)">↖</button>
+            <button type="button" class="canvas-tool-btn" data-tool="rect" title="Rectangle (2 / R)">▭</button>
+            <button type="button" class="canvas-tool-btn" data-tool="diamond" title="Diamond (3 / D)">◇</button>
+            <button type="button" class="canvas-tool-btn" data-tool="circle" title="Ellipse (4 / O)">◯</button>
+            <button type="button" class="canvas-tool-btn" data-tool="arrow" title="Arrow (5 / A)">➔</button>
+            <button type="button" class="canvas-tool-btn" data-tool="line" title="Line (6 / L)">━</button>
+            <button type="button" class="canvas-tool-btn" data-tool="pen" title="Draw (7 / P)">✏️</button>
+            <button type="button" class="canvas-tool-btn" data-tool="text" title="Text (8 / T)">T</button>
+            <button type="button" class="canvas-tool-btn" data-tool="eraser" title="Eraser (9 / E)">🧹</button>
+            <button type="button" class="canvas-tool-btn" data-tool="pan" title="Hand / Pan (0 / H)">✋</button>
           </div>
-          <div class="canvas-zoom-indicator" id="canvas-zoom-text">Scroll wheel / trackpad to zoom & pan · Drawing auto-scales</div>
+
+          <!-- Left Excalidraw Properties Dock -->
+          <div class="canvas-properties-panel" id="canvas-props-panel">
+            <!-- Stroke Color -->
+            <div class="canvas-prop-group">
+              <span class="canvas-prop-label">Stroke</span>
+              <div class="canvas-swatch-row">
+                <div class="canvas-color-dot active" data-stroke="#f8fafc" style="background:#f8fafc" title="White"></div>
+                <div class="canvas-color-dot" data-stroke="#38bdf8" style="background:#38bdf8" title="Sky"></div>
+                <div class="canvas-color-dot" data-stroke="#4ade80" style="background:#4ade80" title="Green"></div>
+                <div class="canvas-color-dot" data-stroke="#fbbf24" style="background:#fbbf24" title="Amber"></div>
+                <div class="canvas-color-dot" data-stroke="#f87171" style="background:#f87171" title="Red"></div>
+                <div class="canvas-color-dot" data-stroke="#c084fc" style="background:#c084fc" title="Purple"></div>
+              </div>
+            </div>
+
+            <!-- Background / Fill -->
+            <div class="canvas-prop-group">
+              <span class="canvas-prop-label">Background</span>
+              <div class="canvas-swatch-row">
+                <div class="canvas-color-dot active" data-fill="transparent" style="background:none;border:1px dashed #94a3b8" title="Transparent"></div>
+                <div class="canvas-color-dot" data-fill="rgba(56, 189, 248, 0.25)" style="background:#38bdf8" title="Soft Blue"></div>
+                <div class="canvas-color-dot" data-fill="rgba(74, 222, 128, 0.25)" style="background:#4ade80" title="Soft Green"></div>
+                <div class="canvas-color-dot" data-fill="rgba(251, 191, 36, 0.25)" style="background:#fbbf24" title="Soft Amber"></div>
+                <div class="canvas-color-dot" data-fill="rgba(248, 113, 113, 0.25)" style="background:#f87171" title="Soft Red"></div>
+                <div class="canvas-color-dot" data-fill="rgba(192, 132, 252, 0.25)" style="background:#c084fc" title="Soft Purple"></div>
+              </div>
+            </div>
+
+            <!-- Fill Style -->
+            <div class="canvas-prop-group">
+              <span class="canvas-prop-label">Fill Style</span>
+              <div class="canvas-btn-row">
+                <button type="button" class="canvas-chip-btn active" data-fill-style="hachure">Hatch</button>
+                <button type="button" class="canvas-chip-btn" data-fill-style="solid">Solid</button>
+                <button type="button" class="canvas-chip-btn" data-fill-style="none">None</button>
+              </div>
+            </div>
+
+            <!-- Stroke Width -->
+            <div class="canvas-prop-group">
+              <span class="canvas-prop-label">Stroke Width</span>
+              <div class="canvas-btn-row">
+                <button type="button" class="canvas-chip-btn" data-width="1.5">Thin</button>
+                <button type="button" class="canvas-chip-btn active" data-width="2.5">Med</button>
+                <button type="button" class="canvas-chip-btn" data-width="4.5">Bold</button>
+              </div>
+            </div>
+
+            <!-- Sloppiness / Roughness -->
+            <div class="canvas-prop-group">
+              <span class="canvas-prop-label">Sloppiness</span>
+              <div class="canvas-btn-row">
+                <button type="button" class="canvas-chip-btn" data-roughness="0.5">Clean</button>
+                <button type="button" class="canvas-chip-btn active" data-roughness="1.2">Artist</button>
+                <button type="button" class="canvas-chip-btn" data-roughness="2.2">Cartoon</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Action Dock -->
+          <div class="canvas-bottom-dock">
+            <button type="button" class="canvas-zoom-btn" id="canvas-undo-btn" title="Undo (Ctrl+Z)">↶</button>
+            <button type="button" class="canvas-zoom-btn" id="canvas-redo-btn" title="Redo (Ctrl+Y)">↷</button>
+            <div class="canvas-divider"></div>
+            <button type="button" class="canvas-zoom-btn" id="canvas-duplicate-btn" title="Duplicate (Ctrl+D)">❐</button>
+            <button type="button" class="canvas-zoom-btn" id="canvas-delete-btn" title="Delete (Del)">🗑️</button>
+            <div class="canvas-divider"></div>
+            <button type="button" class="canvas-zoom-btn" id="canvas-zoom-out" title="Zoom Out">-</button>
+            <span class="canvas-zoom-btn" id="canvas-zoom-text" title="Reset Zoom">100%</span>
+            <button type="button" class="canvas-zoom-btn" id="canvas-zoom-in" title="Zoom In">+</button>
+            <div class="canvas-divider"></div>
+            <button type="button" class="canvas-zoom-btn" id="canvas-clear-btn" title="Clear Canvas">Clear</button>
+          </div>
         </div>
       </div>
     `;
     document.body.appendChild(modal);
 
     const canvasEl = document.getElementById('infinite-canvas-el');
-    activeInfiniteCanvas = new InfiniteCanvas(canvasEl);
+    activeInfiniteCanvas = new InfiniteCanvas(canvasEl, {
+      onViewChange: (zoomPercent) => {
+        const zEl = document.getElementById('canvas-zoom-text');
+        if (zEl) zEl.textContent = `${zoomPercent}%`;
+      }
+    });
 
     const providerSelect = document.getElementById('canvas-provider-select');
     const modelSelect = document.getElementById('canvas-model-select');
 
-    function populateModels(providerKey) {
+    let dynamicProviders = [];
+
+    function updateModelDropdown() {
       modelSelect.innerHTML = '';
-      const cfg = VISION_PROVIDERS_CONFIG[providerKey] || VISION_PROVIDERS_CONFIG.antigravity;
-      cfg.models.forEach(m => {
-        const opt = document.createElement('option');
-        opt.value = m.id;
-        opt.textContent = m.name;
-        modelSelect.appendChild(opt);
-      });
-      const savedModel = localStorage.getItem('qcode_canvas_model_' + providerKey);
-      if (savedModel && Array.from(modelSelect.options).some(o => o.value === savedModel)) {
-        modelSelect.value = savedModel;
+      const pId = providerSelect.value;
+      const prov = dynamicProviders.find(p => p.id === pId);
+      if (prov && prov.models) {
+        prov.models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name || m.id;
+          modelSelect.appendChild(opt);
+        });
+      }
+      const savedM = localStorage.getItem('qcode_canvas_model_' + pId);
+      if (savedM && Array.from(modelSelect.options).some(o => o.value === savedM)) {
+        modelSelect.value = savedM;
       }
     }
 
-    // Try fetching live provider catalog from server
     fetch('/api/vision/providers').then(r => r.json()).then(data => {
-      if (data && data.providers) {
+      if (data && data.providers && data.providers.length > 0) {
+        dynamicProviders = data.providers;
+        providerSelect.innerHTML = '';
         data.providers.forEach(p => {
-          if (!VISION_PROVIDERS_CONFIG[p.id]) {
-            VISION_PROVIDERS_CONFIG[p.id] = { name: p.name, models: p.models || [] };
-          } else {
-            VISION_PROVIDERS_CONFIG[p.id].models = p.models || VISION_PROVIDERS_CONFIG[p.id].models;
-          }
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.name || p.id;
+          providerSelect.appendChild(opt);
         });
-        populateModels(providerSelect.value);
+        const savedP = localStorage.getItem('qcode_canvas_provider') || data.default_provider || 'antigravity';
+        if (Array.from(providerSelect.options).some(o => o.value === savedP)) {
+          providerSelect.value = savedP;
+        }
+        updateModelDropdown();
       }
     }).catch(() => {});
 
-    const savedProvider = localStorage.getItem('qcode_canvas_provider') || 'antigravity';
-    if (Array.from(providerSelect.options).some(o => o.value === savedProvider)) {
-      providerSelect.value = savedProvider;
-    }
-    populateModels(providerSelect.value);
-
     providerSelect.addEventListener('change', () => {
-      populateModels(providerSelect.value);
       localStorage.setItem('qcode_canvas_provider', providerSelect.value);
+      updateModelDropdown();
     });
 
     modelSelect.addEventListener('change', () => {
       localStorage.setItem('qcode_canvas_model_' + providerSelect.value, modelSelect.value);
     });
 
-    // Bind toolbar buttons
+    // Tool switching
     modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(btn => {
       btn.addEventListener('click', () => {
         modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
@@ -5688,44 +5762,85 @@ function openCanvasModal() {
       });
     });
 
-    modal.querySelectorAll('.canvas-color-dot').forEach(dot => {
+    // Stroke colors
+    modal.querySelectorAll('.canvas-color-dot[data-stroke]').forEach(dot => {
       dot.addEventListener('click', () => {
-        modal.querySelectorAll('.canvas-color-dot').forEach(d => d.classList.remove('active'));
+        modal.querySelectorAll('.canvas-color-dot[data-stroke]').forEach(d => d.classList.remove('active'));
         dot.classList.add('active');
-        activeInfiniteCanvas.setColor(dot.getAttribute('data-color'));
+        activeInfiniteCanvas.setStrokeColor(dot.getAttribute('data-stroke'));
       });
     });
 
-    document.getElementById('canvas-undo-btn').addEventListener('click', () => {
-      if (activeInfiniteCanvas.history.length > 0) {
-        const prev = activeInfiniteCanvas.history.pop();
-        activeInfiniteCanvas.redoList.push(activeInfiniteCanvas.elements);
-        activeInfiniteCanvas.elements = prev;
-        activeInfiniteCanvas.render();
+    // Fill colors
+    modal.querySelectorAll('.canvas-color-dot[data-fill]').forEach(dot => {
+      dot.addEventListener('click', () => {
+        modal.querySelectorAll('.canvas-color-dot[data-fill]').forEach(d => d.classList.remove('active'));
+        dot.classList.add('active');
+        activeInfiniteCanvas.setFillColor(dot.getAttribute('data-fill'));
+      });
+    });
+
+    // Fill style
+    modal.querySelectorAll('.canvas-chip-btn[data-fill-style]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        modal.querySelectorAll('.canvas-chip-btn[data-fill-style]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const st = btn.getAttribute('data-fill-style');
+        activeInfiniteCanvas.setFillColor(activeInfiniteCanvas.fillColor, st);
+      });
+    });
+
+    // Stroke width
+    modal.querySelectorAll('.canvas-chip-btn[data-width]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        modal.querySelectorAll('.canvas-chip-btn[data-width]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeInfiniteCanvas.setLineWidth(parseFloat(btn.getAttribute('data-width')));
+      });
+    });
+
+    // Sloppiness / Roughness
+    modal.querySelectorAll('.canvas-chip-btn[data-roughness]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        modal.querySelectorAll('.canvas-chip-btn[data-roughness]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeInfiniteCanvas.setRoughness(parseFloat(btn.getAttribute('data-roughness')));
+      });
+    });
+
+    // Zoom and Action Dock
+    document.getElementById('canvas-undo-btn').addEventListener('click', () => activeInfiniteCanvas.undo());
+    document.getElementById('canvas-redo-btn').addEventListener('click', () => activeInfiniteCanvas.redo());
+    document.getElementById('canvas-duplicate-btn').addEventListener('click', () => activeInfiniteCanvas.duplicateSelected());
+    document.getElementById('canvas-delete-btn').addEventListener('click', () => {
+      if (activeInfiniteCanvas.selectedIds.size > 0) {
+        activeInfiniteCanvas.deleteElements(Array.from(activeInfiniteCanvas.selectedIds));
       }
     });
 
-    document.getElementById('canvas-redo-btn').addEventListener('click', () => {
-      if (activeInfiniteCanvas.redoList.length > 0) {
-        const next = activeInfiniteCanvas.redoList.pop();
-        activeInfiniteCanvas.history.push(activeInfiniteCanvas.elements);
-        activeInfiniteCanvas.elements = next;
-        activeInfiniteCanvas.render();
-      }
+    document.getElementById('canvas-zoom-in').addEventListener('click', () => {
+      const rect = canvasEl.getBoundingClientRect();
+      activeInfiniteCanvas.zoomAt(rect.width / 2, rect.height / 2, 1.2);
+    });
+
+    document.getElementById('canvas-zoom-out').addEventListener('click', () => {
+      const rect = canvasEl.getBoundingClientRect();
+      activeInfiniteCanvas.zoomAt(rect.width / 2, rect.height / 2, 0.8);
+    });
+
+    document.getElementById('canvas-zoom-text').addEventListener('click', () => {
+      activeInfiniteCanvas.resetView();
     });
 
     document.getElementById('canvas-clear-btn').addEventListener('click', () => {
-      if (confirm('Clear canvas?')) {
-        activeInfiniteCanvas.history.push(activeInfiniteCanvas.elements);
-        activeInfiniteCanvas.elements = [];
-        activeInfiniteCanvas.render();
-      }
+      if (confirm('Clear entire whiteboard?')) activeInfiniteCanvas.clear();
     });
 
     document.getElementById('canvas-modal-close-btn').addEventListener('click', () => {
       modal.classList.add('hidden');
     });
 
+    // Convert to Text / Markdown Trigger
     document.getElementById('canvas-do-convert-btn').addEventListener('click', async () => {
       const convertBtn = document.getElementById('canvas-do-convert-btn');
       const base64 = activeInfiniteCanvas.exportImageBase64();
