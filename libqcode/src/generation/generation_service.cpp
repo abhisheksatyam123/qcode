@@ -106,8 +106,13 @@ bool subagent_wants_cursor(const nlohmann::json& args) {
 bool subagent_failover_worthy(const std::string& msg, const GenerateResult& res) {
   if (res.is_retryable.value_or(false)) return true;
   if (msg.find("ModelError") != std::string::npos) return true;
+  if (msg.find("FreeTierError") != std::string::npos) return true;
+  if (msg.find("AuthError") != std::string::npos) return true;
+  if (msg.find("Missing API key") != std::string::npos) return true;
+  if (msg.find("free tier can only be used") != std::string::npos) return true;
   if (msg.find("is not supported") != std::string::npos) return true;
   if (msg.find("Failed to resolve subagent client") != std::string::npos) return true;
+  if (msg.find("401") != std::string::npos || msg.find("403") != std::string::npos) return true;
   return is_error_message_retryable(msg);
 }
 }  // namespace
@@ -199,8 +204,23 @@ static JsonValue run_subagent_turn_multi(
         rest.push_back({&pr, &mo, mo.id});
       }
     }
+    const char* opencode_env_key = std::getenv("OPENCODE_API_KEY");
+    const bool opencode_has_key = (opencode_env_key && *opencode_env_key);
+    // Filter out unauthenticated OpenCode models from rest pool
+    std::vector<FallbackCand> filtered_rest;
+    for (const auto& c : rest) {
+      if (c.p->id == "opencode" && !opencode_has_key && c.p->api_key.empty()) {
+        if (c.model_id != "space-bunny-free") continue;
+      }
+      filtered_rest.push_back(c);
+    }
+    rest = std::move(filtered_rest);
+
     auto prio = [](const ProviderInfo* q) {
-      return (q->id == "opencode") ? 0 : (q->id.find("antigravity") != std::string::npos ? 1 : 2);
+      if (q->id.find("antigravity") != std::string::npos) return 0;
+      if (q->id == "openrouter") return 1;
+      if (q->id == "opencode") return 2;
+      return 3;
     };
     std::stable_sort(rest.begin(), rest.end(),
                      [&](const FallbackCand& a, const FallbackCand& b) { return prio(a.p) < prio(b.p); });
@@ -319,6 +339,16 @@ static JsonValue run_subagent_turn_multi(
       } catch (...) {}
     }
     qcode::GenerateOptions sub_opts(wire_model, sub_sys.str(), "");
+    // Subagent turns must use the same bounded output budget as the parent.
+    // Leaving this unset lets OpenRouter apply a model-specific default (for
+    // some models, 131072), which can turn an otherwise valid delegation into
+    // HTTP 402 when the account cannot afford that completion budget.
+    if (target_model_info && target_model_info->output_limit > 0) {
+      sub_opts.max_tokens =
+          ProviderTransform::max_output_tokens(target_model_info->output_limit);
+    } else {
+      sub_opts.max_tokens = 8192;
+    }
     sub_opts.tools = ToolCatalog::build_definitions(ToolConfig::subagent());
     sub_opts.max_steps = max_steps;
     sub_opts.workspace = workspace;
@@ -713,7 +743,7 @@ static void run_tools_generation_bus(
 
         // Execute tool calls to produce tool results
         std::vector<qcode::ToolResult> executed_results =
-            qcode::ToolExecutor::execute_tools_with_options(step_res.tool_calls, options);
+            qcode::ToolExecutor::execute_tools_with_options(step_res.tool_calls, options, /*parallel=*/true);
 
         std::vector<qcode::ToolResultContentPart> result_parts;
         for (const auto& res : executed_results) {
@@ -1357,6 +1387,8 @@ void run_generation_with_bus(
     // ── Agent mode (mirrors opencode build/plan) ──
     // Plan mode appends the read-only research contract from upstream's
     // plan.txt and drops the task subagent tool.
+    const bool is_subagent = (ctx.agent_mode == "subagent") ||
+                             (!ctx.session_id.empty() && qcode::session::is_child_session(ctx.session_id));
     const bool plan_mode = (ctx.agent_mode == "plan");
     base_opts.system = system_prompt;
     if (plan_mode) {
@@ -1381,6 +1413,8 @@ void run_generation_with_bus(
             base_opts.system += "\n\n" + catalog_section;
         }
         LOG_INFO("ChatBus: agent_mode=plan (read-only)");
+    } else if (is_subagent) {
+        LOG_INFO("ChatBus: agent_mode=subagent (focused worker, nested delegation disabled)");
     } else {
         base_opts.system += std::string(kOrchestratorReminder);
         const std::string catalog_section = format_provider_catalog_for_prompt(providers);
@@ -1453,7 +1487,7 @@ void run_generation_with_bus(
     const bool is_server_duplex_agent =
         (client.tool_execution_model() == ToolExecutionModel::ServerSideDuplex);
     if (enable_tools) {
-      const bool enable_task_tool = !plan_mode;
+      const bool enable_task_tool = (!plan_mode && !is_subagent);
       qcode::ToolSet tools =
           ToolCatalog::build_definitions(enable_task_tool ? ToolConfig::orchestrator() : ToolConfig::subagent());
       base_opts.tools = std::move(tools);
@@ -1466,20 +1500,22 @@ void run_generation_with_bus(
       }
       base_opts.max_steps = max_tool_steps;
 
-      auto providers_ptr = std::make_shared<std::vector<ProviderInfo>>(providers);
-      std::string current_prov_id = provider_id;
-      std::string current_model_id = resolved_model_id;
-      std::string current_workspace = ctx.workspace;
-      std::shared_ptr<std::atomic<bool>> main_abort = ctx.abort_flag;
+      if (enable_task_tool) {
+        auto providers_ptr = std::make_shared<std::vector<ProviderInfo>>(providers);
+        std::string current_prov_id = provider_id;
+        std::string current_model_id = resolved_model_id;
+        std::string current_workspace = ctx.workspace;
+        std::shared_ptr<std::atomic<bool>> main_abort = ctx.abort_flag;
 
-      base_opts.subagent_runner =
-          [providers_ptr, current_prov_id, current_model_id, current_workspace, main_abort](
-              const JsonValue& args,
-              std::shared_ptr<std::atomic<bool>> task_abort) -> JsonValue {
-            return run_subagent_turn_multi(
-                providers_ptr, current_prov_id, current_model_id,
-                current_workspace, main_abort, std::move(task_abort), args);
-          };
+        base_opts.subagent_runner =
+            [providers_ptr, current_prov_id, current_model_id, current_workspace, main_abort](
+                const JsonValue& args,
+                std::shared_ptr<std::atomic<bool>> task_abort) -> JsonValue {
+              return run_subagent_turn_multi(
+                  providers_ptr, current_prov_id, current_model_id,
+                  current_workspace, main_abort, std::move(task_abort), args);
+            };
+      }
     }
     if (enable_tools && !is_server_duplex_agent) {
       auto refresh_client = [&](qcode::Client& out_client) -> bool {

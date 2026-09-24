@@ -564,6 +564,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
 std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& providers) {
     if (providers.empty()) return "";
 
+    const char* opencode_env = std::getenv("OPENCODE_API_KEY");
+    const bool opencode_has_key = (opencode_env && *opencode_env);
+
     std::ostringstream ss;
     ss << "### Available Providers & Models (from opencode.json)\n\n"
        << "You have access to the following configured providers and models. "
@@ -573,13 +576,25 @@ std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& 
 
     for (const auto& provider : providers) {
         if (provider.models.empty()) continue;
-        ss << "- **" << provider.id << "** (" << (provider.name.empty() ? provider.id : provider.name) << "):\n";
+        std::vector<const ModelInfo*> available_models;
         for (const auto& model : provider.models) {
-            ss << "  - `" << model.id << "`";
-            if (!model.name.empty() && model.name != model.id) {
-                ss << " (" << model.name << ")";
+            if (model.id.empty()) continue;
+            // Keyless OpenCode Zen only supports space-bunny-free; other models
+            // reject with 401 AuthError or 403 FreeTierError.
+            if (provider.id == "opencode" && !opencode_has_key && provider.api_key.empty()) {
+                if (model.id != "space-bunny-free") continue;
             }
-            if (model.reasoning) {
+            available_models.push_back(&model);
+        }
+        if (available_models.empty()) continue;
+
+        ss << "- **" << provider.id << "** (" << (provider.name.empty() ? provider.id : provider.name) << "):\n";
+        for (const auto* model : available_models) {
+            ss << "  - `" << model->id << "`";
+            if (!model->name.empty() && model->name != model->id) {
+                ss << " (" << model->name << ")";
+            }
+            if (model->reasoning) {
                 ss << " [reasoning]";
             }
             ss << "\n";

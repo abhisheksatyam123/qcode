@@ -193,13 +193,18 @@ std::string zen_wire_model_id(std::string model_id) {
   // map onto the current free pool so a cross-provider pick does not 401.
   if (contains(id, "muse-spark")) {
     if (contains(id, "meta/") || contains(id, "openrouter/")) {
+      if (contains(id, "1.4")) return "muse-spark-1.4-contributor";
       if (contains(id, "1.3")) return "muse-spark-1.3-contributor-free";
       return "muse-spark-1.2-contributor-free";
     }
-    if (id == "muse-spark-1.2") return "muse-spark-1.2";
+    if (id == "muse-spark-1.4-contributor" || id == "muse-spark-1.4") {
+      return "muse-spark-1.4-contributor";
+    }
     if (id == "muse-spark-1.3") return "muse-spark-1.3";
+    if (id == "muse-spark-1.2") return "muse-spark-1.2";
+    if (contains(id, "1.4")) return "muse-spark-1.4-contributor";
     if (contains(id, "1.3")) return "muse-spark-1.3-contributor-free";
-    return "muse-spark-1.2-contributor-free";
+    return model_id;
   }
   return model_id;
 }

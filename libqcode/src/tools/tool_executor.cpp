@@ -95,13 +95,20 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
   std::vector<ToolResult> results;
   results.reserve(tool_calls.size());
 
+  if (tool_calls.size() <= 1) parallel = false;
+
   bool effective_parallel = parallel;
   if (effective_parallel) {
+    int bash_count = 0;
     for (const auto& call : tool_calls) {
       if (call.tool_name == "bash") {
-        effective_parallel = false;
-        break;
+        ++bash_count;
       }
+    }
+    // Sequential execution is only needed if there are multiple bash commands
+    // that might mutate files or directories with order dependencies.
+    if (bash_count > 1) {
+      effective_parallel = false;
     }
   }
 

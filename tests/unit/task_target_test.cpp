@@ -34,7 +34,14 @@ std::vector<ProviderInfo> sample_catalog() {
   pickle.id = "big-pickle";
   zen.models.push_back(pickle);
 
-  return {cursor, openrouter, zen};
+  ProviderInfo antigravity;
+  antigravity.id = "antigravity";
+  antigravity.name = "Antigravity";
+  ModelInfo gemini;
+  gemini.id = "gemini-3.1-pro";
+  antigravity.models.push_back(gemini);
+
+  return {cursor, openrouter, zen, antigravity};
 }
 
 TEST(TaskTargetTest, ColonFormSelectsProviderEvenWhenModelIdHasSlashes) {
@@ -56,6 +63,21 @@ TEST(TaskTargetTest, ExplicitProviderAndModelFields) {
   EXPECT_TRUE(t.error.empty()) << t.error;
   EXPECT_EQ(t.provider_id, "opencode");
   EXPECT_EQ(t.model_id, "big-pickle");
+}
+
+TEST(TaskTargetTest, OrchestratorCanSelectEveryConfiguredProvider) {
+  const auto catalog = sample_catalog();
+  const std::vector<std::pair<std::string, std::string>> cases = {
+      {"opencode:big-pickle", "opencode"},
+      {"openrouter:deepseek/deepseek-v4-flash-0731", "openrouter"},
+      {"antigravity:gemini-3.1-pro", "antigravity"},
+  };
+  for (const auto& [model, provider] : cases) {
+    const auto t = resolve_subagent_target(
+        nlohmann::json{{"model", model}}, catalog, "cursor", "cursor-grok-4.6");
+    EXPECT_TRUE(t.error.empty()) << model << ": " << t.error;
+    EXPECT_EQ(t.provider_id, provider) << model;
+  }
 }
 
 TEST(TaskTargetTest, SlashSplitsOnlyWhenPrefixIsAProvider) {

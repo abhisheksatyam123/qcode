@@ -414,7 +414,43 @@ void TaskTool::clear_background_tasks() {
 
 JsonValue TaskTool::list_tasks(const std::string& parent_session_id) {
   SubagentRegistry::instance().harvest_ready();
-  return SubagentRegistry::instance().list(parent_session_id);
+  JsonValue live = SubagentRegistry::instance().list(parent_session_id);
+
+  if (!parent_session_id.empty()) {
+    std::unordered_set<std::string> seen_sessions;
+    if (live.contains("metadata") && live["metadata"].contains("tasks")) {
+      for (const auto& item : live["metadata"]["tasks"]) {
+        std::string sid = item.value("task_id", item.value("sessionId", ""));
+        if (!sid.empty()) seen_sessions.insert(sid);
+      }
+    }
+
+    auto durable_sessions = qcode::session::list_sessions_full(true, parent_session_id);
+    for (const auto& s : durable_sessions) {
+      if (seen_sessions.contains(s.id)) continue;
+      std::string status = "done";
+      auto msgs = qcode::session::load_session_messages(s.id);
+      if (!msgs.empty() && msgs.back().first == "Assistant") {
+        if (msgs.back().second.rfind("Error", 0) == 0) {
+          status = "error";
+        }
+      }
+      JsonValue item;
+      item["background_task_id"] = "bg_" + s.id;
+      item["task_id"] = s.id;
+      item["sessionId"] = s.id;
+      item["parent_session_id"] = s.parent_session_id;
+      item["description"] = s.title;
+      item["agent"] = "subagent";
+      item["mode"] = "explore";
+      item["model"] = !s.provider.empty() ? (s.provider + ":" + s.model) : s.model;
+      item["status"] = status;
+
+      live["metadata"]["tasks"].push_back(item);
+    }
+  }
+
+  return live;
 }
 
 void TaskTool::delete_session_tasks(const std::string& session_id) {
@@ -891,6 +927,11 @@ JsonValue TaskTool::execute(const JsonValue& args, const ToolExecutionContext& c
   if (op == "kill" || op == "pause" || op == "resume" || op == "resurrect" || op == "status" || op == "list")
     return exec_lifecycle(args, op);
   if (op == "model") return exec_model(args);
+
+  if (context.session_id.starts_with("ses_") ||
+      (!context.session_id.empty() && qcode::session::is_child_session(context.session_id))) {
+    return JsonValue{{"error", "Nested delegation is disabled for subagents."}};
+  }
 
   return exec_spawn(args, context);
 }

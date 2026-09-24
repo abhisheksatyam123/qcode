@@ -1329,6 +1329,30 @@ std::vector<std::string> get_child_session_ids(const std::string& parent_session
     return children;
 }
 
+std::string get_parent_session_id(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return "";
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return "";
+
+    const char* sql = "SELECT COALESCE(parent_session_id, '') FROM sessions WHERE id = ? LIMIT 1;";
+    sqlite3_stmt* stmt = nullptr;
+    std::string pid;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* txt = sqlite3_column_text(stmt, 0);
+            if (txt) pid = reinterpret_cast<const char*>(txt);
+        }
+        sqlite3_finalize(stmt);
+    }
+    return pid;
+}
+
+bool is_child_session(const std::string& session_id) {
+    return !get_parent_session_id(session_id).empty();
+}
+
 void delete_session(const std::string& session_id) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);

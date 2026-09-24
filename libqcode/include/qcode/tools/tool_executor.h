@@ -25,7 +25,7 @@ class ToolExecutor {
   static std::vector<ToolResult> execute_tools_with_options(
       const std::vector<ToolCall>& tool_calls,
       const GenerateOptions& options,
-      bool parallel = false);
+      bool parallel = true);
 
   static bool validate_tool_call(const ToolCall& tool_call, const Tool& tool);
 

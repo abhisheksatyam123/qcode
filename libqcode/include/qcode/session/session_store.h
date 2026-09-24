@@ -138,6 +138,8 @@ void persist_session_token_stats(const std::string& session_id,
 
 // Delete a session and its associated messages
 std::vector<std::string> get_child_session_ids(const std::string& parent_session_id);
+std::string get_parent_session_id(const std::string& session_id);
+bool is_child_session(const std::string& session_id);
 void delete_session(const std::string& session_id);
 
 // ── Model Capabilities & Performance Telemetry ─────────────────────────

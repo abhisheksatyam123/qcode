@@ -42,6 +42,10 @@ TEST(ProviderTransformTest, ZenApiProtocolMatchesOpenCodeDocs) {
             "responses");
   EXPECT_EQ(ProviderTransform::zen_completions_path("muse-spark-1.2"),
             "/responses");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("muse-spark-1.4-contributor"),
+            "responses");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.4-contributor"),
+            "muse-spark-1.4-contributor");
   EXPECT_EQ(ProviderTransform::zen_api_protocol("gemini-3-pro"), "google");
   EXPECT_EQ(ProviderTransform::zen_completions_path("gemini-3.7-flash"),
             "/models/gemini-3.7-flash:generateContent");

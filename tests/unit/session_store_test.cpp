@@ -212,6 +212,17 @@ TEST_F(SessionStoreTest, SubagentSessionsAreFilteredFromInteractiveLists) {
     EXPECT_EQ(msgs[0].second, "done");
 }
 
+TEST_F(SessionStoreTest, ParentAndChildSessionQueries) {
+    const std::string parent = create_new_session("prov", "model", "/ws", "Parent");
+    ensure_session_row("ses_child_1", "Child 1", "prov", "model", "/ws", parent);
+
+    EXPECT_FALSE(is_child_session(parent));
+    EXPECT_EQ(get_parent_session_id(parent), "");
+
+    EXPECT_TRUE(is_child_session("ses_child_1"));
+    EXPECT_EQ(get_parent_session_id("ses_child_1"), parent);
+}
+
 }  // namespace
 }  // namespace session
 }  // namespace qcode

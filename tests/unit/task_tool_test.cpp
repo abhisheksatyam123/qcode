@@ -424,5 +424,45 @@ TEST_F(TaskToolTest, SessionIdParsedFromSpawnOutput) {
   EXPECT_EQ(TaskTool::session_id_from_result(result), "ses_123abc");
 }
 
+TEST_F(TaskToolTest, SubagentsCannotPerformNestedDelegation) {
+  ToolExecutionContext sub_context;
+  sub_context.session_id = "ses_child_subagent_123";
+
+  const JsonValue out = TaskTool::execute(
+      JsonValue{{"op", "spawn"},
+                {"subagent_type", "general"},
+                {"description", "nested delegation attempt"},
+                {"prompt", "do something"}},
+      sub_context);
+
+  ASSERT_TRUE(out.contains("error"));
+  EXPECT_THAT(out.value("error", ""),
+              testing::HasSubstr("Nested delegation is disabled for subagents"));
+}
+
+TEST_F(TaskToolTest, ListsDurableChildSessionsFromDatabase) {
+  const std::string parent_sid = "parent_sess_abc123";
+  qcode::session::ensure_session_row(parent_sid, "Parent Chat", "openrouter", "model1", "/ws");
+  qcode::session::ensure_session_row("ses_durable_child_1", "Audit simulation parity", "cursor", "composer-2.5", "/ws", parent_sid);
+  qcode::session::save_message("ses_durable_child_1", "Assistant", "Audit complete: found 5 gaps.");
+
+  auto list_json = TaskTool::list_tasks(parent_sid);
+  ASSERT_TRUE(list_json.contains("metadata"));
+  ASSERT_TRUE(list_json["metadata"].contains("tasks"));
+  const auto& tasks = list_json["metadata"]["tasks"];
+  ASSERT_GE(tasks.size(), 1u);
+
+  bool found = false;
+  for (const auto& t : tasks) {
+    if (t.value("task_id", "") == "ses_durable_child_1") {
+      found = true;
+      EXPECT_EQ(t.value("status", ""), "done");
+      EXPECT_EQ(t.value("description", ""), "Audit simulation parity");
+      EXPECT_EQ(t.value("parent_session_id", ""), parent_sid);
+    }
+  }
+  EXPECT_TRUE(found);
+}
+
 }  // namespace test
 }  // namespace qcode
