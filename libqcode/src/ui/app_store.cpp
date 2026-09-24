@@ -656,7 +656,9 @@ void AppStore::wire() {
             sid, p.prompt_tokens, p.completion_tokens, p.total_tokens);
         // Calibration anchor: remember the actual prompt token count so the
         // next heuristic estimate can be corrected against ground truth.
-        *state_.last_actual_prompt_tokens = p.prompt_tokens;
+        if (p.prompt_tokens > 0) {
+            *state_.last_actual_prompt_tokens = p.prompt_tokens;
+        }
         notify();
     }));
 

@@ -213,22 +213,32 @@ inline bool looks_like_task_stall(std::string_view text) {
   });
 }
 
-// Uncapped: build mode keeps nudging until task completion is detected.
-// There is intentionally no numeric cap — continue_count is accepted for
-// logging/telemetry only and never stops the turn. Empty text-only stops
-// always continue. Non-empty text stops only on explicit completion signals;
-// stall phrases are the primary signal, but any other non-completion text
-// also continues so novel phrasing never halts mid-task. The user abort,
-// queued-prompt yield, provider errors, and plan_mode remain the only stops.
+// In build mode, decide whether to auto-nudge the model after a text-only turn.
+// Aligns with Opencode v2 semantics:
+// - If the model returned empty text or stalled with explicit follow-up promises /
+//   confirmation requests without executing tools, auto-nudge to keep progress going.
+// - If stall phrases are present, they take precedence over partial completion
+//   mentions (e.g. "I updated X. Next, I will test Y.").
+// - If explicit completion is signaled, stop.
+// - Otherwise, normal text-only outputs naturally complete the turn.
 inline bool should_auto_continue_build(bool plan_mode,
                                        int continue_count,
                                        std::string_view assistant_text) {
   (void)continue_count;
   if (plan_mode) return false;
-  if (assistant_text.empty()) return true;
-  if (looks_like_task_completion(assistant_text)) return false;
+  if (assistant_text.empty() ||
+      std::ranges::all_of(assistant_text, [](char c) {
+        return std::isspace(static_cast<unsigned char>(c));
+      })) {
+    return true;
+  }
+  // Stalls and forward promises take precedence: if the model announces next steps
+  // or stalls for confirmation without calling a tool, keep going.
   if (looks_like_task_stall(assistant_text)) return true;
-  return true;
+  if (looks_like_task_completion(assistant_text)) return false;
+  // Natural completion (Opencode v2 semantics): text-only output with no tools
+  // and no stall signals completes the turn.
+  return false;
 }
 
 inline constexpr std::string_view kBuildContinueNudge =

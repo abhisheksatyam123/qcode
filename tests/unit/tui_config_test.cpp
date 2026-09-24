@@ -322,7 +322,8 @@ TEST(TuiConfigTest, HomeConfigDrivesProvidersModelsAndEfforts) {
   ASSERT_NE(antigravity, nullptr);
   const auto* gemini = FindModel(antigravity->models, "gemini-3.8-flash");
   if (gemini != nullptr) {
-    EXPECT_EQ(ProviderTransform::default_variant(*gemini), "medium");
+    const std::string expected = gemini->reasoning_default.empty() ? "low" : gemini->reasoning_default;
+    EXPECT_EQ(ProviderTransform::default_variant(*gemini), expected);
     EXPECT_TRUE(ProviderTransform::is_allowed_variant(*gemini, "high"));
     EXPECT_FALSE(ProviderTransform::is_allowed_variant(*gemini, "max"));
   }

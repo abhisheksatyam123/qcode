@@ -97,9 +97,10 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     final_result.tool_results.insert(final_result.tool_results.end(),
                                      step_result.tool_results.begin(),
                                      step_result.tool_results.end());
-    final_result.usage.prompt_tokens += step_result.usage.prompt_tokens;
+    final_result.usage.prompt_tokens = step_result.usage.prompt_tokens;
     final_result.usage.completion_tokens += step_result.usage.completion_tokens;
-    final_result.usage.total_tokens += step_result.usage.total_tokens;
+    final_result.usage.total_tokens =
+        final_result.usage.prompt_tokens + final_result.usage.completion_tokens;
     final_result.finish_reason = step_result.finish_reason;
     final_result.id = step_result.id;
     final_result.model = step_result.model;

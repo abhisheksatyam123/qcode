@@ -31,8 +31,11 @@ TEST(GenerationContinueTest, AutoContinuesBuildStallsButNotPlanOrDone) {
   EXPECT_TRUE(should_auto_continue_build(false, 6, "one more round"));
   EXPECT_TRUE(should_auto_continue_build(false, 20, "one more round"));
   EXPECT_TRUE(should_auto_continue_build(false, 100000, "one more round"));
-  EXPECT_TRUE(should_auto_continue_build(
+  EXPECT_FALSE(should_auto_continue_build(
       false, 0, "Moved model and context into the session header."));
+  // Stall takes precedence over partial completion words
+  EXPECT_TRUE(should_auto_continue_build(
+      false, 0, "I have updated the header. Next, I will run unit tests."));
 }
 
 TEST(GenerationContinueTest, DoesNotFalselyStallOnNormalExplanations) {

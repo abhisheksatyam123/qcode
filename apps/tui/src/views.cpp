@@ -188,20 +188,13 @@ ftxui::Element render_logo() {
     const auto fg = theme_text();
     return vbox({
         hbox({
-            text("         ") | color(muted),
-            text(" ▄ ") | color(fg) | bold,
+            text("█▀▀▀█      ") | color(muted), text("█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀") | color(fg) | bold,
         }),
         hbox({
-            text("█▀▀█     ") | color(muted),
-            text("█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀") | color(fg) | bold,
+            text("█   █  ▀   ") | color(muted), text("█    █  █ █  █ █▀▀▀") | color(fg) | bold,
         }),
         hbox({
-            text("█▄▄█  ▀  ") | color(muted),
-            text("█    █  █ █  █ █▀▀▀") | color(fg) | bold,
-        }),
-        hbox({
-            text("▀▀▀▀     ") | color(muted),
-            text("▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀") | color(fg) | bold,
+            text("▀▀▀▀▀▀     ") | color(muted),text("▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀") | color(fg) | bold,
         }),
     }) | hcenter;
 }
@@ -271,9 +264,8 @@ ftxui::Element render_view(
         }
     }
     const int last_reasoning = state.last_reasoning_tokens ? *state.last_reasoning_tokens : 0;
-    const int last_cache = state.last_cached_prompt_tokens ? *state.last_cached_prompt_tokens : 0;
     const long long usage_total =
-        (long long)ctx_snapshot + (long long)std::max(0, last_reasoning) + (long long)std::max(0, last_cache);
+        (long long)ctx_snapshot + (long long)std::max(0, last_reasoning);
     // Session cost estimate for the usage suffix (same rates as Stats tab).
     double use_in_rate = 3.00, use_out_rate = 15.00;
     {

@@ -652,9 +652,15 @@ static void run_tools_generation_bus(
       }
 
       gen_result.text += step_res.text;
-      gen_result.usage.prompt_tokens += step_res.usage.prompt_tokens;
+      gen_result.usage.prompt_tokens = step_res.usage.prompt_tokens;
       gen_result.usage.completion_tokens += step_res.usage.completion_tokens;
-      gen_result.usage.total_tokens += step_res.usage.total_tokens;
+      gen_result.usage.total_tokens =
+          gen_result.usage.prompt_tokens + gen_result.usage.completion_tokens;
+      if (step_res.usage.prompt_tokens > 0) {
+        bus.publish<ContextSizeUpdated>({
+            .context_tokens = static_cast<int>(step_res.usage.prompt_tokens),
+        });
+      }
       // Prompt-cache accounting: keep the max seen (each step reports the
       // cached prefix of that request, not a delta).
       gen_result.usage.cached_prompt_tokens =
@@ -729,33 +735,40 @@ static void run_tools_generation_bus(
           last_progress_fp = progress_fp;
           no_progress_repeat = 1;
         }
-        constexpr int kNoProgressNudgeAfter = 4;
-        if (no_progress_repeat >= kNoProgressNudgeAfter) {
+        constexpr int kNoProgressNudgeAfter = 2;
+        constexpr int kMaxNoProgressRepeats = 4;
+        if (no_progress_repeat >= kMaxNoProgressRepeats) {
+          LOG_WARN(
+              "run_tools_generation_bus: no-progress tool loop stuck after {} "
+              "identical repeats (step={}); stopping loop",
+              no_progress_repeat, step);
+          stuck = true;
+        } else if (no_progress_repeat >= kNoProgressNudgeAfter) {
           LOG_WARN(
               "run_tools_generation_bus: no-progress tool loop repeating "
               "(no_progress_repeat={} step={}); nudging for a different approach",
               no_progress_repeat, step);
-          no_progress_repeat = 0;
-          last_progress_fp.clear();
           response_messages.push_back(qcode::Message::user(
-              "[System Note: Your last several tool calls were identical with "
-              "identical results. Try a different file, command, or approach to "
-              "make progress instead of repeating the same call.]"));
+              "[System Note: Your previous tool call produced the exact same result. "
+              "Do not repeat the identical call or command; change parameters, "
+              "try a different approach, inspect a different file, or conclude if finished.]"));
         }
 
         // Re-publish the live context size after each tool call so the TUI's
         // context window updates dynamically as messages are appended.
         {
-            qcode::Messages temp_messages = options.messages;
-            temp_messages.insert(temp_messages.end(), response_messages.begin(), response_messages.end());
-            const size_t sys_tok = estimate_system_tokens(options.system);
-            const size_t msg_tok = estimate_tokens(temp_messages);
-            const size_t live = sys_tok + msg_tok;
+            size_t live = 0;
+            if (step_res.usage.prompt_tokens > 0) {
+                const size_t tool_res_tok = estimate_tokens(
+                    qcode::Messages{qcode::Message::tool_results(result_parts)});
+                live = step_res.usage.prompt_tokens + tool_res_tok;
+            } else {
+                qcode::Messages temp_messages = options.messages;
+                temp_messages.insert(temp_messages.end(), response_messages.begin(), response_messages.end());
+                live = estimate_system_tokens(options.system) + estimate_tokens(temp_messages);
+            }
             bus.publish<ContextSizeUpdated>({.context_tokens = static_cast<int>(live)});
-            LOG_INFO(
-                "run_tools_generation_bus: step={} live context={} tokens "
-                "(sys={} msg={})",
-                step, live, sys_tok, msg_tok);
+            LOG_INFO("run_tools_generation_bus: step={} live context={} tokens", step, live);
         }
 
         if (options.on_step_finish) {
@@ -843,9 +856,10 @@ static void run_tools_generation_bus(
       finished = true;
       gen_result.text = synth_res.text;
       *assistant_text = synth_res.text;
-      gen_result.usage.prompt_tokens += synth_res.usage.prompt_tokens;
+      gen_result.usage.prompt_tokens = synth_res.usage.prompt_tokens;
       gen_result.usage.completion_tokens += synth_res.usage.completion_tokens;
-      gen_result.usage.total_tokens += synth_res.usage.total_tokens;
+      gen_result.usage.total_tokens =
+          gen_result.usage.prompt_tokens + gen_result.usage.completion_tokens;
       response_messages.push_back(qcode::Message::assistant(synth_res.text));
       gen_result.response_messages = response_messages;
       bus.publish<MessageDelta>({
