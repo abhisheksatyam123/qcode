@@ -182,7 +182,10 @@ TEST(GeminiTransformTest, WrapEnvelopeLeavesNonFlashModelUnchanged) {
   EXPECT_EQ(env["model"].get<std::string>(), "claude-sonnet");
 }
 
-TEST(GeminiTransformTest, WrapEnvelopeMarksClaudeCacheBreakpoints) {
+TEST(GeminiTransformTest, WrapEnvelopeOmitsCacheBreakpointsForClaude) {
+  // The Antigravity Gemini endpoint rejects cache_control outright with
+  // HTTP 400 "Unknown name \"cache_control\"", so the envelope must not
+  // carry Anthropic-style cache markers on any position.
   json gem = parsed(R"({
     "systemInstruction": {"parts": [{"text": "sys"}]},
     "contents": [
@@ -194,14 +197,15 @@ TEST(GeminiTransformTest, WrapEnvelopeMarksClaudeCacheBreakpoints) {
   })");
   json env = wrap_antigravity_envelope(gem, "claude-sonnet-4-6");
   const auto& req = env["request"];
-  EXPECT_EQ(req["systemInstruction"]["parts"][0]["cache_control"]["type"],
-            "ephemeral");
+  EXPECT_FALSE(req["systemInstruction"]["parts"][0].contains("cache_control"));
   EXPECT_FALSE(req["contents"][0]["parts"][0].contains("cache_control"));
-  EXPECT_EQ(req["contents"][1]["parts"][0]["cache_control"]["type"],
-            "ephemeral");
-  EXPECT_EQ(req["contents"][2]["parts"][0]["cache_control"]["type"],
-            "ephemeral");
-  EXPECT_EQ(req["tools"][0]["cache_control"]["type"], "ephemeral");
+  EXPECT_FALSE(req["contents"][1]["parts"][0].contains("cache_control"));
+  EXPECT_FALSE(req["contents"][2]["parts"][0].contains("cache_control"));
+  EXPECT_FALSE(req["tools"][0].contains("cache_control"));
+  // The request body itself must survive untouched.
+  EXPECT_EQ(req["systemInstruction"]["parts"][0]["text"], "sys");
+  ASSERT_EQ(req["contents"].size(), 3u);
+  EXPECT_EQ(req["tools"][0]["functionDeclarations"][0]["name"], "lookup");
 }
 
 TEST(GeminiTransformTest, WrapEnvelopeSkipsCacheMarkersForGemini) {

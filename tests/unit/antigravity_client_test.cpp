@@ -53,11 +53,11 @@ TEST(AntigravityClientTest, ClaudeRequestMarksCacheAndThinking) {
   const auto& inner = req["request"];
   EXPECT_EQ(inner["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "high");
-  EXPECT_EQ(inner["systemInstruction"]["parts"][0]["cache_control"]["type"],
-            "ephemeral");
+  // cache_control is rejected by the Antigravity endpoint (HTTP 400), so the
+  // Claude envelope must not emit it on any part.
+  EXPECT_FALSE(inner["systemInstruction"]["parts"][0].contains("cache_control"));
   ASSERT_GE(inner["contents"].size(), 2u);
-  EXPECT_EQ(inner["contents"].back()["parts"][0]["cache_control"]["type"],
-            "ephemeral");
+  EXPECT_FALSE(inner["contents"].back()["parts"][0].contains("cache_control"));
 }
 
 TEST(AntigravityClientTest, Gemini38FlashMapsEffortSku) {

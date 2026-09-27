@@ -10,8 +10,6 @@ namespace qcode {
 namespace gemini {
 namespace {
 
-const nlohmann::json kEphemeralCache = {{"type", "ephemeral"}};
-
 std::string openai_message_text(const nlohmann::json& msg) {
   if (!msg.contains("content")) {
     return {};
@@ -84,44 +82,6 @@ nlohmann::json sanitize_gemini_schema(nlohmann::json node) {
     *it = sanitize_gemini_schema(std::move(*it));
   }
   return node;
-}
-
-void mark_last_part_cache(nlohmann::json& parts) {
-  if (!parts.is_array() || parts.empty() || !parts.back().is_object()) {
-    return;
-  }
-  parts.back()["cache_control"] = kEphemeralCache;
-}
-
-// Antigravity Claude rides the Gemini envelope but honors Anthropic
-// cache_control on the last part of system + the last two contents.
-void apply_antigravity_claude_cache(nlohmann::json& gemini_req) {
-  if (gemini_req.contains("systemInstruction") &&
-      gemini_req["systemInstruction"].is_object() &&
-      gemini_req["systemInstruction"].contains("parts")) {
-    mark_last_part_cache(gemini_req["systemInstruction"]["parts"]);
-  }
-  if (gemini_req.contains("contents") && gemini_req["contents"].is_array()) {
-    int marked = 0;
-    for (int i = static_cast<int>(gemini_req["contents"].size()) - 1;
-         i >= 0 && marked < 2; --i) {
-      auto& content = gemini_req["contents"][static_cast<std::size_t>(i)];
-      if (!content.is_object() || !content.contains("parts")) {
-        continue;
-      }
-      mark_last_part_cache(content["parts"]);
-      ++marked;
-    }
-  }
-  if (gemini_req.contains("tools") && gemini_req["tools"].is_array() &&
-      !gemini_req["tools"].empty() && gemini_req["tools"].back().is_object()) {
-    gemini_req["tools"].back()["cache_control"] = kEphemeralCache;
-  }
-}
-
-bool is_claude_model_id(const std::string& model) {
-  return model.find("claude") != std::string::npos ||
-         model.find("anthropic") != std::string::npos;
 }
 
 nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
@@ -199,18 +159,53 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
           continue;
         }
         auto response = msg.value("content", nlohmann::json{});
+        std::string inline_mime;
+        std::string inline_data;
+
         if (response.is_string()) {
           try {
             response = nlohmann::json::parse(response.get<std::string>());
           } catch (...) {
             response = {{"result", response}};
           }
+        } else if (response.is_array()) {
+          nlohmann::json clean_resp = nlohmann::json::object();
+          for (const auto& item : response) {
+            if (item.is_object() && item.value("type", "") == "text") {
+              clean_resp["result"] = item.value("text", "");
+            } else if (item.is_object() && item.value("type", "") == "image_url") {
+              std::string url = item["image_url"].value("url", "");
+              if (url.starts_with("data:") && url.find(";base64,") != std::string::npos) {
+                auto comma = url.find(";base64,");
+                inline_mime = url.substr(5, comma - 5);
+                inline_data = url.substr(comma + 8);
+              }
+            }
+          }
+          response = std::move(clean_resp);
         }
+
+        if (response.is_object() && response.contains("data") && response.contains("mime_type")) {
+          inline_mime = response["mime_type"].get<std::string>();
+          inline_data = response["data"].get<std::string>();
+          response.erase("data");
+          response["status"] = "ok";
+        }
+
         parts.push_back(
             {{"functionResponse",
               {{"id", call_id},
                {"name", tool_names.contains(call_id) ? tool_names[call_id] : ""},
                {"response", std::move(response)}}}});
+
+        if (!inline_mime.empty() && !inline_data.empty()) {
+          parts.push_back({
+              {"inlineData", {
+                  {"mimeType", std::move(inline_mime)},
+                  {"data", std::move(inline_data)}
+              }}
+          });
+        }
       }
       if (!parts.empty()) {
         contents.push_back(
@@ -356,9 +351,11 @@ nlohmann::json wrap_antigravity_envelope_impl(const nlohmann::json& gemini_req,
   env["model"] = mapped_model;
   env["userAgent"] = "antigravity";
   env["requestType"] = "agent";
-  if (is_claude_model_id(mapped_model) && env["request"].is_object()) {
-    apply_antigravity_claude_cache(env["request"]);
-  }
+  // No cache_control on this envelope. The Antigravity Gemini endpoint now
+  // rejects the field outright ("Invalid JSON payload received. Unknown name
+  // \"cache_control\"", HTTP 400) on systemInstruction.parts, contents.parts
+  // and tool objects, for both Claude and Gemini SKUs. Prompt caching is
+  // implicit server-side, so the Anthropic-style markers are dropped here.
 
   return env;
 }
