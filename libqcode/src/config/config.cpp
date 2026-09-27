@@ -564,9 +564,6 @@ std::vector<ProviderInfo> load_providers_from_config() {
 std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& providers) {
     if (providers.empty()) return "";
 
-    const char* opencode_env = std::getenv("OPENCODE_API_KEY");
-    const bool opencode_has_key = (opencode_env && *opencode_env);
-
     std::ostringstream ss;
     ss << "### Available Providers & Models (from opencode.json)\n\n"
        << "You have access to the following configured providers and models. "
