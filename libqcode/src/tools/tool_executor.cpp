@@ -1,3 +1,5 @@
+#include <filesystem>
+#include <fstream>
 #include <algorithm>
 #include <qcode/core/logger.h>
 #include <chrono>
@@ -27,6 +29,23 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   // Check if tool exists
   auto tool_it = tools.find(tool_call.tool_name);
   if (tool_it == tools.end()) {
+    if (tool_call.tool_name == "read" && tool_call.arguments.contains("path") &&
+        tool_call.arguments["path"].is_string()) {
+      std::string path_str = tool_call.arguments["path"].get<std::string>();
+      std::filesystem::path p(path_str);
+      if (options && !options->workspace.empty() && p.is_relative()) {
+        p = std::filesystem::path(options->workspace) / p;
+      }
+      std::ifstream f(p);
+      if (f.is_open()) {
+        std::string text_content((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
+        return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                          nlohmann::json{{"content", text_content}});
+      }
+      return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
+                        "Failed to open file: " + path_str);
+    }
     LOG_WARN("ToolExecutor: tool '{}' not found", tool_call.tool_name);
     return ToolResult(
         tool_call.id, tool_call.tool_name, tool_call.arguments,

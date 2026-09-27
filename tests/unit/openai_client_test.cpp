@@ -104,6 +104,45 @@ TEST(OpenAIRequestBuilderTest, ZenFreeModelsSendOpenCodeClientHeaders) {
   EXPECT_NE(headers.find("x-opencode-request"), headers.end());
 }
 
+TEST(OpenAIRequestBuilderTest, ZenFreeModelsGeneratesValidSessionAndRequestId) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  qcode::providers::ProviderConfig config;
+  config.base_url = "https://opencode.ai/zen/v1";
+  config.api_key = "";
+  const auto headers = builder.build_headers(config);
+  const auto auth = headers.find("Authorization");
+  ASSERT_NE(auth, headers.end());
+  EXPECT_EQ(auth->second, "Bearer public");
+  const auto session = headers.find("x-opencode-session");
+  ASSERT_NE(session, headers.end());
+  EXPECT_TRUE(session->second.starts_with("ses_"));
+  const auto request = headers.find("x-opencode-request");
+  ASSERT_NE(request, headers.end());
+  EXPECT_TRUE(request->second.starts_with("msg_"));
+}
+
+TEST(OpenAIRequestBuilderTest, ZenRequestAutomaticallyInjectsBashAndReadTools) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  qcode::GenerateOptions options;
+  options.model = "muse-spark-1.3-contributor-free";
+  options.prompt = "hello";
+  const auto req = builder.build_request_json(options);
+  EXPECT_TRUE(req.contains("tools"));
+  EXPECT_TRUE(req["tools"].is_array());
+  bool has_bash = false;
+  bool has_read = false;
+  for (const auto& t : req["tools"]) {
+    std::string name = t.contains("name") ? t["name"].get<std::string>() : t["function"]["name"].get<std::string>();
+    if (name == "bash") has_bash = true;
+    if (name == "read") has_read = true;
+  }
+  EXPECT_TRUE(has_bash);
+  EXPECT_TRUE(has_read);
+  EXPECT_TRUE(req.contains("stream"));
+  EXPECT_TRUE(req["stream"].get<bool>());
+}
+
 TEST(OpenAIRequestBuilderTest, NonZenUrlsDoNotGetOpenCodeClientHeaders) {
   qcode::openai::OpenAIRequestBuilder builder;
   qcode::providers::ProviderConfig config;

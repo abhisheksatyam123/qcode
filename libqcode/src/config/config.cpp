@@ -579,11 +579,7 @@ std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& 
         std::vector<const ModelInfo*> available_models;
         for (const auto& model : provider.models) {
             if (model.id.empty()) continue;
-            // Keyless OpenCode Zen only supports space-bunny-free; other models
-            // reject with 401 AuthError or 403 FreeTierError.
-            if (provider.id == "opencode" && !opencode_has_key && provider.api_key.empty()) {
-                if (model.id != "space-bunny-free") continue;
-            }
+
             available_models.push_back(&model);
         }
         if (available_models.empty()) continue;

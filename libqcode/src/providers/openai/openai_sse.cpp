@@ -27,6 +27,30 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       auto json = nlohmann::json::parse(data);
 
       const auto event_type = json.value("type", "");
+      if (event_type == "response.output_item.added") {
+        const auto item = json.value("item", nlohmann::json::object());
+        if (item.value("type", "") == "function_call") {
+          PendingToolCall tc;
+          tc.id = item.value("call_id", item.value("id", ""));
+          tc.name = item.value("name", "");
+          pending_tool_calls_.push_back(std::move(tc));
+        }
+        return;
+      }
+      if (event_type == "response.function_call_arguments.delta") {
+        if (!pending_tool_calls_.empty()) {
+          pending_tool_calls_.back().arguments += json.value("delta", "");
+        }
+        return;
+      }
+      if (event_type == "response.function_call_arguments.done") {
+        if (!pending_tool_calls_.empty()) {
+          if (json.contains("arguments") && json["arguments"].is_string()) {
+            pending_tool_calls_.back().arguments = json["arguments"].get<std::string>();
+          }
+        }
+        return;
+      }
       if (event_type == "response.output_text.delta") {
         push_event(StreamEvent(json.value("delta", "")));
         return;
@@ -37,6 +61,12 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       }
       if (event_type == "response.completed" ||
           event_type == "response.incomplete") {
+        for (const auto& tc : pending_tool_calls_) {
+          if (!tc.name.empty()) {
+            push_event(StreamEvent::tool_call(tc.id, tc.name, tc.arguments.empty() ? "{}" : tc.arguments));
+          }
+        }
+        pending_tool_calls_.clear();
         Usage usage;
         const auto response = json.value("response", nlohmann::json::object());
         if (response.contains("usage")) {
@@ -157,6 +187,26 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
 
       if (!choices.empty() && choices[0].contains("delta")) {
         auto& delta = choices[0]["delta"];
+        if (delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
+          for (const auto& tc : delta["tool_calls"]) {
+            size_t idx = tc.value("index", 0);
+            if (pending_tool_calls_.size() <= idx) {
+              pending_tool_calls_.resize(idx + 1);
+            }
+            if (tc.contains("id") && tc["id"].is_string()) {
+              pending_tool_calls_[idx].id = tc["id"].get<std::string>();
+            }
+            if (tc.contains("function") && tc["function"].is_object()) {
+              const auto& fn = tc["function"];
+              if (fn.contains("name") && fn["name"].is_string()) {
+                pending_tool_calls_[idx].name += fn["name"].get<std::string>();
+              }
+              if (fn.contains("arguments") && fn["arguments"].is_string()) {
+                pending_tool_calls_[idx].arguments += fn["arguments"].get<std::string>();
+              }
+            }
+          }
+        }
         if (delta.contains("content") && !delta["content"].is_null()) {
           const auto& content = delta["content"];
           if (content.is_string()) {
@@ -215,6 +265,13 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         LOG_DEBUG("Stream finished with reason: {}",
                               finish_reason_str);
 
+        for (const auto& tc : pending_tool_calls_) {
+          if (!tc.name.empty()) {
+            push_event(StreamEvent::tool_call(tc.id, tc.name, tc.arguments.empty() ? "{}" : tc.arguments));
+          }
+        }
+        pending_tool_calls_.clear();
+
         finish_event_pushed_ = true;
 
         if (qcode::utils::is_empty_upstream_network_drop(json)) {
@@ -249,6 +306,8 @@ FinishReason OpenAIStreamImpl::parse_finish_reason(
     const std::string& reason_str) {
   if (reason_str == "stop") {
     return kFinishReasonStop;
+  } else if (reason_str == "tool_calls") {
+    return kFinishReasonToolCalls;
   } else if (reason_str == "length") {
     return kFinishReasonLength;
   } else if (reason_str == "content_filter") {

@@ -68,6 +68,12 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   std::atomic<bool> is_complete_{false};
   std::atomic<bool> should_stop_{false};
   std::atomic<bool> finish_event_pushed_{false};
+  struct PendingToolCall {
+    std::string id;
+    std::string name;
+    std::string arguments;
+  };
+  std::vector<PendingToolCall> pending_tool_calls_;
   StreamProtocol protocol_;
 };
 

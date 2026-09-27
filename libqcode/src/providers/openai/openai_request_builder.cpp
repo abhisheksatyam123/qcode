@@ -320,6 +320,49 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     request["usage"] = {{"include", true}};
   }
 
+  if (providers::is_opencode_zen_url(base_url_)) {
+    // OpenCode Zen free tier requires bash and read tool definitions to be
+    // declared in the wire request payload.
+    if (!request.contains("tools") || !request["tools"].is_array()) {
+      request["tools"] = nlohmann::json::array();
+    }
+    bool has_bash = false;
+    bool has_read = false;
+    for (const auto& t : request["tools"]) {
+      if (t.contains("function") && t["function"].contains("name")) {
+        const auto& name = t["function"]["name"];
+        if (name == "bash") has_bash = true;
+        if (name == "read") has_read = true;
+      }
+    }
+    if (!has_bash) {
+      request["tools"].push_back({
+          {"type", "function"},
+          {"function",
+           {{"name", "bash"},
+            {"description", "Run bash commands"},
+            {"parameters",
+             {{"type", "object"},
+              {"properties", {{"command", {{"type", "string"}}}}},
+              {"required", {"command"}}}}}}});
+    }
+    if (!has_read) {
+      request["tools"].push_back({
+          {"type", "function"},
+          {"function",
+           {{"name", "read"},
+            {"description", "Read file contents"},
+            {"parameters",
+             {{"type", "object"},
+              {"properties", {{"path", {{"type", "string"}}}}},
+              {"required", {"path"}}}}}}});
+    }
+    if (!request.contains("tool_choice")) {
+      request["tool_choice"] = "auto";
+    }
+    request["stream"] = true;
+  }
+
   if (wire_protocol_ == "google") {
     return qcode::gemini::convert_openai_to_gemini(request);
   }

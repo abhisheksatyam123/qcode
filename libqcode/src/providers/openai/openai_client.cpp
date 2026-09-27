@@ -1,3 +1,4 @@
+#include "providers/internal/opencode_zen_headers.h"
 #include "openai_client.h"
 
 #include <qcode/core/logger.h>
@@ -128,6 +129,59 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
   wire_protocol_ = options.protocol.empty() ? "chat_completions" : options.protocol;
   LOG_INFO("OpenAI client path={} protocol={} base={}",
            config_.completions_endpoint_path, options.protocol, base_url);
+}
+
+GenerateResult OpenAIClient::generate_text(const GenerateOptions& options) {
+  if (providers::is_opencode_zen_url(config_.base_url)) {
+    StreamOptions stream_opts(options);
+    auto stream = stream_text(stream_opts);
+    GenerateResult result;
+    result.model = options.model;
+    std::string text;
+    std::string reasoning;
+    Usage usage;
+    FinishReason finish_reason = kFinishReasonStop;
+    std::vector<ToolCall> tool_calls;
+
+    for (const auto& event : stream) {
+      if (event.is_text_delta()) {
+        text += event.text_delta;
+      } else if (event.is_reasoning_delta()) {
+        reasoning += event.text_delta;
+      } else if (event.is_tool_call()) {
+        try {
+          nlohmann::json args = nlohmann::json::parse(event.tool_payload);
+          tool_calls.emplace_back(event.tool_call_id, event.tool_name, std::move(args));
+        } catch (...) {
+          tool_calls.emplace_back(event.tool_call_id, event.tool_name, nlohmann::json::object());
+        }
+      } else if (event.is_finish()) {
+        if (event.usage) usage = *event.usage;
+        if (event.finish_reason) finish_reason = *event.finish_reason;
+      } else if (event.is_error()) {
+        return GenerateResult(event.error.value_or("Stream error"));
+      }
+    }
+
+    result.text = std::move(text);
+    if (!reasoning.empty()) result.reasoning = std::move(reasoning);
+    result.usage = usage;
+    if (!tool_calls.empty()) {
+      finish_reason = kFinishReasonToolCalls;
+      result.tool_calls = std::move(tool_calls);
+      std::vector<ToolCallContentPart> parts;
+      for (const auto& tc : result.tool_calls) {
+        parts.emplace_back(tc.id, tc.tool_name, tc.arguments, tc.thought_signature);
+      }
+      result.response_messages.push_back(
+          Message::assistant_with_tools(result.text, parts));
+    } else {
+      result.response_messages.push_back(Message::assistant(result.text));
+    }
+    result.finish_reason = finish_reason;
+    return result;
+  }
+  return BaseProviderClient::generate_text(options);
 }
 
 StreamResult OpenAIClient::stream_text(const StreamOptions& options) {

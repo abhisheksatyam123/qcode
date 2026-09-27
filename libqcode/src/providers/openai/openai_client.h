@@ -27,6 +27,7 @@ class OpenAIClient : public providers::BaseProviderClient {
                const CompatibleOptions& options);
 
   // Override only what's specific to OpenAI
+  GenerateResult generate_text(const GenerateOptions& options) override;
   StreamResult stream_text(const StreamOptions& options) override;
   std::string provider_name() const override;
   std::vector<std::string> supported_models() const override;

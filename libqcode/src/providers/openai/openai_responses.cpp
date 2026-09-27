@@ -112,14 +112,24 @@ nlohmann::json to_responses_request(const nlohmann::json& request) {
   if (request.contains("tools")) {
     responses["tools"] = nlohmann::json::array();
     for (const auto& tool : request["tools"]) {
-      const auto& function = tool["function"];
-      responses["tools"].push_back(
-          {{"type", "function"},
-           {"name", function.value("name", "")},
-           {"description", function.value("description", "")},
-           {"parameters",
-            function.value("parameters", nlohmann::json::object())}});
+      if (tool.contains("function")) {
+        const auto& function = tool["function"];
+        responses["tools"].push_back(
+            {{"type", "function"},
+             {"name", function.value("name", "")},
+             {"description", function.value("description", "")},
+             {"parameters",
+              function.value("parameters", nlohmann::json::object())}});
+      } else {
+        responses["tools"].push_back(tool);
+      }
     }
+  }
+  if (request.contains("stream")) {
+    responses["stream"] = request["stream"];
+  }
+  if (request.contains("tool_choice")) {
+    responses["tool_choice"] = request["tool_choice"];
   }
   return responses;
 }

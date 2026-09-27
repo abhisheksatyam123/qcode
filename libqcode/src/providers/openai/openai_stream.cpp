@@ -22,7 +22,7 @@ std::chrono::seconds default_event_timeout() {
       if (secs > 0) return std::chrono::seconds(secs);
     } catch (...) {}
   }
-  return std::chrono::seconds(30);
+  return std::chrono::seconds(90);
 }
 constexpr auto kSleepInterval = std::chrono::milliseconds(1);
 constexpr auto kConnectionTimeout = 30;  // seconds
@@ -297,6 +297,12 @@ void OpenAIStreamImpl::push_event(StreamEvent event) {
 void OpenAIStreamImpl::push_finish_event_if_needed() {
   bool expected = false;
   if (finish_event_pushed_.compare_exchange_strong(expected, true)) {
+    for (const auto& tc : pending_tool_calls_) {
+      if (!tc.name.empty()) {
+        event_queue_.enqueue(StreamEvent::tool_call(tc.id, tc.name, tc.arguments.empty() ? "{}" : tc.arguments));
+      }
+    }
+    pending_tool_calls_.clear();
     LOG_DEBUG("Pushing finish event to queue");
     event_queue_.enqueue(StreamEvent(kStreamEventTypeFinish));
   } else {

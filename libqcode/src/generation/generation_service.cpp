@@ -204,17 +204,7 @@ static JsonValue run_subagent_turn_multi(
         rest.push_back({&pr, &mo, mo.id});
       }
     }
-    const char* opencode_env_key = std::getenv("OPENCODE_API_KEY");
-    const bool opencode_has_key = (opencode_env_key && *opencode_env_key);
-    // Filter out unauthenticated OpenCode models from rest pool
-    std::vector<FallbackCand> filtered_rest;
-    for (const auto& c : rest) {
-      if (c.p->id == "opencode" && !opencode_has_key && c.p->api_key.empty()) {
-        if (c.model_id != "space-bunny-free") continue;
-      }
-      filtered_rest.push_back(c);
-    }
-    rest = std::move(filtered_rest);
+    // OpenCode models configured in opencode.json are supported in the rest pool.
 
     auto prio = [](const ProviderInfo* q) {
       if (q->id.find("antigravity") != std::string::npos) return 0;
