@@ -109,8 +109,13 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
         }
         if (message["content"].empty()) continue;
       } else {
-        // Handle messages with text and/or tool calls
-        message["role"] = utils::message_role_to_string(msg.role);
+        // Handle messages with text and/or tool calls.
+        // The Anthropic Messages API accepts only user/assistant inside
+        // `messages` - history system notes (e.g. the compaction handoff
+        // written by /compact) must ride as user turns or the request 400s.
+        message["role"] = msg.role == kMessageRoleSystem
+                             ? "user"
+                             : utils::message_role_to_string(msg.role);
 
         // Get text content and tool calls
         std::string text_content = msg.get_text();

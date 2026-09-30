@@ -42,6 +42,7 @@ add_executable(qcode_tests
     unit/commands_test.cpp
     unit/compaction_cache_test.cpp
     unit/image_attachment_test.cpp
+    unit/transform_matrix_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/bus_json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/workspace_fs.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/http_utils.cpp
