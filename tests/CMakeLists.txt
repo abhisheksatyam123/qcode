@@ -19,6 +19,7 @@ add_executable(qcode_tests
     unit/antigravity_client_test.cpp
     unit/cursor_provider_test.cpp
     unit/bash_tool_test.cpp
+    unit/image_tool_test.cpp
     unit/tui_config_test.cpp
     unit/tui_bus_test.cpp
     unit/retry_policy_test.cpp
@@ -39,6 +40,8 @@ add_executable(qcode_tests
     unit/workspace_fs_test.cpp
     unit/study_assistant_test.cpp
     unit/commands_test.cpp
+    unit/compaction_cache_test.cpp
+    unit/image_attachment_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/bus_json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/workspace_fs.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/http_utils.cpp

@@ -83,8 +83,10 @@ target_sources(qcode-engine PRIVATE
     # generation
     src/generation/generation_controller.cpp
     src/generation/generation_service.cpp
+    src/generation/turn_prefix.cpp
 
     # session
+    src/compaction/compaction_request.cpp
     src/session/session_store.cpp
     src/session/session_telemetry.cpp
     src/session/study_store.cpp
@@ -99,6 +101,7 @@ target_sources(qcode-engine PRIVATE
     src/tools/bash_tool.cpp
     src/tools/task_tool.cpp
     src/tools/task_target.cpp
+    src/tools/image_tool.cpp
     src/tools/multi_step_coordinator.cpp
     src/tools/tool_catalog.cpp
 )

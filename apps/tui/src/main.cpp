@@ -284,7 +284,14 @@ int main(int argc, char* argv[]) {
         persist_session_variant();
     };
 
+    auto sync_tool_config_and_system_prompt = [&]() {
+        const auto* mi = current_model_info();
+        tool_cfg.enable_image = (mi != nullptr && mi->vision);
+        system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
+    };
+
     apply_config_variant_if_unset();
+    sync_tool_config_and_system_prompt();
 
     auto open_variant_picker = [&]() {
         qcode::ModelInfo fallback;
@@ -469,6 +476,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        sync_tool_config_and_system_prompt();
         auto modes = qcode::session::get_session_modes(id);
         if (state.agent_mode) {
             *state.agent_mode = modes.first.empty() ? "orchestrator" : modes.first;
@@ -877,7 +885,7 @@ int main(int argc, char* argv[]) {
         if (qcode::tui::handle_model_select_keys(e, overlays, [&](const qcode::ModelEntry& entry) {
             selected_provider = entry.provider_idx;
             selected_model = entry.model_idx;
-            system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
+            sync_tool_config_and_system_prompt();
             clamp_variant_to_current_model();
         })) return true;
 
@@ -900,6 +908,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 apply_config_variant_if_unset();
+                sync_tool_config_and_system_prompt();
                 store.add_toast("Switched to: " + picked.title, "info", 1500);
             },
             [&](const std::string& sid) {
@@ -1541,12 +1550,12 @@ int main(int argc, char* argv[]) {
             *state.scroll_line = 0;
         }
         previous_tab = state.tab_selected;
-        
+
         // Expire old toasts
         store.expire_toasts();
-        
+
         // Status rendered inline in header strip
-        
+
         auto filtered_model_entries = qcode::tui::filter_models(overlays.model_entries, overlays.model_query);
         auto filtered_session_entries = qcode::tui::filter_sessions(overlays.session_entries, overlays.session_query);
         auto filtered_theme_entries = qcode::tui::filter_themes(overlays.theme_entries, overlays.theme_query);
@@ -1580,7 +1589,7 @@ int main(int argc, char* argv[]) {
                 }),
             });
         }
-        
+
         return layout;
     });
 

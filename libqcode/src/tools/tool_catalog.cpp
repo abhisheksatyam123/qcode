@@ -8,6 +8,7 @@
 
 #include <qcode/tools/bash_tool.h>
 #include <qcode/tools/task_tool.h>
+#include <qcode/tools/image_tool.h>
 
 namespace qcode {
 
@@ -35,6 +36,12 @@ task.list = { op: "list" }
 task.kill = { op: "kill", background_task_id: string, reason?: string })",
       true
     },
+    {
+      "image",
+      "Inspect and load image files into the model context for visual reasoning (png, jpg, webp, gif, bmp, svg).",
+      R"(image = { path: string, detail?: "auto"|"low"|"high", description?: string })",
+      true
+    },
   };
 }
 
@@ -43,11 +50,22 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
   std::ostringstream ss;
   ss << "### Core Tool Contract\n\n";
   ss << "This base prompt is the only system-prompt location for tool-use policy.\n\n";
-  if (cfg.enable_task) {
+  if (cfg.enable_task && cfg.enable_image) {
+    ss << "The main purpose of this section is to define the purpose of tool calls "
+          "and how to use them. You have three sets of tools available:\n\n"
+          "1. **Bash tool** - works as a Swiss Army knife; it can execute anything in the shell and read the output. Prefer relative paths under the session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n"
+          "2. **Task tool** - used to delegate tasks to other agents.\n"
+          "3. **Image tool** - used to inspect and load local images for visual reasoning.\n\n";
+  } else if (cfg.enable_task) {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. You have two sets of tools available:\n\n"
           "1. **Bash tool** - works as a Swiss Army knife; it can execute anything in the shell and read the output. Prefer relative paths under the session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n"
           "2. **Task tool** - used to delegate tasks to other agents.\n\n";
+  } else if (cfg.enable_image) {
+    ss << "The main purpose of this section is to define the purpose of tool calls "
+          "and how to use them. You have two sets of tools available:\n\n"
+          "1. **Bash tool** - works as a Swiss Army knife; it can execute anything in the shell and read the output. Prefer relative paths under the session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n"
+          "2. **Image tool** - used to inspect and load local images for visual reasoning.\n\n";
   } else {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. The only exposed tool is **bash**.\n\n";
@@ -62,7 +80,8 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
 
   for (const auto& d : descriptors()) {
     if ((d.name == "bash" && !cfg.enable_bash) ||
-        (d.name == "task" && !cfg.enable_task))
+        (d.name == "task" && !cfg.enable_task) ||
+        (d.name == "image" && !cfg.enable_image))
       continue;
     ss << d.schema_text << "\n\n";
   }
@@ -102,12 +121,14 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
 }
 
 qcode::ToolSet ToolCatalog::build_definitions(const ToolConfig& cfg) {
-  LOG_DEBUG("Tools: build_definitions bash={} task={}", cfg.enable_bash, cfg.enable_task);
+  LOG_DEBUG("Tools: build_definitions bash={} task={} image={}", cfg.enable_bash, cfg.enable_task, cfg.enable_image);
   qcode::ToolSet tools;
   if (cfg.enable_bash)
     tools["bash"] = qcode::BashTool::definition();
   if (cfg.enable_task)
     tools["task"] = qcode::TaskTool::definition();
+  if (cfg.enable_image)
+    tools["image"] = qcode::ImageTool::definition();
   return tools;
 }
 
@@ -175,6 +196,16 @@ std::string ToolCatalog::format_tool_call(const std::string& tool_name,
       }
       if (json.size() <= 1) {
         formatted += "  (no additional parameters)\n";
+      }
+    } else if (tool_name == "image") {
+      if (json.contains("path")) {
+        formatted += "  Path: " + json["path"].get<std::string>() + "\n";
+      }
+      if (json.contains("description") && !json["description"].get<std::string>().empty()) {
+        formatted += "  Description: " + json["description"].get<std::string>() + "\n";
+      }
+      if (json.contains("detail") && !json["detail"].get<std::string>().empty()) {
+        formatted += "  Detail: " + json["detail"].get<std::string>() + "\n";
       }
     } else {
       // Generic tool: show all args
@@ -280,6 +311,21 @@ std::string ToolCatalog::format_tool_result(const std::string& tool_name,
       if (truncate_at > 0 && static_cast<int>(s.length()) > truncate_at)
         s = s.substr(0, truncate_at) + "...";
       formatted += s + "\n";
+    }
+  } else if (tool_name == "image" && parsed_ok) {
+    if (success) {
+      formatted += "  Loaded image: " + parsed.value("path", "image") + " (" +
+                   parsed.value("mime_type", "image") + ", " +
+                   std::to_string(parsed.value("size_bytes", 0)) + " bytes)\n";
+      if (parsed.contains("description") && !parsed["description"].get<std::string>().empty()) {
+        formatted += "  Description: " + parsed["description"].get<std::string>() + "\n";
+      }
+    } else {
+      if (parsed.contains("error")) {
+        formatted += "  Error: " + parsed["error"].get<std::string>() + "\n";
+      } else {
+        formatted += "  " + result_or_error + "\n";
+      }
     }
   } else if (tool_name == "task" && parsed_ok) {
     // Task result

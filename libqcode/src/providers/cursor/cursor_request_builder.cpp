@@ -48,6 +48,14 @@ std::string build_conversation_prompt(const GenerateOptions& options) {
       } else if (const auto* result =
                      std::get_if<ToolResultContentPart>(&part)) {
         prompt << "[tool result: " << result->result.dump() << ']';
+      } else if (const auto* img =
+                     std::get_if<ImageContentPart>(&part)) {
+        // Text-prompt transport: images cannot ride along; surface their
+        // existence instead of dropping the attachment silently.
+        prompt << "[image attachment: " << img->mime_type << ", "
+               << img->data.size() << " b64 chars"
+               << (img->description.empty() ? "" : ", " + img->description)
+               << "]";
       }
     }
     prompt << "\n\n";

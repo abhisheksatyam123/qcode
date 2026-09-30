@@ -13,6 +13,13 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
     const GenerateOptions& options) {
   nlohmann::json request;
   request["model"] = options.model;
+
+  // Prompt-cache breakpoints (dsh/opencode "auto" policy: tools + system +
+  // latest message) — but only for Claude/Anthropic model ids, so generic
+  // Anthropic-compatible endpoints serving other models never see the field.
+  const bool claude_route =
+      options.model.find("claude") != std::string::npos ||
+      options.model.find("anthropic") != std::string::npos;
   int max_tokens = options.max_tokens.value_or(4096);
   std::optional<int> thinking_budget = options.budget_tokens;
   if (!thinking_budget && options.reasoning_effort &&
@@ -73,7 +80,25 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
           tool_result_content["type"] = "tool_result";
           tool_result_content["tool_use_id"] = result.tool_call_id;
 
-          if (!result.is_error) {
+          if (!result.is_error && result.result.is_object() &&
+              result.result.contains("data") && result.result.contains("mime_type")) {
+            nlohmann::json content_arr = nlohmann::json::array();
+            std::string desc = "Image loaded: " + result.result.value("path", "image");
+            if (result.result.contains("description") &&
+                !result.result["description"].get<std::string>().empty()) {
+              desc += " (" + result.result["description"].get<std::string>() + ")";
+            }
+            content_arr.push_back({{"type", "text"}, {"text", desc}});
+            content_arr.push_back({
+                {"type", "image"},
+                {"source", {
+                    {"type", "base64"},
+                    {"media_type", result.result["mime_type"].get<std::string>()},
+                    {"data", result.result["data"].get<std::string>()}
+                }}
+            });
+            tool_result_content["content"] = std::move(content_arr);
+          } else if (!result.is_error) {
             tool_result_content["content"] = result.result.dump();
           } else {
             tool_result_content["content"] = result.result.dump();
@@ -131,6 +156,19 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
                                           {"name", tool_call.tool_name},
                                           {"input", tool_call.arguments}});
           }
+        } else if (!msg.get_images().empty()) {
+          // Attachment message: text block + base64 image blocks.
+          nlohmann::json arr = nlohmann::json::array();
+          if (!text_content.empty()) {
+            arr.push_back({{"type", "text"}, {"text", text_content}});
+          }
+          for (const auto& img : msg.get_images()) {
+            arr.push_back({{"type", "image"},
+                           {"source", {{"type", "base64"},
+                                       {"media_type", img.mime_type},
+                                       {"data", img.data}}}});
+          }
+          message["content"] = std::move(arr);
         } else if (!text_content.empty()) {
           // Simple text message (non-assistant or assistant with text only)
           message["content"] = text_content;
@@ -140,7 +178,61 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
         }
       }
 
-      request["messages"].push_back(message);
+      // Anthropic requires alternating roles; consecutive same-role messages
+      // (e.g. a directive appended after a trailing tool-result user message)
+      // would 400. Merge them into one message instead.
+      if (!request["messages"].empty() &&
+          request["messages"].back().value("role", "") ==
+              message.value("role", "")) {
+        auto merge_block = [](nlohmann::json& dst_content,
+                              const nlohmann::json& src_content) {
+          nlohmann::json arr = nlohmann::json::array();
+          auto append = [&arr](const nlohmann::json& c) {
+            if (c.is_string()) {
+              const auto& s = c.get_ref<const std::string&>();
+              if (!s.empty()) {
+                arr.push_back({{"type", "text"}, {"text", s}});
+              }
+            } else if (c.is_array()) {
+              for (const auto& b : c) arr.push_back(b);
+            }
+          };
+          if (dst_content.is_array()) {
+            for (const auto& b : dst_content) arr.push_back(b);
+          } else if (dst_content.is_string()) {
+            append(dst_content);
+          }
+          append(src_content);
+          dst_content = std::move(arr);
+        };
+        auto& prev = request["messages"].back();
+        if (!prev.contains("content")) prev["content"] = nlohmann::json::array();
+        if (!message.contains("content")) {
+          message["content"] = nlohmann::json::array();
+        }
+        merge_block(prev["content"], message["content"]);
+      } else {
+        request["messages"].push_back(message);
+      }
+    }
+
+    // Cache breakpoint on the latest message so the conversation prefix up
+    // to it is written to the provider cache and reusable next request.
+    if (claude_route && !request["messages"].empty()) {
+      auto& last_msg = request["messages"].back();
+      if (last_msg.contains("content")) {
+        auto& content = last_msg["content"];
+        if (content.is_string()) {
+          const std::string text = content.get<std::string>();
+          content = nlohmann::json::array(
+              {{{"type", "text"},
+                {"text", text},
+                {"cache_control", {{"type", "ephemeral"}}}}});
+        } else if (content.is_array() && !content.empty() &&
+                   content.back().is_object()) {
+          content.back()["cache_control"] = {{"type", "ephemeral"}};
+        }
+      }
     }
   } else {
     // Build from prompt
@@ -191,6 +283,11 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
     }
 
     if (!tools_array.empty()) {
+      // Cache breakpoint on the last tool definition: tool schemas precede
+      // the system prompt in the cacheable prefix.
+      if (claude_route) {
+        tools_array.back()["cache_control"] = {{"type", "ephemeral"}};
+      }
       request["tools"] = tools_array;
 
       // Add tool choice if specified

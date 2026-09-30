@@ -392,6 +392,11 @@ static std::string extract_shell_command(const qcode::ToolCallContentPart& part)
         if (!command.empty()) return command;
     }
 
+    if (part.tool_name == "image" || part.tool_name == "view_image") {
+        auto path = json_string(args, {"path", "file", "file_path", "filename"});
+        if (!path.empty()) return "image " + path;
+    }
+
     if (part.tool_name == "read_file" || part.tool_name == "view_file" ||
         part.tool_name == "write_file" || part.tool_name == "edit_file" ||
         part.tool_name == "replace_file_content") {
@@ -430,6 +435,12 @@ static std::string extract_result_output(const qcode::ToolResultContentPart& par
     // Upstream toolError(): prefer trimmed message, never a raw JSON dump.
     if (part.result.is_string()) return part.result.get<std::string>();
     if (!part.result.is_object()) return part.result.dump();
+    if (part.result.contains("data") && part.result.contains("mime_type")) {
+        std::string p = json_string(part.result, {"path", "file"});
+        std::string mime = json_string(part.result, {"mime_type"});
+        auto bytes = part.result.value("size_bytes", 0);
+        return "Image loaded: " + (p.empty() ? "image" : p) + " (" + mime + ", " + std::to_string(bytes) + " bytes)";
+    }
     auto output = json_string(part.result, {"output", "content", "result",
                                             "summary", "matches", "error", "message"});
     if (!output.empty()) return output;
@@ -637,6 +648,16 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
         Elements user_lines;
         const int wrap_w = plain_wrap_width();
         for (const auto& part : msg.content) {
+            if (const auto* img =
+                    std::get_if<qcode::ImageContentPart>(&part)) {
+                user_lines.push_back(hbox({
+                    text("┃ ") | color(user_green()),
+                    text("[image: " + img->mime_type + ", " +
+                         std::to_string(img->data.size()) + " b64 chars]") |
+                        dim,
+                }) | bgcolor(theme_panel_bg(theme)));
+                continue;
+            }
             const auto* tp = std::get_if<qcode::TextContentPart>(&part);
             if (!tp || tp->text.empty()) continue;
             for (auto& chunk : wrap_plain_block(tp->text, wrap_w)) {

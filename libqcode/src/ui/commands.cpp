@@ -1,4 +1,5 @@
 #include <qcode/ui/commands.h>
+#include <qcode/compaction/compaction_request.h>
 #include <qcode/providers/provider_profile.h>
 #include <qcode/transform/provider_transform.h>
 #include <qcode/session/session_store.h>
@@ -449,7 +450,7 @@ bool handle_slash_command(
             }
         }
         run_compaction(state, providers_list, selected_provider, selected_model,
-                       keep, compaction_thread, bus);
+                       keep, system_prompt, enable_tools, compaction_thread, bus);
         return true;
     }
 
@@ -501,6 +502,8 @@ void run_compaction(
     int selected_provider,
     int selected_model,
     int keep,
+    const std::string& system_prompt,
+    bool enable_tools,
     std::shared_ptr<qcode::compat::jthread> compaction_thread,
     bus::BusPort& bus
 ) {
@@ -528,6 +531,12 @@ void run_compaction(
     int sp = selected_provider;
     int sm = selected_model;
     std::string sid = *state.session_id;
+    // Prompt-cache context for the summarizer call (must mirror the last
+    // routed turn's system prompt / tools — see compaction_request.h).
+    const std::string system_prompt_copy = system_prompt;
+    const bool tools_enabled = enable_tools;
+    const std::string agent_mode =
+        state.agent_mode ? *state.agent_mode : std::string("orchestrator");
 
     bus.publish<qcode::contract::ToastRequested>({
         .message = "Compacting conversation...",
@@ -544,7 +553,8 @@ void run_compaction(
         compaction_thread->join();
     }
     *compaction_thread = qcode::compat::jthread(
-        [providers_copy, sp, sm, snapshot, keep, sid,
+        [providers_copy, sp, sm, snapshot, keep, sid, system_prompt_copy,
+         tools_enabled, agent_mode,
          &bus](qcode::compat::stop_token stop_token) mutable {
         qcode::contract::CompactionResult::Payload result;
         result.keep = keep;
@@ -571,42 +581,6 @@ void run_compaction(
             fail("Invalid model selection");
             return;
         }
-
-        std::ostringstream transcript;
-        for (const auto& m : snapshot) {
-            std::string role_str;
-            if (m.role == qcode::kMessageRoleUser) role_str = "User";
-            else if (m.role == qcode::kMessageRoleAssistant) role_str = "Assistant";
-            else if (m.role == qcode::kMessageRoleSystem) role_str = "System";
-            else role_str = "Message";
-            std::string text;
-            for (const auto& part : m.content) {
-                if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
-                    text += tp->text + "\n";
-                } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
-                    text += "[Tool call: " + tcp->tool_name + "]\n";
-                } else if (std::holds_alternative<qcode::ToolResultContentPart>(part)) {
-                    text += "[Tool result]\n";
-                } else if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
-                    if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";
-                }
-            }
-            transcript << role_str << ": " << text << "\n";
-        }
-
-        const std::string compaction_instruction =
-            "Tools are available when needed, including bash for bounded read-only "
-            "inspection. Do not modify files or create notes while generating the "
-            "handoff summary.\n\n"
-            "Summarize the following conversation into a concise handoff packet so a "
-            "fresh session can take over. Preserve the next actionable task, verified "
-            "evidence, blockers, and concise facts about the code, APIs, data "
-            "structures, files, and user preferences that matter for the request.\n\n"
-            "Keep only task state and concise facts.\n\n"
-            "Output only:\n"
-            "## Tasks\n"
-            "## Systems\n\n"
-            "Use tools only when they improve summary accuracy; otherwise answer directly.";
 
         const auto& sel = providers_copy[sp];
         const auto& selected_model = providers_copy[sp].models[sm];
@@ -635,12 +609,24 @@ void run_compaction(
         }
         qcode::Client client = std::move(resolution.client);
 
-        qcode::GenerateOptions opts;
-        opts.model = wire_model;
-        opts.system = compaction_instruction;
-        opts.messages = {qcode::Message::user(transcript.str())};
+        // Cache-replaying summarizer request: same system prompt, same tool
+        // schemas, history verbatim, directive as the final user message.
+        qcode::compaction::CacheReplayInput replay;
+        replay.system_prompt = system_prompt_copy;
+        replay.agent_mode = agent_mode;
+        replay.is_subagent = qcode::session::is_child_session(sid);
+        replay.enable_tools = tools_enabled;
+        replay.vision_supported = selected_model.vision;
+        replay.providers = &providers_copy;
+        replay.session_id = sid;
+        qcode::GenerateOptions opts = qcode::compaction::build_cache_replay_request(
+            replay, wire_model, sel.id, snapshot);
 
         qcode::GenerateResult res = client.generate_text(opts);
+        // Observable evidence of the warm-prefix replay (see compaction_request.h).
+        LOG_INFO("Compaction summarizer: model={} cached_prompt_tokens={} prompt_tokens={} completion_tokens={}",
+                 opts.model, res.usage.cached_prompt_tokens,
+                 res.usage.prompt_tokens, res.usage.completion_tokens);
         if (stop_token.stop_requested()) {
             fail("Compaction cancelled");
             return;

@@ -104,6 +104,24 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
       if (role != "tool" && !text_content.empty()) {
         parts.push_back({{"text", text_content}});
       }
+      // Chat-completions image_url data URLs -> Gemini inlineData parts.
+      if (role == "user" && msg.contains("content") &&
+          msg["content"].is_array()) {
+        for (const auto& item : msg["content"]) {
+          if (item.value("type", "") != "image_url" ||
+              !item.contains("image_url") || !item["image_url"].is_object()) {
+            continue;
+          }
+          const std::string url = item["image_url"].value("url", "");
+          if (url.rfind("data:", 0) == 0 &&
+              url.find(";base64,") != std::string::npos) {
+            const auto comma = url.find(";base64,");
+            parts.push_back({{"inlineData",
+                              {{"mimeType", url.substr(5, comma - 5)},
+                               {"data", url.substr(comma + 8)}}}});
+          }
+        }
+      }
       // Gemini 2.5+ 400s on thought parts without a thoughtSignature. Unsigned
       // reasoning from Grok/Muse must not be replayed as thought:true.
       if (msg.contains("reasoning") && !msg["reasoning"].is_null() &&

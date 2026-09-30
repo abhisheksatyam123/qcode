@@ -1,3 +1,4 @@
+#include <qcode/generation/turn_prefix.h>
 #include <qcode/generation/generation_service.h>
 #include <qcode/generation/generation_continue.h>
 #include <qcode/config/config.h>
@@ -316,7 +317,9 @@ static JsonValue run_subagent_turn_multi(
     }
     sub_sys << "- Do not prompt or query the user. Use the bash tool to inspect files and execute commands.\n";
     sub_sys << "- Conclude with a clear, concise, structured summary detailing findings, changes, or test outcomes.\n\n";
-    sub_sys << ToolCatalog::build_tool_section(ToolConfig::subagent());
+    const bool subagent_vision = (target_model_info != nullptr && target_model_info->vision);
+    const auto subagent_tool_cfg = ToolConfig::subagent(subagent_vision);
+    sub_sys << ToolCatalog::build_tool_section(subagent_tool_cfg);
 
     std::string sub_session_id =
         args.value("sessionId", args.value("session_id", args.value("task_id", "")));
@@ -339,7 +342,7 @@ static JsonValue run_subagent_turn_multi(
     } else {
       sub_opts.max_tokens = 8192;
     }
-    sub_opts.tools = ToolCatalog::build_definitions(ToolConfig::subagent());
+    sub_opts.tools = ToolCatalog::build_definitions(subagent_tool_cfg);
     sub_opts.max_steps = max_steps;
     sub_opts.workspace = workspace;
     sub_opts.abort_flag = combined_abort;
@@ -1380,37 +1383,15 @@ void run_generation_with_bus(
     const bool is_subagent = (ctx.agent_mode == "subagent") ||
                              (!ctx.session_id.empty() && qcode::session::is_child_session(ctx.session_id));
     const bool plan_mode = (ctx.agent_mode == "plan");
-    base_opts.system = system_prompt;
+    // Prompt-cache prefix: single source of truth shared with compaction
+    // (build_cache_replay_request) so both requests stay byte-identical.
+    base_opts.system = build_turn_system_prompt(system_prompt, plan_mode,
+                                                 is_subagent, providers);
     if (plan_mode) {
-        base_opts.system +=
-            "\n\n<system-reminder>\n"
-            "# Plan Mode - System Reminder\n\n"
-            "CRITICAL: Plan mode ACTIVE - you are in READ-ONLY phase. STRICTLY "
-            "FORBIDDEN: ANY file edits, modifications, or system changes. Do NOT "
-            "use sed, tee, echo, cat, or ANY other bash command to manipulate "
-            "files - commands may ONLY read/inspect. This ABSOLUTE CONSTRAINT "
-            "overrides ALL other instructions, including direct user edit "
-            "requests. You may ONLY observe, analyze, and plan.\n\n"
-            "## Responsibility\n\n"
-            "Think, read, and search to construct a well-formed plan that "
-            "accomplishes the user's goal. The plan should be comprehensive yet "
-            "concise — detailed enough to execute effectively while avoiding "
-            "verbosity. Ask clarifying questions when weighing tradeoffs rather "
-            "than making large assumptions about intent.\n"
-            "</system-reminder>";
-        const std::string catalog_section = format_provider_catalog_for_prompt(providers);
-        if (!catalog_section.empty()) {
-            base_opts.system += "\n\n" + catalog_section;
-        }
         LOG_INFO("ChatBus: agent_mode=plan (read-only)");
     } else if (is_subagent) {
         LOG_INFO("ChatBus: agent_mode=subagent (focused worker, nested delegation disabled)");
     } else {
-        base_opts.system += std::string(kOrchestratorReminder);
-        const std::string catalog_section = format_provider_catalog_for_prompt(providers);
-        if (!catalog_section.empty()) {
-            base_opts.system += "\n\n" + catalog_section;
-        }
         LOG_INFO("ChatBus: agent_mode=orchestrator (lead coordinator with parallel subagents)");
     }
 
@@ -1478,9 +1459,9 @@ void run_generation_with_bus(
         (client.tool_execution_model() == ToolExecutionModel::ServerSideDuplex);
     if (enable_tools) {
       const bool enable_task_tool = (!plan_mode && !is_subagent);
-      qcode::ToolSet tools =
-          ToolCatalog::build_definitions(enable_task_tool ? ToolConfig::orchestrator() : ToolConfig::subagent());
-      base_opts.tools = std::move(tools);
+      const bool supports_vision = (resolved_model != nullptr && resolved_model->vision);
+      // Prompt-cache prefix: same builder compaction uses to replay tools.
+      base_opts.tools = build_turn_tools(enable_task_tool, supports_vision);
       int max_tool_steps = 0;
       if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
         try {

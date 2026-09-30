@@ -132,3 +132,45 @@ Creates a session row in SQLite and returns the generated UUID and resolved disp
 | POST | `/study/chapters/:id/prepare` | Prepare chapter quiz questions |
 | GET | `/study/chapters/:id/quiz` | Fetch active chapter quiz |
 | POST | `/study/quiz/submit` | Submit question attempt and record score |
+
+## Vision & Images
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/vision/providers` | Configured vision-capable providers/models (incl. local Ollama) |
+| POST | `/api/vision/ocr` | Image → Markdown (OCR/diagram transcription): `{image, mode, provider, model}` |
+| POST | `/api/images/generate` | **Generate an image**: `{prompt, provider?, model?, size?, workspace?}` |
+
+### Image attachments on generation
+
+`POST /session/:id/generate` accepts an optional `attachments` array; each image rides
+the user message in the provider's own format (OpenAI `image_url` data URL / Responses
+`input_image`, Anthropic base64 `image` block, Gemini `inlineData`):
+
+```json
+{
+  "session_id": "...",
+  "text": "Describe this screenshot",
+  "attachments": [
+    {"path": "docs/diagram.png", "description": "architecture draft"},
+    {"mime_type": "image/png", "data": "<base64>"}
+  ]
+}
+```
+
+`path` resolves against the session workspace (or `~`/absolute); `mime_type` is required
+with raw `data`. Max 10 MiB decoded, `image/*` only. Attachments persist in the session
+history across reloads and compaction.
+
+### Generate image (`POST /api/images/generate`)
+
+| Provider | Transport | Status (verified through qcode) |
+|----------|-----------|--------------------------------|
+| `antigravity` | Gemini `generationConfig.responseModalities: ["TEXT","IMAGE"]` via `/v1internal:generateContent` | **200** — `inlineData` when present, otherwise the model's inline `<svg>` text block is extracted as `image/svg+xml` |
+| `openrouter` | `POST /api/v1/images/generations` (`response_format: b64_json`) | Provider-dependent: 404 when the model has no images endpoint (`502` relayed with provider error) |
+| `opencode` (Zen) | `POST /zen/v1/images/generations` | 404 — no images endpoint (relayed as `502`) |
+| `cursor` / others | — | `501 {"image_generation": false}` (text-only transport) |
+
+Response `200`: `{status, provider, model, mime_type, data, data_url, path, text}` —
+`data` is base64, `data_url` a ready-to-render data URL, `path` the file written to the
+workspace (`generated-<epoch>.<ext>`).

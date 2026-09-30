@@ -54,10 +54,26 @@ struct ReasoningContentPart {
       : text(std::move(t)), signature(std::move(sig)) {}
 };
 
+// An image attached to a conversation turn (base64 payload, wire and storage).
+// Emitted from server `attachments`; each provider's request builder converts
+// it to its own format: OpenAI-compatible `image_url` data URL (or
+// `input_image` on the Responses API), Anthropic base64 `image` block,
+// Gemini/Antigravity `inlineData` part.
+struct ImageContentPart {
+  std::string data;       // base64-encoded image bytes
+  std::string mime_type;  // e.g. "image/png"
+  std::string description;
+
+  ImageContentPart(std::string d, std::string m, std::string desc = "")
+      : data(std::move(d)),
+        mime_type(std::move(m)),
+        description(std::move(desc)) {}
+};
+
 // Content part variant
 using ContentPart =
     std::variant<TextContentPart, ToolCallContentPart, ToolResultContentPart,
-                 ReasoningContentPart>;
+                 ReasoningContentPart, ImageContentPart>;
 
 // Message content is now a vector of content parts
 using MessageContent = std::vector<ContentPart>;
@@ -75,6 +91,18 @@ struct Message {
 
   static Message user(const std::string& text) {
     return Message(kMessageRoleUser, {TextContentPart{text}});
+  }
+
+  static Message user_with_images(const std::string& text,
+                                  const std::vector<ImageContentPart>& images) {
+    MessageContent parts;
+    if (!text.empty()) {
+      parts.emplace_back(TextContentPart{text});
+    }
+    for (const auto& img : images) {
+      parts.emplace_back(img);
+    }
+    return Message(kMessageRoleUser, std::move(parts));
   }
 
   static Message assistant(const std::string& text) {
@@ -131,6 +159,23 @@ struct Message {
                        [](const ContentPart& part) {
                          return std::holds_alternative<TextContentPart>(part);
                        });
+  }
+
+  bool has_images() const {
+    return std::any_of(content.begin(), content.end(),
+                       [](const ContentPart& part) {
+                         return std::holds_alternative<ImageContentPart>(part);
+                       });
+  }
+
+  std::vector<ImageContentPart> get_images() const {
+    std::vector<ImageContentPart> out;
+    for (const auto& part : content) {
+      if (const auto* ip = std::get_if<ImageContentPart>(&part)) {
+        out.push_back(*ip);
+      }
+    }
+    return out;
   }
 
   bool has_tool_calls() const {

@@ -7,6 +7,11 @@
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/providers/registry.h>
 #include <qcode/session/session_store.h>
+#include <qcode/session/system_prompt.h>
+#include <qcode/providers/provider_profile.h>
+#include <qcode/tools/tool_catalog.h>
+#include <qcode/compaction/compaction_request.h>
+#include <qcode/core/logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -95,43 +100,6 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
             ? &sel.models[sm]
             : nullptr;
 
-    // Format the transcript for compaction
-    std::ostringstream transcript;
-    for (const auto& m : snapshot) {
-        std::string role_str;
-        if (m.role == qcode::kMessageRoleUser) role_str = "User";
-        else if (m.role == qcode::kMessageRoleAssistant) role_str = "Assistant";
-        else if (m.role == qcode::kMessageRoleSystem) role_str = "System";
-        else role_str = "Message";
-        std::string text;
-        for (const auto& part : m.content) {
-            if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
-                text += tp->text + "\n";
-            } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
-                text += "[Tool call: " + tcp->tool_name + "]\n";
-            } else if (std::holds_alternative<qcode::ToolResultContentPart>(part)) {
-                text += "[Tool result]\n";
-            } else if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
-                if (!rcp->text.empty()) text += "[Reasoning: " + rcp->text + "]\n";
-            }
-        }
-        transcript << role_str << ": " << text << "\n";
-    }
-
-    const std::string compaction_instruction =
-        "Tools are available when needed, including bash for bounded read-only "
-        "inspection. Do not modify files or create notes while generating the "
-        "handoff summary.\n\n"
-        "Summarize the following conversation into a concise handoff packet so a "
-        "fresh session can take over. Preserve the next actionable task, verified "
-        "evidence, blockers, and concise facts about the code, APIs, data "
-        "structures, files, and user preferences that matter for the request.\n\n"
-        "Keep only task state and concise facts.\n\n"
-        "Output only:\n"
-        "## Tasks\n"
-        "## Systems\n\n"
-        "Use tools only when they improve summary accuracy; otherwise answer directly.";
-
     qcode::providers::register_authenticated_providers();
     qcode::providers::ProviderOptions provider_options;
     provider_options.base_url = sel.api_url;
@@ -142,6 +110,11 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
             ? selected_model->protocol
             : sel.protocol;
     provider_options.project_id = sel.project_id;
+    // Wire model id, exactly as the generate route resolves it — a raw
+    // config id can silently route elsewhere (and break the cache prefix).
+    const auto call = qcode::prepare_provider_call(provider_options, sel.id,
+                                                   model_id);
+    const std::string wire_model = call.wire_model_id;
     auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
         sel.id, provider_options);
     if (!resolution.ok()) {
@@ -152,12 +125,65 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
 
     qcode::Client client = std::move(resolution.client);
 
-    qcode::GenerateOptions opts;
-    opts.model = (*providers_list)[sp].models[sm].id;
-    opts.system = compaction_instruction;
-    opts.messages = {qcode::Message::user(transcript.str())};
+    // Mirror the generate route's turn context so the summarizer request
+    // replays the last routed request's cacheable prefix byte-for-byte
+    // (system prompt + tool schemas + history), with the directive appended
+    // as the final user message. See compaction_request.h (dsh rule).
+    // Same study-mode resolution and default system prompt as the generate
+    // route (route_session.cpp), so the replayed system prefix matches.
+    bool study_mode =
+#ifdef __ANDROID__
+        true;
+#else
+        false;
+#endif
+    if (body.contains("study_mode") && body["study_mode"].is_boolean()) {
+        study_mode = body["study_mode"].get<bool>();
+    }
+    const std::string mode_str = body.value("mode", "");
+    if (mode_str == "study") study_mode = true;
+    if (mode_str == "code") study_mode = false;
+
+    std::string system_prompt;
+    if (body.contains("system_prompt") && body["system_prompt"].is_string() &&
+        !body["system_prompt"].get<std::string>().empty()) {
+        system_prompt = body["system_prompt"].get<std::string>();
+    } else if (study_mode) {
+        system_prompt =
+            qcode::SystemPrompt::build(qcode::SystemPrompt::study_identity());
+    } else {
+        system_prompt = qcode::SystemPrompt::build_default(
+            qcode::ToolConfig::orchestrator(
+                selected_model != nullptr && selected_model->vision));
+    }
+
+    std::string agent_mode = body.value("agent_mode", "");
+    if (agent_mode.empty()) {
+        auto modes = qcode::session::get_session_modes(sid);
+        agent_mode = modes.first;
+    }
+    if (agent_mode.empty()) {
+        agent_mode = (sid.rfind("ses_", 0) == 0) ? "subagent" : "orchestrator";
+    }
+
+    qcode::compaction::CacheReplayInput replay;
+    replay.system_prompt = system_prompt;
+    replay.agent_mode = agent_mode;
+    replay.is_subagent = qcode::session::is_child_session(sid);
+    replay.enable_tools = true;  // generate route hardcodes enable_tools=true
+    replay.vision_supported =
+        (selected_model != nullptr && selected_model->vision);
+    replay.providers = providers_list.get();
+    replay.session_id = sid;
+    qcode::GenerateOptions opts = qcode::compaction::build_cache_replay_request(
+        replay, wire_model, sel.id, snapshot);
 
     qcode::GenerateResult gen_res = client.generate_text(opts);
+    // Observable evidence of the warm-prefix replay: a cache hit here means
+    // the summarizer call reused the last routed request's prefix.
+    LOG_INFO("Compaction summarizer: model={} cached_prompt_tokens={} prompt_tokens={} completion_tokens={}",
+             opts.model, gen_res.usage.cached_prompt_tokens,
+             gen_res.usage.prompt_tokens, gen_res.usage.completion_tokens);
     if (!gen_res.is_success() || (gen_res.error && !gen_res.error->empty())) {
         res.status = 500;
         std::string err = gen_res.error && !gen_res.error->empty() ? *gen_res.error : gen_res.error_message();

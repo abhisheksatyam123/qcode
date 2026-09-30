@@ -21,6 +21,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
   std::string model_id =
       ProviderTransform::chat_wire_model_id(transport_, options.model);
   std::string schema_provider = "openai";
+
   if (wire_protocol_ == "google") {
     schema_provider = "google";
   } else if (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen) {
@@ -76,7 +77,23 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
           tool_message["tool_call_id"] =
               ProviderTransform::canonicalize_tool_call_id(result.tool_call_id);
 
-          if (!result.is_error) {
+          if (!result.is_error && result.result.is_object() &&
+              result.result.contains("data") && result.result.contains("mime_type")) {
+            nlohmann::json content_arr = nlohmann::json::array();
+            std::string desc = "Image loaded: " + result.result.value("path", "image");
+            if (result.result.contains("description") &&
+                !result.result["description"].get<std::string>().empty()) {
+              desc += " (" + result.result["description"].get<std::string>() + ")";
+            }
+            content_arr.push_back({{"type", "text"}, {"text", desc}});
+            std::string data_url = "data:" + result.result["mime_type"].get<std::string>() +
+                                   ";base64," + result.result["data"].get<std::string>();
+            content_arr.push_back({
+                {"type", "image_url"},
+                {"image_url", {{"url", std::move(data_url)}}}
+            });
+            tool_message["content"] = std::move(content_arr);
+          } else if (!result.is_error) {
             tool_message["content"] = result.result.dump();
           } else {
             tool_message["content"] = "Error: " + result.result.dump();
@@ -104,8 +121,27 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       }
 
       // Set content - OpenAI expects both text and tool calls in the same
-      // message
-      if (!text_content.empty()) {
+      // message. Image attachments force a content-part array (data URL for
+      // Chat Completions, input_image for the Responses API).
+      const auto image_parts = msg.get_images();
+      if (!image_parts.empty()) {
+        nlohmann::json arr = nlohmann::json::array();
+        if (!text_content.empty()) {
+          arr.push_back({{"type", use_responses_ ? "input_text" : "text"},
+                         {"text", text_content}});
+        }
+        for (const auto& img : image_parts) {
+          const std::string url =
+              "data:" + img.mime_type + ";base64," + img.data;
+          if (use_responses_) {
+            arr.push_back({{"type", "input_image"}, {"image_url", url}});
+          } else {
+            arr.push_back({{"type", "image_url"},
+                           {"image_url", {{"url", url}}}});
+          }
+        }
+        message["content"] = std::move(arr);
+      } else if (!text_content.empty()) {
         message["content"] = text_content;
       }
       if (!reasoning_content.empty()) {
@@ -255,6 +291,17 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     }
 
     if (!tools_array.empty()) {
+      // Prompt-cache breakpoint on the last tool definition for Claude
+      // models on cache-hinting transports (OpenRouter/OpenCode Zen honor
+      // content-part cache_control; tool schemas are the first prefix
+      // segment). Other transports rely on implicit prefix caching.
+      const bool claude_on_hint_transport =
+          (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen ||
+           transport_ == ProviderTransform::ChatTransport::kOpenRouter) &&
+          is_claude_cache_model(options.model);
+      if (claude_on_hint_transport) {
+        tools_array.back()["cache_control"] = {{"type", "ephemeral"}};
+      }
       request["tools"] = tools_array;
 
       // Add tool choice if specified

@@ -43,6 +43,27 @@ nlohmann::json to_responses_request(const nlohmann::json& request) {
           continue;
         }
         if (!part.is_object()) continue;
+        // Image attachments: pass Responses-shape image parts through and
+        // lift chat-completions image_url parts into input_image (the text
+        // extraction below would drop them as empty).
+        const auto ptype = part.value("type", "");
+        if (ptype == "input_image") {
+          parts.push_back(part);
+          continue;
+        }
+        if (ptype == "image_url") {
+          std::string url;
+          if (part.contains("image_url") && part["image_url"].is_object()) {
+            url = part["image_url"].value("url", "");
+          } else if (part.contains("image_url") &&
+                     part["image_url"].is_string()) {
+            url = part["image_url"].get<std::string>();
+          }
+          if (!url.empty()) {
+            parts.push_back({{"type", "input_image"}, {"image_url", url}});
+          }
+          continue;
+        }
         std::string text;
         if (part.contains("text") && part["text"].is_string()) {
           text = part["text"].get<std::string>();

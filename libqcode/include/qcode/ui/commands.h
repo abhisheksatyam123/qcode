@@ -120,6 +120,8 @@ void run_compaction(
     int selected_provider,
     int selected_model,
     int keep,
+    const std::string& system_prompt,
+    bool enable_tools,
     std::shared_ptr<qcode::compat::jthread> compaction_thread,
     bus::BusPort& bus
 );

@@ -620,7 +620,37 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
             std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
 
             if (sender == "User" || sender == "user") {
-                history.push_back(qcode::Message::user(content));
+                // Attachment envelope written by the generate route:
+                // {"text": "...", "images": [{mime_type, data, description}]}.
+                // Anything else stays a plain-text user message.
+                qcode::MessageContent parts;
+                if (!content.empty() && content.front() == '{') {
+                    try {
+                        auto j = nlohmann::json::parse(content);
+                        if (j.is_object() && j.contains("images") &&
+                            j["images"].is_array()) {
+                            const std::string txt = j.value("text", "");
+                            if (!txt.empty()) {
+                                parts.emplace_back(qcode::TextContentPart{txt});
+                            }
+                            for (const auto& ji : j["images"]) {
+                                if (!ji.is_object()) continue;
+                                parts.emplace_back(qcode::ImageContentPart{
+                                    ji.value("data", ""),
+                                    ji.value("mime_type", ""),
+                                    ji.value("description", "")});
+                            }
+                        }
+                    } catch (...) {
+                        parts.clear();
+                    }
+                }
+                if (parts.empty()) {
+                    history.push_back(qcode::Message::user(content));
+                } else {
+                    history.push_back(qcode::Message(
+                        qcode::kMessageRoleUser, std::move(parts)));
+                }
                 continue;
             }
             if (sender == "Reasoning" || sender == "reasoning") {
@@ -827,6 +857,40 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
         long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
 
         for (const auto& m : messages) {
+            // User messages carrying image attachments persist as one
+            // envelope row so reloads restore text + images together; the
+            // per-part loop below would silently drop ImageContentPart.
+            if (m.role == qcode::kMessageRoleUser && m.has_images()) {
+                nlohmann::json env{{"text", m.get_text()},
+                                   {"images", nlohmann::json::array()}};
+                for (const auto& part : m.content) {
+                    if (const auto* ip =
+                            std::get_if<qcode::ImageContentPart>(&part)) {
+                        nlohmann::json ji{{"mime_type", ip->mime_type},
+                                          {"data", ip->data}};
+                        if (!ip->description.empty()) {
+                            ji["description"] = ip->description;
+                        }
+                        env["images"].push_back(std::move(ji));
+                    }
+                }
+                const std::string content =
+                    env.dump(-1, ' ', false,
+                             nlohmann::json::error_handler_t::replace);
+                sqlite3_reset(ins_stmt);
+                sqlite3_clear_bindings(ins_stmt);
+                sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1,
+                                   SQLITE_TRANSIENT);
+                sqlite3_bind_text(ins_stmt, 2, "User", -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1,
+                                   SQLITE_TRANSIENT);
+                sqlite3_bind_int64(ins_stmt, 4, created_at);
+                if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+                    LOG_ERROR("SQLite: overwrite insert User(envelope) failed: {}",
+                              sqlite3_errmsg(db));
+                }
+                continue;
+            }
             for (const auto& part : m.content) {
                 if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                     if (rcp->text.empty()) continue;

@@ -12,9 +12,15 @@
 
 #include <nlohmann/json.hpp>
 
+#include <qcode/tools/image_tool.h>
+
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -276,7 +282,19 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
         system_prompt =
             qcode::SystemPrompt::build(qcode::SystemPrompt::study_identity());
     } else {
-        system_prompt = qcode::SystemPrompt::build_default();
+        bool vision_supported = false;
+        for (const auto& p : *providers_list) {
+            if (p.id == provider || p.name == provider) {
+                for (const auto& m : p.models) {
+                    if (m.id == model || m.name == model) {
+                        vision_supported = m.vision;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+        system_prompt = qcode::SystemPrompt::build_default(qcode::ToolConfig::orchestrator(vision_supported));
     }
     std::string reasoning_mode = body.value("reasoning_mode", "off");
     std::string agent_mode = body.value("agent_mode", "");
@@ -343,10 +361,104 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
             subscribe_session(*bus, session));
     }
 
+    // ── Optional image attachments ──
+    // body.attachments = [{mime_type?, data|path, description?}] become
+    // ImageContentPart on the user message; each provider's request builder
+    // converts them to its own image format (image_url / input_image,
+    // Anthropic image block, Gemini inlineData).
+    std::vector<qcode::ImageContentPart> image_attachments;
+    if (body.contains("attachments") && body["attachments"].is_array()) {
+        constexpr size_t kMaxDecodedBytes = 10 * 1024 * 1024;
+        auto attachment_error = [&](const std::string& msg) {
+            res.status = 400;
+            nlohmann::json err_j;
+            err_j["error"] = msg;
+            res.set_content(err_j.dump(), "application/json");
+        };
+        for (const auto& att : body["attachments"]) {
+            if (!att.is_object()) {
+                attachment_error("attachment must be an object");
+                return;
+            }
+            std::string data_b64 = att.value("data", "");
+            const std::string att_path = att.value("path", "");
+            std::string mime = att.value("mime_type", "");
+            const std::string desc = att.value("description", "");
+            if (data_b64.empty() && att_path.empty()) {
+                attachment_error("attachment needs 'data' (base64) or 'path'");
+                return;
+            }
+            if (!att_path.empty()) {
+                std::string resolved = att_path;
+                if (att_path.rfind("~/", 0) == 0) {
+                    const char* home = std::getenv("HOME");
+                    if (home) {
+                        resolved =
+                            std::string(home) + "/" + att_path.substr(2);
+                    }
+                } else if (std::filesystem::path(att_path).is_relative()) {
+                    resolved = (std::filesystem::path(ws) / att_path).string();
+                }
+                std::ifstream in(resolved, std::ios::binary);
+                if (!in) {
+                    attachment_error("attachment not found: " + att_path);
+                    return;
+                }
+                std::ostringstream ss;
+                ss << in.rdbuf();
+                const std::string raw = ss.str();
+                if (raw.empty()) {
+                    attachment_error("attachment file is empty: " + att_path);
+                    return;
+                }
+                if (raw.size() > kMaxDecodedBytes) {
+                    attachment_error("attachment too large (max 10 MiB): " +
+                                     att_path);
+                    return;
+                }
+                if (mime.empty()) {
+                    mime = qcode::ImageTool::detect_mime_type(resolved, raw);
+                }
+                data_b64 = qcode::ImageTool::base64_encode(raw);
+            } else {
+                // Estimate decoded size from the base64 length.
+                if (data_b64.size() / 4 * 3 > kMaxDecodedBytes) {
+                    attachment_error("attachment too large (max 10 MiB)");
+                    return;
+                }
+                if (mime.empty()) {
+                    attachment_error(
+                        "attachment 'mime_type' is required with raw 'data'");
+                    return;
+                }
+            }
+            if (mime.rfind("image/", 0) != 0) {
+                attachment_error("unsupported attachment media type: " + mime);
+                return;
+            }
+            image_attachments.emplace_back(data_b64, mime, desc);
+        }
+    }
+
     // Save user message and add to history
     qcode::session::set_session_provider_model(session->id, provider, model);
-    qcode::session::save_message(session->id, "User", text);
-    session->messages.push_back(qcode::Message::user(text));
+    if (image_attachments.empty()) {
+        qcode::session::save_message(session->id, "User", text);
+        session->messages.push_back(qcode::Message::user(text));
+    } else {
+        // Persist an envelope so reloads keep the attachments (plain-text
+        // rows stay legacy-compatible).
+        nlohmann::json env{{"text", text}, {"images", nlohmann::json::array()}};
+        for (const auto& img : image_attachments) {
+            nlohmann::json ji{{"mime_type", img.mime_type},
+                              {"data", img.data}};
+            if (!img.description.empty()) ji["description"] = img.description;
+            env["images"].push_back(std::move(ji));
+        }
+        qcode::session::save_message(session->id, "User", env.dump());
+        session->messages.push_back(
+            qcode::Message::user_with_images(text, image_attachments));
+    }
 
     // Keep a local copy of messages for the generation thread, applying the compaction cutoff
     qcode::Messages messages = qcode::apply_compaction_cutoff(session->messages);

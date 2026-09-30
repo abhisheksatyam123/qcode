@@ -10,7 +10,7 @@ namespace qcode {
 // ── Tool descriptors for the system prompt ──
 
 struct ToolDescriptor {
-  std::string name;         // e.g. "bash", "task"
+  std::string name;         // e.g. "bash", "task", "image"
   std::string description;  // one-line summary
   std::string schema_text;  // human-readable parameter schema
   bool enabled{true};
@@ -21,9 +21,14 @@ struct ToolDescriptor {
 struct ToolConfig {
   bool enable_bash{true};
   bool enable_task{true};
+  bool enable_image{false};
 
-  static ToolConfig orchestrator() { return ToolConfig{true, true}; }
-  static ToolConfig subagent() { return ToolConfig{true, false}; }
+  static ToolConfig orchestrator(bool vision = false) {
+    return ToolConfig{true, true, vision};
+  }
+  static ToolConfig subagent(bool vision = false) {
+    return ToolConfig{true, false, vision};
+  }
 };
 
 // ── Agent tool catalog (prompt + ToolSet) ──

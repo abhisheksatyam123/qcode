@@ -537,6 +537,19 @@ Messages normalize_messages(const Messages& messages, const Model& model) {
         rp.text = utils::sanitize_utf8(rp.text);
         if (!keep_reasoning_part(model, rp)) continue;
         filtered_content.push_back(std::move(rp));
+      } else if (std::holds_alternative<ImageContentPart>(part)) {
+        auto ip = std::get<ImageContentPart>(part);
+        // Base64 payload: strip whitespace/newlines some encoders insert.
+        ip.data.erase(std::remove_if(ip.data.begin(), ip.data.end(),
+                                     [](unsigned char c) {
+                                       return c == '\r' || c == '\n' ||
+                                              c == ' ';
+                                     }),
+                      ip.data.end());
+        ip.mime_type = utils::sanitize_utf8(ip.mime_type);
+        ip.description = utils::sanitize_utf8(ip.description);
+        if (ip.data.empty() || ip.mime_type.rfind("image/", 0) != 0) continue;
+        filtered_content.push_back(std::move(ip));
       }
     }
 

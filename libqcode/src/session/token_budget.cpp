@@ -25,6 +25,9 @@ size_t estimate_tokens(const qcode::Messages& messages) {
                 total += (result_str.size() + kCharsPerToken - 1) / kCharsPerToken;
             } else if (const auto* rp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                 total += (rp->text.size() + kCharsPerToken - 1) / kCharsPerToken;
+            } else if (const auto* ip = std::get_if<qcode::ImageContentPart>(&part)) {
+                // Base64 payload costs roughly a quarter of its size in tokens.
+                total += (ip->data.size() + kCharsPerToken - 1) / kCharsPerToken;
             }
         }
     }

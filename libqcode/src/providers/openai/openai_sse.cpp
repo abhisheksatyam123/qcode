@@ -69,7 +69,7 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         pending_tool_calls_.clear();
         Usage usage;
         const auto response = json.value("response", nlohmann::json::object());
-        if (response.contains("usage")) {
+        if (response.contains("usage") && response["usage"].is_object()) {
           const auto& raw_usage = response["usage"];
           usage.prompt_tokens = raw_usage.value("input_tokens", 0);
           usage.completion_tokens = raw_usage.value("output_tokens", 0);
@@ -277,7 +277,10 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         if (qcode::utils::is_empty_upstream_network_drop(json)) {
           push_event(create_error_event(
               "Upstream network error: empty completion"));
-        } else if (json.contains("usage")) {
+        } else if (json.contains("usage") && json["usage"].is_object()) {
+          // Zen free models emit "usage":null on the finish_reason chunk;
+          // parse_usage() would throw on null and the finish event (with its
+          // cache/token accounting) would be lost.
           auto usage = parse_usage(json["usage"]);
           LOG_INFO(
               "Stream completed - tokens used: {} prompt, {} completion, {} "
