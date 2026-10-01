@@ -30,6 +30,17 @@ struct FileChangeEntry {
     bool binary = false;
 };
 
+// One row in the Subagents tab list (from task tool background/durable tasks).
+struct SubagentEntry {
+    std::string task_id;
+    std::string background_task_id;
+    std::string description;
+    std::string agent;
+    std::string mode;
+    std::string model;
+    std::string status;
+};
+
 // Shared chat / TUI session state.
 struct ChatState {
     std::shared_ptr<std::atomic<bool>> is_generating =
@@ -91,6 +102,8 @@ struct ChatState {
     // Parallel-subagent rows on the Sessions tab (index == task index).
     std::shared_ptr<std::vector<HitBox>> subagent_row_boxes =
         std::make_shared<std::vector<HitBox>>();
+    std::shared_ptr<std::vector<SubagentEntry>> subagent_entries =
+        std::make_shared<std::vector<SubagentEntry>>();
     // Session to restore when leaving a subagent (tool click / subagent row).
     std::shared_ptr<std::string> return_session_id = std::make_shared<std::string>();
     std::shared_ptr<HitBox> session_back_box = std::make_shared<HitBox>();

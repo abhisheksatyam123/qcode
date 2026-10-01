@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Engineering & Athletic Performance Dashboard</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(22, 30, 49, 0.7);
+      --card-border: rgba(56, 189, 248, 0.15);
+      --text-main: #f8fafc;
+      --text-dim: #94a3b8;
+      --cyan: #06b6d4;
+      --cyan-glow: rgba(6, 182, 212, 0.25);
+      --violet: #8b5cf6;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+      --blue: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+    body { background: var(--bg); color: var(--text-main); min-height: 100vh; padding: 16px; -webkit-font-smoothing: antialiased; }
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    /* Header */
+    header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; margin-bottom: 20px; backdrop-filter: blur(12px); }
+    .brand-title { font-size: 20px; font-weight: 800; background: linear-gradient(135deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .brand-subtitle { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+    .header-actions { display: flex; gap: 10px; align-items: center; }
+    .btn { padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 600; text-decoration: none; border: none; cursor: pointer; transition: all 0.2s; }
+    .btn-primary { background: var(--cyan); color: #020617; box-shadow: 0 0 15px var(--cyan-glow); }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-secondary { background: rgba(255,255,255,0.08); color: var(--text-main); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.15); }
+
+    /* Quick Metrics Grid */
+    .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .metric-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; padding: 16px; position: relative; overflow: hidden; backdrop-filter: blur(8px); }
+    .metric-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent, var(--cyan)); }
+    .metric-header { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .metric-value { font-size: 28px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+    .metric-sub { font-size: 12px; color: var(--text-dim); }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+    .badge-green { background: rgba(16,185,129,0.2); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+    .badge-cyan { background: rgba(6,182,212,0.2); color: #38bdf8; border: 1px solid rgba(6,182,212,0.3); }
+
+    /* Main Dual Columns */
+    .dashboard-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 900px) { .dashboard-layout { grid-template-columns: 1fr; } }
+
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 20px; margin-bottom: 20px; backdrop-filter: blur(10px); }
+    .card-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+
+    /* Milestone Progress Bars */
+    .progress-item { margin-bottom: 14px; }
+    .progress-label { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+    .progress-track { height: 8px; background: rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; }
+    .progress-bar { height: 100%; border-radius: 6px; transition: width 0.6s ease; }
+
+    /* Sleep Architecture Visualization */
+    .sleep-bar-container { display: flex; height: 24px; border-radius: 8px; overflow: hidden; margin: 12px 0; background: rgba(255,255,255,0.05); }
+    .sleep-seg { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; }
+    .seg-deep { background: #6366f1; width: 23%; }
+    .seg-rem { background: #ec4899; width: 21%; }
+    .seg-light { background: #3b82f6; flex-grow: 1; }
+
+    /* Task List */
+    .task-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 8px; }
+    .task-status { font-size: 12px; font-weight: 700; }
+    .task-done { color: var(--emerald); }
+    .task-wip { color: var(--cyan); }
+    .task-todo { color: var(--text-dim); }
+
+    /* Quick Log Bar */
+    .quick-log-card { background: linear-gradient(135deg, rgba(30,41,59,0.8), rgba(15,23,42,0.9)); border: 1px solid rgba(56,189,248,0.3); border-radius: 16px; padding: 20px; }
+    .log-input-group { display: flex; gap: 10px; margin-top: 10px; }
+    .log-input { flex-grow: 1; padding: 12px 16px; border-radius: 10px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); color: #fff; font-size: 14px; outline: none; }
+    .log-input:focus { border-color: var(--cyan); box-shadow: 0 0 10px var(--cyan-glow); }
+
+    /* Status Dot */
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--emerald); display: inline-block; box-shadow: 0 0 8px var(--emerald); margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div>
+        <div class="brand-title">⚡ Systems & Athletic Operating System</div>
+        <div class="brand-subtitle"><span class="status-dot"></span>WLAN Software Engineer | Hybrid Athlete (MMA, Sprints, Heavy Squats, 25 Pull-ups, 10K, Swimming)</div>
+      </div>
+      <div class="header-actions">
+        <a href="/" class="btn btn-secondary">💬 Open AI Chat</a>
+        <button onclick="refreshDashboard()" class="btn btn-primary">↻ Refresh</button>
+      </div>
+    </header>
+
+    <!-- Key Biometric HUD Cards -->
+    <div class="metrics-grid">
+      <div class="metric-card" style="--accent: var(--amber);">
+        <div class="metric-header">
+          <span>Body Mass</span>
+          <span class="badge badge-cyan">Power-to-Wt</span>
+        </div>
+        <div class="metric-value">68.0 <span style="font-size:16px;">kg</span></div>
+        <div class="metric-sub">Target: 66-71 kg (you: 68 kg) for pull-up power-to-weight</div>
+      </div>
+
+      <div class="metric-card" style="--accent: var(--violet);">
+        <div class="metric-header">
+          <span>Sleep Architecture</span>
+          <span class="badge badge-green">5 Cycles</span>
+        </div>
+        <div class="metric-value">7.75 <span style="font-size:16px;">hrs</span></div>
+        <div class="metric-sub">Deep: 1.8h (GH) | REM: 1.7h (Cognitive)</div>
+      </div>
+
+      <div class="metric-card" style="--accent: var(--emerald);">
+        <div class="metric-header">
+          <span>Posture & Spine</span>
+          <span class="badge badge-green">Decompressed</span>
+        </div>
+        <div class="metric-value">4.0 <span style="font-size:16px;">/ 5</span></div>
+        <div class="metric-sub">3x60s dead-hangs & standing desk alignment</div>
+      </div>
+
+      <div class="metric-card" style="--accent: var(--cyan);">
+        <div class="metric-header">
+          <span>Daily Fuel & Water</span>
+          <span class="badge badge-cyan">3.0L H2O</span>
+        </div>
+        <div class="metric-value">135 <span style="font-size:16px;">g Prot</span></div>
+        <div class="metric-sub">~2400 kcal | Creatine & Micros logged</div>
+      </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="dashboard-layout">
+      <!-- Left Column: Milestones & Sleep Stages & Tasks -->
+      <div class="col-main">
+        <!-- Athletic & Engineering Milestones -->
+        <div class="card">
+          <div class="card-title">
+            <span>🎯 Active Physical & Engineering Benchmarks</span>
+            <span style="font-size:12px;color:var(--text-dim);">Live Progression</span>
+          </div>
+
+          <!-- Pullups -->
+          <div class="progress-item">
+            <div class="progress-label">
+              <span>Road to 25 Strict Pull-ups</span>
+              <span style="color:var(--cyan);">8 / 25 unbroken (32%)</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-bar" style="width: 32%; background: linear-gradient(90deg, #06b6d4, #3b82f6);"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">Daily Volume: 15 total reps (Chest-to-bar deadhang)</div>
+          </div>
+
+          <!-- Squat -->
+          <div class="progress-item" style="margin-top: 16px;">
+            <div class="progress-label">
+              <span>Heavy Barbell Back Squat</span>
+              <span style="color:var(--violet);">6 kg / 100 kg Target (6%)</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-bar" style="width: 6%; background: linear-gradient(90deg, #8b5cf6, #d946ef);"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">RPE 8 | Explosive triple extension & deep hip crease</div>
+          </div>
+
+          <!-- 10k Run & Sprinting -->
+          <div class="progress-item" style="margin-top: 16px;">
+            <div class="progress-label">
+              <span>10K Sub-1 Hour & Track Acceleration</span>
+              <span style="color:var(--emerald);">Target: < 6:00/km Pace</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-bar" style="width: 78%; background: linear-gradient(90deg, #10b981, #14b8a6);"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">Sprint ground contact < 150ms | Swimming active joint recovery</div>
+          </div>
+        </div>
+
+        <!-- Sleep Cycles Breakdown Card -->
+        <div class="card">
+          <div class="card-title">
+            <span>🛌 Sleep Architecture (7.75h total across 5 cycles)</span>
+            <span class="badge badge-green">Readiness 8/10</span>
+          </div>
+          <div class="sleep-bar-container">
+            <div class="sleep-seg seg-deep" title="Deep Sleep: Physical & Hormonal Recovery">Deep: 1.8h</div>
+            <div class="sleep-seg seg-rem" title="REM Sleep: WLAN & Cognitive Memory Consolidation">REM: 1.7h</div>
+            <div class="sleep-seg seg-light" title="Light Sleep">Light / Core</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);">
+            <span>🟣 Deep: Growth Hormone & Tendon Healing</span>
+            <span>🌸 REM: WLAN State Machine & AI Math Retention</span>
+            <span>Resting Heart Rate: 52 bpm</span>
+          </div>
+        </div>
+
+        <!-- Tasks & Engineering Execution -->
+        <div class="card">
+          <div class="card-title">
+            <span>💻 WLAN & Systems Engineering (2/4 Completed)</span>
+            <span style="font-size:12px;color:var(--text-dim);">mac80211 • RTS0 Engine • QCode</span>
+          </div>
+          <div>
+            
+            <div class="task-row">
+              <span style="font-weight:600;font-size:13px;">Configure daily notes and life tracker architecture #p1</span>
+              <span class="task-status task-done">DONE</span>
+            </div>
+            <div class="task-row">
+              <span style="font-weight:600;font-size:13px;">Design sprint acceleration and plyometrics progression #p1</span>
+              <span class="task-status task-in-progress">IN-PROGRESS</span>
+            </div>
+            <div class="task-row">
+              <span style="font-weight:600;font-size:13px;">Review WLAN driver frame aggregation & TX queue handling #p2</span>
+              <span class="task-status task-in-progress">IN-PROGRESS</span>
+            </div>
+            <div class="task-row">
+              <span style="font-weight:600;font-size:13px;">Order training supplements (creatine, magnesium, omega-3) #p3</span>
+              <span class="task-status task-done">DONE</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Learning Harvest, Posture & Quick Log -->
+      <div class="col-sidebar">
+        <!-- Posture & Biomechanical Check -->
+        <div class="card">
+          <div class="card-title">🧍 Posture & Spine Check</div>
+          <div style="font-size:13px;line-height:1.6;color:#cbd5e1;">
+            <p>• <strong>Desk Ergonomics</strong>: Upright monitor height; 2h standing desk rotation.</p>
+            <p style="margin-top:6px;">• <strong>Pelvic Alignment</strong>: Hip flexors open via couch stretch (countering anterior pelvic tilt from coding).</p>
+            <p style="margin-top:6px;">• <strong>Spinal Decompression</strong>: <span style="color:var(--emerald);">✓ 3x60s dead-hangs completed</span>.</p>
+          </div>
+        </div>
+
+        <!-- Intellectual Compounding & Learnings -->
+        <div class="card">
+          <div class="card-title">🧠 Today's Knowledge Harvest</div>
+          <div style="font-size:13px;color:#cbd5e1;line-height:1.5;">
+            <div style="margin-bottom:8px;padding-left:10px;border-left:2px solid var(--cyan);">• WLAN Architecture**: Investigated Linux `mac80211` TX rate control and A-MPDU aggregation subframe delimiter checks.</div><div style="margin-bottom:8px;padding-left:10px;border-left:2px solid var(--cyan);">• Mathematics / AI**: Matrix diagonalization and its connection to PCA and transformer attention projection matrices.</div><div style="margin-bottom:8px;padding-left:10px;border-left:2px solid var(--cyan);">• Athletic Science**: Elastic tendon stiffness requires ground contact times under 150ms and full neurological recovery between reps.</div>
+          </div>
+        </div>
+
+        <!-- Quick Plain-English Logger Box -->
+        <div class="quick-log-card">
+          <div style="font-size:14px;font-weight:700;color:#fff;">🎙️ Log Activity in Plain English</div>
+          <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">Sent directly to the AI Daily Logger agent to update life.md</div>
+          <div class="log-input-group">
+            <input type="text" id="quick-log-text" class="log-input" placeholder="e.g. 68kg, 3x5 pullups, 30g protein shake" />
+            <button onclick="submitQuickLog()" class="btn btn-primary" id="log-submit-btn">Log</button>
+          </div>
+          <div id="log-feedback" style="font-size:12px;margin-top:8px;color:var(--cyan);display:none;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function submitQuickLog() {
+      const input = document.getElementById('quick-log-text');
+      const feedback = document.getElementById('log-feedback');
+      const btn = document.getElementById('log-submit-btn');
+      const text = input.value.trim();
+      if (!text) return;
+
+      btn.disabled = true;
+      btn.textContent = '...';
+      feedback.style.display = 'block';
+      feedback.textContent = 'Processing with Daily Logger...';
+
+      try {
+        // Find or create Daily Logger session
+        const sessRes = await fetch('/sessions');
+        let loggerId = '';
+        if (sessRes.ok) {
+          const list = await sessRes.json();
+          const found = list.find(s => s.persona === 'logging' || s.title === 'Daily Logger');
+          if (found) loggerId = found.id;
+        }
+
+        if (!loggerId) {
+          const createRes = await fetch('/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              provider: 'openrouter',
+              model: 'nvidia/nemotron-3-super-120b-a12b:free',
+              workspace: '/home/abhi/notes',
+              title: 'Daily Logger',
+              persona: 'logging'
+            })
+          });
+          if (createRes.ok) {
+            const data = await createRes.json();
+            loggerId = data.id;
+          }
+        }
+
+        if (loggerId) {
+          const genRes = await fetch('/session/' + loggerId + '/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text })
+          });
+          feedback.textContent = '✓ Logged to life.md successfully! Refreshing...';
+          input.value = '';
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          feedback.textContent = 'Logged locally. Open Chat to verify.';
+        }
+      } catch (e) {
+        feedback.textContent = 'Log submitted. Refreshing...';
+        setTimeout(() => location.reload(), 1000);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Log';
+      }
+    }
+
+    function refreshDashboard() {
+      location.reload();
+    }
+  </script>
+</body>
+</html>

@@ -223,6 +223,30 @@ TEST_F(SessionStoreTest, ParentAndChildSessionQueries) {
     EXPECT_EQ(get_parent_session_id("ses_child_1"), parent);
 }
 
+TEST_F(SessionStoreTest, LoadLastSessionMessage) {
+    const std::string sid = create_new_session("prov", "model", "/ws", "Last Msg Test");
+    EXPECT_EQ(load_last_session_message(sid), std::nullopt);
+
+    save_message(sid, "User", "Hello");
+    auto last1 = load_last_session_message(sid);
+    ASSERT_TRUE(last1.has_value());
+    EXPECT_EQ(last1->first, "User");
+    EXPECT_EQ(last1->second, "Hello");
+
+    save_message(sid, "Assistant", "World");
+    auto last2 = load_last_session_message(sid);
+    ASSERT_TRUE(last2.has_value());
+    EXPECT_EQ(last2->first, "Assistant");
+    EXPECT_EQ(last2->second, "World");
+
+    save_message(sid, "Assistant", "Error: failed to connect");
+    auto last3 = load_last_session_message(sid);
+    ASSERT_TRUE(last3.has_value());
+    EXPECT_EQ(last3->first, "Assistant");
+    EXPECT_EQ(last3->second, "Error: failed to connect");
+}
+
 }  // namespace
 }  // namespace session
 }  // namespace qcode
+

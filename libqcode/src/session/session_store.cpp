@@ -296,6 +296,24 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
+    // ── Migration v8 → v9: persist persona per session ──
+    if (user_version < 9) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "ALTER TABLE sessions ADD COLUMN persona TEXT DEFAULT '';",
+            nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 9;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    }
+
+    // Ensure performance indexes exist on messages and sessions
+    sqlite3_exec(db,
+        "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db,
+        "CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);",
+        nullptr, nullptr, nullptr);
+
     LOG_INFO("SQLite: database opened successfully at {}", get_db_path());
 }
 
@@ -994,6 +1012,30 @@ std::vector<std::pair<std::string, std::string>> load_session_messages(const std
     return out;
 }
 
+std::optional<std::pair<std::string, std::string>> load_last_session_message(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return std::nullopt;
+
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return std::nullopt;
+
+    const char* sql = "SELECT sender, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char* sender_txt = sqlite3_column_text(stmt, 0);
+            const unsigned char* content_txt = sqlite3_column_text(stmt, 1);
+            std::string sender = sender_txt ? reinterpret_cast<const char*>(sender_txt) : "";
+            std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
+            sqlite3_finalize(stmt);
+            return std::make_pair(std::move(sender), std::move(content));
+        }
+        sqlite3_finalize(stmt);
+    }
+    return std::nullopt;
+}
+
 std::vector<std::pair<std::string, std::string>> list_sessions(bool include_subagents) {
     std::vector<std::pair<std::string, std::string>> sessions;
     auto db_lock = SharedDbHandle::instance().acquire();
@@ -1039,29 +1081,49 @@ std::vector<SessionInfo> list_sessions_full(bool include_subagents, const std::s
         return sessions;
     }
 
-    std::string sql =
-        "SELECT sessions.id, sessions.title, COALESCE(sessions.workspace, ''), "
-        "       COALESCE(sessions.provider, ''), COALESCE(sessions.model, ''), "
-        "       COALESCE(m.last_msg_time, sessions.created_at) AS last_active, "
-        "       COALESCE(m.msg_count, 0) AS msg_count, "
-        "       COALESCE(sessions.parent_session_id, '') AS parent_id "
-        "FROM sessions "
-        "LEFT JOIN ( "
-        "    SELECT session_id, MAX(created_at) AS last_msg_time, COUNT(*) AS msg_count "
-        "    FROM messages "
-        "    GROUP BY session_id "
-        ") m ON m.session_id = sessions.id ";
-    if (!include_subagents) {
-        sql += "WHERE COALESCE(sessions.agent_mode, '') != 'subagent' "
-               "  AND sessions.id NOT LIKE 'ses_%' ";
-    } else if (!parent_session_id.empty()) {
-        sql += "WHERE COALESCE(sessions.parent_session_id, '') = ? ";
+    std::string sql;
+    if (include_subagents && !parent_session_id.empty()) {
+        sql =
+            "SELECT sessions.id, sessions.title, COALESCE(sessions.workspace, ''), "
+            "       COALESCE(sessions.provider, ''), COALESCE(sessions.model, ''), "
+            "       COALESCE(m.last_msg_time, sessions.created_at) AS last_active, "
+            "       COALESCE(m.msg_count, 0) AS msg_count, "
+            "       COALESCE(sessions.parent_session_id, '') AS parent_id, "
+            "       COALESCE(sessions.persona, '') AS persona "
+            "FROM sessions "
+            "LEFT JOIN ( "
+            "    SELECT session_id, MAX(created_at) AS last_msg_time, COUNT(*) AS msg_count "
+            "    FROM messages "
+            "    WHERE session_id IN (SELECT id FROM sessions WHERE COALESCE(parent_session_id, '') = ?) "
+            "    GROUP BY session_id "
+            ") m ON m.session_id = sessions.id "
+            "WHERE COALESCE(sessions.parent_session_id, '') = ? "
+            "ORDER BY last_active DESC;";
+    } else {
+        sql =
+            "SELECT sessions.id, sessions.title, COALESCE(sessions.workspace, ''), "
+            "       COALESCE(sessions.provider, ''), COALESCE(sessions.model, ''), "
+            "       COALESCE(m.last_msg_time, sessions.created_at) AS last_active, "
+            "       COALESCE(m.msg_count, 0) AS msg_count, "
+            "       COALESCE(sessions.parent_session_id, '') AS parent_id, "
+            "       COALESCE(sessions.persona, '') AS persona "
+            "FROM sessions "
+            "LEFT JOIN ( "
+            "    SELECT session_id, MAX(created_at) AS last_msg_time, COUNT(*) AS msg_count "
+            "    FROM messages "
+            "    GROUP BY session_id "
+            ") m ON m.session_id = sessions.id ";
+        if (!include_subagents) {
+            sql += "WHERE COALESCE(sessions.agent_mode, '') != 'subagent' "
+                   "  AND sessions.id NOT LIKE 'ses_%' ";
+        }
+        sql += "ORDER BY last_active DESC;";
     }
-    sql += "ORDER BY last_active DESC;";
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, sql.c_str(), &stmt)) {
         if (include_subagents && !parent_session_id.empty()) {
             sqlite3_bind_text(stmt, 1, parent_session_id.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, parent_session_id.c_str(), -1, SQLITE_TRANSIENT);
         }
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             SessionInfo info;
@@ -1079,6 +1141,8 @@ std::vector<SessionInfo> list_sessions_full(bool include_subagents, const std::s
             info.last_active_at = sqlite3_column_int64(stmt, 5);
             info.message_count = sqlite3_column_int(stmt, 6);
             info.parent_session_id = pid_txt ? reinterpret_cast<const char*>(pid_txt) : "";
+            const unsigned char* persona_txt = sqlite3_column_text(stmt, 8);
+            info.persona = persona_txt ? reinterpret_cast<const char*>(persona_txt) : "";
             sessions.push_back(std::move(info));
         }
         sqlite3_finalize(stmt);
@@ -1447,6 +1511,46 @@ void delete_session(const std::string& session_id) {
     }
 }
 
+
+std::string get_session_persona(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return "";
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return "";
+
+    const char* sql = "SELECT COALESCE(persona, '') FROM sessions WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    std::string persona;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* txt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            if (txt) persona = txt;
+        }
+        sqlite3_finalize(stmt);
+    }
+    return persona;
+}
+
+void set_session_persona(const std::string& session_id, const std::string& persona) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) {
+        LOG_WARN("SQLite: refusing set_session_persona with invalid session id '{}'", session_id);
+        return;
+    }
+
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+
+    const char* sql = "UPDATE sessions SET persona = ? WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, persona.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+}
 
 } // namespace session
 } // namespace qcode

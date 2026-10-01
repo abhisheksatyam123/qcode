@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <optional>
 #include <utility>
 
 #include <qcode/config/provider_info.h>
@@ -55,6 +56,9 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
 // Load saved messages (sender, content) for a session, oldest first
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id);
 
+// Load the most recent message (sender, content) for a session, or nullopt if none
+std::optional<std::pair<std::string, std::string>> load_last_session_message(const std::string& session_id);
+
 // ── Persisted prompt queue (mirrors upstream: prompts submitted while busy
 // become pending session data and survive restarts) ──
 // Append a queued prompt for a session (FIFO by insertion).
@@ -81,6 +85,7 @@ struct SessionInfo {
     std::string provider;
     std::string model;
     std::string parent_session_id;
+    std::string persona;
     long long last_active_at = 0;
     int message_count = 0;
 };
@@ -101,6 +106,10 @@ std::pair<std::string, std::string> get_session_modes(const std::string& session
 void set_session_modes(const std::string& session_id,
                        const std::string& agent_mode,
                        const std::string& reasoning_mode);
+
+// Persisted per-session persona (e.g. "logging", "advisor", "exercise", "athletics", "learning", "generic").
+std::string get_session_persona(const std::string& session_id);
+void set_session_persona(const std::string& session_id, const std::string& persona);
 
 // Aggregate statistics for a session (computed from messages + live counters).
 struct SessionStats {

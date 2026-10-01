@@ -2,11 +2,16 @@
 
 #include "server_routes.h"
 #include <httplib.h>
+#include <nlohmann/json.hpp>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace qcode {
 namespace server {
+
+std::string load_persona_prompt(const std::string& persona, const std::string& workspace);
+nlohmann::json list_available_personas(const std::string& workspace);
 
 void register_system_routes(
     httplib::Server& svr,

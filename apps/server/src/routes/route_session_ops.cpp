@@ -93,6 +93,13 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         }
     }
     if (sm == -1) sm = 0;
+    // Normalize to the config model id, exactly as the generate route does
+    // (route_session.cpp). Session rows may store the display name (e.g.
+    // "MiMo-V2.6-Flash Free"); sending it on the wire makes Zen answer
+    // 401 ModelError ("model not supported") and compaction fails.
+    if (!(*providers_list)[sp].models.empty()) {
+        model_id = (*providers_list)[sp].models[sm].id;
+    }
 
     const auto& sel = (*providers_list)[sp];
     const qcode::ModelInfo* selected_model =
@@ -144,17 +151,32 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     if (mode_str == "study") study_mode = true;
     if (mode_str == "code") study_mode = false;
 
+    std::string persona_name = body.value("persona", "");
+    if (persona_name.empty()) {
+        persona_name = qcode::session::get_session_persona(sid);
+    }
+    std::string ws = qcode::session::get_session_workspace(sid);
+
     std::string system_prompt;
     if (body.contains("system_prompt") && body["system_prompt"].is_string() &&
         !body["system_prompt"].get<std::string>().empty()) {
         system_prompt = body["system_prompt"].get<std::string>();
-    } else if (study_mode) {
-        system_prompt =
-            qcode::SystemPrompt::build(qcode::SystemPrompt::study_identity());
-    } else {
-        system_prompt = qcode::SystemPrompt::build_default(
-            qcode::ToolConfig::orchestrator(
-                selected_model != nullptr && selected_model->vision));
+    } else if (!persona_name.empty()) {
+        std::string persona_prompt = load_persona_prompt(persona_name, ws);
+        if (!persona_prompt.empty()) {
+            bool vision_supported = (selected_model != nullptr && selected_model->vision);
+            system_prompt = qcode::SystemPrompt::build(persona_prompt, qcode::ToolConfig::orchestrator(vision_supported));
+        }
+    }
+    if (system_prompt.empty()) {
+        if (study_mode) {
+            system_prompt =
+                qcode::SystemPrompt::build(qcode::SystemPrompt::study_identity());
+        } else {
+            system_prompt = qcode::SystemPrompt::build_default(
+                qcode::ToolConfig::orchestrator(
+                    selected_model != nullptr && selected_model->vision));
+        }
     }
 
     std::string agent_mode = body.value("agent_mode", "");

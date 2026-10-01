@@ -113,6 +113,30 @@ int main(int argc, char* argv[]) {
     // ── Legacy state access ──
     auto& state = store.state();
 
+    auto refresh_subagents = [&state]() {
+        const std::string curr_sid = state.session_id ? *state.session_id : "";
+        auto subagent_data = qcode::TaskTool::list_tasks(curr_sid);
+        std::vector<qcode::SubagentEntry> entries;
+        if (subagent_data.contains("metadata") &&
+            subagent_data["metadata"].contains("tasks")) {
+            for (const auto& t : subagent_data["metadata"]["tasks"]) {
+                qcode::SubagentEntry entry;
+                entry.background_task_id = t.value("background_task_id", "");
+                entry.status = t.value("status", "");
+                entry.agent = t.value("agent", "general");
+                entry.mode = t.value("mode", "explore");
+                entry.model = t.value("model", "");
+                entry.description = t.value("description", "");
+                entry.task_id = t.value("task_id", t.value("sessionId", ""));
+                entries.push_back(std::move(entry));
+            }
+        }
+        if (!state.subagent_entries) {
+            state.subagent_entries = std::make_shared<std::vector<qcode::SubagentEntry>>();
+        }
+        *state.subagent_entries = std::move(entries);
+    };
+
     qcode::GenerationController generation(store, bus, app_running);
 
     // ── Spinner: advance frame periodically + queue watchdog ──
@@ -204,6 +228,7 @@ int main(int argc, char* argv[]) {
         }
     }
     qcode::update_modified_files(state);
+    refresh_subagents();
 
     // ── Popups state ──
     qcode::tui::TuiOverlayState overlays;
@@ -425,6 +450,7 @@ int main(int argc, char* argv[]) {
         std::string new_id = qcode::session::create_new_session(prov, mod);
         store.set_session_id(new_id);
         state.messages_history->clear();
+        if (state.subagent_entries) state.subagent_entries->clear();
         std::string title = "Session - " + mod;
         sync_session_title(state, title);
         if (state.retry_available) *state.retry_available = false;
@@ -482,6 +508,7 @@ int main(int argc, char* argv[]) {
             *state.agent_mode = modes.first.empty() ? "orchestrator" : modes.first;
         }
 
+        refresh_subagents();
         state.tab_selected = 0;
         store.add_toast("Opened session: " + (use_title.empty() ? id : use_title),
                         "info", 1500);
@@ -1188,7 +1215,7 @@ int main(int argc, char* argv[]) {
         // ── Tool block keyboard navigation (only when prompt is empty) ──
         // j/k focus tools, h/← collapse (3 lines), l/→ expand (full), Enter toggles.
         const bool tool_keys_active =
-            prompt_input.empty() && !any_overlay();
+            state.tab_selected == 0 && prompt_input.empty() && !any_overlay();
         auto ensure_tool_focused = [&]() -> bool {
             if (!state.tool_block_order || state.tool_block_order->empty()) {
                 return false;
@@ -1309,15 +1336,12 @@ int main(int argc, char* argv[]) {
 
         // ── Subagents tab: delegated children for current session only ──
         if (state.tab_selected == 3 && !any_overlay()) {
-            const std::string curr_sid = state.session_id ? *state.session_id : "";
-            auto listed = qcode::TaskTool::list_tasks(curr_sid);
-            const auto& tasks =
-                (listed.contains("metadata") && listed["metadata"].contains("tasks"))
-                    ? listed["metadata"]["tasks"]
-                    : nlohmann::json::array();
+            const auto& tasks = state.subagent_entries ? *state.subagent_entries
+                                                       : std::vector<qcode::SubagentEntry>{};
             int child_count = static_cast<int>(tasks.size());
 
             if (e == Event::Character('r') || e == Event::Character('R')) {
+                refresh_subagents();
                 store.add_toast("Refreshed subagents", "info", 1000);
                 screen.Post(Event::Custom);
                 return true;
@@ -1344,10 +1368,8 @@ int main(int argc, char* argv[]) {
                 if (e == Event::Return) {
                     int idx = std::clamp(state.selected_session_item, 0,
                                          child_count - 1);
-                    const std::string sid = tasks[idx].value(
-                        "task_id", tasks[idx].value("sessionId", ""));
-                    const std::string desc =
-                        tasks[idx].value("description", sid);
+                    const std::string sid = tasks[idx].task_id;
+                    const std::string desc = tasks[idx].description.empty() ? sid : tasks[idx].description;
                     if (!sid.empty()) {
                         open_chat_session(sid, desc, true);
                         store.add_toast("Opened child session: " + desc, "info",
@@ -1437,24 +1459,22 @@ int main(int argc, char* argv[]) {
                     state.session_back_box->Contain(e.mouse().x, e.mouse().y)) {
                     if (return_to_parent_session()) return true;
                 }
-                if (state.tab_selected == 3 && state.subagent_row_boxes) {
-                    const std::string curr_sid = state.session_id ? *state.session_id : "";
-                    auto listed = qcode::TaskTool::list_tasks(curr_sid);
-                    const auto& tasks =
-                        (listed.contains("metadata") &&
-                         listed["metadata"].contains("tasks"))
-                            ? listed["metadata"]["tasks"]
-                            : nlohmann::json::array();
+                if (state.tab_selected == 3 && state.subagent_row_boxes && state.subagent_entries) {
+                    const auto& tasks = *state.subagent_entries;
                     for (size_t i = 0; i < state.subagent_row_boxes->size() &&
                                        i < tasks.size();
                          ++i) {
                         if ((*state.subagent_row_boxes)[i].Contain(e.mouse().x,
                                                                    e.mouse().y)) {
-                            const std::string sid = tasks[i].value(
-                                "task_id", tasks[i].value("sessionId", ""));
-                            const std::string desc =
-                                tasks[i].value("description", sid);
-                            open_chat_session(sid, desc, true);
+                            state.selected_session_item = static_cast<int>(i);
+                            const std::string sid = tasks[i].task_id;
+                            const std::string desc = tasks[i].description.empty() ? sid : tasks[i].description;
+                            if (!sid.empty()) {
+                                open_chat_session(sid, desc, true);
+                                store.add_toast("Opened child session: " + desc,
+                                                "info", 1500);
+                            }
+                            screen.Post(Event::Custom);
                             return true;
                         }
                     }
@@ -1539,6 +1559,7 @@ int main(int argc, char* argv[]) {
         git_monitor.apply_pending(state);
         if (was_generating && !store.is_generating()) {
             git_monitor.request_refresh(screen);
+            refresh_subagents();
         }
 
         // Start queued work only after the prior worker has fully exited.
@@ -1549,7 +1570,21 @@ int main(int argc, char* argv[]) {
             state.files_detail_open = false;
             *state.scroll_line = 0;
         }
+        if (state.tab_selected == 3 && previous_tab != 3) {
+            refresh_subagents();
+            state.selected_session_item = 0;
+            *state.scroll_line = 0;
+        }
         previous_tab = state.tab_selected;
+
+        if (state.tab_selected == 3) {
+            static auto last_subagents_poll = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_subagents_poll >= std::chrono::seconds(2)) {
+                last_subagents_poll = now;
+                refresh_subagents();
+            }
+        }
 
         // Expire old toasts
         store.expire_toasts();

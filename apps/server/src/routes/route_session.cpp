@@ -37,6 +37,10 @@ nlohmann::json session_public_json(const qcode::session::SessionInfo& s) {
     if (agent.empty()) {
         agent = (s.id.rfind("ses_", 0) == 0) ? "subagent" : "orchestrator";
     }
+    std::string persona = s.persona;
+    if (persona.empty()) {
+        persona = qcode::session::get_session_persona(s.id);
+    }
     return {
         {"id", s.id},
         {"title", s.title},
@@ -45,7 +49,8 @@ nlohmann::json session_public_json(const qcode::session::SessionInfo& s) {
         {"model", s.model},
         {"agent_mode", agent},
         {"reasoning_mode", modes.second},
-        {"parent_session_id", s.parent_session_id}
+        {"parent_session_id", s.parent_session_id},
+        {"persona", persona}
     };
 }
 
@@ -63,6 +68,89 @@ void shutdown_active_sessions() {
             sess->abort_flag->store(true);
         }
     }
+}
+
+
+std::string load_persona_prompt(const std::string& persona, const std::string& workspace) {
+    if (persona.empty()) return "";
+    std::vector<std::filesystem::path> candidates;
+
+    std::filesystem::path p(persona);
+    if (p.is_absolute()) {
+        candidates.push_back(p);
+    }
+
+    if (!workspace.empty()) {
+        candidates.push_back(std::filesystem::path(workspace) / "persona" / (persona + ".md"));
+        candidates.push_back(std::filesystem::path(workspace) / "persona" / persona);
+        candidates.push_back(std::filesystem::path(workspace) / (persona + ".md"));
+    }
+
+    const char* home = std::getenv("HOME");
+    std::filesystem::path home_path = home ? std::filesystem::path(home) : std::filesystem::path("/home/abhi");
+    candidates.push_back(home_path / "notes" / "persona" / (persona + ".md"));
+    candidates.push_back(home_path / "notes" / "persona" / persona);
+
+    for (const auto& path : candidates) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(path, ec)) {
+            std::ifstream ifs(path);
+            if (ifs) {
+                std::stringstream buffer;
+                buffer << ifs.rdbuf();
+                LOG_INFO("Loaded persona '{}' from {}", persona, path.string());
+                return buffer.str();
+            }
+        }
+    }
+
+    LOG_WARN("Could not find persona file for '{}'", persona);
+    return "";
+}
+
+nlohmann::json list_available_personas(const std::string& workspace) {
+    nlohmann::json result = nlohmann::json::array();
+    std::vector<std::filesystem::path> scan_dirs;
+    if (!workspace.empty()) {
+        scan_dirs.push_back(std::filesystem::path(workspace) / "persona");
+    }
+    const char* home = std::getenv("HOME");
+    std::filesystem::path home_path = home ? std::filesystem::path(home) : std::filesystem::path("/home/abhi");
+    scan_dirs.push_back(home_path / "notes" / "persona");
+
+    std::unordered_set<std::string> seen_ids;
+    for (const auto& dir : scan_dirs) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dir, ec)) continue;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".md") {
+                std::string id = entry.path().stem().string();
+                if (seen_ids.insert(id).second) {
+                    std::string title = id;
+                    if (!title.empty()) title[0] = std::toupper(static_cast<unsigned char>(title[0]));
+                    std::string desc = "";
+                    std::ifstream ifs(entry.path());
+                    if (ifs) {
+                        std::string line;
+                        while (std::getline(ifs, line)) {
+                            if (line.rfind("You are the ", 0) == 0 || line.rfind("You are a ", 0) == 0) {
+                                desc = line;
+                                break;
+                            }
+                        }
+                    }
+                    result.push_back({
+                        {"id", id},
+                        {"name", title},
+                        {"file", entry.path().filename().string()},
+                        {"path", entry.path().string()},
+                        {"description", desc}
+                    });
+                }
+            }
+        }
+    }
+    return result;
 }
 
 void register_session_routes(
@@ -274,27 +362,56 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
     if (mode == "study") study_mode = true;
     if (mode == "code") study_mode = false;
 
+    std::string persona_name = body.value("persona", "");
+    if (persona_name.empty()) {
+        persona_name = qcode::session::get_session_persona(session_id);
+    }
+    std::string session_ws = qcode::session::get_session_workspace(session_id);
+    if (session_ws.empty()) session_ws = default_workspace;
+
     std::string system_prompt;
     if (body.contains("system_prompt") && body["system_prompt"].is_string() &&
         !body["system_prompt"].get<std::string>().empty()) {
         system_prompt = body["system_prompt"].get<std::string>();
-    } else if (study_mode) {
-        system_prompt =
-            qcode::SystemPrompt::build(qcode::SystemPrompt::study_identity());
-    } else {
-        bool vision_supported = false;
-        for (const auto& p : *providers_list) {
-            if (p.id == provider || p.name == provider) {
-                for (const auto& m : p.models) {
-                    if (m.id == model || m.name == model) {
-                        vision_supported = m.vision;
-                        break;
+    } else if (!persona_name.empty()) {
+        std::string persona_prompt = load_persona_prompt(persona_name, session_ws);
+        if (!persona_prompt.empty()) {
+            bool vision_supported = false;
+            for (const auto& p : *providers_list) {
+                if (p.id == provider || p.name == provider) {
+                    for (const auto& m : p.models) {
+                        if (m.id == model || m.name == model) {
+                            vision_supported = m.vision;
+                            break;
+                        }
                     }
+                    break;
                 }
-                break;
             }
+            system_prompt = qcode::SystemPrompt::build(persona_prompt, qcode::ToolConfig::orchestrator(vision_supported));
+            LOG_INFO("Session {}: loaded persona '{}'", session_id, persona_name);
         }
-        system_prompt = qcode::SystemPrompt::build_default(qcode::ToolConfig::orchestrator(vision_supported));
+    }
+
+    if (system_prompt.empty()) {
+        if (study_mode) {
+            system_prompt =
+                qcode::SystemPrompt::build(qcode::SystemPrompt::study_identity());
+        } else {
+            bool vision_supported = false;
+            for (const auto& p : *providers_list) {
+                if (p.id == provider || p.name == provider) {
+                    for (const auto& m : p.models) {
+                        if (m.id == model || m.name == model) {
+                            vision_supported = m.vision;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+            system_prompt = qcode::SystemPrompt::build_default(qcode::ToolConfig::orchestrator(vision_supported));
+        }
     }
     std::string reasoning_mode = body.value("reasoning_mode", "off");
     std::string agent_mode = body.value("agent_mode", "");
@@ -689,12 +806,16 @@ svr.Post("/sessions", [default_workspace](const httplib::Request& req, httplib::
         res.set_content(R"({"error":"provider and model required"})", "application/json");
         return;
     }
+    std::string persona = body.value("persona", "");
     auto id = qcode::session::create_new_session(provider, model, workspace, custom_id);
+    if (!persona.empty()) {
+        qcode::session::set_session_persona(id, persona);
+    }
     std::string title = qcode::session::get_session_title(id);
     if (title.empty()) {
         title = custom_id.empty() ? ("Session - " + model) : custom_id;
     }
-    res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}, {"title", title}}).dump(), "application/json");
+    res.set_content(nlohmann::json({{"id", id}, {"workspace", workspace}, {"title", title}, {"persona", persona}}).dump(), "application/json");
 });
 
 // ── Rename session ──
@@ -815,6 +936,36 @@ svr.Get("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& r
 });
 
 // ── Set agent mode (plan <-> orchestrator), matching TUI toggle ──
+
+// ── Set session persona ──
+svr.Post("/session/([^/]+)/persona", [](const httplib::Request& req, httplib::Response& res) {
+    std::string sid = url_decode(req.matches[1]);
+    if (sid.empty() || !qcode::session::is_valid_session_id(sid)) {
+        res.status = 400;
+        res.set_content(R"({"error":"invalid session_id"})", "application/json");
+        return;
+    }
+    nlohmann::json body;
+    try { body = nlohmann::json::parse(req.body); } catch (...) {
+        res.status = 400;
+        res.set_content(R"({"error":"invalid JSON"})", "application/json");
+        return;
+    }
+    std::string persona = body.value("persona", "");
+    qcode::session::set_session_persona(sid, persona);
+    res.set_content(nlohmann::json({{"ok", true}, {"persona", persona}}).dump(), "application/json");
+});
+
+// ── List available personas ──
+svr.Get("/personas", [default_workspace](const httplib::Request& req, httplib::Response& res) {
+    std::string ws = req.has_param("workspace") ? req.get_param_value("workspace") : default_workspace;
+    res.set_content(list_available_personas(ws).dump(2), "application/json");
+});
+svr.Get("/api/personas", [default_workspace](const httplib::Request& req, httplib::Response& res) {
+    std::string ws = req.has_param("workspace") ? req.get_param_value("workspace") : default_workspace;
+    res.set_content(list_available_personas(ws).dump(2), "application/json");
+});
+
 svr.Post("/session/([^/]+)/mode", [](const httplib::Request& req, httplib::Response& res) {
     std::string sid = url_decode(req.matches[1]);
     if (sid.empty() || !qcode::session::is_valid_session_id(sid)) {

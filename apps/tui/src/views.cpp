@@ -1067,10 +1067,12 @@ ftxui::Element render_view(
     }
     // ── Tab 3: Subagents for current session only ──
     else {
-        const std::string curr_sid = state.session_id ? *state.session_id : "";
-        auto subagent_data = TaskTool::list_tasks(curr_sid);
+        const auto& tasks = state.subagent_entries ? *state.subagent_entries
+                                                   : std::vector<SubagentEntry>{};
         if (state.session_row_boxes) state.session_row_boxes->clear();
-        if (state.subagent_row_boxes) state.subagent_row_boxes->clear();
+        if (state.subagent_row_boxes) {
+            state.subagent_row_boxes->resize(tasks.size());
+        }
 
         Elements content_rows;
 
@@ -1081,29 +1083,25 @@ ftxui::Element render_view(
         ));
         content_rows.push_back(separatorLight() | color(accent(theme)));
 
-        bool has_subagents = subagent_data.contains("metadata") &&
-                             subagent_data["metadata"].contains("tasks") &&
-                             !subagent_data["metadata"]["tasks"].empty();
-        if (!has_subagents) {
+        if (tasks.empty()) {
             content_rows.push_back(text("  No subagents run for this session.") | dim);
             content_rows.push_back(
                 text("  Spawn subagents using the task tool. They will appear here for the active session.") | dim);
         } else {
-            const auto& tasks = subagent_data["metadata"]["tasks"];
             content_rows.push_back(hbox(
                 text("▶ SUBAGENTS (" + std::to_string(tasks.size()) + ")") | bold | color(Color::CyanLight)
             ));
-            int row_i = 0;
-            for (const auto& t : tasks) {
-                std::string bg_id = t.value("background_task_id", "");
-                std::string status = t.value("status", "");
-                std::string agent_type = t.value("agent", "general");
-                std::string mode_str = t.value("mode", "explore");
-                std::string model_str = t.value("model", "");
-                std::string desc = t.value("description", "");
-                std::string sid = t.value("task_id", t.value("sessionId", ""));
+            for (size_t row_i = 0; row_i < tasks.size(); ++row_i) {
+                const auto& t = tasks[row_i];
+                const std::string& bg_id = t.background_task_id;
+                const std::string& status = t.status;
+                const std::string& agent_type = t.agent;
+                const std::string& mode_str = t.mode;
+                const std::string& model_str = t.model;
+                const std::string& desc = t.description;
+                const std::string& sid = t.task_id;
                 const bool is_current = (state.session_id && sid == *state.session_id);
-                const bool is_active_cursor = (row_i == state.selected_session_item);
+                const bool is_active_cursor = (static_cast<int>(row_i) == state.selected_session_item);
 
                 Color status_col = Color::Default;
                 if (status == "running") status_col = Color::Yellow;
@@ -1126,12 +1124,10 @@ ftxui::Element render_view(
                     row = std::move(row) | bgcolor(bg_popup());
                 }
                 if (state.subagent_row_boxes) {
-                    state.subagent_row_boxes->emplace_back();
                     row = std::move(row) |
-                          reflect_box(state.subagent_row_boxes->back());
+                          reflect_box((*state.subagent_row_boxes)[row_i]);
                 }
                 content_rows.push_back(std::move(row));
-                ++row_i;
             }
         }
 

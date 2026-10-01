@@ -429,9 +429,9 @@ JsonValue TaskTool::list_tasks(const std::string& parent_session_id) {
     for (const auto& s : durable_sessions) {
       if (seen_sessions.contains(s.id)) continue;
       std::string status = "done";
-      auto msgs = qcode::session::load_session_messages(s.id);
-      if (!msgs.empty() && msgs.back().first == "Assistant") {
-        if (msgs.back().second.rfind("Error", 0) == 0) {
+      auto last_msg = qcode::session::load_last_session_message(s.id);
+      if (last_msg && last_msg->first == "Assistant") {
+        if (last_msg->second.rfind("Error", 0) == 0) {
           status = "error";
         }
       }
