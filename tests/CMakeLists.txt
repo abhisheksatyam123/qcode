@@ -90,6 +90,7 @@ target_include_directories(qcode_tests
         ${CMAKE_SOURCE_DIR}/libqcode/src
         ${CMAKE_SOURCE_DIR}/libqcode/include
         ${CMAKE_SOURCE_DIR}/apps/server/include
+        ${CMAKE_SOURCE_DIR}/apps/tui/include
         ${CMAKE_SOURCE_DIR}/apps/server/src
 )
 

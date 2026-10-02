@@ -212,18 +212,11 @@ int main(int argc, char* argv[]) {
             *state.session_title =
                 qcode::session::get_session_title(store.session_id());
         }
-        if (!loaded_prov_id.empty() && !loaded_model_id.empty()) {
-            for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
-                if (providers_list[i].name == loaded_prov_id || providers_list[i].id == loaded_prov_id) {
-                    for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
-                        if (providers_list[i].models[j].name == loaded_model_id || providers_list[i].models[j].id == loaded_model_id) {
-                            selected_provider = i;
-                            selected_model = j;
-                            break;
-                        }
-                    }
-                    break;
-                }
+        if (!loaded_prov_id.empty() || !loaded_model_id.empty()) {
+            if (auto resolved = qcode::tui::resolve_provider_model_indices(
+                    providers_list, loaded_prov_id, loaded_model_id)) {
+                selected_provider = resolved->first;
+                selected_model = resolved->second;
             }
         }
     }
@@ -489,17 +482,10 @@ int main(int argc, char* argv[]) {
         store.set_status(gen_running ? "generating" : "idle");
         auto pm = qcode::session::get_session_provider_model(id);
         if (!pm.first.empty() || !pm.second.empty()) {
-            for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
-                if (providers_list[i].name == pm.first || providers_list[i].id == pm.first) {
-                    for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
-                        if (providers_list[i].models[j].name == pm.second || providers_list[i].models[j].id == pm.second) {
-                            selected_provider = i;
-                            selected_model = j;
-                            break;
-                        }
-                    }
-                    break;
-                }
+            if (auto resolved = qcode::tui::resolve_provider_model_indices(
+                    providers_list, pm.first, pm.second)) {
+                selected_provider = resolved->first;
+                selected_model = resolved->second;
             }
         }
         sync_tool_config_and_system_prompt();
@@ -868,6 +854,9 @@ int main(int argc, char* argv[]) {
                                           selected_provider, selected_model,
                                           enable_tools, system_prompt, state,
                                           compaction_thread, *bus);
+            sync_tool_config_and_system_prompt();
+            clamp_variant_to_current_model();
+            overlays.session_entries = qcode::session::list_sessions_full();
             return;
         }
 
@@ -914,24 +903,25 @@ int main(int argc, char* argv[]) {
             selected_model = entry.model_idx;
             sync_tool_config_and_system_prompt();
             clamp_variant_to_current_model();
+            if (state.session_id && !state.session_id->empty()) {
+                qcode::session::set_session_provider_model(
+                    *state.session_id,
+                    providers_list[selected_provider].name,
+                    providers_list[selected_provider].models[selected_model].name);
+            }
+            overlays.session_entries = qcode::session::list_sessions_full();
+            store.add_toast("Switched model: " + entry.model_name, "info", 1500);
         })) return true;
 
         if (qcode::tui::handle_session_select_keys(e, overlays,
             [&](const qcode::session::SessionInfo& picked) {
                 open_chat_session(picked.id, picked.title, false);
 
-                if (!picked.provider.empty() && !picked.model.empty()) {
-                    for (int i = 0; i < static_cast<int>(providers_list.size()); ++i) {
-                        if (providers_list[i].name == picked.provider || providers_list[i].id == picked.provider) {
-                            for (int j = 0; j < static_cast<int>(providers_list[i].models.size()); ++j) {
-                                if (providers_list[i].models[j].name == picked.model || providers_list[i].models[j].id == picked.model) {
-                                    selected_provider = i;
-                                    selected_model = j;
-                                    break;
-                                }
-                            }
-                            break;
-                        }
+                if (!picked.provider.empty() || !picked.model.empty()) {
+                    if (auto resolved = qcode::tui::resolve_provider_model_indices(
+                            providers_list, picked.provider, picked.model)) {
+                        selected_provider = resolved->first;
+                        selected_model = resolved->second;
                     }
                 }
                 apply_config_variant_if_unset();

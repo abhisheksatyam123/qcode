@@ -66,7 +66,8 @@ public:
         sqlite3_bind_text(insert_, 3, content.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int64(insert_, 4, created_at);
         if (sqlite3_step(insert_) != SQLITE_DONE) {
-            LOG_ERROR("SQLite: message insert failed: {}", sqlite3_errmsg(db_));
+            LOG_ERROR("SQLite: message insert failed for session '{}' (sender '{}'): {}",
+                      session_id, sender, sqlite3_errmsg(db_));
         }
     }
 

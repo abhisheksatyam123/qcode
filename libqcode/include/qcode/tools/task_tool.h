@@ -140,7 +140,7 @@ class TaskTool {
 
  private:
   static JsonValue exec_spawn(const JsonValue& args, const ToolExecutionContext& context);
-  static JsonValue exec_result(const JsonValue& args);
+  static JsonValue exec_result(const JsonValue& args, const ToolExecutionContext& context = {});
   static JsonValue exec_lifecycle(const JsonValue& args, const std::string& op);
   static JsonValue exec_model(const JsonValue& args);
 };

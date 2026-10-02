@@ -62,10 +62,11 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
         static_cast<int>(step_result.finish_reason));
 
     if (!step_result.is_success()) {
+      final_result.finish_reason = step_result.finish_reason;
+      final_result.error = step_result.error;
       if (step == 0) {
         return step_result;
       }
-      final_result.error = step_result.error;
       break;
     }
 
@@ -120,17 +121,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
         step_result.has_tool_calls()) {
       const std::vector<ToolResult>& tool_results = step_result.tool_results;
 
-      bool all_failed = true;
-      for (const auto& result : tool_results) {
-        if (result.is_success()) {
-          all_failed = false;
-          break;
-        }
-      }
-      if (all_failed && !tool_results.empty()) {
-        final_result.finish_reason = kFinishReasonError;
-        break;
-      }
+
 
       // Append assistant turn (text + tool calls) and tool result messages to
       // the running accumulator. Next iteration's input messages are rebuilt

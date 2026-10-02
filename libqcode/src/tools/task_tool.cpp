@@ -159,7 +159,8 @@ class SubagentRegistry {
     persist_subagent_output(session_id, output);
   }
 
-  JsonValue await_or_poll(const std::string& bg_id, int timeout_ms) {
+  JsonValue await_or_poll(const std::string& bg_id, int timeout_ms,
+                          std::shared_ptr<std::atomic<bool>> abort_flag = nullptr) {
     std::shared_ptr<SubagentTaskEntry> entry;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -173,6 +174,32 @@ class SubagentRegistry {
     }
 
     if (!entry) {
+      // Fallback: check SQLite durable sessions in case memory registry was reset
+      std::string lookup_id = bg_id;
+      if (lookup_id.rfind("bg_", 0) == 0) lookup_id = lookup_id.substr(3);
+      std::string title = qcode::session::get_session_title(lookup_id);
+      if (!title.empty()) {
+        auto last_msg = qcode::session::load_last_session_message(lookup_id);
+        std::string status = "done";
+        std::string output = "Subagent session completed.";
+        if (last_msg && last_msg->first == "Assistant") {
+          output = last_msg->second;
+          if (output.rfind("Error", 0) == 0) status = "error";
+        }
+        auto pm = qcode::session::get_session_provider_model(lookup_id);
+        JsonValue res;
+        res["title"] = "task " + status + ": " + title;
+        res["output"] = output;
+        res["metadata"] = {
+            {"status", status},
+            {"background_task_id", bg_id},
+            {"task_id", lookup_id},
+            {"sessionId", lookup_id},
+            {"model", !pm.first.empty() ? (pm.first + ":" + pm.second) : pm.second},
+        };
+        if (status == "error") res["error"] = output;
+        return res;
+      }
       JsonValue err;
       err["error"] = "Background task not found: " + bg_id;
       return err;
@@ -211,11 +238,21 @@ class SubagentRegistry {
       return res;
     }
 
-    std::future_status status;
-    if (timeout_ms == 0) {
+    std::future_status status = std::future_status::timeout;
+    if (timeout_ms <= 0) {
       status = fut.wait_for(std::chrono::milliseconds(0));
     } else {
-      status = fut.wait_for(std::chrono::milliseconds(timeout_ms));
+      constexpr auto kSlice = std::chrono::milliseconds(100);
+      auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+      while (std::chrono::steady_clock::now() < deadline) {
+        if (abort_flag && abort_flag->load()) {
+          break;
+        }
+        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        status = fut.wait_for(std::min(kSlice, remaining));
+        if (status == std::future_status::ready) break;
+      }
     }
 
     if (status == std::future_status::ready) {
@@ -737,9 +774,17 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
   std::string parent_session_id = context.session_id;
   {
     std::string title = description.empty() ? subagent_type : description;
-    qcode::session::ensure_session_row(session_id, title, args.value("provider", ""),
-                                       args.value("model", ""), context.workspace,
-                                       parent_session_id);
+    std::string prov = args.value("provider", "");
+    std::string mod = args.value("model", "");
+    if (prov.empty() && !mod.empty()) {
+      auto colon = mod.find(':');
+      if (colon != std::string::npos && colon > 0 && colon + 1 < mod.size()) {
+        prov = mod.substr(0, colon);
+        mod = mod.substr(colon + 1);
+      }
+    }
+    qcode::session::ensure_session_row(session_id, title, prov, mod,
+                                       context.workspace, parent_session_id);
     qcode::session::save_message(session_id, "User", prompt_text);
   }
   bool is_background = args.value("background", args.value("run_in_background", false));
@@ -877,7 +922,7 @@ JsonValue TaskTool::exec_spawn(const JsonValue& raw_args, const ToolExecutionCon
   return result;
 }
 
-JsonValue TaskTool::exec_result(const JsonValue& args) {
+JsonValue TaskTool::exec_result(const JsonValue& args, const ToolExecutionContext& context) {
   LOG_DEBUG("TaskTool: exec_result");
   std::string bg_id = args.value("background_task_id", args.value("task_id", ""));
   if (bg_id.empty()) {
@@ -887,7 +932,7 @@ JsonValue TaskTool::exec_result(const JsonValue& args) {
   }
 
   int timeout_ms = args.value("timeout_ms", 30000);
-  return SubagentRegistry::instance().await_or_poll(bg_id, timeout_ms);
+  return SubagentRegistry::instance().await_or_poll(bg_id, timeout_ms, context.abort_flag);
 }
 
 JsonValue TaskTool::exec_lifecycle(const JsonValue& args, const std::string& op) {
@@ -923,7 +968,7 @@ JsonValue TaskTool::exec_model(const JsonValue& args) {
 JsonValue TaskTool::execute(const JsonValue& args, const ToolExecutionContext& context) {
   std::string op = args.value("op", "spawn");
 
-  if (op == "result") return exec_result(args);
+  if (op == "result") return exec_result(args, context);
   if (op == "kill" || op == "pause" || op == "resume" || op == "resurrect" || op == "status" || op == "list")
     return exec_lifecycle(args, op);
   if (op == "model") return exec_model(args);

@@ -113,7 +113,11 @@ bool subagent_failover_worthy(const std::string& msg, const GenerateResult& res)
   if (msg.find("free tier can only be used") != std::string::npos) return true;
   if (msg.find("is not supported") != std::string::npos) return true;
   if (msg.find("Failed to resolve subagent client") != std::string::npos) return true;
-  if (msg.find("401") != std::string::npos || msg.find("403") != std::string::npos) return true;
+  if (msg.find("subagent generation failed") != std::string::npos) return true;
+  if (msg.find("401") != std::string::npos || msg.find("403") != std::string::npos ||
+      msg.find("404") != std::string::npos || msg.find("429") != std::string::npos ||
+      msg.find("500") != std::string::npos || msg.find("502") != std::string::npos ||
+      msg.find("503") != std::string::npos || msg.find("504") != std::string::npos) return true;
   return is_error_message_retryable(msg);
 }
 }  // namespace
@@ -274,6 +278,13 @@ static JsonValue run_subagent_turn_multi(
     }
     qcode::Client subagent_client = std::move(resolution.client);
 
+    std::string sub_session_id =
+        args.value("sessionId", args.value("session_id", args.value("task_id", "")));
+    if (!sub_session_id.empty() && target_provider) {
+      qcode::session::set_session_provider_model(
+          sub_session_id, target_provider->name, target_model_id);
+    }
+
     std::ostringstream sub_sys;
     sub_sys << "You are an autonomous '" << subagent_type
             << "' subagent delegated by the Lead Orchestrator.\n";
@@ -321,8 +332,7 @@ static JsonValue run_subagent_turn_multi(
     const auto subagent_tool_cfg = ToolConfig::subagent(subagent_vision);
     sub_sys << ToolCatalog::build_tool_section(subagent_tool_cfg);
 
-    std::string sub_session_id =
-        args.value("sessionId", args.value("session_id", args.value("task_id", "")));
+
 
     int max_steps = 0;
     if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {

@@ -153,6 +153,7 @@ struct GenerateResult {
       : finish_reason(kFinishReasonError), error(std::move(error_message)) {}
 
   bool is_success() const {
+    if (error.has_value() && !error->empty()) return false;
     return finish_reason == kFinishReasonStop ||
            finish_reason == kFinishReasonLength ||
            finish_reason == kFinishReasonToolCalls;

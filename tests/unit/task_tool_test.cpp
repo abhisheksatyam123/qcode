@@ -14,6 +14,7 @@
 #include <thread>
 
 #include <qcode/core/tool.h>
+#include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/tools/task_tool.h>
 
 namespace qcode {
@@ -462,6 +463,83 @@ TEST_F(TaskToolTest, ListsDurableChildSessionsFromDatabase) {
     }
   }
   EXPECT_TRUE(found);
+}
+
+TEST_F(TaskToolTest, ResultFallsBackToDurableSession) {
+  const std::string child_sid = "ses_durable_child_res_999";
+  qcode::session::ensure_session_row(child_sid, "Network test suite", "antigravity", "gemini-3.8-flash", "/ws");
+  qcode::session::save_message(child_sid, "Assistant", "Network test suite passed: 10/10 ok.");
+
+  // Clear in-memory registry to simulate process restart or lost registry
+  TaskTool::clear_background_tasks();
+
+  JsonValue res = TaskTool::execute(
+      JsonValue{{"op", "result"},
+                {"background_task_id", "bg_" + child_sid}},
+      {});
+
+  ASSERT_TRUE(res.contains("metadata"));
+  EXPECT_EQ(res["metadata"].value("status", ""), "done");
+  EXPECT_THAT(res.value("output", ""), testing::HasSubstr("Network test suite passed"));
+}
+
+
+TEST(MultiStepCoordinatorTest, DoesNotAbortWhenToolExecutionFails) {
+  // Setup options with tools
+  ToolSet tools;
+  Tool mock_tool;
+  mock_tool.name = "failing_tool";
+  mock_tool.description = "A tool that returns an error";
+  mock_tool.execute = [](const JsonValue&, const ToolExecutionContext&) -> JsonValue {
+    throw std::runtime_error("Command failed with exit code 1");
+  };
+  tools["failing_tool"] = mock_tool;
+
+  GenerateOptions opts("mock-model", "system prompt", "initial user prompt");
+  opts.tools = tools;
+  opts.max_steps = 3;
+
+  int step_count = 0;
+  auto generate_func = [&](const GenerateOptions& step_opts) -> GenerateResult {
+    step_count++;
+    if (step_count == 1) {
+      // Step 1: Model calls failing_tool
+      GenerateResult res;
+      res.finish_reason = kFinishReasonToolCalls;
+      res.tool_calls.push_back(ToolCall("call_1", "failing_tool", JsonValue::object()));
+      return res;
+    } else {
+      // Step 2: Model receives error tool result and recovers/completes
+      bool found_tool_result = false;
+      for (const auto& msg : step_opts.messages) {
+        if (msg.has_tool_results()) {
+          found_tool_result = true;
+          for (const auto& part : msg.content) {
+            if (std::holds_alternative<ToolResultContentPart>(part)) {
+              const auto& tr = std::get<ToolResultContentPart>(part);
+              EXPECT_TRUE(tr.is_error);
+              EXPECT_TRUE(tr.result.contains("error"));
+              EXPECT_THAT(tr.result["error"].get<std::string>(),
+                          testing::HasSubstr("Command failed with exit code 1"));
+            }
+          }
+        }
+      }
+      EXPECT_TRUE(found_tool_result);
+
+      GenerateResult res;
+      res.finish_reason = kFinishReasonStop;
+      res.text = "I recovered from the error.";
+      return res;
+    }
+  };
+
+  GenerateResult final_res = MultiStepCoordinator::execute_multi_step(opts, generate_func);
+
+  EXPECT_EQ(step_count, 2);
+  EXPECT_TRUE(final_res.is_success());
+  EXPECT_EQ(final_res.finish_reason, kFinishReasonStop);
+  EXPECT_EQ(final_res.text, "I recovered from the error.");
 }
 
 }  // namespace test

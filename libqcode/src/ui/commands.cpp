@@ -97,26 +97,98 @@ bool handle_slash_command(
     }
     std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
 
-    LOG_DEBUG("Commands: /model list requested");
+    LOG_DEBUG("Commands: /model requested args='{}'", args);
     if (cmd == "model" || cmd == "models") {
         auto entries = build_model_entries(providers_list);
-        std::ostringstream m;
-        m << "Select a model:\n";
-        std::string last_cat;
-        for (auto& e : entries) {
-            if (e.category != last_cat) {
-                if (!last_cat.empty()) m << "\n";
-                m << "  " << e.category << ":\n";
-                last_cat = e.category;
+        if (args.empty()) {
+            std::ostringstream m;
+            m << "Available models:\n";
+            std::string last_cat;
+            int num = 1;
+            for (auto& e : entries) {
+                if (e.category != last_cat) {
+                    if (!last_cat.empty()) m << "\n";
+                    m << "  " << e.category << ":\n";
+                    last_cat = e.category;
+                }
+                bool active = (e.provider_idx == selected_provider &&
+                               e.model_idx == selected_model);
+                m << "  " << (active ? "▶ " : "  ") << num << ". " << e.model_name;
+                if (e.model_id != e.model_name)
+                    m << "  (" << e.model_id << ")";
+                m << "\n";
+                num++;
             }
-            bool active = (e.provider_idx == selected_provider &&
-                           e.model_idx == selected_model);
-            m << "  " << (active ? "▶ " : "  ") << e.model_name;
-            if (e.model_id != e.model_name)
-                m << "  " << e.model_id;
-            m << "\n";
+            m << "\nUse '/model <name|id|number>' to switch models.";
+            append_system_message(state, m.str());
+            return true;
         }
-        append_system_message(state, m.str());
+
+        // Switch to specified model
+        int target_prov = -1;
+        int target_mod = -1;
+
+        // 1. Try numeric 1-based index
+        try {
+            size_t pos = 0;
+            int n = std::stoi(args, &pos);
+            if (pos == args.size() && n >= 1 && n <= static_cast<int>(entries.size())) {
+                target_prov = entries[n - 1].provider_idx;
+                target_mod = entries[n - 1].model_idx;
+            }
+        } catch (...) {}
+
+        // 2. Try exact or case-insensitive match on model_id, model_name, or category:model_id
+        if (target_prov < 0) {
+            std::string q = args;
+            std::transform(q.begin(), q.end(), q.begin(), [](unsigned char c) { return std::tolower(c); });
+            for (const auto& e : entries) {
+                std::string mid = e.model_id;
+                std::string mname = e.model_name;
+                std::string cat = e.category;
+                std::transform(mid.begin(), mid.end(), mid.begin(), [](unsigned char c) { return std::tolower(c); });
+                std::transform(mname.begin(), mname.end(), mname.begin(), [](unsigned char c) { return std::tolower(c); });
+                std::transform(cat.begin(), cat.end(), cat.begin(), [](unsigned char c) { return std::tolower(c); });
+                std::string combo = cat + ":" + mid;
+                if (mid == q || mname == q || combo == q) {
+                    target_prov = e.provider_idx;
+                    target_mod = e.model_idx;
+                    break;
+                }
+            }
+        }
+
+        // 3. Try substring match on model_id or model_name
+        if (target_prov < 0) {
+            std::string q = args;
+            std::transform(q.begin(), q.end(), q.begin(), [](unsigned char c) { return std::tolower(c); });
+            for (const auto& e : entries) {
+                std::string mid = e.model_id;
+                std::string mname = e.model_name;
+                std::transform(mid.begin(), mid.end(), mid.begin(), [](unsigned char c) { return std::tolower(c); });
+                std::transform(mname.begin(), mname.end(), mname.begin(), [](unsigned char c) { return std::tolower(c); });
+                if (mid.find(q) != std::string::npos || mname.find(q) != std::string::npos) {
+                    target_prov = e.provider_idx;
+                    target_mod = e.model_idx;
+                    break;
+                }
+            }
+        }
+
+        if (target_prov >= 0 && target_mod >= 0) {
+            selected_provider = target_prov;
+            selected_model = target_mod;
+            const auto& prov = providers_list[selected_provider];
+            const auto& mod = prov.models[selected_model];
+            if (state.session_id && !state.session_id->empty()) {
+                qcode::session::set_session_provider_model(
+                    *state.session_id, prov.name, mod.name);
+            }
+            append_system_message(state, "Model switched to: " + mod.name + " (" + prov.name + ")");
+        } else {
+            append_system_message(
+                state, "Unknown model '" + args + "'. Use /model to list available models.");
+        }
         return true;
     }
 
