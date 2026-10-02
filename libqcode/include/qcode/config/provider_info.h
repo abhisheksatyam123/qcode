@@ -37,10 +37,25 @@ struct ProviderInfo {
     std::vector<ModelInfo> models;
 };
 
+// Check if a provider has valid credentials / endpoint to execute calls.
+bool is_provider_authenticated(const ProviderInfo& provider);
+
+// Check if a model is currently eligible and working for delegation.
+bool is_model_working(const ProviderInfo& provider, const ModelInfo& model);
+
+// Filter providers and their models to only those that are working.
+std::vector<ProviderInfo> filter_working_providers(const std::vector<ProviderInfo>& providers);
+
 // Format a clean Markdown section of available providers and models for the system prompt.
-std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& providers);
+std::string format_provider_catalog_for_prompt(
+    const std::vector<ProviderInfo>& providers,
+    std::string_view current_provider_id = "",
+    std::string_view current_model_id = "");
 
 // Compact `provider:model_id` list for task-tool error payloads (from opencode.json).
-std::string format_provider_catalog_for_error(const std::vector<ProviderInfo>& providers);
+std::string format_provider_catalog_for_error(
+    const std::vector<ProviderInfo>& providers,
+    std::string_view current_provider_id = "",
+    std::string_view current_model_id = "");
 
 }  // namespace qcode

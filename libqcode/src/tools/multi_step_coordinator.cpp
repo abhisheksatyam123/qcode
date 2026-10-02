@@ -109,19 +109,15 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     final_result.system_fingerprint = step_result.system_fingerprint;
     final_result.provider_metadata = step_result.provider_metadata;
 
-    // Termination conditions identical to before.
-    if (step_result.finish_reason == kFinishReasonStop ||
-        step_result.finish_reason == kFinishReasonLength ||
-        step_result.finish_reason == kFinishReasonContentFilter ||
+    // Termination conditions: abort only on hard provider errors or content filters.
+    if (step_result.finish_reason == kFinishReasonContentFilter ||
         step_result.finish_reason == kFinishReasonError) {
       break;
     }
 
-    if (step_result.finish_reason == kFinishReasonToolCalls &&
-        step_result.has_tool_calls()) {
+    // Process tool calls if present, regardless of finish_reason ("tool_calls", "stop", etc.)
+    if (step_result.has_tool_calls()) {
       const std::vector<ToolResult>& tool_results = step_result.tool_results;
-
-
 
       // Append assistant turn (text + tool calls) and tool result messages to
       // the running accumulator. Next iteration's input messages are rebuilt
@@ -129,7 +125,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
       std::vector<ToolCallContentPart> tool_call_contents;
       tool_call_contents.reserve(step_result.tool_calls.size());
       for (const auto& tc : step_result.tool_calls) {
-        tool_call_contents.emplace_back(tc.id, tc.tool_name, tc.arguments);
+        tool_call_contents.emplace_back(tc.id, tc.tool_name, tc.arguments, tc.thought_signature);
       }
       response_messages.push_back(
           Message::assistant_with_tools(step_result.text, tool_call_contents));
@@ -139,8 +135,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
       response_messages.insert(response_messages.end(), tool_messages.begin(),
                                tool_messages.end());
     } else {
-      // No tool calls and a non-terminal finish reason: nothing to feed back,
-      // so we're done.
+      // No tool calls: text response completed.
       break;
     }
   }

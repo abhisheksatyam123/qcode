@@ -23,10 +23,13 @@ namespace qcode {
 //   plan_mode    -> plan reminder + catalog
 //   is_subagent  -> raw prompt only (focused worker, no catalog)
 //   otherwise    -> orchestrator reminder + catalog
-std::string build_turn_system_prompt(const std::string& system_prompt,
-                                     bool plan_mode,
-                                     bool is_subagent,
-                                     const std::vector<ProviderInfo>& providers);
+std::string build_turn_system_prompt(
+    const std::string& system_prompt,
+    bool plan_mode,
+    bool is_subagent,
+    const std::vector<ProviderInfo>& providers,
+    std::string_view current_provider_id = "",
+    std::string_view current_model_id = "");
 
 // Tool definitions dispatched for a turn.
 //   enable_task_tool -> orchestrator tool set, else subagent tool set.

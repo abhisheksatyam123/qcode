@@ -1,3 +1,4 @@
+#include <qcode/core/logger.h>
 #include <qcode/tools/task_target.h>
 #include <qcode/transform/provider_transform.h>
 
@@ -61,8 +62,11 @@ std::string first_catalog_combo(const std::vector<ProviderInfo>& providers) {
 }
 
 std::string with_catalog_hint(std::string message,
-                              const std::vector<ProviderInfo>& providers) {
-  const std::string catalog = format_provider_catalog_for_error(providers);
+                              const std::vector<ProviderInfo>& providers,
+                              std::string_view current_provider_id = "",
+                              std::string_view current_model_id = "") {
+  const std::string catalog = format_provider_catalog_for_error(
+      providers, current_provider_id, current_model_id);
   if (catalog.empty()) return message;
   if (!message.empty() && message.back() != '\n') message.push_back('\n');
   return message + catalog;
@@ -107,14 +111,16 @@ void parse_combo(std::string raw,
 }
 
 SubagentTarget bind_spec(const Spec& spec,
-                         const std::vector<ProviderInfo>& providers) {
+                         const std::vector<ProviderInfo>& providers,
+                         std::string_view default_provider_id = "",
+                         std::string_view default_model_id = "") {
   SubagentTarget out;
   out.provider = find_provider(providers, spec.provider);
   if (!spec.provider.empty() && !out.provider) {
     out.error = with_catalog_hint(
         "Unknown provider '" + spec.provider +
             "' (use provider:model from opencode.json)",
-        providers);
+        providers, default_provider_id, default_model_id);
     return out;
   }
 
@@ -148,7 +154,7 @@ SubagentTarget bind_spec(const Spec& spec,
     out.error = with_catalog_hint(
         "Unknown model '" + spec.model +
             "' (pass provider:model, e.g. " + first_catalog_combo(providers) + ")",
-        providers);
+        providers, default_provider_id, default_model_id);
     return out;
   }
 
@@ -160,6 +166,87 @@ SubagentTarget bind_spec(const Spec& spec,
 
 bool is_inherit_model_id(std::string_view id) {
   return id == "inherit" || id == "parent" || id == "default";
+}
+
+bool matches_orchestrator(
+    std::string_view prov, std::string_view mod,
+    std::string_view orch_prov, std::string_view orch_mod) {
+  if (orch_prov.empty() || orch_mod.empty()) return false;
+  const bool prov_match = (to_lower(std::string(prov)) == to_lower(std::string(orch_prov)));
+  const bool mod_match = (to_lower(std::string(mod)) == to_lower(std::string(orch_mod)));
+  return prov_match && mod_match;
+}
+
+SubagentTarget pick_alternate_working_target(
+    const std::vector<ProviderInfo>& providers,
+    std::string_view orchestrator_provider_id,
+    std::string_view orchestrator_model_id,
+    bool allow_cursor) {
+  struct Cand {
+    const ProviderInfo* p = nullptr;
+    const ModelInfo* m = nullptr;
+  };
+  std::vector<Cand> candidates;
+
+  for (const auto& pr : providers) {
+    if (!is_provider_authenticated(pr)) continue;
+    const bool is_cursor = (pr.id == "cursor" || pr.id.find("cursor") != std::string::npos);
+    if (is_cursor && !allow_cursor) continue;
+
+    for (const auto& mo : pr.models) {
+      if (mo.id.empty()) continue;
+      if (!is_model_working(pr, mo)) continue;
+      if (matches_orchestrator(pr.id, mo.id, orchestrator_provider_id, orchestrator_model_id)) {
+        continue;
+      }
+      candidates.push_back({&pr, &mo});
+    }
+  }
+
+  if (candidates.empty()) {
+    // If only 1 model configured in entire catalog, return whatever is available
+    for (const auto& pr : providers) {
+      for (const auto& mo : pr.models) {
+        if (!mo.id.empty()) {
+          SubagentTarget t;
+          t.provider = &pr;
+          t.provider_id = pr.id;
+          t.model_info = &mo;
+          t.model_id = mo.id;
+          return t;
+        }
+      }
+    }
+    SubagentTarget err;
+    err.error = "No available AI provider configured for subagent";
+    return err;
+  }
+
+  // Preference ranking:
+  // 1. Different provider than orchestrator (+100 penalty for same provider)
+  // 2. High-speed reasoning / tool providers (antigravity > openrouter > opencode > cursor)
+  auto prio = [&](const Cand& c) {
+    int p_val = 0;
+    if (to_lower(c.p->id) == to_lower(std::string(orchestrator_provider_id))) {
+      p_val += 100;
+    }
+    if (c.p->id.find("antigravity") != std::string::npos) p_val += 1;
+    else if (c.p->id == "openrouter") p_val += 2;
+    else if (c.p->id == "opencode") p_val += 3;
+    else p_val += 4;
+    return p_val;
+  };
+
+  std::stable_sort(candidates.begin(), candidates.end(),
+                   [&](const Cand& a, const Cand& b) { return prio(a) < prio(b); });
+
+  const auto& best = candidates.front();
+  SubagentTarget out;
+  out.provider = best.p;
+  out.provider_id = best.p->id;
+  out.model_info = best.m;
+  out.model_id = best.m->id;
+  return out;
 }
 
 SubagentTarget resolve_subagent_target(
@@ -205,34 +292,24 @@ SubagentTarget resolve_subagent_target(
   }
 
   for (const auto& spec : specs) {
-    SubagentTarget t = bind_spec(spec, providers);
-    if (t.error.empty() && t.provider) return t;
+    SubagentTarget t = bind_spec(spec, providers, default_provider_id, default_model_id);
     if (!t.error.empty() && specs.size() == 1) return t;
+    if (!t.error.empty() || !t.provider) continue;
+
+    // Check if target matches the orchestrator
+    if (matches_orchestrator(t.provider_id, t.model_id, default_provider_id, default_model_id)) {
+      if (specs.size() > 1) {
+        continue;  // Try remaining fallback specs first
+      }
+      // If caller specifically requested the orchestrator model, steer to alternate working model
+      return pick_alternate_working_target(providers, default_provider_id, default_model_id);
+    }
+    return t;
   }
 
-  SubagentTarget fallback;
-  fallback.provider = find_provider(providers, default_provider_id);
-  if (!fallback.provider && !providers.empty()) {
-    fallback.provider = &providers.front();
-  }
-  if (!fallback.provider) {
-    fallback.error = "No available AI provider configured for subagent";
-    return fallback;
-  }
-  fallback.provider_id = fallback.provider->id;
-  fallback.model_info = find_model(*fallback.provider, default_model_id);
-  if (fallback.model_info) {
-    fallback.model_id = fallback.model_info->id;
-  } else if (!std::string(default_model_id).empty() &&
-             !is_inherit_model_id(default_model_id)) {
-    fallback.model_id = std::string(default_model_id);
-  } else if (!fallback.provider->models.empty()) {
-    fallback.model_info = &fallback.provider->models.front();
-    fallback.model_id = fallback.model_info->id;
-  } else {
-    fallback.error = "No available AI provider configured for subagent";
-  }
-  return fallback;
+  // No specific alternate model resolved from specs (or all matched orchestrator / inherit / empty).
+  // Automatically select the best alternate working model different from the orchestrator.
+  return pick_alternate_working_target(providers, default_provider_id, default_model_id);
 }
 
 }  // namespace qcode

@@ -484,6 +484,125 @@ TEST_F(TaskToolTest, ResultFallsBackToDurableSession) {
 }
 
 
+
+TEST_F(TaskToolTest, SubagentsExecuteConcurrentlyOnSeparateWorkerThreadsWithoutBlocking) {
+  constexpr int kNumWorkers = 3;
+  std::atomic<int> concurrent_active{0};
+  std::atomic<int> max_concurrent{0};
+  std::mutex thread_ids_mutex;
+  std::set<std::thread::id> thread_ids;
+
+  ToolExecutionContext context;
+  context.subagent_runner = [&](const JsonValue& args,
+                                std::shared_ptr<std::atomic<bool>>) -> JsonValue {
+    {
+      std::lock_guard<std::mutex> lock(thread_ids_mutex);
+      thread_ids.insert(std::this_thread::get_id());
+    }
+
+    int cur = ++concurrent_active;
+    int prev_max = max_concurrent.load();
+    while (cur > prev_max && !max_concurrent.compare_exchange_weak(prev_max, cur)) {}
+
+    // Sleep long enough so all workers overlap concurrently
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    --concurrent_active;
+    return JsonValue{{"output", "worker done: " + args.value("description", "")}};
+  };
+
+  std::vector<std::string> bg_ids;
+  for (int i = 0; i < kNumWorkers; ++i) {
+    JsonValue spawn = TaskTool::execute(
+        JsonValue{{"op", "spawn"},
+                  {"subagent_type", "explore"},
+                  {"description", "worker_" + std::to_string(i)},
+                  {"prompt", "work"},
+                  {"background", true}},
+        context);
+    EXPECT_EQ(spawn["metadata"].value("status", ""), "running");
+    bg_ids.push_back(spawn["metadata"].value("background_task_id", ""));
+  }
+
+  // All workers should have distinct background task IDs
+  EXPECT_EQ(bg_ids.size(), static_cast<size_t>(kNumWorkers));
+  for (size_t i = 0; i < bg_ids.size(); ++i) {
+    for (size_t j = i + 1; j < bg_ids.size(); ++j) {
+      EXPECT_NE(bg_ids[i], bg_ids[j]);
+    }
+  }
+
+  // Collect results
+  for (int i = 0; i < kNumWorkers; ++i) {
+    JsonValue res = TaskTool::execute(
+        JsonValue{{"op", "result"},
+                  {"background_task_id", bg_ids[i]},
+                  {"timeout_ms", 3000}},
+        context);
+    EXPECT_EQ(res["metadata"].value("status", ""), "done");
+    EXPECT_THAT(res.value("output", ""),
+                testing::HasSubstr("worker done: worker_" + std::to_string(i)));
+  }
+
+  // Check that multiple workers ran concurrently on distinct worker threads
+  EXPECT_GE(max_concurrent.load(), 2);
+  EXPECT_GE(thread_ids.size(), 2u);
+}
+
+TEST(MultiStepCoordinatorTest, ProcessesToolCallsEvenWhenFinishReasonIsStop) {
+  ToolSet tools;
+  Tool mock_tool;
+  mock_tool.name = "calc_tool";
+  mock_tool.description = "A calculation tool";
+  mock_tool.execute = [](const JsonValue&, const ToolExecutionContext&) -> JsonValue {
+    return JsonValue{{"result", 42}};
+  };
+  tools["calc_tool"] = mock_tool;
+
+  GenerateOptions opts("mock-model", "system prompt", "initial user prompt");
+  opts.tools = tools;
+  opts.max_steps = 3;
+
+  int step_count = 0;
+  auto generate_func = [&](const GenerateOptions& step_opts) -> GenerateResult {
+    step_count++;
+    if (step_count == 1) {
+      // Step 1: Model outputs tool calls but sets finish_reason = Stop
+      GenerateResult res;
+      res.finish_reason = kFinishReasonStop;
+      res.tool_calls.push_back(ToolCall("call_calc", "calc_tool", JsonValue::object()));
+      return res;
+    } else {
+      // Step 2: Model receives tool result
+      bool found_tool_result = false;
+      for (const auto& msg : step_opts.messages) {
+        if (msg.has_tool_results()) {
+          found_tool_result = true;
+          for (const auto& part : msg.content) {
+            if (std::holds_alternative<ToolResultContentPart>(part)) {
+              const auto& tr = std::get<ToolResultContentPart>(part);
+              EXPECT_FALSE(tr.is_error);
+              EXPECT_EQ(tr.result.value("result", 0), 42);
+            }
+          }
+        }
+      }
+      EXPECT_TRUE(found_tool_result);
+
+      GenerateResult res;
+      res.finish_reason = kFinishReasonStop;
+      res.text = "Result is 42.";
+      return res;
+    }
+  };
+
+  GenerateResult final_res = MultiStepCoordinator::execute_multi_step(opts, generate_func);
+
+  EXPECT_EQ(step_count, 2);
+  EXPECT_TRUE(final_res.is_success());
+  EXPECT_EQ(final_res.text, "Result is 42.");
+}
+
 TEST(MultiStepCoordinatorTest, DoesNotAbortWhenToolExecutionFails) {
   // Setup options with tools
   ToolSet tools;

@@ -86,7 +86,7 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
     context.can_edit = options->can_edit;
   }
   if (options && options->abort_flag) {
-    context.abort_flag = std::make_shared<std::atomic<bool>>(options->abort_flag->load());
+    context.abort_flag = options->abort_flag;
   } else {
     context.abort_flag = std::make_shared<std::atomic<bool>>(false);
   }

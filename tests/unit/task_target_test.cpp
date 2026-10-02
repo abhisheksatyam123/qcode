@@ -110,13 +110,24 @@ TEST(TaskTargetTest, ProviderSlashModelStillWorks) {
   EXPECT_EQ(t.model_id, "nvidia/nemotron-3.5-lightning:free");
 }
 
-TEST(TaskTargetTest, InheritFallsBackToLeadProviderModel) {
+TEST(TaskTargetTest, InheritOrSameModelSteersToAlternateWorkingModel) {
   const auto catalog = sample_catalog();
   const auto t = resolve_subagent_target(
       nlohmann::json{{"model", "inherit"}}, catalog, "opencode", "big-pickle");
   EXPECT_TRUE(t.error.empty()) << t.error;
-  EXPECT_EQ(t.provider_id, "opencode");
-  EXPECT_EQ(t.model_id, "big-pickle");
+  // Subagents must NOT use the orchestrator's provider:model
+  EXPECT_NE(t.provider_id + ":" + t.model_id, "opencode:big-pickle");
+  EXPECT_EQ(t.provider_id, "antigravity");
+  EXPECT_EQ(t.model_id, "gemini-3.1-pro");
+}
+
+TEST(TaskTargetTest, OrchestratorModelIsAvoidedForSubagent) {
+  const auto catalog = sample_catalog();
+  const auto t = resolve_subagent_target(
+      nlohmann::json{{"model", "opencode:big-pickle"}}, catalog, "opencode", "big-pickle");
+  EXPECT_TRUE(t.error.empty()) << t.error;
+  // Steers away from orchestrator's own model
+  EXPECT_NE(t.provider_id + ":" + t.model_id, "opencode:big-pickle");
 }
 
 TEST(TaskTargetTest, UnknownProviderIsAnError) {

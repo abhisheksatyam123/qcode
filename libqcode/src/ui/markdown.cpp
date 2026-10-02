@@ -7,6 +7,7 @@
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/dom/table.hpp>
 #include <ftxui/screen/terminal.hpp>
+#include <ftxui/screen/string.hpp>
 
 #include "md4c.h"
 
@@ -35,6 +36,8 @@ struct MStyle {
   bool img = false;  // markup.image: markdownImage
   bool img_text = false; // markup.image.text: markdownImageText
   bool dim = false;
+  bool math = false;
+  bool math_display = false;
   std::string href;
 };
 
@@ -44,6 +47,170 @@ struct IItem {
   std::string text;
   MStyle style;
 };
+
+
+static void parse_latex_math_rec(const std::string& text, const MStyle& cur_style, std::vector<IItem>& out) {
+  static const std::vector<std::pair<std::string, std::string>> kSymbols = {
+      {"\\longrightarrow", " ⟶ "},
+      {"\\longleftarrow", " ⟵ "},
+      {"\\rightarrow", " → "},
+      {"\\to", " → "},
+      {"\\leftarrow", " ← "},
+      {"\\gets", " ← "},
+      {"\\Longrightarrow", " ⟹ "},
+      {"\\Longleftarrow", " ⟸ "},
+      {"\\Rightarrow", " ⇒ "},
+      {"\\Leftarrow", " ⇐ "},
+      {"\\longleftrightarrow", " ⟷ "},
+      {"\\leftrightarrow", " ↔ "},
+      {"\\Longleftrightarrow", " ⟺ "},
+      {"\\iff", " ⟺ "},
+      {"\\mapsto", " ↦ "},
+      {"\\uparrow", " ↑ "},
+      {"\\downarrow", " ↓ "},
+      {"\\times", " × "},
+      {"\\cdot", " · "},
+      {"\\pm", " ± "},
+      {"\\mp", " ∓ "},
+      {"\\div", " ÷ "},
+      {"\\leq", " ≤ "},
+      {"\\le", " ≤ "},
+      {"\\geq", " ≥ "},
+      {"\\ge", " ≥ "},
+      {"\\neq", " ≠ "},
+      {"\\ne", " ≠ "},
+      {"\\approx", " ≈ "},
+      {"\\equiv", " ≡ "},
+      {"\\in", " ∈ "},
+      {"\\notin", " ∉ "},
+      {"\\subset", " ⊂ "},
+      {"\\subseteq", " ⊆ "},
+      {"\\cup", " ∪ "},
+      {"\\cap", " ∩ "},
+      {"\\forall", " ∀ "},
+      {"\\exists", " ∃ "},
+      {"\\infty", " ∞ "},
+      {"\\sum", " ∑ "},
+      {"\\prod", " ∏ "},
+      {"\\int", " ∫ "},
+      {"\\partial", " ∂ "},
+      {"\\nabla", " ∇ "},
+      {"\\alpha", "α"},
+      {"\\beta", "β"},
+      {"\\gamma", "γ"},
+      {"\\delta", "δ"},
+      {"\\epsilon", "ε"},
+      {"\\theta", "θ"},
+      {"\\lambda", "λ"},
+      {"\\mu", "μ"},
+      {"\\pi", "π"},
+      {"\\sigma", "σ"},
+      {"\\phi", "φ"},
+      {"\\omega", "ω"},
+      {"\\Delta", "Δ"},
+      {"\\Sigma", "Σ"},
+      {"\\Omega", "Ω"},
+      {"\\quad", "  "},
+      {"\\qquad", "    "},
+      {"\\,", " "},
+      {"\\:", " "},
+      {"\\;", " "},
+      {"\\ ", " "},
+      {"\\{", "{"},
+      {"\\}", "}"},
+      {"\\_", "_"},
+      {"\\%", "%"},
+  };
+
+  size_t idx = 0;
+  const size_t L = text.size();
+
+  while (idx < L) {
+    if (text[idx] == '\\') {
+      // Check style commands
+      static const std::vector<std::pair<std::string, int>> kStyleCmds = {
+          {"\\mathbf", 1}, {"\\textbf", 1},
+          {"\\mathit", 2}, {"\\textit", 2},
+          {"\\underline", 3},
+          {"\\text", 0}, {"\\mathrm", 0}, {"\\operatorname", 0}
+      };
+
+      bool handled_cmd = false;
+      for (const auto& [cmd, mode] : kStyleCmds) {
+        if (text.compare(idx, cmd.size(), cmd) == 0) {
+          size_t p = idx + cmd.size();
+          while (p < L && std::isspace(static_cast<unsigned char>(text[p]))) p++;
+          if (p < L && text[p] == '{') {
+            int depth = 1;
+            size_t q = p + 1;
+            while (q < L && depth > 0) {
+              if (text[q] == '{') depth++;
+              else if (text[q] == '}') depth--;
+              q++;
+            }
+            std::string sub_text = text.substr(p + 1, (q > p + 1) ? (q - p - 2) : 0);
+            MStyle next_s = cur_style;
+            if (mode == 1) next_s.bold = true;
+            else if (mode == 2) next_s.em = true;
+            else if (mode == 3) next_s.underline = true;
+            parse_latex_math_rec(sub_text, next_s, out);
+            idx = q;
+            handled_cmd = true;
+            break;
+          }
+        }
+      }
+      if (handled_cmd) continue;
+
+      // Check symbols
+      bool handled_sym = false;
+      for (const auto& [sym, rep] : kSymbols) {
+        if (text.compare(idx, sym.size(), sym) == 0) {
+          IItem it;
+          it.kind = IKind::Text;
+          it.text = rep;
+          it.style = cur_style;
+          out.push_back(it);
+          idx += sym.size();
+          handled_sym = true;
+          break;
+        }
+      }
+      if (handled_sym) continue;
+
+      // Unknown command: skip backslash and collect alpha letters
+      size_t k = idx + 1;
+      while (k < L && std::isalpha(static_cast<unsigned char>(text[k]))) k++;
+      if (k > idx + 1) {
+        IItem it;
+        it.kind = IKind::Text;
+        it.text = text.substr(idx + 1, k - idx - 1);
+        it.style = cur_style;
+        out.push_back(it);
+        idx = k;
+      } else {
+        idx++;
+      }
+      continue;
+    }
+
+    if (text[idx] == '{' || text[idx] == '}') {
+      idx++;
+      continue;
+    }
+
+    // Normal text chunk
+    size_t start = idx;
+    while (idx < L && text[idx] != '\\' && text[idx] != '{' && text[idx] != '}') {
+      idx++;
+    }
+    IItem it;
+    it.kind = IKind::Text;
+    it.text = text.substr(start, idx - start);
+    it.style = cur_style;
+    out.push_back(it);
+  }
+}
 
 struct BlockCtx {
   MD_BLOCKTYPE type = MD_BLOCK_DOC;
@@ -201,7 +368,7 @@ static Element flush_inline(const std::vector<IItem>& items, int avail,
       newline();
       continue;
     }
-    int w = (int)tk.w.size();
+    int w = ftxui::string_width(tk.w);
     int allowance =
         lines.empty() ? std::max(1, avail - prefix_cols) : std::max(1, avail - hang);
     if (!cl.empty() && cwdt + 1 + w > allowance) newline();
@@ -264,6 +431,13 @@ static Element flush_inline(const std::vector<IItem>& items, int avail,
       if (tk.s.url) e = e | color(theme_md_link(theme)) | underlined;
       if (tk.s.img) e = e | color(theme_md_image(theme));
       if (tk.s.img_text) e = e | color(theme_md_image_text(theme));
+      if (tk.s.math) {
+        if (tk.s.bold) {
+          e = e | bold | color(accent(theme));
+        } else {
+          e = e | color(accent2(theme));
+        }
+      }
       row.push_back(e);
       if (k + 1 < lines[li].size()) row.push_back(text(" "));
     }
@@ -715,6 +889,15 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
       break;
     }
     case MD_BLOCK_CODE: {
+      if (b.code_lang == "math" || b.code_lang == "latex" || b.code_lang == "katex") {
+        MStyle ms;
+        ms.math = true;
+        ms.math_display = true;
+        std::vector<IItem> math_items;
+        parse_latex_math_rec(b.code_text, ms, math_items);
+        el = flush_inline(math_items, avail, "  ", 2, c->theme);
+        break;
+      }
       // opencode web: code blocks get the shiki background; TUI equivalent
       // is panel_bg with per-theme syntax roles. Long lines fall back to
       // chunked plain rendering so nothing clips at the right edge.
@@ -930,6 +1113,21 @@ static int md_enter_span(MD_SPANTYPE type, void* detail, void* ud) {
     case MD_SPAN_DEL: s.del = true; break;
     case MD_SPAN_U: s.underline = true; break;
     case MD_SPAN_MARK: s.mark = true; break;
+    case MD_SPAN_LATEXMATH: {
+      s.math = true;
+      s.math_display = false;
+      break;
+    }
+    case MD_SPAN_LATEXMATH_DISPLAY: {
+      s.math = true;
+      s.math_display = true;
+      if (!c->stack.empty()) {
+        IItem br;
+        br.kind = IKind::Hard;
+        c->stack.back().inline_items.push_back(br);
+      }
+      break;
+    }
     case MD_SPAN_A: {
       auto* d = static_cast<MD_SPAN_A_DETAIL*>(detail);
       s.link = true;
@@ -973,6 +1171,15 @@ static int md_enter_span(MD_SPANTYPE type, void* detail, void* ud) {
 static int md_leave_span(MD_SPANTYPE type, void*, void* ud) {
   Ctx* c = static_cast<Ctx*>(ud);
   if (type == MD_SPAN_IMG) return 0;
+  if (type == MD_SPAN_LATEXMATH || type == MD_SPAN_LATEXMATH_DISPLAY) {
+    if (type == MD_SPAN_LATEXMATH_DISPLAY && !c->stack.empty()) {
+      IItem br;
+      br.kind = IKind::Hard;
+      c->stack.back().inline_items.push_back(br);
+    }
+    if (!c->style_stack.empty()) c->style_stack.pop_back();
+    return 0;
+  }
   if (type == MD_SPAN_A && !c->style_stack.empty()) {
     // opencode TUI scope markup.link.url → markdownLink (underlined); the
     // label itself already rendered via markdownLinkText in flush_inline.
@@ -1017,6 +1224,13 @@ static int md_text(MD_TEXTTYPE type, const MD_CHAR* txt, MD_SIZE size, void* ud)
   }
   if (type == MD_TEXT_HTML) return 0;  // strip raw HTML
 
+  if (type == MD_TEXT_LATEXMATH) {
+    MStyle ms = c->style_stack.empty() ? MStyle{} : c->style_stack.back();
+    ms.math = true;
+    parse_latex_math_rec(s, ms, cur.inline_items);
+    return 0;
+  }
+
   IItem it;
   if (type == MD_TEXT_BR) {
     it.kind = IKind::Hard;
@@ -1056,7 +1270,7 @@ ftxui::Elements render_markdown(const std::string& input_text, const std::string
   MD_PARSER parser;
   std::memset(&parser, 0, sizeof(parser));
   parser.abi_version = 0;
-  parser.flags = MD_DIALECT_GITHUB;
+  parser.flags = MD_DIALECT_GITHUB | MD_FLAG_LATEXMATHSPANS;
   parser.enter_block = md_enter_block;
   parser.leave_block = md_leave_block;
   parser.enter_span = md_enter_span;

@@ -138,35 +138,22 @@ static JsonValue run_subagent_turn_multi(
     return JsonValue{{"error", "task prompt is required"}};
   }
 
+  const bool is_background = args.value("background", args.value("run_in_background", false));
   auto aborted = [&]() {
-    return (main_abort_flag && main_abort_flag->load()) ||
-           (task_abort_flag && task_abort_flag->load());
+    if (task_abort_flag && task_abort_flag->load()) return true;
+    if (!is_background && main_abort_flag && main_abort_flag->load()) return true;
+    return false;
   };
   if (aborted()) {
     return JsonValue{{"error", "Subagent cancelled due to abort flag"}};
   }
 
-  auto combined_abort = std::make_shared<std::atomic<bool>>(false);
-  auto stop_watch = std::make_shared<std::atomic<bool>>(false);
-  std::thread abort_watch([main_abort_flag, task_abort_flag, combined_abort,
-                           stop_watch]() {
-    while (!stop_watch->load()) {
-      if ((main_abort_flag && main_abort_flag->load()) ||
-          (task_abort_flag && task_abort_flag->load())) {
-        combined_abort->store(true);
-        return;
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(40));
-    }
-  });
-  struct JoinWatch {
-    std::shared_ptr<std::atomic<bool>> stop;
-    std::thread& th;
-    ~JoinWatch() {
-      stop->store(true);
-      if (th.joinable()) th.join();
-    }
-  } join_watch{stop_watch, abort_watch};
+  std::shared_ptr<std::atomic<bool>> effective_abort;
+  if (is_background) {
+    effective_abort = task_abort_flag ? task_abort_flag : std::make_shared<std::atomic<bool>>(false);
+  } else {
+    effective_abort = main_abort_flag ? main_abort_flag : (task_abort_flag ? task_abort_flag : std::make_shared<std::atomic<bool>>(false));
+  }
 
   std::string subagent_type = args.value("subagent_type", "general");
   std::string mode = args.value("mode", "explore");
@@ -201,11 +188,14 @@ static JsonValue run_subagent_turn_multi(
     const bool allow_cursor = subagent_wants_cursor(args);
     std::vector<FallbackCand> rest;
     for (const auto& pr : *providers) {
+      if (!is_provider_authenticated(pr)) continue;
       const bool is_cursor = pr.id == "cursor" || pr.id.find("cursor") != std::string::npos;
       if (is_cursor && !allow_cursor) continue;
       for (const auto& mo : pr.models) {
         if (mo.id.empty()) continue;
+        if (!is_model_working(pr, mo)) continue;
         if (pr.id == target_provider->id && mo.id == target_model_id) continue;
+        if (matches_orchestrator(pr.id, mo.id, default_provider_id, default_model_id)) continue;
         rest.push_back({&pr, &mo, mo.id});
       }
     }
@@ -262,6 +252,11 @@ static JsonValue run_subagent_turn_multi(
       const auto fresh = get_antigravity_token(/*force_refresh=*/false);
       if (!fresh.empty()) {
         prov_opts.api_key = fresh;
+      }
+    } else if (target_provider->id == "openrouter") {
+      if (prov_opts.api_key.empty()) {
+        const char* key = std::getenv("OPENROUTER_API_KEY");
+        if (key && *key != '\0') prov_opts.api_key = key;
       }
     }
 
@@ -355,7 +350,7 @@ static JsonValue run_subagent_turn_multi(
     sub_opts.tools = ToolCatalog::build_definitions(subagent_tool_cfg);
     sub_opts.max_steps = max_steps;
     sub_opts.workspace = workspace;
-    sub_opts.abort_flag = combined_abort;
+    sub_opts.abort_flag = effective_abort;
     sub_opts.session_id = sub_session_id;
     bool can_edit = args.value("can_edit", false);
     if (mode == "explore") can_edit = false;

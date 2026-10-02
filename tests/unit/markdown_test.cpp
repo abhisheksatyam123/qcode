@@ -81,6 +81,32 @@ TEST(MarkdownTest, CodeBlockAndTableRendering) {
   EXPECT_NE(clean.find("text"), std::string::npos);
 }
 
+
+TEST(MarkdownTest, RendersLatexMathDiagramInTUI) {
+  std::string markdown =
+      "Architectural flow:\n\n"
+      "$$\\text{Your Code} \\longrightarrow \\mathbf{\\text{Logging Facade (API)}} \\longrightarrow \\text{Logging Engine (Implementation)}$$\n\n"
+      "Next step.";
+
+  auto elements = render_markdown(markdown);
+  auto element = ftxui::vbox(std::move(elements));
+  auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(120), ftxui::Dimension::Fit(element));
+  ftxui::Render(screen, element);
+  std::string output = screen.ToString();
+  printf("Rendered LaTeX Math in TUI (width 120):\n%s\n", output.c_str());
+
+  std::string clean = strip_ansi(output);
+  // Verify that the LaTeX commands were converted into clean readable text & unicode symbols
+  EXPECT_NE(clean.find("Your Code"), std::string::npos);
+  EXPECT_NE(clean.find("⟶"), std::string::npos);
+  EXPECT_NE(clean.find("Logging Facade (API)"), std::string::npos);
+  EXPECT_NE(clean.find("Logging Engine (Implementation)"), std::string::npos);
+  // Raw LaTeX command backslashes should NOT be present
+  EXPECT_EQ(clean.find("\\text{"), std::string::npos);
+  EXPECT_EQ(clean.find("\\longrightarrow"), std::string::npos);
+  EXPECT_EQ(clean.find("\\mathbf{"), std::string::npos);
+}
+
 TEST(MessageRenderTest, ToolCallAndResultRendering) {
   qcode::ToolCallContentPart call_part(
       "call_123", "bash",

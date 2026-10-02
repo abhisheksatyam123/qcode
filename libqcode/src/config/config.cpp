@@ -561,28 +561,88 @@ std::vector<ProviderInfo> load_providers_from_config() {
     return loaded;
 }
 
-std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& providers) {
-    if (providers.empty()) return "";
+bool is_provider_authenticated(const ProviderInfo& provider) {
+    if (!provider.api_key.empty()) return true;
+    if (provider.id == "opencode" || provider.name == "OpenCode Zen") return true;
+    if (provider.id == "openrouter" || provider.name == "OpenRouter") {
+        const char* key = std::getenv("OPENROUTER_API_KEY");
+        if (key && *key != '\0') return true;
+    }
+    if (provider.id == "antigravity" || provider.name == "Antigravity") {
+        if (!get_antigravity_token().empty()) return true;
+    }
+    if (provider.id == "cursor" || provider.name == "Cursor") {
+        if (!get_cursor_access_token().empty()) return true;
+    }
+    // Unit tests / mocks where api_url is empty
+    if (provider.api_url.empty() && provider.api_key.empty()) return true;
+    return false;
+}
+
+bool is_model_working(const ProviderInfo& provider, const ModelInfo& model) {
+    if (model.id.empty()) return false;
+    if (provider.id == "opencode" && zen_id_is_retired(model.id)) return false;
+    if (!model.tool_call && model.context_window > 0) return false;
+    return true;
+}
+
+std::vector<ProviderInfo> filter_working_providers(const std::vector<ProviderInfo>& providers) {
+    std::vector<ProviderInfo> result;
+    for (const auto& prov : providers) {
+        if (!is_provider_authenticated(prov)) continue;
+        ProviderInfo filtered = prov;
+        filtered.models.clear();
+        for (const auto& model : prov.models) {
+            if (is_model_working(prov, model)) {
+                filtered.models.push_back(model);
+            }
+        }
+        if (!filtered.models.empty()) {
+            result.push_back(std::move(filtered));
+        }
+    }
+    return result;
+}
+
+std::string format_provider_catalog_for_prompt(
+    const std::vector<ProviderInfo>& providers,
+    std::string_view current_provider_id,
+    std::string_view current_model_id) {
+    const auto working_providers = filter_working_providers(providers);
+    const auto& catalog = working_providers.empty() ? providers : working_providers;
+    if (catalog.empty()) return "";
 
     std::ostringstream ss;
-    ss << "### Available Providers & Models (from opencode.json)\n\n"
-       << "You have access to the following configured providers and models. "
-       << "When delegating subtasks with `task` (`op: \"spawn\"`), assign any catalog model "
-       << "using `model: \"<provider>:<model_id>\"` (colon — model ids may contain slashes), "
-       << "`provider` + `model`, or a bare `model_id`:\n\n";
+    ss << "### Available Providers & Models (from opencode.json)\n\n";
 
-    for (const auto& provider : providers) {
+    const bool has_lead = !current_provider_id.empty() && !current_model_id.empty();
+    if (has_lead) {
+        ss << "**CRITICAL DELEGATION RULE:** As Lead Orchestrator, your current model is `"
+           << current_provider_id << ":" << current_model_id << "`\n"
+           << "Subagents MUST run on a DIFFERENT provider:model than you. Delegating to your own model is strictly forbidden.\n"
+           << "You MUST assign subagents an alternate working model from the catalog below using `model: \"<provider>:<model_id>\"`:\n\n";
+    } else {
+        ss << "You have access to the following configured and working models. "
+           << "When delegating subtasks with `task` (`op: \"spawn\"`), assign any catalog model "
+           << "using `model: \"<provider>:<model_id>\"` (colon — model ids may contain slashes), "
+           << "`provider` + `model`, or a bare `model_id`:\n\n";
+    }
+
+    for (const auto& provider : catalog) {
         if (provider.models.empty()) continue;
         std::vector<const ModelInfo*> available_models;
         for (const auto& model : provider.models) {
             if (model.id.empty()) continue;
-
             available_models.push_back(&model);
         }
         if (available_models.empty()) continue;
 
         ss << "- **" << provider.id << "** (" << (provider.name.empty() ? provider.id : provider.name) << "):\n";
         for (const auto* model : available_models) {
+            const bool is_lead = has_lead &&
+                (provider.id == current_provider_id || provider.name == current_provider_id) &&
+                (model->id == current_model_id || model->name == current_model_id);
+
             ss << "  - `" << model->id << "`";
             if (!model->name.empty() && model->name != model->id) {
                 ss << " (" << model->name << ")";
@@ -590,24 +650,39 @@ std::string format_provider_catalog_for_prompt(const std::vector<ProviderInfo>& 
             if (model->reasoning) {
                 ss << " [reasoning]";
             }
+            if (is_lead) {
+                ss << " [CURRENT ORCHESTRATOR - DO NOT ASSIGN TO SUBAGENT]";
+            }
             ss << "\n";
         }
     }
 
     ss << "\n#### Multi-Agent Parallel Delegation Guidelines\n"
        << "- Run independent subtasks concurrently by specifying `background: true` on `task.spawn`.\n"
+       << "- Subagents execute concurrently on worker threads in parallel and will not block each other.\n"
+       << "- Subagents MUST use a different provider:model than the orchestrator ("
+       << (has_lead ? (std::string(current_provider_id) + ":" + std::string(current_model_id)) : "lead") << ").\n"
        << "- Match tasks to model strengths (e.g. fast models for search/inspection, reasoning models for architecture/refactoring).\n"
        << "- Collect results with `task` operation `result` and `background_task_id`.\n";
 
     return ss.str();
 }
 
-std::string format_provider_catalog_for_error(const std::vector<ProviderInfo>& providers) {
+std::string format_provider_catalog_for_error(
+    const std::vector<ProviderInfo>& providers,
+    std::string_view current_provider_id,
+    std::string_view current_model_id) {
+    (void)current_provider_id;
+    (void)current_model_id;
+    const auto working_providers = filter_working_providers(providers);
+    const auto& catalog = working_providers.empty() ? providers : working_providers;
+
     std::ostringstream ss;
     int count = 0;
-    for (const auto& provider : providers) {
+    for (const auto& provider : catalog) {
         for (const auto& model : provider.models) {
             if (model.id.empty()) continue;
+
             if (count == 0) {
                 ss << "Available models from opencode.json (use provider:model):\n";
             }

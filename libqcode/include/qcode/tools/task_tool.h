@@ -126,8 +126,8 @@ class TaskTool {
  public:
   static constexpr const char* kDescription =
       "Delegate tasks to a subagent. Main fields: prompt (or task), provider, model (or provider:model), "
-      "and background (true for parallel concurrent execution). Retrieve background results with "
-      "op=result and background_task_id. List tasks with op=list.";
+      "and background (true for parallel concurrent execution). Note: Subagents MUST use a different provider:model than the orchestrator. "
+      "Retrieve background results with op=result and background_task_id. List tasks with op=list.";
 
   static JsonValue execute(const JsonValue& args, const ToolExecutionContext& context);
   static Tool definition();

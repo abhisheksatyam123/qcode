@@ -5,10 +5,13 @@
 
 namespace qcode {
 
-std::string build_turn_system_prompt(const std::string& system_prompt,
-                                     bool plan_mode,
-                                     bool is_subagent,
-                                     const std::vector<ProviderInfo>& providers) {
+std::string build_turn_system_prompt(
+    const std::string& system_prompt,
+    bool plan_mode,
+    bool is_subagent,
+    const std::vector<ProviderInfo>& providers,
+    std::string_view current_provider_id,
+    std::string_view current_model_id) {
       std::string out = system_prompt;
       if (plan_mode) {
           out +=
@@ -27,14 +30,14 @@ std::string build_turn_system_prompt(const std::string& system_prompt,
               "verbosity. Ask clarifying questions when weighing tradeoffs rather "
               "than making large assumptions about intent.\n"
               "</system-reminder>";
-          const std::string catalog_section = format_provider_catalog_for_prompt(providers);
+          const std::string catalog_section = format_provider_catalog_for_prompt(providers, current_provider_id, current_model_id);
           if (!catalog_section.empty()) {
               out += "\n\n" + catalog_section;
           }
       } else if (is_subagent) {
       } else {
           out += std::string(kOrchestratorReminder);
-          const std::string catalog_section = format_provider_catalog_for_prompt(providers);
+          const std::string catalog_section = format_provider_catalog_for_prompt(providers, current_provider_id, current_model_id);
           if (!catalog_section.empty()) {
               out += "\n\n" + catalog_section;
           }

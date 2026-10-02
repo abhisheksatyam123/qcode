@@ -24,8 +24,20 @@ struct SubagentTarget {
 
 bool is_inherit_model_id(std::string_view id);
 
+// True if prov and mod match the orchestrator provider and model (case-insensitive).
+bool matches_orchestrator(
+    std::string_view prov, std::string_view mod,
+    std::string_view orch_prov, std::string_view orch_mod);
+
+// Select the best alternate working model from opencode.json that differs from the orchestrator.
+SubagentTarget pick_alternate_working_target(
+    const std::vector<ProviderInfo>& providers,
+    std::string_view orchestrator_provider_id,
+    std::string_view orchestrator_model_id,
+    bool allow_cursor = false);
+
 // Pick provider+model from spawn args against the live opencode.json catalog.
-// Unlisted model ids are still accepted when the provider is known (wire passthrough).
+// Enforces the rule that subagents must use a different model than the orchestrator.
 SubagentTarget resolve_subagent_target(
     const nlohmann::json& args,
     const std::vector<ProviderInfo>& providers,

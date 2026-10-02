@@ -259,6 +259,7 @@ inline constexpr std::string_view kOrchestratorReminder =
     "When facing broad investigations, complex refactors, multi-file searches, or parallel verification steps, "
     "spawn subagents (mode: explore | implement | verify) with `model: \"provider:model_id\"` "
     "so any lead can delegate to any catalog model. "
+    "CRITICAL RULE: Subagents MUST use a different provider:model than you. Delegating to your own model is strictly forbidden. "
     "Monitor their status, collect their results, and synthesize their outputs to complete the user's objective.\n"
     "</system-reminder>";
 
