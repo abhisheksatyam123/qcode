@@ -735,7 +735,7 @@ ftxui::Element render_view(
                     adjacent_tool_results =
                         &(*state.messages_history)[i + 1];
                 }
-                const bool cacheable = (i + 1 < history_size);
+                const bool cacheable = (i + 1 < history_size) && !msg.has_tool_calls() && !msg.has_tool_results() && !msg.has_reasoning();
                 auto cached = message_cache.find(i);
                 if (cacheable && cached != message_cache.end()) {
                     msgs.push_back(cached->second);
@@ -787,7 +787,8 @@ ftxui::Element render_view(
             const int content_height = std::max(0, chat_scroll->requirement().min_y);
             const int prompt_box_h = prompt_box->requirement().min_y;
             const int chrome_height = 2 + prompt_box_h;
-            const int viewport_height = std::max(1, state.terminal_height - chrome_height);
+            const int term_h = stable_terminal_size().dimy;
+            const int viewport_height = std::max(1, term_h - chrome_height);
             const int max_scroll = qcode::tui::compute_max_scroll(content_height, viewport_height);
 
             if (*state.auto_scroll) {
@@ -996,7 +997,8 @@ ftxui::Element render_view(
                 const int content_height =
                     std::max(0, file_scroll->requirement().min_y);
                 const int chrome_height = 5;
-                const int viewport_height = std::max(1, state.terminal_height - chrome_height);
+                const int term_h = stable_terminal_size().dimy;
+            const int viewport_height = std::max(1, term_h - chrome_height);
                 const int max_scroll = qcode::tui::compute_max_scroll(content_height, viewport_height);
                 if (*state.auto_scroll) {
                     *state.scroll_line = 0;

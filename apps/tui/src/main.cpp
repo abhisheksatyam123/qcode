@@ -1248,24 +1248,26 @@ int main(int argc, char* argv[]) {
         };
         if (tool_keys_active) {
             if (e == Event::ArrowUp) {
-                if (!navigate_tool(-1)) {
-                    *state.auto_scroll = false;
-                    *state.scroll_line = std::max(0, *state.scroll_line - 2);
-                    screen.Post(Event::Custom);
-                }
+                *state.auto_scroll = false;
+                *state.scroll_line = std::max(0, *state.scroll_line - 2);
+                screen.Post(Event::Custom);
                 return true;
             }
             if (e == Event::ArrowDown) {
-                if (!navigate_tool(1)) {
-                    *state.scroll_line = *state.scroll_line + 2;
-                    screen.Post(Event::Custom);
-                }
+                *state.scroll_line = *state.scroll_line + 2;
+                screen.Post(Event::Custom);
                 return true;
             }
-            if (e == Event::ArrowLeft) {
+            if (e == Event::Character('k') || e == Event::Character('K')) {
+                if (navigate_tool(-1)) return true;
+            }
+            if (e == Event::Character('j') || e == Event::Character('J')) {
+                if (navigate_tool(1)) return true;
+            }
+            if (e == Event::ArrowLeft || e == Event::Character('h') || e == Event::Character('H')) {
                 if (set_focused_tool_collapsed(true)) return true;
             }
-            if (e == Event::ArrowRight) {
+            if (e == Event::ArrowRight || e == Event::Character('l') || e == Event::Character('L')) {
                 if (set_focused_tool_collapsed(false)) return true;
             }
         }
