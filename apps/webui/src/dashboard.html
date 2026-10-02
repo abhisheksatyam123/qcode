@@ -103,8 +103,8 @@
           <span>Body Mass</span>
           <span class="badge badge-cyan">Power-to-Wt</span>
         </div>
-        <div class="metric-value">68.0 <span style="font-size:16px;">kg</span></div>
-        <div class="metric-sub">Target: 66-71 kg (you: 68 kg) for pull-up power-to-weight</div>
+        <div class="metric-value">70.0 <span style="font-size:16px;">kg</span></div>
+        <div class="metric-sub">Target: 66-71 kg (you: 70 kg) for pull-up power-to-weight</div>
       </div>
 
       <div class="metric-card" style="--accent: var(--violet);">
@@ -204,17 +204,21 @@
         <!-- Tasks & Engineering Execution -->
         <div class="card">
           <div class="card-title">
-            <span>💻 WLAN & Systems Engineering (0/3 Completed)</span>
+            <span>💻 WLAN & Systems Engineering (0/4 Completed)</span>
             <span style="font-size:12px;color:var(--text-dim);">mac80211 • RTS0 Engine • QCode</span>
           </div>
           <div>
             
             <div class="task-row">
-              <span style="font-weight:600;font-size:13px;">WLAN software architecture & driver/firmware offload tasks #p1</span>
+              <span style="font-weight:600;font-size:13px;">Codebase walkthrough & architecture understanding of `qcode-tui` (`apps/tui`) (started ~10:05) #p1</span>
+              <span class="task-status task-in-progress">IN-PROGRESS</span>
+            </div>
+            <div class="task-row">
+              <span style="font-weight:600;font-size:13px;">WLAN software architecture & driver/firmware offload tasks #p2</span>
               <span class="task-status task-todo">TODO</span>
             </div>
             <div class="task-row">
-              <span style="font-weight:600;font-size:13px;">Systems engineering & QCode / RTS0 game engine prototype #p2</span>
+              <span style="font-weight:600;font-size:13px;">Systems engineering & RTS0 game engine prototype #p2</span>
               <span class="task-status task-todo">TODO</span>
             </div>
             <div class="task-row">
@@ -250,7 +254,7 @@
           <div style="font-size:14px;font-weight:700;color:#fff;">🎙️ Log Activity in Plain English</div>
           <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">Sent directly to the AI Daily Logger agent to update life.md</div>
           <div class="log-input-group">
-            <input type="text" id="quick-log-text" class="log-input" placeholder="e.g. 68kg, 3x5 pullups, 30g protein shake" />
+            <input type="text" id="quick-log-text" class="log-input" placeholder="e.g. 70kg, 3x5 pullups, 30g protein shake" />
             <button onclick="submitQuickLog()" class="btn btn-primary" id="log-submit-btn">Log</button>
           </div>
           <div id="log-feedback" style="font-size:12px;margin-top:8px;color:var(--cyan);display:none;"></div>

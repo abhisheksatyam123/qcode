@@ -30,6 +30,7 @@
 #include <qcode/ui/chat_state.h>
 #include <qcode/session/system_prompt.h>
 #include <views.h>
+#include <scroll_helpers.h>
 #include <qcode/ui/app_store.h>
 #include <qcode/generation/generation_controller.h>
 #include <qcode/core/in_process_bus.h>
@@ -1247,10 +1248,19 @@ int main(int argc, char* argv[]) {
         };
         if (tool_keys_active) {
             if (e == Event::ArrowUp) {
-                if (navigate_tool(-1)) return true;
+                if (!navigate_tool(-1)) {
+                    *state.auto_scroll = false;
+                    *state.scroll_line = std::max(0, *state.scroll_line - 2);
+                    screen.Post(Event::Custom);
+                }
+                return true;
             }
             if (e == Event::ArrowDown) {
-                if (navigate_tool(1)) return true;
+                if (!navigate_tool(1)) {
+                    *state.scroll_line = *state.scroll_line + 2;
+                    screen.Post(Event::Custom);
+                }
+                return true;
             }
             if (e == Event::ArrowLeft) {
                 if (set_focused_tool_collapsed(true)) return true;
@@ -1258,7 +1268,6 @@ int main(int argc, char* argv[]) {
             if (e == Event::ArrowRight) {
                 if (set_focused_tool_collapsed(false)) return true;
             }
-
         }
         if (e == Event::Tab) {
             if (any_overlay()) return true;
@@ -1270,7 +1279,18 @@ int main(int argc, char* argv[]) {
         if (state.tab_selected == 1 && !any_overlay()) {
             const auto file_count =
                 state.file_changes ? state.file_changes->size() : 0;
-            if (!state.files_detail_open && file_count > 0) {
+            if (state.files_detail_open) {
+                if (e == Event::ArrowUp || e == Event::Character('k')) {
+                    *state.scroll_line = std::max(0, *state.scroll_line - 2);
+                    screen.Post(Event::Custom);
+                    return true;
+                }
+                if (e == Event::ArrowDown || e == Event::Character('j')) {
+                    *state.scroll_line = *state.scroll_line + 2;
+                    screen.Post(Event::Custom);
+                    return true;
+                }
+            } else if (file_count > 0) {
                 if (e == Event::ArrowUp || e == Event::Character('k')) {
                     state.selected_file =
                         std::max(0, state.selected_file - 1);
@@ -1369,55 +1389,122 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        // ── Keyboard line-by-line chat scrolling with modifiers ──
+        if (state.tab_selected == 0 && !any_overlay()) {
+            if (e == Event::Special("[1;2A") || e == Event::Special("[1;5A") || e == Event::Special("[1;3A")) {
+                *state.auto_scroll = false;
+                *state.scroll_line = std::max(0, *state.scroll_line - 3);
+                screen.Post(Event::Custom);
+                return true;
+            }
+            if (e == Event::Special("[1;2B") || e == Event::Special("[1;5B") || e == Event::Special("[1;3B")) {
+                *state.scroll_line = *state.scroll_line + 3;
+                screen.Post(Event::Custom);
+                return true;
+            }
+        }
+
         constexpr int kLinesPerWheel = 3;
-        constexpr int kLinesPerPage = 20;
+        const int page = qcode::tui::compute_page_step(state.terminal_height);
         if (e == Event::PageUp) {
             *state.auto_scroll = false;
-            if (state.tab_selected == 0) {
-                const auto page =
-                    static_cast<size_t>(std::max(8, state.terminal_height / 2));
-                *state.history_window_start =
-                    *state.history_window_start > page
-                        ? *state.history_window_start - page
-                        : 0;
-                *state.scroll_line = 0;
+            if (state.tab_selected == 3) {
+                state.selected_session_item =
+                    std::max(0, state.selected_session_item - page);
             } else {
-                *state.scroll_line =
-                    std::max(0, *state.scroll_line - kLinesPerPage);
+                *state.scroll_line = std::max(0, *state.scroll_line - page);
             }
+            screen.Post(Event::Custom);
             return true;
         }
         if (e == Event::PageDown) {
-            *state.auto_scroll = false;
-            if (state.tab_selected == 0) {
-                const auto page =
-                    static_cast<size_t>(std::max(8, state.terminal_height / 2));
-                *state.history_window_start = std::min(
-                    state.messages_history->size(),
-                    *state.history_window_start + page);
-                *state.scroll_line = INT_MAX;
+            if (state.tab_selected == 3) {
+                const auto& tasks = state.subagent_entries
+                                        ? *state.subagent_entries
+                                        : std::vector<qcode::SubagentEntry>{};
+                const int child_count = static_cast<int>(tasks.size());
+                state.selected_session_item =
+                    std::min(std::max(0, child_count - 1),
+                             state.selected_session_item + page);
             } else {
-                *state.scroll_line =
-                    std::min(INT_MAX, *state.scroll_line + kLinesPerPage);
+                *state.scroll_line = *state.scroll_line + page;
             }
-            return true;
-        }
-        if (e == Event::End) {
-            *state.auto_scroll = true;
-            *state.scroll_line = INT_MAX;
+            screen.Post(Event::Custom);
             return true;
         }
         if (e == Event::Home) {
             *state.auto_scroll = false;
-            if (state.tab_selected == 0) {
-                *state.history_window_start = 0;
+            if (state.tab_selected == 3) {
+                state.selected_session_item = 0;
+            } else {
+                *state.scroll_line = 0;
             }
-            *state.scroll_line = 0;
+            screen.Post(Event::Custom);
+            return true;
+        }
+        if (e == Event::End) {
+            if (state.tab_selected == 3) {
+                const auto& tasks = state.subagent_entries
+                                        ? *state.subagent_entries
+                                        : std::vector<qcode::SubagentEntry>{};
+                state.selected_session_item =
+                    std::max(0, static_cast<int>(tasks.size()) - 1);
+            } else {
+                *state.auto_scroll = true;
+                *state.scroll_line = INT_MAX;
+            }
+            screen.Post(Event::Custom);
             return true;
         }
         if (e.is_mouse()) {
-            if (e.mouse().button == Mouse::WheelUp) { *state.auto_scroll = false; *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel); return true; }
-            if (e.mouse().button == Mouse::WheelDown) { *state.scroll_line = std::min(INT_MAX, *state.scroll_line + kLinesPerWheel); return true; }
+            if (state.tab_selected == 1 && !state.files_detail_open) {
+                const auto file_count =
+                    state.file_changes ? state.file_changes->size() : 0;
+                if (file_count > 0) {
+                    if (e.mouse().button == Mouse::WheelUp) {
+                        state.selected_file = std::max(0, state.selected_file - 1);
+                        screen.Post(Event::Custom);
+                        return true;
+                    }
+                    if (e.mouse().button == Mouse::WheelDown) {
+                        state.selected_file = std::min(
+                            static_cast<int>(file_count) - 1, state.selected_file + 1);
+                        screen.Post(Event::Custom);
+                        return true;
+                    }
+                }
+            }
+            if (state.tab_selected == 3) {
+                const auto& tasks = state.subagent_entries
+                                        ? *state.subagent_entries
+                                        : std::vector<qcode::SubagentEntry>{};
+                const int child_count = static_cast<int>(tasks.size());
+                if (child_count > 0) {
+                    if (e.mouse().button == Mouse::WheelUp) {
+                        state.selected_session_item =
+                            std::max(0, state.selected_session_item - 1);
+                        screen.Post(Event::Custom);
+                        return true;
+                    }
+                    if (e.mouse().button == Mouse::WheelDown) {
+                        state.selected_session_item =
+                            std::min(child_count - 1, state.selected_session_item + 1);
+                        screen.Post(Event::Custom);
+                        return true;
+                    }
+                }
+            }
+            if (e.mouse().button == Mouse::WheelUp) {
+                *state.auto_scroll = false;
+                *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel);
+                screen.Post(Event::Custom);
+                return true;
+            }
+            if (e.mouse().button == Mouse::WheelDown) {
+                *state.scroll_line = *state.scroll_line + kLinesPerWheel;
+                screen.Post(Event::Custom);
+                return true;
+            }
             if (e.mouse().button == Mouse::Left && e.mouse().motion == Mouse::Pressed) {
                 if (state.tab_selected == 1 && state.files_detail_open &&
                     state.files_back_box) {

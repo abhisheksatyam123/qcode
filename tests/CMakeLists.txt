@@ -40,6 +40,7 @@ add_executable(qcode_tests
     unit/workspace_fs_test.cpp
     unit/study_assistant_test.cpp
     unit/commands_test.cpp
+    unit/tui_scroll_test.cpp
     unit/compaction_cache_test.cpp
     unit/image_attachment_test.cpp
     unit/transform_matrix_test.cpp

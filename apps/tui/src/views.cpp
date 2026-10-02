@@ -1,5 +1,6 @@
 #include <qcode/ui/message_render.h>
 #include <views.h>
+#include "scroll_helpers.h"
 #include "file_diff_preview.h"
 #include "pickers.h"
 #include <qcode/config/provider_info.h>
@@ -625,24 +626,29 @@ ftxui::Element render_view(
             // message on every token made render cost grow without bound.
             Elements msgs;
             const auto history_size = state.messages_history->size();
-            // Keep the rendered window tight so stream frames stay cheap even
-            // on long sessions (older messages stay in history/DB).
-            const auto window_size = static_cast<size_t>(
-                std::max(24, state.terminal_height + 8));
-            const auto max_start =
-                history_size > window_size ? history_size - window_size : 0;
-            if (*state.auto_scroll) {
-                *state.history_window_start = max_start;
-            } else {
-                *state.history_window_start =
-                    std::min(*state.history_window_start, max_start);
+            // Up to 500 messages, render all history for continuous, fluid scrolling.
+            // Beyond 500 messages, keep a generous sliding window of 300 messages.
+            size_t first = 0;
+            size_t last = history_size;
+            constexpr size_t kMaxFullRender = 500;
+            if (history_size > kMaxFullRender) {
+                constexpr size_t kWindowSlice = 300;
+                if (*state.auto_scroll) {
+                    first = history_size - kWindowSlice;
+                    last = history_size;
+                } else {
+                    first = std::min(
+                        state.history_window_start ? *state.history_window_start : static_cast<size_t>(0),
+                        history_size - kWindowSlice);
+                    last = first + kWindowSlice;
+                }
             }
-            const auto first = *state.history_window_start;
-            const auto last = std::min(history_size, first + window_size);
+            if (state.history_window_start) {
+                *state.history_window_start = first;
+            }
 
-            // Completed plain messages are immutable. Reuse their parsed
-            // Markdown/FTXUI trees across frames and keep cache residency
-            // bounded to the current window.
+            // Completed messages and tools are cached as parsed FTXUI trees.
+            // Cache is invalidated on provider/model/theme/session/width/collapse changes.
             static const qcode::Messages* cache_owner = nullptr;
             static size_t cached_history_size = 0;
             static int cached_width = 0;
@@ -651,8 +657,25 @@ ftxui::Element render_view(
             static std::string cached_theme;
             static std::string cached_session;
             static bool cached_thinking = false;
+            static size_t cached_collapse_rev = 0;
+            static int cached_focused_tool = -1;
             static std::unordered_map<size_t, Element> message_cache;
+
+            size_t current_collapse_rev = 0;
+            if (state.tool_collapse_state) {
+                for (const auto& [k, v] : *state.tool_collapse_state) {
+                    current_collapse_rev ^= std::hash<std::string>{}(k) + (v ? 1 : 0);
+                }
+            }
+            if (state.thinking_expand_state) {
+                for (const auto& [k, v] : *state.thinking_expand_state) {
+                    current_collapse_rev ^= std::hash<unsigned long>{}(k) + (v ? 2 : 0);
+                }
+            }
+            const int current_focused_tool =
+                state.focused_tool_index ? *state.focused_tool_index : -1;
             const auto terminal_width = stable_terminal_size().dimx;
+
             if (cache_owner != state.messages_history.get() ||
                 history_size < cached_history_size ||
                 terminal_width != cached_width ||
@@ -660,7 +683,9 @@ ftxui::Element render_view(
                 cached_model != selected_model ||
                 cached_theme != *state.theme ||
                 cached_session != *state.session_id ||
-                cached_thinking != *state.show_thinking) {
+                cached_thinking != *state.show_thinking ||
+                cached_collapse_rev != current_collapse_rev ||
+                cached_focused_tool != current_focused_tool) {
                 message_cache.clear();
                 cache_owner = state.messages_history.get();
                 cached_width = terminal_width;
@@ -669,22 +694,32 @@ ftxui::Element render_view(
                 cached_theme = *state.theme;
                 cached_session = *state.session_id;
                 cached_thinking = *state.show_thinking;
+                cached_collapse_rev = current_collapse_rev;
+                cached_focused_tool = current_focused_tool;
             }
             cached_history_size = history_size;
-            for (auto it = message_cache.begin(); it != message_cache.end();) {
-                if (it->first < first || it->first >= last) {
-                    it = message_cache.erase(it);
-                } else {
-                    ++it;
-                }
+
+            if (message_cache.size() > 1000) {
+                message_cache.clear();
             }
 
-            if (state.tool_block_order) state.tool_block_order->clear();
+            if (state.tool_block_order) {
+                state.tool_block_order->clear();
+                for (size_t mi = 0; mi < history_size; ++mi) {
+                    const auto& m = (*state.messages_history)[mi];
+                    for (const auto& part : m.content) {
+                        if (const auto* tp = std::get_if<qcode::ToolCallContentPart>(&part)) {
+                            state.tool_block_order->push_back(tp->id);
+                        }
+                    }
+                }
+            }
             if (state.tool_arrow_boxes) state.tool_arrow_boxes->clear();
             if (state.tool_task_boxes) state.tool_task_boxes->clear();
             if (state.tool_task_sessions) state.tool_task_sessions->clear();
             if (state.thinking_header_boxes)
                 state.thinking_header_boxes->clear();
+
             if (first > 0) {
                 msgs.push_back(
                     text(" " + std::to_string(first) +
@@ -700,9 +735,7 @@ ftxui::Element render_view(
                     adjacent_tool_results =
                         &(*state.messages_history)[i + 1];
                 }
-                const bool cacheable =
-                    i + 1 < history_size && !msg.has_tool_calls() &&
-                    !msg.has_tool_results() && !msg.has_reasoning();
+                const bool cacheable = (i + 1 < history_size);
                 auto cached = message_cache.find(i);
                 if (cacheable && cached != message_cache.end()) {
                     msgs.push_back(cached->second);
@@ -745,27 +778,33 @@ ftxui::Element render_view(
                 });
             }
 
-            // Measure chat content height (in rendered lines) so scrolling uses a
-            // real line index instead of INT_MAX. ftxui clamps focusPosition(y) to
-            // [0, content-1], so INT_MAX (and INT_MAX-3) both pin to the bottom and
-            // make wheel/key scrolling a no-op. Keeping a real index fixes that.
+            // Measure chat content height (in rendered lines) and compute exact
+            // scroll position without dead zone.
             Element chat_scroll = vbox(std::move(msgs));
             chat_scroll->ComputeRequirement();
-            {
-                const int content_height = std::max(0, chat_scroll->requirement().min_y);
-                if (*state.auto_scroll) {
-                    *state.scroll_line = std::max(0, content_height - 1);
-                } else {
-                    *state.scroll_line =
-                        std::clamp(*state.scroll_line, 0, std::max(0, content_height - 1));
-                    // Re-engage auto-scroll when user scrolls back to the bottom
-                    if (*state.scroll_line >= content_height - 1) {
-                        *state.auto_scroll = true;
-                    }
+            prompt_box->ComputeRequirement();
+
+            const int content_height = std::max(0, chat_scroll->requirement().min_y);
+            const int prompt_box_h = prompt_box->requirement().min_y;
+            const int chrome_height = 2 + prompt_box_h;
+            const int viewport_height = std::max(1, state.terminal_height - chrome_height);
+            const int max_scroll = qcode::tui::compute_max_scroll(content_height, viewport_height);
+
+            if (*state.auto_scroll) {
+                *state.scroll_line = max_scroll;
+            } else {
+                *state.scroll_line =
+                    std::clamp(*state.scroll_line, 0, max_scroll);
+                // Re-engage auto-scroll when user scrolls back to the bottom
+                if (*state.scroll_line >= max_scroll) {
+                    *state.auto_scroll = true;
                 }
             }
+
+            const int focus_y = qcode::tui::compute_focus_y(*state.scroll_line, viewport_height);
+
             body = vbox({
-                chat_scroll | vscroll_indicator | focusPosition(0, *state.scroll_line) | yframe | flex,
+                chat_scroll | vscroll_indicator | focusPosition(0, focus_y) | yframe | flex,
                 // prompt box follows directly (status lives in footer)
                 prompt_box,
             }) | flex;
@@ -869,18 +908,19 @@ ftxui::Element render_view(
             {
                 const int content_height =
                     std::max(0, file_scroll->requirement().min_y);
+                const int viewport_height = std::max(1, state.terminal_height - 4);
                 // Keep the selected row roughly in view.
                 const int target = std::min(
                     content_height - 1,
                     std::max(0, state.selected_file + 2));
-                *state.scroll_line =
-                    std::clamp(target, 0, std::max(0, content_height - 1));
+                const int focus_y = qcode::tui::compute_focus_y(target, viewport_height);
+                *state.scroll_line = target;
                 *state.auto_scroll = false;
+                body = vbox({
+                    file_scroll | vscroll_indicator |
+                        focusPosition(0, focus_y) | yframe | flex,
+                }) | flex;
             }
-            body = vbox({
-                file_scroll | vscroll_indicator |
-                    focusPosition(0, *state.scroll_line) | yframe | flex,
-            }) | flex;
         } else {
             // Detail view: unified diff for the selected file.
             const auto selected = std::clamp(
@@ -955,21 +995,25 @@ ftxui::Element render_view(
             {
                 const int content_height =
                     std::max(0, file_scroll->requirement().min_y);
+                const int chrome_height = 5;
+                const int viewport_height = std::max(1, state.terminal_height - chrome_height);
+                const int max_scroll = qcode::tui::compute_max_scroll(content_height, viewport_height);
                 if (*state.auto_scroll) {
                     *state.scroll_line = 0;
                     *state.auto_scroll = false;
                 } else {
                     *state.scroll_line = std::clamp(
                         *state.scroll_line, 0,
-                        std::max(0, content_height - 1));
+                        max_scroll);
                 }
+                const int focus_y = qcode::tui::compute_focus_y(*state.scroll_line, viewport_height);
+                body = vbox({
+                    text(" FILE DIFF ") | bold | color(accent2(theme)) | hcenter,
+                    text(""),
+                    file_scroll | vscroll_indicator |
+                        focusPosition(0, focus_y) | yframe | flex,
+                }) | flex;
             }
-            body = vbox({
-                text(" FILE DIFF ") | bold | color(accent2(theme)) | hcenter,
-                text(""),
-                file_scroll | vscroll_indicator |
-                    focusPosition(0, *state.scroll_line) | yframe | flex,
-            }) | flex;
         }
     }
     // ── Tab 2: Stats ──
@@ -1135,17 +1179,18 @@ ftxui::Element render_view(
         session_scroll->ComputeRequirement();
         {
             const int content_height = std::max(0, session_scroll->requirement().min_y);
+            const int viewport_height = std::max(1, state.terminal_height - 6);
             const int target = std::min(
                 content_height - 1,
-                std::max(0, state.selected_session_item + 4));
-            *state.scroll_line = std::clamp(target, 0, std::max(0, content_height - 1));
+                std::max(0, state.selected_session_item + 2));
+            const int focus_y = qcode::tui::compute_focus_y(target, viewport_height);
+            *state.scroll_line = target;
             *state.auto_scroll = false;
+            body = vbox({
+                session_scroll | vscroll_indicator |
+                    focusPosition(0, focus_y) | yframe | flex,
+            }) | flex;
         }
-
-        body = vbox({
-            session_scroll | vscroll_indicator |
-                focusPosition(0, *state.scroll_line) | yframe | flex,
-        }) | flex;
     }
 
     auto main_layout = vbox({
