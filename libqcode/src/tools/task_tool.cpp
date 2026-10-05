@@ -219,6 +219,7 @@ class SubagentRegistry {
             {"sessionId", entry->session_id},
             {"agent", entry->subagent_type},
             {"mode", entry->mode},
+            {"model", entry->model},
         };
         if (entry->status == "error") res["error"] = entry->error;
         return res;
@@ -248,10 +249,38 @@ class SubagentRegistry {
         if (abort_flag && abort_flag->load()) {
           break;
         }
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          if (entry->status == "killed") {
+            break;
+          }
+        }
+        if (entry->abort_flag && entry->abort_flag->load()) {
+          break;
+        }
         auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
         status = fut.wait_for(std::min(kSlice, remaining));
         if (status == std::future_status::ready) break;
+      }
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (entry->status == "killed") {
+        JsonValue res;
+        res["title"] = "task killed: " + entry->description;
+        res["output"] = entry->output.empty() ? "Task killed by orchestrator." : entry->output;
+        res["metadata"] = {
+            {"status", "killed"},
+            {"background_task_id", entry->background_task_id},
+            {"task_id", entry->session_id},
+            {"sessionId", entry->session_id},
+            {"agent", entry->subagent_type},
+            {"mode", entry->mode},
+            {"model", entry->model},
+        };
+        return res;
       }
     }
 
@@ -264,6 +293,22 @@ class SubagentRegistry {
       }
 
       std::lock_guard<std::mutex> lock(mutex_);
+      if (entry->status == "killed") {
+        JsonValue res;
+        res["title"] = "task killed: " + entry->description;
+        res["output"] = entry->output.empty() ? "Task killed by orchestrator." : entry->output;
+        res["metadata"] = {
+            {"status", "killed"},
+            {"background_task_id", entry->background_task_id},
+            {"task_id", entry->session_id},
+            {"sessionId", entry->session_id},
+            {"agent", entry->subagent_type},
+            {"mode", entry->mode},
+            {"model", entry->model},
+        };
+        return res;
+      }
+
       if (out_json.is_object() && out_json.contains("error")) {
         entry->status = "error";
         entry->error = out_json.value("error", "Subagent failed");
@@ -271,6 +316,9 @@ class SubagentRegistry {
       } else {
         entry->status = "done";
         entry->output = out_json.value("output", "Subagent finished with no output");
+      }
+      if (out_json.is_object() && out_json.contains("model") && out_json["model"].is_string()) {
+        entry->model = out_json["model"].get<std::string>();
       }
       persist_subagent_output(entry->session_id, entry->output);
 
@@ -284,6 +332,7 @@ class SubagentRegistry {
           {"sessionId", entry->session_id},
           {"agent", entry->subagent_type},
           {"mode", entry->mode},
+          {"model", entry->model},
       };
       if (entry->status == "error") res["error"] = entry->error;
       return res;
@@ -390,7 +439,12 @@ class SubagentRegistry {
       item["description"] = t->description;
       item["agent"] = t->subagent_type;
       item["mode"] = t->mode;
-      item["model"] = t->model;
+      std::string m = t->model;
+      if (m.empty() && !t->session_id.empty()) {
+        auto pm = qcode::session::get_session_provider_model(t->session_id);
+        m = !pm.first.empty() ? (pm.first + ":" + pm.second) : pm.second;
+      }
+      item["model"] = m;
       item["status"] = t->status;
       list_arr.push_back(item);
       ss << "- " << t->background_task_id << " [" << t->status << "] (" << t->subagent_type << " / " << t->mode << "): " << t->description << "\n";
@@ -942,15 +996,22 @@ JsonValue TaskTool::exec_lifecycle(const JsonValue& args, const std::string& op)
   if (op == "kill") {
     return SubagentRegistry::instance().kill(id, reason);
   }
-  if (op == "status" || op == "list") {
+  if (op == "status") {
+    if (!id.empty()) {
+      return SubagentRegistry::instance().await_or_poll(id, 0 /* non-blocking poll */, nullptr);
+    }
     std::string parent_sid = args.value("parent_session_id", args.value("session_id", ""));
-    return SubagentRegistry::instance().list(parent_sid);
+    return list_tasks(parent_sid);
+  }
+  if (op == "list") {
+    std::string parent_sid = args.value("parent_session_id", args.value("session_id", ""));
+    return list_tasks(parent_sid);
   }
 
   JsonValue err;
   err["error"] =
       "Unsupported task op '" + op +
-      "'. Use spawn, result, kill, or list.";
+      "'. Use spawn, result, kill, list, or status.";
   err["metadata"]["op"] = op;
   err["metadata"]["task_id"] = id;
   return err;

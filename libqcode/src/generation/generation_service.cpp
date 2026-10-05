@@ -404,6 +404,10 @@ static JsonValue run_subagent_turn_multi(
     std::string final_text = res.text;
     if (final_text.empty()) final_text = "(subagent finished without output)";
     out["output"] = final_text;
+    if (target_provider) {
+      out["provider"] = target_provider->id;
+    }
+    out["model"] = target_model_id;
     if (fb_attempt > 0) {
       out["fallback_used"] = true;
       out["fallback_attempts"] = fb_attempt + 1;

@@ -1,4 +1,7 @@
+#include <cstdint>
+#include <cstdlib>
 #include <map>
+#include <string_view>
 
 #include <qcode/core/logger.h>
 #include <qcode/tools/multi_step_coordinator.h>
@@ -7,6 +10,35 @@
 #include <qcode/core/tool.h>
 
 namespace qcode {
+
+namespace {
+
+// FNV-1a fingerprint of a step's progress signal: ordered tool names,
+// arguments, and results. Deliberately excludes free text (models vary
+// chatter) and tool call ids (providers may mint unique ids per response),
+// so identical fingerprints mean "same request, same result" — no progress.
+constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
+constexpr uint64_t kFnvPrime = 1099511628211ULL;
+
+uint64_t fingerprint_step(const GenerateResult& r) {
+  uint64_t h = kFnvOffset;
+  auto mix = [&h](std::string_view s) {
+    for (unsigned char c : s) {
+      h ^= c;
+      h *= kFnvPrime;
+    }
+  };
+  for (const auto& tc : r.tool_calls) {
+    mix(tc.tool_name);
+    mix(tc.arguments.dump());
+  }
+  for (const auto& tr : r.tool_results) {
+    mix(tr.is_success() ? tr.result.dump() : tr.error_message());
+  }
+  return h;
+}
+
+}  // namespace
 
 GenerateResult MultiStepCoordinator::execute_multi_step(
     const GenerateOptions& initial_options,
@@ -18,8 +50,28 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     // provider stops requesting them (user abort / provider error still stop).
     return generate_func(initial_options);
   }
-  const int step_cap =
-      (initial_options.max_steps <= 0) ? -1 : initial_options.max_steps;
+  // max_steps <= 0 used to mean "uncapped", which let a pathological tool
+  // loop run forever (default max_steps is 0). Resolve an effective safety
+  // cap: an explicit positive max_steps wins, then QCODE_MAX_STEPS; only an
+  // explicit QCODE_MAX_STEPS=0 keeps truly-uncapped behavior. Otherwise a
+  // hard default guarantees the loop terminates.
+  constexpr int kDefaultStepSafetyCap = 100;
+  int effective_max_steps = initial_options.max_steps;
+  bool env_steps_set = false;
+  if (effective_max_steps <= 0) {
+    if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
+      try {
+        const int v = std::stoi(env_steps);
+        if (v >= 0) {
+          effective_max_steps = v;
+          env_steps_set = true;
+        }
+      } catch (...) {}
+    }
+  }
+  const int step_cap = (effective_max_steps > 0)
+                           ? effective_max_steps
+                           : (env_steps_set ? -1 : kDefaultStepSafetyCap);
 
   // initial_messages is the user's original input, kept immutable across
   // steps; response_messages accumulates assistant turns and tool-result
@@ -41,7 +93,30 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
 
   GenerateResult final_result;
 
+  // Tracks whether the loop exited via the step cap with tool results still
+  // unsummarized (set true only when a body completes with pending tool
+  // results, cleared at the top of every iteration so any mid-body break
+  // leaves it false).
+  bool pending_tool_results = false;
+  uint64_t prev_step_fp = 0;
+  int fp_streak = 0;
+  // 5 consecutive identical steps (each is a full LLM roundtrip) is an
+  // unambiguous loop; high enough that slow legitimate polling (identical
+  // status output a few times in a row) never trips it.
+  constexpr int kMaxIdenticalSteps = 5;
+
   for (int step = 0; step_cap < 0 || step < step_cap; ++step) {
+    pending_tool_results = false;
+
+    // User abort: stop stepping immediately. The loop previously ignored
+    // abort_flag entirely, so killed subagents kept calling the LLM/tools.
+    // "Aborted by user" is the sentinel generation_service.cpp recognizes.
+    if (initial_options.abort_flag && initial_options.abort_flag->load()) {
+      final_result.finish_reason = kFinishReasonError;
+      final_result.error = "Aborted by user";
+      break;
+    }
+
     // Truncate to the immutable prefix and re-append the running accumulator.
     // (vector::resize would require Message to be default-constructible.)
     step_messages.erase(std::next(step_messages.begin(), initial_count),
@@ -64,6 +139,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     if (!step_result.is_success()) {
       final_result.finish_reason = step_result.finish_reason;
       final_result.error = step_result.error;
+      pending_tool_results = false;
       if (step == 0) {
         return step_result;
       }
@@ -112,6 +188,31 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     // Termination conditions: abort only on hard provider errors or content filters.
     if (step_result.finish_reason == kFinishReasonContentFilter ||
         step_result.finish_reason == kFinishReasonError) {
+      pending_tool_results = false;
+      break;
+    }
+
+    // Stuck-loop detection: three consecutive byte-identical steps (same
+    // text, same tool calls, same tool results) mean the model is spinning.
+    // Stop instead of burning tokens forever.
+    const uint64_t step_fp = fingerprint_step(step_result);
+    if (step_fp == prev_step_fp) {
+      ++fp_streak;
+    } else {
+      prev_step_fp = step_fp;
+      fp_streak = 1;
+    }
+    if (step_result.has_tool_calls() && fp_streak >= kMaxIdenticalSteps) {
+      LOG_WARN(
+          "MultiStepCoordinator: stuck loop detected - step {} repeated an "
+          "identical request/result {} times; stopping",
+          step + 1, fp_streak);
+      final_result.finish_reason = kFinishReasonError;
+      final_result.error =
+          "Stuck loop detected: the same tool call and result repeated " +
+          std::to_string(fp_streak) +
+          " times. Refine the tool arguments or take a different approach.";
+      pending_tool_results = false;
       break;
     }
 
@@ -134,9 +235,61 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
           tool_results_to_messages(step_result.tool_calls, tool_results);
       response_messages.insert(response_messages.end(), tool_messages.begin(),
                                tool_messages.end());
+      pending_tool_results = true;
     } else {
       // No tool calls: text response completed.
+      pending_tool_results = false;
       break;
+    }
+  }
+
+  // Hit the step cap with tool results still pending: run one final
+  // synthesis pass with tools disabled so the model converts those results
+  // into a closing answer instead of being cut off mid-work.
+  if (pending_tool_results && step_cap > 0 &&
+      !(initial_options.abort_flag && initial_options.abort_flag->load())) {
+    LOG_WARN("MultiStepCoordinator: reached step cap ({}) with pending tool "
+             "results; running one synthesis step without tools",
+             step_cap);
+    GenerateOptions synth_options = step_options;
+    synth_options.tools.clear();
+    synth_options.active_tools.clear();
+    synth_options.max_steps = 1;
+    synth_options.prompt.clear();
+    // Rebuild input = immutable prefix + full accumulator (including the
+    // final tool results appended by the last iteration).
+    Messages synth_messages(step_messages.begin(),
+                            step_messages.begin() +
+                                static_cast<std::ptrdiff_t>(initial_count));
+    synth_messages.insert(synth_messages.end(), response_messages.begin(),
+                          response_messages.end());
+    synth_options.messages = std::move(synth_messages);
+
+    GenerateResult synth = generate_func(synth_options);
+    if (synth.is_success()) {
+      GenerateStep synth_step;
+      synth_step.text = synth.text;
+      synth_step.finish_reason = synth.finish_reason;
+      synth_step.usage = synth.usage;
+      final_result.steps.push_back(synth_step);
+      if (initial_options.on_step_finish) {
+        initial_options.on_step_finish.value()(synth_step);
+      }
+      final_result.text += synth.text;
+      final_result.usage.prompt_tokens = synth.usage.prompt_tokens;
+      final_result.usage.completion_tokens += synth.usage.completion_tokens;
+      final_result.usage.total_tokens = final_result.usage.prompt_tokens +
+                                        final_result.usage.completion_tokens;
+      final_result.finish_reason = synth.finish_reason;
+      final_result.id = synth.id;
+      final_result.model = synth.model;
+      final_result.created = synth.created;
+      final_result.system_fingerprint = synth.system_fingerprint;
+      final_result.provider_metadata = synth.provider_metadata;
+      response_messages.push_back(Message::assistant(synth.text));
+    } else {
+      LOG_WARN("MultiStepCoordinator: synthesis step failed: {}",
+               synth.error_message());
     }
   }
 

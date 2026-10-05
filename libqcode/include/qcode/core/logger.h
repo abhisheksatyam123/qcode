@@ -31,13 +31,20 @@ enum class LogLevel {
 
 // ── Helpers ──
 
-/// Thread-local name (set by each thread for human-readable logs).
+
+/* local name for the current thread */
 inline thread_local std::string t_thread_name;
 
-/// Set a human-readable name for the current thread.
+/* Set a human-readable name for the current thread.
+ * Here std::move move the pointer  of name string to t_thread_name
+ *
+ */
 inline void set_thread_name(std::string name) { t_thread_name = std::move(name); }
 
-/// Returns the thread name if set, otherwise falls back to hex thread-id.
+/*
+ * this API returns the string name of the current thread if set
+ * else it returns the hex thread id values from std::this_thread::get_id
+ */
 inline std::string thread_name_string() {
   if (!t_thread_name.empty()) return t_thread_name;
   std::ostringstream ss;
@@ -68,13 +75,24 @@ inline std::string_view short_file_name(std::string_view path) {
 
 class Logger {
  public:
+  /* virtaul means we have to run derived destructor fiest then we will be  running Logger() descrtuctor */
   virtual ~Logger() = default;
 
   // Core logging method with full source location
   virtual void log(LogLevel level, std::string_view message,
                    std::source_location loc) = 0;
 
-  // Convenience methods (call log() directly; macros capture source_location at call site)
+  /* Convenience methods (call log() directly; macros capture source_location at call site)
+   * template : template keyword means that we need to crate actual API at compile time depending on the calllers of this function
+   * typename describes what types we need to pick in this template
+   * ... means we will be having multiple types
+   * Args is list of those types.
+   * std::format_string is string of format types " {} {}" where these brackets will be printed with values.
+   * <Args...> in the format string represent what types will get inseted in the string.
+   * ... is pack in left and unpack in righ  in this case its pack of values.
+   * we are calling log API with debug level and std::format into our fmt string with our unpacked arguments each with
+   *  std::formard<type>(value)
+   */
   template <typename... Args>
   void debug(std::format_string<Args...> fmt, Args&&... args) {
     if (is_enabled(LogLevel::kLogLevelDebug)) {
@@ -183,12 +201,19 @@ namespace detail {
 
 #if QCODE_LOGGER_ATOMIC_SHARED_PTR
 
+/* Instanciating the logger
+  * here the static inside the function means the initialization of the instance variable
+  * will only happane once.
+  */
 inline std::atomic<std::shared_ptr<Logger>>& logger_instance() {
   static std::atomic<std::shared_ptr<Logger>> instance{
       std::make_shared<ConsoleLogger>()};
   return instance;
 }
 
+/* as Logger is a shared pointer to type std::atomic then to load  of type std::atomic
+ * we need .load , .store API from standerd library
+ */
 inline void store_logger(std::shared_ptr<Logger> logger) {
   logger_instance().store(std::move(logger));
 }

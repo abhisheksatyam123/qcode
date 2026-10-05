@@ -8,6 +8,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <thread>
 #include <algorithm>
 #include <iostream>
 #include <filesystem>
@@ -47,7 +48,10 @@ public:
             db_ = open_database(actual_path);
             if (!db_) return;
             current_path_ = expected_path;
-            sqlite3_busy_timeout(db_, 2000);
+            // 10s (was 2s): parallel subagents writing large tool results
+            // used to hit SQLITE_BUSY and silently DROP messages. Matches
+            // the internal-db handle timeout (session_db_internal.h).
+            sqlite3_busy_timeout(db_, 10000);
             constexpr auto kInsertSql =
                 "INSERT INTO messages (session_id, sender, content, created_at) "
                 "VALUES (?, ?, ?, ?);";
@@ -65,9 +69,19 @@ public:
         sqlite3_bind_text(insert_, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(insert_, 3, content.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int64(insert_, 4, created_at);
-        if (sqlite3_step(insert_) != SQLITE_DONE) {
-            LOG_ERROR("SQLite: message insert failed for session '{}' (sender '{}'): {}",
-                      session_id, sender, sqlite3_errmsg(db_));
+        int rc = sqlite3_step(insert_);
+        // SQLITE_BUSY/LOCKED can still outlive the busy timeout under heavy
+        // parallel writes; retry a couple of times before dropping the row.
+        for (int attempt = 0; (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) &&
+                              attempt < 2;
+             ++attempt) {
+            sqlite3_reset(insert_);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            rc = sqlite3_step(insert_);
+        }
+        if (rc != SQLITE_DONE) {
+            LOG_ERROR("SQLite: message insert failed for session '{}' (sender '{}') rc={}: {}",
+                      session_id, sender, rc, sqlite3_errmsg(db_));
         }
     }
 

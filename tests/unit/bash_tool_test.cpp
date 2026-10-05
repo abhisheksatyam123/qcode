@@ -2,10 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace qcode {
 namespace {
@@ -91,25 +95,77 @@ TEST(BashToolTest, TruncatesAtValidUtf8Boundary) {
   unsetenv("QCODE_TOOL_OUTPUT_DIR");
 }
 
-TEST(BashToolTest, SerializesConcurrentExecutions) {
-  std::atomic<int> running_count{0};
-  std::atomic<bool> overlap_detected{false};
+// Guards against regression to the old process-wide `g_bash_exec_mutex`,
+// which serialized EVERY command: 5 x 0.4s sleeps would take >= 2.0s.
+// Bounded concurrency must admit them in (at most) ceil(5/4) = 2 waves.
+TEST(BashToolTest, RunsConcurrentExecutionsInParallelInsteadOfSerializing) {
+  constexpr int kNumCommands = 5;
+  constexpr auto kSleep = std::chrono::milliseconds(400);
 
   auto task = [&]() {
     const JsonValue args = {
         {"mode", "run"},
-        {"command", "sleep 0.05"},
+        {"command", "sleep 0.4"},
         {"description", "Concurrent test sleep"},
+        {"timeout", 10000},
     };
     BashTool::execute(args, ToolExecutionContext{});
   };
 
-  std::thread t1(task);
-  std::thread t2(task);
-  t1.join();
-  t2.join();
+  const auto start = std::chrono::steady_clock::now();
+  std::vector<std::thread> threads;
+  threads.reserve(kNumCommands);
+  for (int i = 0; i < kNumCommands; ++i) threads.emplace_back(task);
+  for (auto& t : threads) t.join();
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - start);
 
-  EXPECT_FALSE(overlap_detected.load());
+  // Serialized execution => >= 5 * 400ms = 2000ms. Generous margin over the
+  // expected ~800ms (2 waves of 4 slots) to stay robust on loaded machines.
+  EXPECT_LT(elapsed.count(), 1500)
+      << "concurrent bash commands appear serialized: " << elapsed.count()
+      << "ms";
+}
+
+// Scoped override of the limiter slot count (read live on each acquire).
+struct EnvVarGuard {
+  explicit EnvVarGuard(const char* name, const char* value) : name_(name) {
+    setenv(name_, value, 1);
+  }
+  ~EnvVarGuard() { unsetenv(name_); }
+  const char* name_;
+};
+
+// With QCODE_BASH_MAX_CONCURRENT=2, 4 x 400ms sleeps must run in exactly 2
+// waves: >= 750ms (proves the bound is enforced) but < 1400ms (proves it is
+// bounded parallelism, not full serialization, which would be >= 1600ms).
+TEST(BashToolTest, EnforcesBoundedConcurrencyFromEnvOverride) {
+  EnvVarGuard guard("QCODE_BASH_MAX_CONCURRENT", "2");
+
+  auto task = [&]() {
+    const JsonValue args = {
+        {"mode", "run"},
+        {"command", "sleep 0.4"},
+        {"description", "Bounded concurrency test sleep"},
+        {"timeout", 10000},
+    };
+    BashTool::execute(args, ToolExecutionContext{});
+  };
+
+  const auto start = std::chrono::steady_clock::now();
+  std::vector<std::thread> threads;
+  threads.reserve(4);
+  for (int i = 0; i < 4; ++i) threads.emplace_back(task);
+  for (auto& t : threads) t.join();
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - start);
+
+  EXPECT_GE(elapsed.count(), 750)
+      << "bound not enforced: 4 x 400ms finished in " << elapsed.count()
+      << "ms with 2 slots";
+  EXPECT_LT(elapsed.count(), 1400)
+      << "too slow with 2 slots (serial would be 1600ms): "
+      << elapsed.count() << "ms";
 }
 
 TEST(BashToolTest, AllowsBitwiseShiftOperatorsWithoutFalseHeredocError) {

@@ -661,5 +661,100 @@ TEST(MultiStepCoordinatorTest, DoesNotAbortWhenToolExecutionFails) {
   EXPECT_EQ(final_res.text, "I recovered from the error.");
 }
 
+TEST_F(TaskToolTest, StatusLifecycleReturnsTaskStatusNonblocking) {
+  ToolExecutionContext context;
+  auto unblock = std::make_shared<std::promise<void>>();
+  auto can_finish = unblock->get_future().share();
+
+  context.subagent_runner = [can_finish](const JsonValue&, std::shared_ptr<std::atomic<bool>>) {
+    can_finish.wait();
+    return JsonValue{{"output", "delayed status task completed"}};
+  };
+
+  JsonValue spawn_res = TaskTool::execute(
+      JsonValue{{"prompt", "check status"}, {"background", true}},
+      context);
+  std::string bg_id = spawn_res["metadata"].value("background_task_id", "");
+  ASSERT_FALSE(bg_id.empty());
+
+  // op=status with background_task_id returns non-blocking status
+  JsonValue status_res = TaskTool::execute(
+      JsonValue{{"op", "status"}, {"background_task_id", bg_id}},
+      context);
+  EXPECT_EQ(status_res["metadata"].value("status", ""), "running");
+
+  // Unblock runner to let it finish
+  unblock->set_value();
+
+  // Await completion
+  JsonValue res = TaskTool::execute(
+      JsonValue{{"op", "result"}, {"background_task_id", bg_id}, {"timeout_ms", 2000}},
+      context);
+  EXPECT_EQ(res["metadata"].value("status", ""), "done");
+
+  // op=status now reports done
+  JsonValue status_after = TaskTool::execute(
+      JsonValue{{"op", "status"}, {"background_task_id", bg_id}},
+      context);
+  EXPECT_EQ(status_after["metadata"].value("status", ""), "done");
+}
+
+TEST_F(TaskToolTest, KilledTaskStatusNotOverwrittenByLateCompletion) {
+  ToolExecutionContext context;
+  auto started = std::make_shared<std::promise<void>>();
+  auto can_finish = std::make_shared<std::promise<void>>();
+  auto allow = can_finish->get_future().share();
+
+  context.subagent_runner = [started, allow](const JsonValue&, std::shared_ptr<std::atomic<bool>> abort_flag) {
+    started->set_value();
+    allow.wait();
+    return JsonValue{{"output", "late completion output"}};
+  };
+
+  JsonValue spawn_res = TaskTool::execute(
+      JsonValue{{"prompt", "will be killed"}, {"background", true}},
+      context);
+  std::string bg_id = spawn_res["metadata"].value("background_task_id", "");
+  ASSERT_FALSE(bg_id.empty());
+
+  started->get_future().wait();
+
+  // Kill the task
+  JsonValue kill_res = TaskTool::execute(
+      JsonValue{{"op", "kill"}, {"background_task_id", bg_id}, {"reason", "aborted by user"}},
+      context);
+  EXPECT_EQ(kill_res["metadata"].value("status", ""), "killed");
+
+  // Let runner finish late
+  can_finish->set_value();
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  // Result MUST remain killed, not overwritten to done
+  JsonValue result_res = TaskTool::execute(
+      JsonValue{{"op", "result"}, {"background_task_id", bg_id}, {"timeout_ms", 500}},
+      context);
+  EXPECT_EQ(result_res["metadata"].value("status", ""), "killed");
+  EXPECT_THAT(result_res.value("output", ""), testing::HasSubstr("killed by orchestrator"));
+}
+
+TEST_F(TaskToolTest, SubagentModelRecordedFromRunnerResult) {
+  ToolExecutionContext context;
+  context.subagent_runner = [](const JsonValue&, std::shared_ptr<std::atomic<bool>>) {
+    return JsonValue{{"output", "result with model info"}, {"model", "custom-prov:custom-model"}};
+  };
+
+  JsonValue spawn_res = TaskTool::execute(
+      JsonValue{{"prompt", "model test"}, {"background", true}},
+      context);
+  std::string bg_id = spawn_res["metadata"].value("background_task_id", "");
+  ASSERT_FALSE(bg_id.empty());
+
+  JsonValue res = TaskTool::execute(
+      JsonValue{{"op", "result"}, {"background_task_id", bg_id}, {"timeout_ms", 2000}},
+      context);
+  EXPECT_EQ(res["metadata"].value("status", ""), "done");
+  EXPECT_EQ(res["metadata"].value("model", ""), "custom-prov:custom-model");
+}
+
 }  // namespace test
 }  // namespace qcode

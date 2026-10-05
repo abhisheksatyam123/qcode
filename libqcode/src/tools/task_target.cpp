@@ -172,8 +172,16 @@ bool matches_orchestrator(
     std::string_view prov, std::string_view mod,
     std::string_view orch_prov, std::string_view orch_mod) {
   if (orch_prov.empty() || orch_mod.empty()) return false;
-  const bool prov_match = (to_lower(std::string(prov)) == to_lower(std::string(orch_prov)));
-  const bool mod_match = (to_lower(std::string(mod)) == to_lower(std::string(orch_mod)));
+  auto clean = [](std::string s) {
+    s = to_lower(s);
+    s.erase(std::remove_if(s.begin(), s.end(), [](char c) {
+      return c == '-' || c == '_' || c == ' ' || c == '.';
+    }), s.end());
+    return s;
+  };
+  const bool prov_match = (clean(std::string(prov)) == clean(std::string(orch_prov)));
+  const bool mod_match = (to_lower(std::string(mod)) == to_lower(std::string(orch_mod))) ||
+                         (clean(std::string(mod)) == clean(std::string(orch_mod)));
   return prov_match && mod_match;
 }
 

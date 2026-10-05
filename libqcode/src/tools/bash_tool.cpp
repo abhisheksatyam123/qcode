@@ -8,6 +8,7 @@
 #include <cctype>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -751,16 +752,99 @@ std::string BashTool::run_shell(const std::string& command,
       "If you truly need more inline text, request the smallest useful output budget (for bash, max_output_chars); large values can bloat context.");
 }
 
-static std::mutex g_bash_exec_mutex;
+// ── Bounded bash concurrency limiter ──
+//
+// Replaces the old process-wide `g_bash_exec_mutex` (commit 43b9dd24) which
+// serialized EVERY bash command in the process: a single long-running
+// command stalled all parallel subagents, and waiting threads could not be
+// interrupted while blocked on std::mutex::lock(). The limiter admits up to
+// `slots()` concurrent commands (a small multiple of hardware concurrency)
+// and waiters poll the abort flag so cancelled tasks never wedge.
+class BashConcurrencyLimiter {
+ public:
+  static BashConcurrencyLimiter& instance() {
+    static BashConcurrencyLimiter inst;
+    return inst;
+  }
+
+  // Acquires an execution slot. Returns false if the abort flag fired while
+  // waiting (caller must not launch a shell). Never blocks indefinitely on
+  // abort: waiters wake at least every 50ms to re-check the flag.
+  bool acquire(const std::shared_ptr<std::atomic<bool>>& abort_flag) {
+    const size_t limit = slots();
+    std::unique_lock<std::mutex> lock(mutex_);
+    while (in_use_ >= limit) {
+      if (abort_flag && abort_flag->load()) return false;
+      cv_.wait_for(lock, std::chrono::milliseconds(50));
+    }
+    if (abort_flag && abort_flag->load()) return false;
+    ++in_use_;
+    return true;
+  }
+
+  void release() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      --in_use_;
+    }
+    cv_.notify_one();
+  }
+
+  // Slot count: QCODE_BASH_MAX_CONCURRENT=N overrides (read live so tests
+  // can tighten/loosen it); otherwise clamp(hardware_concurrency, 4, 16).
+  size_t slots() const {
+    if (const char* env = std::getenv("QCODE_BASH_MAX_CONCURRENT")) {
+      try {
+        const int v = std::stoi(env);
+        if (v >= 1) return static_cast<size_t>(v);
+      } catch (...) {}
+    }
+    size_t hw = default_slots_.load();
+    if (hw == 0) {
+      unsigned hc = std::thread::hardware_concurrency();
+      if (hc == 0) hc = 4;
+      hw = std::clamp<unsigned>(hc, 4, 16);
+      default_slots_.store(hw);
+    }
+    return hw;
+  }
+
+ private:
+  BashConcurrencyLimiter() = default;
+
+  mutable std::mutex mutex_;
+  std::condition_variable cv_;
+  size_t in_use_ = 0;
+  mutable std::atomic<size_t> default_slots_{0};
+};
+
+// RAII slot guard: releases the slot on every early-return path of exec_run.
+class BashSlotGuard {
+ public:
+  explicit BashSlotGuard(BashConcurrencyLimiter& limiter) : limiter_(limiter) {}
+  ~BashSlotGuard() { if (held_) limiter_.release(); }
+  BashSlotGuard(const BashSlotGuard&) = delete;
+  BashSlotGuard& operator=(const BashSlotGuard&) = delete;
+
+  bool try_acquire(const std::shared_ptr<std::atomic<bool>>& abort_flag) {
+    held_ = limiter_.acquire(abort_flag);
+    return held_;
+  }
+
+ private:
+  BashConcurrencyLimiter& limiter_;
+  bool held_ = false;
+};
 
 JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& context) {
-  // Enforce strictly 1 bash tool command execution at a time process-wide.
-  std::unique_lock<std::mutex> lock(g_bash_exec_mutex);
+  // Bound concurrent shell execution process-wide (was: full serialization).
+  BashSlotGuard slot(BashConcurrencyLimiter::instance());
 
   std::string desc = args.value("description", "");
 
-  // If abort was requested while waiting for the lock, return immediately without launching shell.
-  if (context.abort_flag && context.abort_flag->load()) {
+  // If abort was requested while waiting for a slot, return immediately
+  // without launching a shell.
+  if (!slot.try_acquire(context.abort_flag)) {
     JsonValue result;
     result["title"] = desc.empty() ? "bash" : desc;
     result["output"] = "Error: Tool execution aborted by user";

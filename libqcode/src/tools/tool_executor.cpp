@@ -116,20 +116,12 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
 
   if (tool_calls.size() <= 1) parallel = false;
 
-  bool effective_parallel = parallel;
-  if (effective_parallel) {
-    int bash_count = 0;
-    for (const auto& call : tool_calls) {
-      if (call.tool_name == "bash") {
-        ++bash_count;
-      }
-    }
-    // Sequential execution is only needed if there are multiple bash commands
-    // that might mutate files or directories with order dependencies.
-    if (bash_count > 1) {
-      effective_parallel = false;
-    }
-  }
+  const bool effective_parallel = parallel;
+  // NOTE: a batch containing multiple bash calls used to be forced
+  // sequential to avoid memory spikes. That concern is now handled by
+  // BashConcurrencyLimiter inside BashTool::exec_run (bounded slots), so
+  // parallel batches with several bash calls are admitted again — this was
+  // a major serialization point for large parallel subagent workloads.
 
   if (!effective_parallel) {
     // Execute sequentially
@@ -302,11 +294,16 @@ ToolResult ToolExecutor::execute_sync_tool(
   bool user_aborted = false;
 
   while (true) {
-    if (future.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
-      break;
-    }
+    // Check abort BEFORE future readiness: a tool that honors the abort
+    // flag returns quickly, so if readiness were checked first the tool's
+    // cooperative "aborted" output would be reported as a SUCCESS result
+    // (observed as a flaky failure in ToolTimeoutTest.GlobalAbortInterception
+    // under load). User abort must deterministically win.
     if (options && options->abort_flag && options->abort_flag->load()) {
       user_aborted = true;
+      break;
+    }
+    if (future.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
       break;
     }
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -317,8 +314,16 @@ ToolResult ToolExecutor::execute_sync_tool(
     }
   }
 
+  if (!user_aborted && options && options->abort_flag && options->abort_flag->load()) {
+    user_aborted = true;
+  }
+
   if (user_aborted || timed_out) {
-    if (context.abort_flag) {
+    // Only a genuine user abort may propagate to the shared abort flag. A
+    // tool timeout is scoped to this single tool: flagging the shared
+    // options->abort_flag here used to poison the whole session and kill
+    // every parallel subagent as soon as one tool timed out.
+    if (user_aborted && context.abort_flag) {
       context.abort_flag->store(true);
     }
     std::thread([f = std::move(future)]() mutable {
@@ -368,11 +373,12 @@ ToolResult ToolExecutor::execute_async_tool(
     bool user_aborted = false;
 
     while (true) {
-      if (future.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
-        break;
-      }
+      // Same abort-before-readiness ordering as the sync path.
       if (options && options->abort_flag && options->abort_flag->load()) {
         user_aborted = true;
+        break;
+      }
+      if (future.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
         break;
       }
       auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -383,8 +389,14 @@ ToolResult ToolExecutor::execute_async_tool(
       }
     }
 
+    if (!user_aborted && options && options->abort_flag && options->abort_flag->load()) {
+      user_aborted = true;
+    }
+
     if (user_aborted || timed_out) {
-      if (context.abort_flag) {
+      // Same rule as the sync path: only user aborts propagate to the shared
+      // abort flag; a timeout stays scoped to this tool.
+      if (user_aborted && context.abort_flag) {
         context.abort_flag->store(true);
       }
       std::thread([f = std::move(future)]() mutable {

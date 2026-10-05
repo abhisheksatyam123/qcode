@@ -407,8 +407,8 @@ TEST(ImageToolTest, LiveOpenRouterVisionWithImageToolResult) {
 
   // 3. Assemble conversation with tool call and tool result containing image
   GenerateOptions opts;
-  opts.model = "nex-agi/nex-n2.5-mini:free";
-  opts.max_tokens = 80;
+  opts.model = "dots-studio/dots-3-note-preview:free";
+  opts.max_tokens = 512;
 
   opts.messages.push_back(Message::user("What color is the pixel in the image? Answer concisely."));
   std::vector<ToolCallContentPart> calls;
