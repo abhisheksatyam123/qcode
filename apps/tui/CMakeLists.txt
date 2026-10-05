@@ -6,6 +6,7 @@ add_executable(qcode-tui
     src/overlays.cpp
     src/git_monitor.cpp
     src/views.cpp
+    src/prompt_wrap.cpp
     src/pickers.cpp
     src/views_toast.cpp
     src/file_diff_preview.cpp

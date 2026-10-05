@@ -3,6 +3,7 @@
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/box.hpp>
 #include <ftxui/screen/color.hpp>
 
 #include <algorithm>
@@ -15,6 +16,8 @@
 #include <unistd.h>
 #include <vector>
 #include <climits>
+
+#include <prompt_wrap.h>
 
 #include <qcode/core/file_logger.h>
 #include <qcode/core/jthread.h>
@@ -165,6 +168,12 @@ int main(int argc, char* argv[]) {
     //  2. Provider & Config setup
     // ═══════════════════════════════════════════════════════════
     std::string prompt_input;
+    // Chat input cursor (byte offset) and rendered-bounds boxes. Bound into
+    // the FTXUI Input via InputOption::cursor_position so the wrapped
+    // renderer and click/arrow handlers share the exact cursor location.
+    int prompt_cursor = 0;
+    ftxui::Box prompt_rows_content_box;  // absolute bounds of wrapped rows
+    ftxui::Box prompt_rows_vp_box;       // absolute bounds of the viewport
     qcode::ToolConfig tool_cfg{true, true};
     std::string system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
     bool enable_tools = true;
@@ -238,12 +247,20 @@ int main(int argc, char* argv[]) {
 
     InputOption input_opts = InputOption::Default();
     input_opts.multiline = true;
-    input_opts.transform = [](InputState s) {
-        s.element = s.element | bgcolor(Color::Default);
-        if (s.focused) {
-            s.element = s.element | bgcolor(Color::Default);
+    input_opts.cursor_position = &prompt_cursor;
+    input_opts.transform = [&](InputState s) {
+        if (s.is_placeholder) {
+            // Empty content: FTXUI's placeholder (single short line).
+            return s.element | bgcolor(Color::Default);
         }
-        return s.element;
+        // Wrap long lines into vertical rows. FTXUI's stock render draws one
+        // row per '\n' and clips (text() never wraps), so without this the
+        // box grew but the text scrolled horizontally.
+        const int wrap_w = qcode::tui::prompt_box_inner_width(state);
+        Element wrapped = qcode::tui::render_wrapped_input(
+            prompt_input, prompt_cursor, wrap_w, s.focused, s.hovered,
+            &prompt_rows_content_box, &prompt_rows_vp_box);
+        return wrapped | bgcolor(Color::Default);
     };
     Component input = Input(&prompt_input, "Ask anything...", input_opts);
 
@@ -1070,6 +1087,24 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // ── Visual-row arrow navigation in the wrapped chat input ──
+        // FTXUI's Input moves by logical '\n' lines only, which jumps from
+        // the very start to the very end (and back) on a single wrapped
+        // paragraph. Move by wrapped display row instead, preserving the
+        // display column; at the first/last row fall through to FTXUI's
+        // default logical-line behavior.
+        if (state.tab_selected == 0 &&
+            (e == Event::ArrowUp || e == Event::ArrowDown)) {
+            const int wrap_w = qcode::tui::prompt_box_inner_width(state);
+            const int moved = qcode::tui::move_visual_row(
+                prompt_input, wrap_w, prompt_cursor,
+                e == Event::ArrowUp ? -1 : 1);
+            if (moved >= 0) {
+                prompt_cursor = moved;
+                return true;
+            }
+        }
+
         // Alt+Enter = newline
         if (e == Event::Special("\x1b\n") || e == Event::Special("\x1b\r") || e == Event::Special("\x1b\x0a")) {
             prompt_input += "\n";
@@ -1459,6 +1494,29 @@ int main(int argc, char* argv[]) {
             return true;
         }
         if (e.is_mouse()) {
+            // ── Click-to-position in the wrapped chat input ──
+            // FTXUI's Input maps clicks with logical lines (and its private
+            // cursor box, which our wrapped render does not populate), so a
+            // click on wrapped text would move the cursor to the wrong
+            // place. Map the click through the wrapped rows ourselves.
+            if (state.tab_selected == 0 && !any_overlay() &&
+                !prompt_input.empty() &&
+                e.mouse().button == Mouse::Left &&
+                e.mouse().motion == Mouse::Pressed &&
+                prompt_rows_vp_box.Contain(e.mouse().x, e.mouse().y)) {
+                const int wrap_w = qcode::tui::prompt_box_inner_width(state);
+                const auto rows =
+                    qcode::tui::wrap_prompt_rows(prompt_input, wrap_w);
+                if (!rows.empty()) {
+                    int row = e.mouse().y - prompt_rows_content_box.y_min;
+                    row = std::clamp(row, 0, (int)rows.size() - 1);
+                    const int col = e.mouse().x - prompt_rows_content_box.x_min;
+                    prompt_cursor = qcode::tui::byte_at_visual_col(
+                        prompt_input, rows[row], col);
+                    input->TakeFocus();
+                    return true;
+                }
+            }
             if (state.tab_selected == 1 && !state.files_detail_open) {
                 const auto file_count =
                     state.file_changes ? state.file_changes->size() : 0;

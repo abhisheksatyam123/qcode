@@ -1,5 +1,6 @@
 #include <qcode/ui/message_render.h>
 #include <views.h>
+#include <prompt_wrap.h>
 #include "scroll_helpers.h"
 #include "file_diff_preview.h"
 #include "pickers.h"
@@ -75,27 +76,27 @@ std::string format_workspace_path() {
     return path;
 }
 
-int prompt_input_height(const std::string& prompt_input, int max_lines) {
-    int input_lines = 1;
-    const int term_w = stable_terminal_size().dimx;
-    const int avail = std::max(20, term_w - 7);
-    size_t pos = 0;
-    while (pos <= prompt_input.size()) {
-        size_t nl = prompt_input.find('\n', pos);
-        std::string seg = (nl == std::string::npos)
-            ? prompt_input.substr(pos)
-            : prompt_input.substr(pos, nl - pos);
-        const int w = ftxui::string_width(seg);
-        int segs = (w <= 0) ? 1 : (w + avail - 1) / avail;
-        input_lines += segs - 1;
-        if (nl == std::string::npos) break;
-        pos = nl + 1;
-    }
-    if (input_lines < 1) input_lines = 1;
-    return std::min(input_lines, max_lines);
+int prompt_input_height(const std::string& prompt_input, int max_lines,
+                        int width) {
+    // Exact wrapped-row count (same wrap the renderer uses) — a ceil(w/avail)
+    // estimate under-counts rows for word wrapping and over-counts for CJK.
+    return wrapped_line_count(prompt_input, width, max_lines);
 }
 
 }  // namespace
+
+int prompt_box_inner_width(const ChatState& state) {
+    const int term_w = std::max(20, stable_terminal_size().dimx);
+    int box_w = term_w;
+    if (state.tab_selected == 0 &&
+        (!state.messages_history || state.messages_history->empty())) {
+        // Empty chat: the prompt box is clamped (see render_view) and
+        // centered; FTXUI additionally never exceeds the terminal width.
+        box_w = std::min(std::clamp(term_w - 8, 48, 84), term_w);
+    }
+    // Minus borderRounded borders (2) and the " ❯ " prefix (3).
+    return std::max(20, box_w - 5);
+}
 
 // Upstream opencode formatUsage (session-data.ts): locale-grouped total with
 // optional percent + cost. Total folds input+output+reasoning+cache.
@@ -605,7 +606,8 @@ ftxui::Element render_view(
         bool empty = state.messages_history->empty();
 
         if (empty) {
-            const int input_height = prompt_input_height(prompt_input, 6);
+            const int input_height =
+                prompt_input_height(prompt_input, 6, prompt_box_inner_width(state));
             const int term_w = stable_terminal_size().dimx;
             const int prompt_w = std::clamp(term_w - 8, 48, 84);
             Element prompt_box = make_prompt_box(input_height);
@@ -767,7 +769,8 @@ ftxui::Element render_view(
                 msgs.push_back(render_queued_block(*queue, theme));
             }
 
-            const int input_height = prompt_input_height(prompt_input, 8);
+            const int input_height =
+                prompt_input_height(prompt_input, 8, prompt_box_inner_width(state));
             Element prompt_box = make_prompt_box(input_height);
 
             auto suggestions = build_suggestions_panel();

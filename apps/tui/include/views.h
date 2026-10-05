@@ -24,6 +24,13 @@ namespace tui {
 // commits to a new size only after it is observed stable for a few frames.
 ftxui::Dimensions stable_terminal_size();
 
+// Width (terminal columns) available to the text inside the prompt box:
+// terminal width minus the rounded border (2) and the " ❯ " prefix (3).
+// On the empty-chat screen the box itself is clamped to [48, 84] columns.
+// Must match the layout in render_view() exactly — the chat input wraps,
+// measures its height, and maps mouse clicks with this single value.
+int prompt_box_inner_width(const ChatState& state);
+
 ftxui::Element render_logo();
 
 ftxui::Element render_view(
