@@ -2,13 +2,7 @@
 
 #include <qcode/core/tool.h>
 
-#include <functional>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <optional>
 #include <string>
-#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -16,133 +10,50 @@ namespace qcode {
 
 using JsonValue = nlohmann::json;
 
-// ── Task Tool Schema ──
-// Direct port of opencode's TaskTool contract (src/tool/task/contract/port.ts)
-
-namespace TaskToolSchema {
-
-inline JsonValue spawn_parameters() {
-  JsonValue s;
-  s["type"] = "object";
-  s["properties"] = JsonValue::object();
-  auto& p = s["properties"];
-
-  // op (default "spawn")
-  p["op"] = JsonValue{{"type", "string"}, {"enum", {"spawn", "result", "kill", "list", "status"}},
-                       {"description", "Operation type. Default spawn. Use result/kill/list for background tasks."}};
-
-  // Common spawn fields
-  p["description"] = JsonValue{{"type", "string"}, {"description", "Short label for the subagent task."}};
-  p["subagent_type"] = JsonValue{{"type", "string"},
-    {"description", "Type of subagent to delegate to. Defaults to mode, or general."}};
-  p["agent"] = JsonValue{{"type", "string"}, {"description", "Alias for subagent_type."}};
-  p["prompt"] = JsonValue{{"type", "string"}, {"description", "Plain-language task for the subagent."}};
-  p["task"] = JsonValue{{"type", "string"}, {"description", "Preferred alias for prompt."}};
-
-  // Delegation mode
-  p["mode"] = JsonValue{{"type", "string"}, {"enum", {"explore", "implement", "verify"}},
-                         {"description", "explore=read-only analysis, implement=bounded edits, verify=tests/audits."}};
-  p["objective"] = JsonValue{{"type", "string"}, {"description", "One-sentence outcome for this subagent."}};
-
-  // Scope
-  p["scope"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}},
-                          {"description", "Files, directories, modules, or commands the subagent may inspect."}};
-  p["out_of_scope"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}},
-                                 {"description", "Areas the subagent must not inspect or change."}};
-
-  // Policy
-  p["filesystem_policy"] = JsonValue{{"type", "string"}, {"enum", {"bash-only"}},
-                                       {"description", "Filesystem access policy."}};
-  p["output_format"] = JsonValue{{"type", "string"}, {"enum", {"structured-summary"}},
-                                   {"description", "Required result shape."}};
-  p["can_edit"] = JsonValue{{"type", "boolean"}, {"description", "Whether subagent can edit files."}};
-
-  // Paths
-  p["allowed_paths"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}},
-                                   {"description", "Non-empty path allow-list for implement mode."}};
-  p["forbidden_paths"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}},
-                                     {"description", "Path deny-list."}};
-
-  // Budget
-  p["budget"] = JsonValue{
-    {"type", "object"},
-    {"properties", JsonValue{
-      {"max_files", JsonValue{{"type", "integer"}, {"minimum", 1}}},
-      {"max_output_chars", JsonValue{{"type", "integer"}, {"minimum", 1}}},
-      {"timeout_ms", JsonValue{{"type", "integer"}, {"minimum", 1}}}
-    }}
-  };
-
-  // Destination (any configured provider → any of its models)
-  p["provider"] = JsonValue{{"type", "string"},
-    {"description", "Catalog provider id (openrouter, opencode, cursor, antigravity). Combined with model."}};
-  p["model"] = JsonValue{{"type", "string"},
-    {"description", "Model id, or provider:model (colon). Prefer colon because model ids often contain slashes."}};
-  p["models"] = JsonValue{{"type", "array"}, {"items", JsonValue{{"type", "string"}}},
-                            {"description", "Fallback list of provider:model (or model id) candidates."}};
-  p["task_id"] = JsonValue{{"type", "string"}, {"description", "Resume a previous task by id."}};
-
-  // Background
-  p["background"] = JsonValue{{"type", "boolean"}, {"description", "Start subagent in background."}};
-  p["run_in_background"] = JsonValue{{"type", "boolean"}, {"description", "Legacy alias for background."}};
-
-  return s;
-}
-
-inline JsonValue result_parameters() {
-  JsonValue s;
-  s["type"] = "object";
-  s["properties"] = JsonValue::object();
-  auto& p = s["properties"];
-
-  p["op"] = JsonValue{{"type", "string"}, {"const", "result"}};
-  p["background_task_id"] = JsonValue{{"type", "string"}, {"description", "Background task id."}};
-  p["timeout_ms"] = JsonValue{{"type", "integer"}, {"minimum", 0},
-                                {"description", "How long to wait in ms. 0 = nonblocking status check."}};
-
-  return s;
-}
-
-inline JsonValue lifecycle_or_model_parameters() {
-  JsonValue s;
-  s["type"] = "object";
-  s["properties"] = JsonValue::object();
-  auto& p = s["properties"];
-
-  p["op"] = JsonValue{{"type", "string"}, {"enum", {"kill", "pause", "resume", "resurrect", "model"}}};
-  p["task_id"] = JsonValue{{"type", "string"}};
-  p["pid"] = JsonValue{{"type", "string"}};
-  p["reason"] = JsonValue{{"type", "string"}, {"maxLength", 280}};
-  p["model"] = JsonValue{{"type", "string"}};
-
-  return s;
-}
-
-}  // namespace TaskToolSchema
-
-// ── TaskTool executor ──
-
+// `task` delegates one self-contained job to a subagent and blocks until the
+// subagent reports back. Each subagent works in its own child session (shown
+// in the UI) and is part of its parent's turn: the parent's abort stops it.
+// Parallelism comes from issuing several task calls in one message; the tool
+// executor runs them concurrently.
 class TaskTool {
  public:
   static constexpr const char* kDescription =
-      "Delegate tasks to a subagent. Main fields: prompt (or task), provider, model (or provider:model), "
-      "and background (true for parallel concurrent execution). Note: Subagents MUST use a different provider:model than the orchestrator. "
-      "Retrieve background results with op=result and background_task_id. List tasks with op=list.";
+      "Delegate a self-contained job to a subagent and wait for its final report. "
+      "The subagent cannot see this conversation, so put every detail it needs in "
+      "`prompt`. Issue several task calls in one message to run them in parallel. "
+      "mode: explore (read-only, default), implement (may edit files), verify "
+      "(build/test/audit). model: omit it and the router picks a free model by "
+      "learned success; paid models run only when named. Rate reports with rate_task.";
 
-  static JsonValue execute(const JsonValue& args, const ToolExecutionContext& context);
+  static JsonValue parameters();
   static Tool definition();
-  static void clear_background_tasks();
-  static JsonValue list_tasks(const std::string& parent_session_id = "");
-  static void delete_session_tasks(const std::string& session_id);
-  static bool is_session_running(const std::string& session_id);
-  static JsonValue normalize_spawn_args(JsonValue args);
-  static std::string session_id_from_result(const JsonValue& result);
+  static JsonValue execute(const JsonValue& args, const ToolExecutionContext& context);
 
- private:
-  static JsonValue exec_spawn(const JsonValue& args, const ToolExecutionContext& context);
-  static JsonValue exec_result(const JsonValue& args, const ToolExecutionContext& context = {});
-  static JsonValue exec_lifecycle(const JsonValue& args, const std::string& op);
-  static JsonValue exec_model(const JsonValue& args);
+  // `rate_task`: the lead scores finished task reports; the scores train
+  // which free models get future tasks (qcode/session/subagent_stats.h).
+  static constexpr const char* kRateDescription =
+      "Rate finished task reports 1-5 (5 = correct and complete, 3 = usable with "
+      "fixes, 1 = wrong/useless). Ratings train which free models get future tasks; "
+      "rate every report you relied on. Returns the learned model board (success per "
+      "mode, rating, latency, resting); call with no ratings to just see it.";
+
+  static JsonValue rate_parameters();
+  static Tool rate_definition();
+  static JsonValue execute_rate(const JsonValue& args, const ToolExecutionContext& context);
+
+  // Subagents of `parent_session_id` for the UI: running ones, then finished
+  // child sessions. Shape: {output, metadata: {tasks: [{task_id, sessionId,
+  // parent_session_id, description, agent, mode, model, status}]}}.
+  static JsonValue list_tasks(const std::string& parent_session_id = "");
+  static bool is_session_running(const std::string& session_id);
+  // Stop running subagents that are, or belong to, `session_id`.
+  static void delete_session_tasks(const std::string& session_id);
+
+  // Repairs Cursor's shredded Task protobuf arguments into {prompt,
+  // description, mode, difficulty, model}. Only the Cursor exec path needs it.
+  static JsonValue normalize_spawn_args(JsonValue args);
+  // Child session id from a task tool result (current and legacy shapes).
+  static std::string session_id_from_result(const JsonValue& result);
 };
 
 }  // namespace qcode

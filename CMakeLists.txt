@@ -59,11 +59,36 @@ if(QCODE_ENABLE_SANITIZERS)
     endif()
 endif()
 
+# Release-style builds: -O2 + NDEBUG (CMake's default Release uses -O3).
+# RelWithDebInfo already defaults to "-O2 -g -DNDEBUG" and is left as-is.
+if(NOT MSVC)
+    set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
+endif()
+
+# Per-function / per-data sections and dead-section removal, non-Debug only.
+if(NOT MSVC)
+    add_compile_options("$<$<NOT:$<CONFIG:Debug>>:-ffunction-sections>")
+    add_compile_options("$<$<NOT:$<CONFIG:Debug>>:-fdata-sections>")
+endif()
+if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Android)$")
+    add_link_options("$<$<NOT:$<CONFIG:Debug>>:LINKER:--gc-sections>")
+endif()
+
+# Link-time optimisation for Release only, when the toolchain supports it.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT QCODE_IPO_SUPPORTED OUTPUT QCODE_IPO_MSG LANGUAGES C CXX)
+if(QCODE_IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+else()
+    message(STATUS "IPO/LTO unavailable: ${QCODE_IPO_MSG}")
+endif()
+
 set(HTTPLIB_COMPILE_DEFS
     CPPHTTPLIB_OPENSSL_SUPPORT=1
     CPPHTTPLIB_ZLIB_SUPPORT=1
     CPPHTTPLIB_BROTLI_SUPPORT=1
-    CPPHTTPLIB_THREAD_POOL_COUNT=8
+    CPPHTTPLIB_THREAD_POOL_COUNT=64
 )
 
 add_subdirectory(third_party)

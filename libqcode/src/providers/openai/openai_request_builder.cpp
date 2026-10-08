@@ -49,9 +49,12 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     std::unordered_set<std::string> seen_tool_call_ids;
 
     // Close unpaired tool calls (TUI restart / abort mid-tool) so Responses
-    // does not 400 with "No tool output found for function call".
-    const auto messages = ProviderTransform::normalize_messages(
-        options.messages, Model(options.model, schema_provider));
+    // does not 400 with "No tool output found for function call". Tool
+    // output is text-only on Chat and Responses: image tool results become
+    // text plus a user image message after the tool messages.
+    const auto messages = ProviderTransform::lift_tool_result_images(
+        ProviderTransform::normalize_messages(
+            options.messages, Model(options.model, schema_provider)));
 
     // Use provided messages
     for (const auto& msg : messages) {
@@ -61,45 +64,30 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       if (msg.has_tool_results()) {
         // OpenAI expects each tool result as a separate message with role
         // "tool"
-        for (const auto& result : msg.get_tool_results()) {
-          const std::string result_id =
-              ProviderTransform::canonicalize_tool_call_id(result.tool_call_id);
-          if (!result.tool_call_id.empty() &&
+        for (const auto& part : msg.content) {
+          const auto* result = std::get_if<ToolResultContentPart>(&part);
+          if (!result) continue;
+          std::string result_id =
+              ProviderTransform::canonicalize_tool_call_id(result->tool_call_id);
+          if (!result->tool_call_id.empty() &&
               !seen_tool_call_ids.contains(result_id)) {
             LOG_DEBUG(
                 "openai_request_builder: dropping orphaned tool result "
                 "tool_call_id={}",
-                result.tool_call_id);
+                result->tool_call_id);
             continue;
           }
           nlohmann::json tool_message;
           tool_message["role"] = "tool";
-          tool_message["tool_call_id"] =
-              ProviderTransform::canonicalize_tool_call_id(result.tool_call_id);
+          tool_message["tool_call_id"] = std::move(result_id);
 
-          if (!result.is_error && result.result.is_object() &&
-              result.result.contains("data") && result.result.contains("mime_type")) {
-            nlohmann::json content_arr = nlohmann::json::array();
-            std::string desc = "Image loaded: " + result.result.value("path", "image");
-            if (result.result.contains("description") &&
-                !result.result["description"].get<std::string>().empty()) {
-              desc += " (" + result.result["description"].get<std::string>() + ")";
-            }
-            content_arr.push_back({{"type", "text"}, {"text", desc}});
-            std::string data_url = "data:" + result.result["mime_type"].get<std::string>() +
-                                   ";base64," + result.result["data"].get<std::string>();
-            content_arr.push_back({
-                {"type", "image_url"},
-                {"image_url", {{"url", std::move(data_url)}}}
-            });
-            tool_message["content"] = std::move(content_arr);
-          } else if (!result.is_error) {
-            tool_message["content"] = result.result.dump();
+          if (!result->is_error) {
+            tool_message["content"] = result->result.dump();
           } else {
-            tool_message["content"] = "Error: " + result.result.dump();
+            tool_message["content"] = "Error: " + result->result.dump();
           }
 
-          request["messages"].push_back(tool_message);
+          request["messages"].push_back(std::move(tool_message));
         }
         continue;  // Skip adding the main message
       }
@@ -107,47 +95,48 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       // Handle messages with text and/or tool calls
       message["role"] = utils::message_role_to_string(msg.role);
 
-      // Get text content (accumulate all text parts)
+      // Get text content (accumulate all text parts). Tool calls and images
+      // are read in place below rather than copied out of the message.
       std::string text_content = msg.get_text();
-      const auto reasoning_content = msg.get_reasoning();
+      std::string reasoning_content = msg.get_reasoning();
+      const bool has_tool_calls = msg.has_tool_calls();
+      const bool has_images = msg.has_images();
 
-      // Get tool calls
-      auto tool_calls = msg.get_tool_calls();
-      for (const auto& tool_call : tool_calls) {
-        if (!tool_call.id.empty()) {
-          seen_tool_call_ids.insert(
-              ProviderTransform::canonicalize_tool_call_id(tool_call.id));
-        }
+      // Skip empty messages
+      if (text_content.empty() && reasoning_content.empty() &&
+          !has_tool_calls && !has_images) {
+        continue;
       }
 
       // Set content - OpenAI expects both text and tool calls in the same
       // message. Image attachments force a content-part array (data URL for
       // Chat Completions, input_image for the Responses API).
-      const auto image_parts = msg.get_images();
-      if (!image_parts.empty()) {
+      if (has_images) {
         nlohmann::json arr = nlohmann::json::array();
         if (!text_content.empty()) {
           arr.push_back({{"type", use_responses_ ? "input_text" : "text"},
-                         {"text", text_content}});
+                         {"text", std::move(text_content)}});
         }
-        for (const auto& img : image_parts) {
-          const std::string url =
-              "data:" + img.mime_type + ";base64," + img.data;
+        for (const auto& part : msg.content) {
+          const auto* img = std::get_if<ImageContentPart>(&part);
+          if (!img) continue;
+          std::string url = "data:" + img->mime_type + ";base64," + img->data;
           if (use_responses_) {
-            arr.push_back({{"type", "input_image"}, {"image_url", url}});
+            arr.push_back(
+                {{"type", "input_image"}, {"image_url", std::move(url)}});
           } else {
             arr.push_back({{"type", "image_url"},
-                           {"image_url", {{"url", url}}}});
+                           {"image_url", {{"url", std::move(url)}}}});
           }
         }
         message["content"] = std::move(arr);
       } else if (!text_content.empty()) {
-        message["content"] = text_content;
+        message["content"] = std::move(text_content);
       }
       if (!reasoning_content.empty()) {
         if (use_responses_) {
           // Responses API keeps the dedicated reasoning fields.
-          message["reasoning"] = reasoning_content;
+          message["reasoning"] = std::move(reasoning_content);
           for (const auto& part : msg.content) {
             if (const auto* reasoning =
                     std::get_if<ReasoningContentPart>(&part);
@@ -162,35 +151,34 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
           // OpenCode injects capabilities.interleaved.field onto
           // openaiCompatible (reasoning_content for Ox Alpha / DeepSeek,
           // reasoning for Muse Spark). OpenRouter skips this.
-          message[field] = reasoning_content;
+          message[field] = std::move(reasoning_content);
         }
       }
 
-      if (!tool_calls.empty()) {
+      if (has_tool_calls) {
         nlohmann::json tool_calls_array = nlohmann::json::array();
-        for (const auto& tool_call : tool_calls) {
+        for (const auto& part : msg.content) {
+          const auto* tool_call = std::get_if<ToolCallContentPart>(&part);
+          if (!tool_call) continue;
+          std::string call_id =
+              ProviderTransform::canonicalize_tool_call_id(tool_call->id);
+          if (!tool_call->id.empty()) seen_tool_call_ids.insert(call_id);
           nlohmann::json encoded_call{
-              {"id", ProviderTransform::canonicalize_tool_call_id(tool_call.id)},
+              {"id", std::move(call_id)},
               {"type", "function"},
               {"function",
-               {{"name", tool_call.tool_name},
-                {"arguments", tool_call.arguments.dump()}}}};
+               {{"name", tool_call->tool_name},
+                {"arguments", tool_call->arguments.dump()}}}};
           // normalize_messages already drops signatures the target family
           // cannot replay. Encoding only when schema==google hid them from
           // Antigravity (inner builder stays openai, then convert_openai_to_gemini).
-          if (!tool_call.thought_signature.empty()) {
+          if (!tool_call->thought_signature.empty()) {
             encoded_call["thought_signature"] =
-                tool_call.thought_signature;
+                tool_call->thought_signature;
           }
           tool_calls_array.push_back(std::move(encoded_call));
         }
-        message["tool_calls"] = tool_calls_array;
-      }
-
-      // Skip empty messages
-      if (text_content.empty() && reasoning_content.empty() &&
-          tool_calls.empty()) {
-        continue;
+        message["tool_calls"] = std::move(tool_calls_array);
       }
 
       // Upstream lowerAssistantMessage sends an explicit null content for
@@ -199,7 +187,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
         message["content"] = nullptr;
       }
 
-      request["messages"].push_back(message);
+      request["messages"].push_back(std::move(message));
     }
   } else {
     // Build from system + prompt
@@ -284,9 +272,9 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
                                    {"function",
                                     {{"name", tool_name},
                                      {"description", tool.description},
-                                     {"parameters", normalized_schema}}}};
+                                     {"parameters", std::move(normalized_schema)}}}};
 
-        tools_array.push_back(tool_def);
+        tools_array.push_back(std::move(tool_def));
       }
     }
 
@@ -302,7 +290,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       if (claude_on_hint_transport) {
         tools_array.back()["cache_control"] = {{"type", "ephemeral"}};
       }
-      request["tools"] = tools_array;
+      request["tools"] = std::move(tools_array);
 
       // Add tool choice if specified
       switch (options.tool_choice.type) {
@@ -325,7 +313,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       }
 
       LOG_DEBUG("Added {} tools with choice: {}",
-                            tools_array.size(),
+                            request["tools"].size(),
                             options.tool_choice.to_string());
     }
   }

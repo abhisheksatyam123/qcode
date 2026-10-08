@@ -1,4 +1,5 @@
 #include <qcode/providers/registry.h>
+#include <qcode/config/config.h>
 #include <qcode/core/logger.h>
 
 #include <qcode/providers/anthropic.h>
@@ -84,6 +85,50 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
   return ClientResolution{openai::create_client(api_key, compatible)};
 }
 
+ClientResolution resolve_anthropic(const ProviderOptions& options) {
+  std::string api_key = options.api_key;
+  if (api_key.empty()) {
+    api_key = env_value("ANTHROPIC_API_KEY");
+  }
+  bool is_oauth = false;
+  if (api_key.empty()) {
+    api_key = qcode::get_anthropic_token();
+    if (!api_key.empty()) {
+      is_oauth = true;
+    }
+  } else if (api_key.starts_with("sk-ant-oat")) {
+    is_oauth = true;
+  }
+
+  if (api_key.empty()) {
+    return ClientResolution::fail(
+        "Anthropic API key or Claude Code login not found (set ANTHROPIC_API_KEY "
+        "or login with Claude Code ~/.claude/.credentials.json).");
+  }
+
+  anthropic::CompatibleOptions compatible;
+  compatible.base_url =
+      options.base_url.empty() ? "https://api.anthropic.com" : options.base_url;
+  compatible.completions_path = options.completions_path;
+  compatible.headers = options.headers;
+  compatible.bearer_auth = is_oauth;
+  compatible.is_oauth = is_oauth;
+
+  return ClientResolution{anthropic::create_client(api_key, compatible)};
+}
+
+ClientResolution resolve_openai(const ProviderOptions& options) {
+  const auto api_key = first_key(options.api_key, "OPENAI_API_KEY");
+  if (api_key.empty() && (options.base_url.empty() || !allows_keyless_zen(options.base_url))) {
+    return ClientResolution::fail("OPENAI_API_KEY not set.");
+  }
+  const auto base_url =
+      options.base_url.empty() ? "https://api.openai.com/v1" : options.base_url;
+  return ClientResolution{openai::create_client(
+      api_key.empty() ? "__EMPTY__" : api_key,
+      to_openai(options, base_url))};
+}
+
 }  // namespace
 
 ProviderRegistry& ProviderRegistry::instance() {
@@ -99,12 +144,18 @@ void ProviderRegistry::register_provider(const std::string& id,
 ClientResolution ProviderRegistry::resolve(
     const std::string& id, const ProviderOptions& options) const {
   auto it = resolvers_.find(id);
-  if (it == resolvers_.end()) {
-    return ClientResolution::fail(
-        "Unsupported provider: " + id +
-        ". Supported providers are: cursor, opencode, openrouter, antigravity.");
+  if (it != resolvers_.end()) {
+    return it->second(options);
   }
-  return it->second(options);
+  if (!options.base_url.empty()) {
+    if (options.protocol == "messages") {
+      return resolve_anthropic(options);
+    }
+    return resolve_openai(options);
+  }
+  return ClientResolution::fail(
+      "Unsupported provider: " + id +
+      ". Supported providers are: cursor, opencode, openrouter, antigravity, anthropic, openai.");
 }
 
 ClientResolution ProviderRegistry::resolve(const std::string& id,
@@ -118,6 +169,8 @@ void register_core_providers() {
   auto& reg = ProviderRegistry::instance();
   reg.register_provider("opencode", resolve_opencode);
   reg.register_provider("openrouter", resolve_openrouter);
+  reg.register_provider("anthropic", resolve_anthropic);
+  reg.register_provider("openai", resolve_openai);
 }
 
 }  // namespace providers

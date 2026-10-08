@@ -3,6 +3,7 @@
 #include <qcode/core/logger.h>
 
 #include <curl/curl.h>
+#include <algorithm>
 #include <functional>
 #include <memory>
 
@@ -20,11 +21,19 @@ struct StreamWriteCtx {
   std::string* body = nullptr;
   const std::function<bool(std::string_view)>* on_chunk = nullptr;
   std::function<bool()> should_abort;
+  std::function<void()> on_sent;
+  bool sent = false;
   bool abort = false;
 };
 
 bool abort_requested(const StreamWriteCtx* ctx) {
   return ctx != nullptr && ctx->should_abort && ctx->should_abort();
+}
+
+void signal_sent(StreamWriteCtx* ctx) {
+  if (ctx->sent) return;
+  ctx->sent = true;
+  if (ctx->on_sent) ctx->on_sent();
 }
 
 size_t stream_write_callback(char* ptr, size_t size, size_t nmemb,
@@ -35,8 +44,9 @@ size_t stream_write_callback(char* ptr, size_t size, size_t nmemb,
     return 0;
   }
   const size_t n = size * nmemb;
-  if (ctx->body != nullptr) {
-    ctx->body->append(ptr, n);
+  signal_sent(ctx);
+  if (ctx->body != nullptr && ctx->body->size() < kStreamBodyCap) {
+    ctx->body->append(ptr, std::min(n, kStreamBodyCap - ctx->body->size()));
   }
   if (ctx->on_chunk != nullptr && *(ctx->on_chunk) != nullptr) {
     if (!(*ctx->on_chunk)(std::string_view(ptr, n))) {
@@ -47,13 +57,14 @@ size_t stream_write_callback(char* ptr, size_t size, size_t nmemb,
   return n;
 }
 
-int stream_xferinfo(void* userdata, curl_off_t, curl_off_t, curl_off_t,
-                    curl_off_t) {
+int stream_xferinfo(void* userdata, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
+                    curl_off_t ultotal, curl_off_t ulnow) {
   auto* ctx = static_cast<StreamWriteCtx*>(userdata);
   if (abort_requested(ctx)) {
     ctx->abort = true;
     return 1;
   }
+  if (ultotal > 0 && ulnow >= ultotal) signal_sent(ctx);
   return 0;
 }
 
@@ -167,17 +178,20 @@ Http2PostResult http2_post_stream(
     const std::string& content_type,
     const std::function<bool(std::string_view chunk)>& on_chunk,
     int timeout_sec,
-    std::function<bool()> should_abort) {
+    std::function<bool()> should_abort,
+    std::function<void()> on_sent) {
   Http2PostResult result;
   StreamWriteCtx ctx;
   ctx.body = &result.body;
   ctx.on_chunk = &on_chunk;
   ctx.should_abort = std::move(should_abort);
+  ctx.on_sent = std::move(on_sent);
   ensure_curl();
 
   CURL* curl = curl_easy_init();
   if (curl == nullptr) {
     result.error = "curl_easy_init failed";
+    signal_sent(&ctx);
     return result;
   }
 
@@ -188,6 +202,7 @@ Http2PostResult http2_post_stream(
   curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, stream_xferinfo);
   curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
   finish_post(curl, result, url);
+  signal_sent(&ctx);  // never leave a waiter hanging on a failed transfer
   curl_slist_free_all(header_list);
   curl_easy_cleanup(curl);
   if (ctx.abort) {

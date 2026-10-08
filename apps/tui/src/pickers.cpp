@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <string>
+#include <unordered_map>
 
 namespace qcode {
 namespace tui {
@@ -86,6 +88,30 @@ ftxui::Element build_theme_popup(
 }
 
 // ── Model selector popup with Capability & Telemetry Inspector ──
+// Render-path wrapper around session::get_model_performance_summary (a SQLite
+// query). Results are memoized per (provider, model) and refreshed at most
+// once every kPerfSummaryTtl so the UI does not hit the DB on every frame.
+const session::ModelPerformanceSummary& cached_model_performance_summary(
+    const std::string& model_id, const std::string& provider) {
+    struct CacheEntry {
+        session::ModelPerformanceSummary value;
+        std::chrono::steady_clock::time_point fetched_at{};
+        bool valid = false;
+    };
+    static std::unordered_map<std::string, CacheEntry> cache;
+    static constexpr auto kPerfSummaryTtl = std::chrono::seconds(2);
+
+    const std::string key = provider + '\x1f' + model_id;
+    auto& entry = cache[key];
+    const auto now = std::chrono::steady_clock::now();
+    if (!entry.valid || now - entry.fetched_at >= kPerfSummaryTtl) {
+        entry.value = session::get_model_performance_summary(model_id, provider);
+        entry.fetched_at = now;
+        entry.valid = true;
+    }
+    return entry.value;
+}
+
 ftxui::Element build_model_popup(
     const std::vector<ModelEntry>& entries,
     int select_idx,
@@ -150,7 +176,7 @@ ftxui::Element build_model_popup(
 
         // ── Populate Right Inspector Panel for selected item ──
         const auto& sel_entry = entries[select_idx];
-        auto perf = session::get_model_performance_summary(sel_entry.model_id, sel_entry.category);
+        const auto& perf = cached_model_performance_summary(sel_entry.model_id, sel_entry.category);
 
         right_lines.push_back(hbox({ text(" Model: ") | bold | color(accent(theme)), text(sel_entry.model_name) | bold }));
         right_lines.push_back(hbox({ text(" Provider: ") | dim, text(sel_entry.category) }));

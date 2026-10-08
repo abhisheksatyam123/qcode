@@ -628,6 +628,7 @@ void run_compaction(
         [providers_copy, sp, sm, snapshot, keep, sid, system_prompt_copy,
          tools_enabled, agent_mode,
          &bus](qcode::compat::stop_token stop_token) mutable {
+        qcode::logger::ScopedThreadSession bind(sid);
         qcode::contract::CompactionResult::Payload result;
         result.keep = keep;
         result.original_size = snapshot.size();

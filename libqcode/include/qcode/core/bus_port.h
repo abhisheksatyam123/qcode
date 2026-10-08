@@ -6,6 +6,7 @@
 #include <typeinfo>
 #include <concepts>
 #include <any>
+#include <utility>
 
 namespace qcode {
 namespace bus {
@@ -28,10 +29,16 @@ public:
         register_type(E::type, std::type_index(typeid(typename E::Payload)));
     }
 
-    // Publish a typed event. Thread-safe.
+    // Publish a typed event. Thread-safe. Rvalue payloads (tool output,
+    // deltas) are moved into the queue instead of copied.
     template <EventDefinition E>
     void publish(const typename E::Payload& payload) {
         publish_impl(E::type, std::any(payload), std::type_index(typeid(typename E::Payload)));
+    }
+
+    template <EventDefinition E>
+    void publish(typename E::Payload&& payload) {
+        publish_impl(E::type, std::any(std::move(payload)), std::type_index(typeid(typename E::Payload)));
     }
 
     // Subscribe to a typed event. Returns RAII Subscription.

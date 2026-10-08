@@ -1,11 +1,12 @@
 #include "anthropic_stream.h"
 
-#include <qcode/core/ssl_config.h>
+#include "core/http_request_handler.h"
 #include <qcode/core/logger.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
-#include <sstream>
+#include <string_view>
 #include <thread>
 
 namespace {
@@ -18,7 +19,8 @@ std::chrono::seconds default_event_timeout() {
   }
   return std::chrono::seconds(30);
 }
-constexpr auto kSleepInterval = std::chrono::milliseconds(1);
+constexpr auto kWakeInterval = std::chrono::milliseconds(50);
+constexpr std::size_t kMaxErrorBodyBytes = 64 * 1024;
 }  // namespace
 
 namespace qcode {
@@ -49,10 +51,14 @@ void AnthropicStreamImpl::start_stream(const std::string& url,
     event_timeout_ = default_event_timeout();
   }
 
-  // Start streaming in a separate thread
-  stream_thread_ = std::thread([this, url, headers, request_body]() {
+  // Start streaming in a separate thread. The body is serialized here so the
+  // thread owns one string instead of a deep copy of the request JSON.
+  auto sid = qcode::logger::thread_session_id();
+  stream_thread_ = std::thread([this, url, headers, body = request_body.dump(),
+                                sid]() mutable {
+    qcode::logger::ScopedThreadSession bind(sid);
     try {
-      run_stream(url, headers, request_body);
+      run_stream(url, headers, std::move(body));
     } catch (const std::exception& e) {
       LOG_ERROR("Stream thread exception: {}", e.what());
       StreamEvent error_event(kStreamEventTypeError,
@@ -84,11 +90,17 @@ StreamEvent AnthropicStreamImpl::get_next_event() {
                          "Timeout waiting for next event");
     }
 
-    std::this_thread::sleep_for(kSleepInterval);
+    // Block until a producer pushes, the stream completes, or the wake slice
+    // elapses (the slice keeps timeout checks responsive). The predicate is
+    // evaluated under wait_mutex_, and producers take that mutex before
+    // notifying, so a push or completion cannot slip between the checks above
+    // and the wait.
+    std::unique_lock<std::mutex> lock(wait_mutex_);
+    wait_cv_.wait_for(lock, kWakeInterval, [this] {
+      return stream_complete_ || event_queue_.size_approx() > 0;
+    });
   }
 
-  LOG_DEBUG("Dequeued event type: {}",
-                        static_cast<int>(event.type));
   return event;
 }
 
@@ -106,7 +118,7 @@ void AnthropicStreamImpl::stop_stream() {
 
 void AnthropicStreamImpl::run_stream(const std::string& url,
                                      const httplib::Headers& headers,
-                                     const nlohmann::json& request_body) {
+                                     std::string body) {
   LOG_DEBUG("Performing stream request");
 
   // Parse URL to extract host and path
@@ -131,36 +143,81 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
   LOG_DEBUG("Stream host: {}, path: {}, SSL: {}", host, path,
                         use_ssl);
 
+  const std::string target =
+      std::string(use_ssl ? "https://" : "http://") + host;
   try {
-    if (use_ssl) {
-      httplib::SSLClient client(host);
-      qcode::http::configure_client_tls(client, true);
-      client.set_connection_timeout(30, 0);
-      client.set_read_timeout(120, 0);
+    auto cli = qcode::http::acquire_stream_client(target, 30, 120);
 
-      auto result =
-          client.Post(path, headers, request_body.dump(), "application/json");
+    httplib::Request req;
+    req.method = "POST";
+    req.path = path;
+    req.headers = headers;
+    req.body = std::move(body);
+    req.set_header("Content-Type", "application/json");
 
-      if (result && result->status == 200) {
-        parse_sse_response(result->body);
-      } else {
-        handle_stream_error(result ? result->status : 0,
-                            result ? result->body : "Connection failed");
+    // Parse SSE as it arrives so each delta reaches the consumer at once
+    // instead of after the whole generation. A non-200 body is an error
+    // payload, not SSE: keep it (capped) for the error event. Returning false on stop
+    // cancels the read, so stop_stream() does not wait for the response.
+    int status = 0;
+    std::string pending;     // bytes after the last complete line
+    std::string event_data;  // payload of the event being read
+    std::string error_body;
+    std::size_t chunks = 0;
+    std::size_t bytes = 0;
+    req.response_handler = [&status](const httplib::Response& res) {
+      status = res.status;
+      return true;
+    };
+    req.content_receiver = [&](const char* data, size_t len,
+                               uint64_t /*offset*/, uint64_t /*total*/) {
+      if (stop_requested_) return false;
+      ++chunks;
+      bytes += len;
+      if (status != 200) {
+        if (error_body.size() < kMaxErrorBodyBytes) {
+          error_body.append(
+              data, std::min(len, kMaxErrorBodyBytes - error_body.size()));
+        }
+        return true;
       }
-    } else {
-      httplib::Client client(host);
-      client.set_connection_timeout(30, 0);
-      client.set_read_timeout(120, 0);
-
-      auto result =
-          client.Post(path, headers, request_body.dump(), "application/json");
-
-      if (result && result->status == 200) {
-        parse_sse_response(result->body);
-      } else {
-        handle_stream_error(result ? result->status : 0,
-                            result ? result->body : "Connection failed");
+      pending.append(data, len);
+      std::size_t start = 0;
+      for (std::size_t nl; (nl = pending.find('\n', start)) != std::string::npos;
+           start = nl + 1) {
+        if (stop_requested_) return false;
+        std::string_view line(pending.data() + start, nl - start);
+        if (line.ends_with('\r')) line.remove_suffix(1);
+        if (line.empty()) {
+          // Empty line signals end of event
+          if (!event_data.empty()) {
+            process_sse_event(event_data);
+            event_data.clear();
+          }
+        } else if (line.starts_with("data: ")) {
+          event_data.assign(line.substr(6));
+        }
       }
+      pending.erase(0, start);
+      return true;
+    };
+
+    httplib::Response res;
+    httplib::Error error = httplib::Error::Success;
+    const bool sent = cli->send(req, res, error);
+    LOG_DEBUG("Anthropic stream done status={} chunks={} bytes={} stopped={}",
+              status, chunks, bytes, stop_requested_.load());
+
+    const bool ok = sent && res.status == 200;
+    if (!ok && !stop_requested_) {
+      handle_stream_error(sent ? res.status : 0,
+                          sent ? error_body
+                               : "Connection failed (" +
+                                     httplib::to_string(error) + ")");
+    }
+    // Pool only a complete 200 that was not aborted; everything else closes.
+    if (ok && !stop_requested_) {
+      qcode::http::release_stream_client(target, std::move(cli));
     }
   } catch (const std::exception& e) {
     LOG_ERROR("Stream request exception: {}", e.what());
@@ -168,28 +225,6 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
   }
 
   mark_complete();
-}
-
-void AnthropicStreamImpl::parse_sse_response(const std::string& response) {
-  LOG_DEBUG("Processing SSE response, size: {}", response.size());
-
-  std::istringstream stream(response);
-  std::string line;
-  std::string event_data;
-
-  while (std::getline(stream, line) && !stop_requested_) {
-    if (line.empty()) {
-      // Empty line signals end of event
-      if (!event_data.empty()) {
-        process_sse_event(event_data);
-        event_data.clear();
-      }
-    } else if (line.starts_with("data: ")) {
-      event_data = line.substr(6);
-    }
-  }
-
-  LOG_DEBUG("SSE processing complete");
 }
 
 void AnthropicStreamImpl::process_sse_event(const std::string& data) {
@@ -201,8 +236,6 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
   try {
     auto json_event = nlohmann::json::parse(data);
     std::string event_type = json_event.value("type", "");
-
-    LOG_DEBUG("Processing SSE event type: {}", event_type);
 
     if (event_type == "message_start") {
       // message_start.message.usage carries input_tokens (+ cache hits).
@@ -225,19 +258,12 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
         const auto& delta = json_event["delta"];
         std::string delta_type = delta.value("type", "");
         if (delta_type == "thinking_delta" && delta.contains("thinking")) {
-          std::string thinking = delta["thinking"].get<std::string>();
-          push_event(StreamEvent::reasoning(thinking));
-          LOG_DEBUG("Enqueued thinking delta: '{}'", thinking);
+          push_event(StreamEvent::reasoning(delta["thinking"].get<std::string>()));
         } else if (delta_type == "signature_delta" &&
                    delta.contains("signature")) {
-          std::string sig = delta["signature"].get<std::string>();
-          push_event(StreamEvent::reasoning("", sig));
-          LOG_DEBUG("Enqueued thinking signature");
+          push_event(StreamEvent::reasoning("", delta["signature"].get<std::string>()));
         } else if (delta.contains("text")) {
-          std::string text = delta["text"].get<std::string>();
-          StreamEvent event(text);
-          push_event(event);
-          LOG_DEBUG("Enqueued text delta: '{}'", text);
+          push_event(StreamEvent(delta["text"].get<std::string>()));
         }
       }
     } else if (event_type == "content_block_stop") {
@@ -280,7 +306,18 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
 
 void AnthropicStreamImpl::push_event(const StreamEvent& event) {
   event_queue_.enqueue(event);
+  notify_consumer();
 }
+
+void AnthropicStreamImpl::notify_consumer() {
+  // Taking the mutex (even briefly) orders this notify after any waiter's
+  // predicate check, so the wakeup cannot be lost.
+  {
+    std::lock_guard<std::mutex> lock(wait_mutex_);
+  }
+  wait_cv_.notify_all();
+}
+
 
 void AnthropicStreamImpl::mark_complete() {
   stream_complete_ = true;
@@ -291,6 +328,7 @@ void AnthropicStreamImpl::mark_complete() {
     StreamEvent finish_event(kStreamEventTypeFinish);
     push_event(finish_event);
   }
+  notify_consumer();
 }
 
 StreamEvent AnthropicStreamImpl::create_error_event(

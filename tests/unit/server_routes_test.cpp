@@ -1,3 +1,6 @@
+#include <qcode/core/session_file_logger.h>
+#include <qcode/core/logger.h>
+#include "routes/session_runtime.h"
 #include "session/session_db_internal.h"
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -432,3 +435,87 @@ TEST_F(ServerRoutesTest, TasksAndSubagentSessionLookup) {
     EXPECT_TRUE(after.contains("reasoning_mode"));
 }
 
+
+TEST_F(ServerRoutesTest, SessionLogsEndpointReturnsIsolatedSessionLogs) {
+    std::string test_log_dir = "/tmp/qcode_routes_log_test_" + std::to_string(getpid()) + "_" +
+                               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    std::error_code ec;
+    fs::create_directories(test_log_dir, ec);
+
+    qcode::server::g_session_logger = qcode::install_session_file_logger(
+        test_log_dir, "qcode-server", qcode::logger::LogLevel::kLogLevelDebug);
+
+    // Create session 1
+    auto res_create1 = client_->Post(
+        "/sessions",
+        nlohmann::json({{"provider", "mock-provider"}, {"model", "mock-model"}}).dump(),
+        "application/json");
+    ASSERT_TRUE(res_create1);
+    ASSERT_EQ(res_create1->status, 200);
+    std::string sid1 = nlohmann::json::parse(res_create1->body).value("id", "");
+    ASSERT_FALSE(sid1.empty());
+
+    // Create session 2
+    auto res_create2 = client_->Post(
+        "/sessions",
+        nlohmann::json({{"provider", "mock-provider"}, {"model", "mock-model"}}).dump(),
+        "application/json");
+    ASSERT_TRUE(res_create2);
+    ASSERT_EQ(res_create2->status, 200);
+    std::string sid2 = nlohmann::json::parse(res_create2->body).value("id", "");
+    ASSERT_FALSE(sid2.empty());
+
+    // Emit logs under sid1
+    qcode::logger::set_thread_session_id(sid1);
+    LOG_INFO("UniqueLogMessageForSessionOne_12345");
+
+    // Emit logs under sid2
+    qcode::logger::set_thread_session_id(sid2);
+    LOG_INFO("UniqueLogMessageForSessionTwo_67890");
+
+    // Emit unscoped server log
+    qcode::logger::set_thread_session_id("");
+    LOG_INFO("UniqueLogMessageForUnscopedServer_99999");
+
+    // Query sid1 logs via JSON
+    auto res_log1 = client_->Get("/session/" + sid1 + "/logs");
+    ASSERT_TRUE(res_log1);
+    EXPECT_EQ(res_log1->status, 200);
+    auto log1_json = nlohmann::json::parse(res_log1->body);
+    EXPECT_EQ(log1_json.value("session_id", ""), sid1);
+    std::string log1_text = log1_json.value("log", "");
+    EXPECT_NE(log1_text.find("UniqueLogMessageForSessionOne_12345"), std::string::npos);
+    EXPECT_EQ(log1_text.find("UniqueLogMessageForSessionTwo_67890"), std::string::npos);
+    EXPECT_EQ(log1_text.find("UniqueLogMessageForUnscopedServer_99999"), std::string::npos);
+
+    // Query sid2 logs via raw format
+    auto res_log2 = client_->Get("/session/" + sid2 + "/logs?raw=1");
+    ASSERT_TRUE(res_log2);
+    EXPECT_EQ(res_log2->status, 200);
+    EXPECT_NE(res_log2->body.find("UniqueLogMessageForSessionTwo_67890"), std::string::npos);
+    EXPECT_EQ(res_log2->body.find("UniqueLogMessageForSessionOne_12345"), std::string::npos);
+
+    // Query unscoped server logs
+    auto res_server_log = client_->Get("/logs");
+    ASSERT_TRUE(res_server_log);
+    EXPECT_EQ(res_server_log->status, 200);
+    auto server_log_json = nlohmann::json::parse(res_server_log->body);
+    std::string server_text = server_log_json.value("log", "");
+    EXPECT_NE(server_text.find("UniqueLogMessageForUnscopedServer_99999"), std::string::npos);
+    EXPECT_EQ(server_text.find("UniqueLogMessageForSessionOne_12345"), std::string::npos);
+
+    // Query 404 for non-existent session
+    auto res_log_none = client_->Get("/session/non_existent_sid_123/logs");
+    ASSERT_TRUE(res_log_none);
+    EXPECT_EQ(res_log_none->status, 404);
+
+    // Delete session 1 and check that logger pruned its in-memory sink
+    auto res_del = client_->Delete("/session/" + sid1);
+    ASSERT_TRUE(res_del);
+    EXPECT_EQ(res_del->status, 200);
+    EXPECT_FALSE(qcode::server::g_session_logger->has_open_sink(sid1));
+
+    qcode::server::g_session_logger->close_all();
+    qcode::server::g_session_logger.reset();
+    fs::remove_all(test_log_dir, ec);
+}

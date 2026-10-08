@@ -1698,7 +1698,7 @@ body {
 /* Stack explorer vertically on narrow widths */
 /* ── 2026 visual system & responsive polish ── */
 :root {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', sans-serif;
+  --font-sans: 'JetBrains Mono', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', sans-serif;
   --font-mono: 'Fira Code', 'DejaVu Sans Mono', 'Cascadia Code', 'SF Mono', Consolas, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', monospace;
   color-scheme: dark;
   --bg: #080b12;
@@ -4766,3 +4766,144 @@ kbd {
   background: #0f172a;
   width: 100%;
 }
+
+/* ── WebUI refresh: prettier colors + spinner + pretty fonts (2026) ── */
+:root {
+  --bg: #070b14;
+  --surface: #0b1220;
+  --surface-raised: #111a2e;
+  --surface-soft: #0f172a;
+  --border: rgba(148,163,184,.14);
+  --border-strong: rgba(148,163,184,.24);
+  --text: #e7edf7;
+  --muted: #8ea0b8;
+  --faint: #5c6b85;
+  --accent: #38bdf8;
+  --accent-strong: #818cf8;
+  --blue: #60a5fa;
+  --danger: #fb7185;
+  --warning: #fbbf24;
+  --success: #34d399;
+  --font-sans: 'JetBrains Mono', 'Inter', 'Fire Code', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', sans-serif;
+  --font-mono: 'FiraCode Nerd Font Mono', 'FiraCode Nerd Font', 'Fira Code', 'DejaVu Sans Mono', 'Cascadia Code', 'SF Mono', Consolas, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', monospace;
+  color-scheme: dark;
+}
+body {
+  background: radial-gradient(circle at top, rgba(56,189,248,.10), transparent 28rem), linear-gradient(180deg, #070b14 0%, #05070d 100%) !important;
+  color: var(--text);
+}
+#sidebar {
+  background: linear-gradient(180deg, #07101f 0%, #05070d 100%) !important;
+  border-right: 1px solid rgba(56,189,248,.12) !important;
+}
+#chat-container {
+  background: radial-gradient(circle at top, rgba(129,140,248,.08), transparent 18rem), transparent !important;
+}
+.message-content {
+  background: rgba(15,23,42,.72) !important;
+  border-color: rgba(148,163,184,.12) !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,.22) !important;
+}
+.message.user .message-content {
+  background: linear-gradient(135deg, rgba(59,130,246,.24), rgba(14,165,233,.16)) !important;
+  border-color: rgba(56,189,248,.25) !important;
+}
+.message.assistant .message-content {
+  background: rgba(15,23,42,.74) !important;
+  border-color: rgba(148,163,184,.10) !important;
+}
+.tool-heading, .tool-cmd, .tool-in, .tool-duration, .tool-path { font-family: var(--font-mono) !important; }
+#input-area textarea { background: #08111f !important; border-color: rgba(148,163,184,.18) !important; }
+#input-area textarea:focus { border-color: rgba(56,189,248,.48) !important; }
+
+/* Tiny CSS spinner for working/loading states */
+.qcode-spinner {
+  display: inline-block;
+  width: .85em;
+  height: .85em;
+  margin-right: .25rem;
+  border: 2px solid rgba(56,189,248,.22);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: qcodeSpin .8s linear infinite;
+  vertical-align: -.12em;
+}
+.qcode-spinner.small { width:.65em; height:.65em; border-width:1.5px; }
+@keyframes qcodeSpin { to { transform: rotate(360deg); } }
+.session-gen-indicator {
+  display: inline-block !important;
+  width: .9em !important;
+  height: .9em !important;
+  margin-right: .25rem;
+  border: 2px solid rgba(251,191,36,.25);
+  border-top-color: var(--warning);
+  border-radius: 999px;
+  animation: qcodeSpin .9s linear infinite;
+  vertical-align: -.15em;
+}
+.tool-block.running .tool-status-icon {
+  color: var(--warning) !important;
+}
+.loading-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+}
+.loading-spinner::before {
+  content: '';
+  width: .9em;
+  height: .9em;
+  border: 2px solid rgba(56,189,248,.18);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: qcodeSpin .85s linear infinite;
+}
+
+/* WebUI visual polish */
+:root {
+  --font-sans: 'Inter', 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --bg: #05070f;
+  --surface: #0f172a;
+  --surface-raised: #111827;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --border: rgba(148,163,184,0.12);
+  --accent: #38bdf8;
+}
+body { background: var(--bg); color: var(--text); font-family: var(--font-sans); }
+.message-content {
+  background: rgba(15,23,42,0.62);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 14px 16px;
+}
+.message.user .message-content {
+  background: rgba(56,189,248,0.12);
+  border-color: rgba(56,189,248,0.22);
+}
+.message.assistant .message-content,
+.message.system .message-content,
+.message.tool .message-content {
+  background: rgba(15,23,42,0.62);
+  border-color: rgba(148,163,184,0.12);
+}
+.sidebar-brand h1 { color: #fff; }
+.version { color: var(--muted); }
+.app, #app { background: var(--bg); }
+.sidebar, .main-content-wrapper, .main, #main { background: var(--bg); }
+.message-header .role-icon { color: var(--accent); }
+.fs-entry, .session-item, .sidebar-nav-btn, .tab, .files-empty { border-radius: 10px; }
+/* Spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner, .session-gen-indicator.spinner::after {
+  content: '';
+  display: inline-block;
+  width: 0.8em; height: 0.8em;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: currentColor;
+  border-radius: 999px;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -0.1em;
+}
+.session-gen-indicator.spinner { padding-right: 0.8em; }

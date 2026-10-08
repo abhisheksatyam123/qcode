@@ -1,50 +1,39 @@
 #pragma once
 
+#include <qcode/core/message.h>
 #include <qcode/core/tool.h>
 
+#include <cstddef>
 #include <string>
 #include <string_view>
-#include <nlohmann/json.hpp>
 
 namespace qcode {
 
-using JsonValue = nlohmann::json;
-
-namespace ImageToolSchema {
-
-inline JsonValue parameters() {
-  JsonValue s;
-  s["type"] = "object";
-  s["properties"] = JsonValue::object();
-  auto& p = s["properties"];
-
-  p["path"] = JsonValue{
-    {"type", "string"},
-    {"description", "Path to the image file (relative to workspace or absolute). Supported formats: png, jpg, jpeg, webp, gif, bmp, svg."}
-  };
-  p["detail"] = JsonValue{
-    {"type", "string"},
-    {"enum", {"auto", "low", "high"}},
-    {"description", "Optional fidelity level for vision models (auto, low, high). Default auto."}
-  };
-  p["description"] = JsonValue{
-    {"type", "string"},
-    {"description", "Optional brief description or question about what to observe in the image."}
-  };
-
-  s["required"] = JsonValue::array({"path"});
-  return s;
-}
-
-}  // namespace ImageToolSchema
-
+// `image` tool: loads a local png/jpeg/webp/gif so a vision model can see it.
+//
+// Success result (stored and persisted as-is): {path, mime_type, size_bytes,
+// data (base64)}. It never reaches a provider in that form:
+// ProviderTransform::lift_tool_result_images turns it into a short text tool
+// result plus a typed user ImageContentPart, which every request builder
+// already serializes. Failures throw, so they surface as is_error results.
 class ImageTool {
  public:
-  static JsonValue execute(const JsonValue& args, const ToolExecutionContext& context);
-  static Tool definition();
+  // Base64 of this stays under Anthropic's 5 MB per-image limit.
+  static constexpr size_t kMaxBytes = 3'750'000;
 
-  static std::string detect_mime_type(const std::string& path, std::string_view data);
-  static bool is_supported_image(const std::string& path);
+  static Tool definition();
+  static JsonValue execute(const JsonValue& args,
+                           const ToolExecutionContext& context);
+
+  // True for a successful image tool result (the shape `execute` returns).
+  static bool is_image_result(const ToolResultContentPart& part);
+  // "Loaded image a.png (image/png, 1024 bytes)" for an image result.
+  static std::string summary(const JsonValue& result);
+
+  // MIME type from magic bytes; empty unless png/jpeg/webp/gif.
+  static std::string detect_mime_type(std::string_view data);
+  // png/jpeg/webp/gif: the formats every vision provider accepts.
+  static bool is_supported_mime_type(std::string_view mime_type);
   static std::string base64_encode(std::string_view in);
 };
 

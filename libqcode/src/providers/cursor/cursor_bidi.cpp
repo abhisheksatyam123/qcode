@@ -42,7 +42,10 @@ struct CursorBidi::Impl {
         token_(std::move(token)),
         request_id_(std::move(request_id)),
         client_version_(std::move(client_version)),
-        worker_([this] { run(); }) {}
+        worker_([this, sid = qcode::logger::thread_session_id()] {
+          qcode::logger::ScopedThreadSession bind(sid);
+          run();
+        }) {}
 
   ~Impl() { shutdown(); }
 

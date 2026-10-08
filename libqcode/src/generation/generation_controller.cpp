@@ -1,6 +1,7 @@
 #include <qcode/generation/generation_controller.h>
 
 #include <qcode/core/logger.h>
+#include <qcode/core/perf.h>
 #include <qcode/generation/generation_service.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/core/event.h>
@@ -9,9 +10,37 @@
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_set>
 #include <utility>
 
 namespace qcode {
+
+namespace {
+
+// True when some tool call has no matching tool result, i.e. when
+// close_unpaired_tool_calls would synthesize one. Ids only, no payload copies.
+bool has_unpaired_tool_calls(const Messages& messages) {
+    std::unordered_set<std::string> result_ids;
+    for (const auto& msg : messages) {
+        for (const auto& part : msg.content) {
+            if (const auto* tr = std::get_if<ToolResultContentPart>(&part);
+                tr && !tr->tool_call_id.empty()) {
+                result_ids.insert(tr->tool_call_id);
+            }
+        }
+    }
+    for (const auto& msg : messages) {
+        for (const auto& part : msg.content) {
+            const auto* call = std::get_if<ToolCallContentPart>(&part);
+            if (call && !call->id.empty() && !result_ids.contains(call->id)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 // Decides whether `prompt` still needs a visible User message appended to
 // history. Guards against DUPLICATE user prompts after retries/aborts: if
@@ -65,12 +94,16 @@ bool GenerationController::is_active() const noexcept {
 }
 
 void GenerationController::request_abort() {
-    // Stop the in-flight turn only. Queued prompts are preserved so a
-    // force-stop → enqueue handoff (and multi-prompt queues) still run.
+    // Stop the in-flight turn. Queued prompts are kept but paused until the
+    // user sends again, so Esc never hands off to another turn by itself.
     auto& state = store_.state();
     if (state.abort_flag) {
         state.abort_flag->store(true, std::memory_order_release);
     }
+    queue_paused_ = true;
+    abort_requested_ns_.store(
+        std::chrono::steady_clock::now().time_since_epoch().count(),
+        std::memory_order_relaxed);
     if (worker_.joinable()) {
         worker_.request_stop();
     }
@@ -113,13 +146,17 @@ void GenerationController::force_stop_ui() {
 }
 
 void GenerationController::spawn(std::string prompt, GenerationRequest request) {
-    if (store_.state().abort_flag) {
-        store_.state().abort_flag->store(false, std::memory_order_release);
-    }
+    // Never touch the running turn's abort flag here: clearing it used to
+    // un-stop a turn the user had just stopped with Esc.
+    queue_paused_ = false;
     if (is_busy()) {
+        const bool stopping =
+            store_.state().abort_flag && store_.state().abort_flag->load();
         store_.enqueue_prompt(std::move(prompt));
         const auto n = store_.queue_size();
-        store_.add_toast("Prompt queued #" + std::to_string(n), "info", 1500);
+        store_.add_toast(stopping ? "Prompt queued — runs once the stop finishes"
+                                  : "Prompt queued — joins the next model request",
+                         "info", 1500);
         LOG_INFO("GenerationController: spawn deferred — queued (size={})", n);
         return;
     }
@@ -131,8 +168,7 @@ void GenerationController::maybe_start_queued(GenerationRequest request) {
         !store_.has_queued_prompt()) {
         return;
     }
-    if (store_.state().abort_flag && store_.state().abort_flag->load()) {
-        // Previous turn was aborted by user — do not auto-start queued prompts.
+    if (queue_paused_) {
         return;
     }
     if (std::chrono::steady_clock::now() < queue_resume_at_) {
@@ -154,9 +190,11 @@ void GenerationController::spawn_unlocked(std::string prompt,
         // Safe: busy_ is false, so the previous worker has finished.
         worker_.join();
     }
-    if (store_.state().abort_flag) {
-        store_.state().abort_flag->store(false, std::memory_order_release);
-    }
+    // A fresh abort token per turn: Esc stops exactly this turn, and nothing
+    // that happens later (a new send, a queued start) can clear it.
+    auto abort_flag = std::make_shared<std::atomic<bool>>(false);
+    store_.state().abort_flag = abort_flag;
+    queue_paused_ = false;
 
     const auto& providers = request.providers;
     const int sel_prov = request.provider_idx;
@@ -177,6 +215,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
         std::lock_guard<std::mutex> lock(active_session_mutex_);
         active_session_id_ = store_.session_id();
     }
+    abort_requested_ns_.store(0, std::memory_order_relaxed);
     busy_->store(true, std::memory_order_release);
     store_.set_generating(true);
     store_.clear_error();
@@ -198,19 +237,18 @@ void GenerationController::spawn_unlocked(std::string prompt,
     // matching ToolResult. Providers 400 ("No tool output found for
     // function call") if we replay that pair. Close them on the UI thread
     // so the worker snapshot, the scrollback, and the session DB agree.
-    if (auto& hist_ptr = store_.state().messages_history; hist_ptr) {
+    if (auto& hist_ptr = store_.state().messages_history;
+        hist_ptr && has_unpaired_tool_calls(*hist_ptr)) {
         auto repaired =
             ProviderTransform::close_unpaired_tool_calls(*hist_ptr);
-        if (repaired.size() != hist_ptr->size()) {
-            LOG_WARN(
-                "GenerationController: closed {} unpaired tool call(s) "
-                "left by an interrupted turn",
-                repaired.size() - hist_ptr->size());
-            hist_ptr =
-                std::make_shared<qcode::Messages>(std::move(repaired));
-            session::overwrite_session_history(store_.session_id(),
-                                               *hist_ptr);
-        }
+        LOG_WARN(
+            "GenerationController: closed {} unpaired tool call(s) "
+            "left by an interrupted turn",
+            repaired.size() - hist_ptr->size());
+        hist_ptr =
+            std::make_shared<qcode::Messages>(std::move(repaired));
+        session::overwrite_session_history(store_.session_id(),
+                                           *hist_ptr);
     }
     LOG_INFO(
         "GenerationController: spawn prompt_len={} queue_remaining={} "
@@ -234,12 +272,21 @@ void GenerationController::spawn_unlocked(std::string prompt,
     worker_ = qcode::compat::jthread(
         [this, bus_ptr, state_ptr, providers_copy = std::move(providers_copy),
          app_running, busy_ptr, store_ptr, sel_prov, sel_mod,
-         sys_prompt = std::move(sys_prompt),
-         tools_enabled, spawn_session](qcode::compat::stop_token stop_token) {
+         sys_prompt = std::move(sys_prompt), tools_enabled, spawn_session,
+         abort_flag](qcode::compat::stop_token stop_token) {
+            qcode::logger::ScopedThreadSession bind(spawn_session);
             // Clear busy + wake UI when the worker exits (including after Esc
             // force-stop left is_generating already false).
             const auto busy_guard = std::shared_ptr<void>(
                 nullptr, [this, busy_ptr, store_ptr, spawn_session, bus_ptr](void*) {
+                    if (const auto at = abort_requested_ns_.exchange(0); at != 0) {
+                        const auto now =
+                            std::chrono::steady_clock::now().time_since_epoch().count();
+                        PERF_LOG("esc_to_worker_exit_ms={:.1f}",
+                                 std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::duration(now - at))
+                                     .count());
+                    }
                     {
                         std::lock_guard<std::mutex> lock(active_session_mutex_);
                         if (active_session_id_ == spawn_session) {
@@ -270,19 +317,19 @@ void GenerationController::spawn_unlocked(std::string prompt,
                     .agent_mode = state_ptr->agent_mode ? *state_ptr->agent_mode
                                                         : "build",
                     .workspace = session::get_session_workspace(spawn_session),
-                    .abort_flag = state_ptr->abort_flag,
+                    .abort_flag = abort_flag,
                     .has_queued_work = [store_ptr]() {
                         return store_ptr->has_queued_prompt();
+                    },
+                    .take_queued_prompts = [store_ptr, spawn_session]() {
+                        return store_ptr->take_queued_prompts(spawn_session);
                     }};
-                if (state_ptr->abort_flag) {
-                    state_ptr->abort_flag->store(false, std::memory_order_release);
-                }
 
                 // Snapshot history via shared_ptr so compaction cannot race the
                 // vector while we copy.
                 const auto history = state_ptr->messages_history;
                 qcode::Messages gen_messages = history ? *history : qcode::Messages{};
-                gen_messages = qcode::apply_compaction_cutoff(gen_messages);
+                gen_messages = qcode::apply_compaction_cutoff(std::move(gen_messages));
                 gen_messages.erase(
                     std::remove_if(gen_messages.begin(), gen_messages.end(),
                                    [](const qcode::Message& message) {
@@ -321,7 +368,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
                             "Context over window: {}/{} tokens ({}%) >= prune "
                             "threshold {} — pruning",
                             total, ctx_window, pct, prune_at);
-                        gen_messages = prune_context(gen_messages, ctx_window);
+                        gen_messages = prune_context(std::move(gen_messages), ctx_window);
                         const size_t after =
                             sys_tok + estimate_tokens(gen_messages);
                         if (after < total) {
@@ -363,7 +410,7 @@ void GenerationController::spawn_unlocked(std::string prompt,
 
                 backend.run_generation(providers_copy[sel_prov].id,
                                        providers_copy[sel_prov].models[sel_mod].id,
-                                       sys_prompt, gen_messages, tools_enabled,
+                                       sys_prompt, std::move(gen_messages), tools_enabled,
                                        ctx);
 
                 const auto duration_ms =

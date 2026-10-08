@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <concurrentqueue.h>
+#include <condition_variable>
 #include <httplib.h>
 #include <mutex>
 #include <thread>
@@ -41,11 +42,13 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
   std::chrono::seconds event_timeout_{30};
   void run_stream(const std::string& url,
                   const httplib::Headers& headers,
-                  const nlohmann::json& request_body);
-  void parse_sse_response(const std::string& response);
+                  std::string body);
   void process_sse_event(const std::string& data);
   void push_event(const StreamEvent& event);
   void mark_complete();
+  // Wakes a consumer blocked in get_next_event(). Called after every enqueue,
+  // on completion and on stop.
+  void notify_consumer();
 
   // Accumulated usage across message_start / message_delta events.
   Usage stream_usage_{};
@@ -56,6 +59,8 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
   void handle_stream_error(int status_code, const std::string& error_body);
 
   moodycamel::ConcurrentQueue<StreamEvent> event_queue_;
+  std::mutex wait_mutex_;  // guards only the sleep/wake handshake
+  std::condition_variable wait_cv_;
   std::thread stream_thread_;
   std::mutex thread_mutex_;  // serializes start_stream / double-start guard
   std::atomic<bool> stop_requested_{false};

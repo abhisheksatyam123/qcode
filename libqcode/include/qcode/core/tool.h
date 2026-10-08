@@ -19,23 +19,24 @@ namespace qcode {
 
 using JsonValue = nlohmann::json;
 
-/// Nested subagent turn. Second arg is the per-task abort flag (kill / parent Esc).
+/// Nested subagent turn. Second arg is the parent turn's abort flag.
 using SubagentRunner = std::function<JsonValue(
     const JsonValue& args, std::shared_ptr<std::atomic<bool>> abort_flag)>;
+
+/// The learned subagent model board (qcode/tools/subagent_router.h) as text.
+using RoutingBoard = std::function<std::string()>;
 
 /// Context provided to tool execution functions
 struct ToolExecutionContext {
   std::string tool_call_id;
-  Messages messages;
-  std::optional<std::function<void()>> abort_signal;
   std::string workspace;
   std::string session_id;  // parent/orchestrator session when set
   std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
-  // Multi-agent hook (opencode TaskTool parity): when set, the task tool
-  // runs a REAL nested subagent turn instead of returning a simulated
-  // result. Args: {prompt, subagent_type, description...}; returns JSON with
-  // "output" / "error".
+  // Runs the task tool's subagent turn. Args: {prompt, description, mode,
+  // session_id, model?}; returns JSON with "output" or "error".
   SubagentRunner subagent_runner{nullptr};
+  // Shown by rate_task; set together with subagent_runner.
+  RoutingBoard routing_board{nullptr};
   // When false, bash refuses workspace-mutating commands (explore subagents).
   bool can_edit{true};
 };
@@ -164,6 +165,8 @@ struct ToolResult {
         arguments(std::move(args)),
         result(std::move(res)) {}
 
+  // Failure. `result` carries the message too: callers forward `result` as
+  // the is_error tool result, and a null one hid the reason from the model.
   ToolResult(std::string call_id,
              std::string name,
              JsonValue args,
@@ -171,6 +174,7 @@ struct ToolResult {
       : tool_call_id(std::move(call_id)),
         tool_name(std::move(name)),
         arguments(std::move(args)),
+        result(JsonValue{{"error", error_msg}}),
         error(std::move(error_msg)) {}
 
   ToolResult() = default;

@@ -47,6 +47,7 @@ struct GenerateOptions {
   // layer so the task tool can run a real nested subagent turn. Returns JSON
   // with "output" (final subagent text) or "error".
   SubagentRunner subagent_runner;
+  RoutingBoard routing_board;  // learned subagent model board, for rate_task
   std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
   bool can_edit{true};
   // When true, ServerSideDuplex streams (Cursor/Grok) yield so a queued

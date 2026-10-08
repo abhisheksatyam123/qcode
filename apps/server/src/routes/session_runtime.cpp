@@ -1,6 +1,7 @@
 #include "session_runtime.h"
 #include "bus_json_codec.h"
 
+#include <qcode/core/logger.h>
 #include <qcode/session/session_store.h>
 
 namespace qcode {
@@ -8,57 +9,152 @@ namespace server {
 
 using namespace qcode::contract;
 
+namespace {
+
+// Bounds memory; a stream further behind than this skips ahead.
+constexpr size_t kMaxStreamEvents = 4096;
+
+// Queue an event for the session's streams. Caller holds queue_mutex.
+void push_event(GenSession& session, nlohmann::json j) {
+    if (!session.generating && session.streams == 0) return;  // no one can read it
+    const uint64_t turn = session.active_turn.load();
+    session.events.push_back({turn, encode_stream_line(std::move(j), turn)});
+    if (session.events.size() > kMaxStreamEvents) {
+        session.events.pop_front();
+        ++session.events_base;
+    }
+    session.queue_cv.notify_all();
+}
+
+// Run `fn(session, payload)` for each event of type E while the session
+// lives. Holding it weakly lets a deleted session (and its subscriptions)
+// be freed instead of being kept alive by the bus.
+template <typename E, typename Fn>
+qcode::bus::Subscription subscribe_weak(qcode::bus::BusRuntime& bus,
+                                        const std::shared_ptr<GenSession>& session,
+                                        Fn fn) {
+    return bus.subscribe<E>(
+        [weak = std::weak_ptr<GenSession>(session), fn](const typename E::Payload& p) {
+            if (auto s = weak.lock()) fn(s, p);
+        });
+}
+
+}  // namespace
+
 std::mutex g_sessions_mutex;
 std::unordered_map<std::string, std::shared_ptr<GenSession>> g_sessions;
+std::shared_ptr<qcode::SessionFileLogger> g_session_logger;
+
+void prune_session_logs() {
+    if (!g_session_logger) return;
+    auto logger = g_session_logger;
+    logger->prune([](const std::string& sid) {
+        if (sid.empty()) return true;  // unscoped stem file is always kept
+        {
+            std::lock_guard<std::mutex> lock(g_sessions_mutex);
+            if (g_sessions.find(sid) != g_sessions.end()) return true;
+        }
+        return qcode::session::session_exists(sid);
+    });
+}
+
+void deliver_bus_events(qcode::bus::BusRuntime& bus) {
+    // One thread at a time keeps subscribers in bus order. A subscriber that
+    // publishes re-enters here; the loop below picks its event up.
+    static std::mutex deliver_mutex;
+    thread_local bool delivering = false;
+    if (delivering) return;
+    std::lock_guard<std::mutex> lock(deliver_mutex);
+    delivering = true;
+    for (;;) {
+        try {
+            if (bus.drain() == 0) break;
+        } catch (const std::exception& e) {
+            LOG_ERROR("Bus subscriber failed: {}", e.what());
+        } catch (...) {
+            LOG_ERROR("Bus subscriber failed");
+        }
+    }
+    delivering = false;
+}
+
+void flush_turn_text(GenSession& session) {
+    if (!session.reasoning_text.empty()) {
+        qcode::session::save_message(session.id, "Reasoning", session.reasoning_text);
+    }
+    if (!session.assistant_text.empty()) {
+        qcode::session::save_message(session.id, "Assistant", session.assistant_text);
+    }
+    session.reasoning_text.clear();
+    session.assistant_text.clear();
+}
+
+void abort_turn(GenSession& session) {
+    std::lock_guard<std::mutex> lock(session.queue_mutex);
+    session.abort_flag->store(true);
+    session.pending_prompts.clear();
+}
+
+std::shared_ptr<const std::string> encode_stream_line(nlohmann::json j, uint64_t turn) {
+    j["turn"] = turn;
+    return std::make_shared<const std::string>(
+        j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n");
+}
+
+std::shared_ptr<void> attach_stream(const std::shared_ptr<GenSession>& session) {
+    ++session->streams;
+    return std::shared_ptr<void>(nullptr, [session](void*) {
+        std::lock_guard<std::mutex> lock(session->queue_mutex);
+        --session->streams;
+        trim_events(*session);
+    });
+}
+
+void trim_events(GenSession& session) {
+    if (session.generating || session.streams > 0) return;
+    session.events_base += session.events.size();
+    session.events.clear();
+}
 
 std::vector<qcode::bus::Subscription> subscribe_session(
     qcode::bus::BusRuntime& bus,
-    std::shared_ptr<GenSession> session)
+    const std::shared_ptr<GenSession>& session)
 {
     std::vector<qcode::bus::Subscription> subs;
 
-    subs.push_back(bus.subscribe<MessageDelta>(
-        [session](const MessageDelta::Payload& p) {
+    subs.push_back(subscribe_weak<MessageDelta>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const MessageDelta::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
-            auto j = qcode::server::message_delta_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
-            session->event_queue.push_back(std::move(j));
+            session->assistant_text += p.text;
+            push_event(*session, qcode::server::message_delta_to_json(p));
         }
     ));
 
-    subs.push_back(bus.subscribe<ToolCallStarted>(
-        [session](const ToolCallStarted::Payload& p) {
+    subs.push_back(subscribe_weak<ToolCallStarted>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const ToolCallStarted::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
             session->tool_call_count++;
-            // Flush thinking accumulated since the previous tool call as its
-            // own row so DB order preserves the think -> tool interleaving
-            // the webui timeline renders.
-            std::string reasoning_to_save;
-            {
-                std::lock_guard<std::mutex> lock(session->queue_mutex);
-                if (!session->reasoning_text.empty()) {
-                    reasoning_to_save = std::move(session->reasoning_text);
-                    session->reasoning_text.clear();
-                }
-            }
-            if (!reasoning_to_save.empty()) {
-                qcode::session::save_message(p.session_id, "Reasoning", reasoning_to_save);
-            }
             nlohmann::json call_json = {
                 {"id", p.tool_call_id},
                 {"name", p.tool_name},
                 {"arguments", p.arguments},
             };
-            qcode::session::save_message(p.session_id, "ToolCall", call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
-
-            auto j = qcode::server::tool_call_started_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
-            session->event_queue.push_back(std::move(j));
+            // Flush thinking accumulated since the previous tool call as its
+            // own row so DB order preserves the think -> tool interleaving
+            // the webui timeline renders.
+            if (!session->reasoning_text.empty()) {
+                qcode::session::save_message(p.session_id, "Reasoning", session->reasoning_text);
+                session->reasoning_text.clear();
+            }
+            qcode::session::save_message(p.session_id, "ToolCall", call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+            push_event(*session, qcode::server::tool_call_started_to_json(p));
         }
     ));
 
-    subs.push_back(bus.subscribe<ToolCallCompleted>(
-        [session](const ToolCallCompleted::Payload& p) {
+    subs.push_back(subscribe_weak<ToolCallCompleted>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const ToolCallCompleted::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
             session->total_tool_time_ms += static_cast<int>(p.duration_ms);
             nlohmann::json result_json = {
@@ -68,51 +164,58 @@ std::vector<qcode::bus::Subscription> subscribe_session(
                 {"is_error", p.is_error},
                 {"duration_ms", p.duration_ms},
             };
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
             qcode::session::save_message(p.session_id, "ToolResult", result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
-
-            auto j = qcode::server::tool_call_completed_to_json(p);
-            std::lock_guard<std::mutex> lock(session->queue_mutex);
-            session->event_queue.push_back(std::move(j));
+            push_event(*session, qcode::server::tool_call_completed_to_json(p));
         }
     ));
 
-    subs.push_back(bus.subscribe<SessionStatusChanged>(
-        [session](const SessionStatusChanged::Payload& p) {
+    subs.push_back(subscribe_weak<UserMessageInjected>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const UserMessageInjected::Payload& p) {
+            if (p.session_id != session->id) return;
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
+            // Save the reply so far first, so history shows the prompt where
+            // the model actually read it.
+            flush_turn_text(*session);
+            qcode::session::save_message(session->id, "User", p.text);
+            push_event(*session, qcode::server::user_message_injected_to_json(p));
+        }
+    ));
+
+    subs.push_back(subscribe_weak<SessionStatusChanged>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const SessionStatusChanged::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
-            auto j = qcode::server::session_status_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
-            session->event_queue.push_back(std::move(j));
+            push_event(*session, qcode::server::session_status_to_json(p));
         }
     ));
 
-    subs.push_back(bus.subscribe<ErrorOccurred>(
-        [session](const ErrorOccurred::Payload& p) {
+    subs.push_back(subscribe_weak<ErrorOccurred>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const ErrorOccurred::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
             if (p.severity == "info") {
                 // Heartbeat / progress notice — not an error, do not queue as error event
                 return;
             }
-            auto j = qcode::server::error_occurred_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             if (p.severity == "error" || p.severity == "fatal") {
                 session->error = p.message;
             }
-            session->event_queue.push_back(std::move(j));
+            push_event(*session, qcode::server::error_occurred_to_json(p));
         }
     ));
 
-    subs.push_back(bus.subscribe<ReasoningDelta>(
-        [session](const ReasoningDelta::Payload& p) {
+    subs.push_back(subscribe_weak<ReasoningDelta>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const ReasoningDelta::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
-            auto j = qcode::server::reasoning_delta_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
-            if (!p.text.empty()) session->reasoning_text += p.text;
-            session->event_queue.push_back(std::move(j));
+            session->reasoning_text += p.text;
+            push_event(*session, qcode::server::reasoning_delta_to_json(p));
         }
     ));
 
-    subs.push_back(bus.subscribe<TokenUsageUpdated>(
-        [session](const TokenUsageUpdated::Payload& p) {
+    subs.push_back(subscribe_weak<TokenUsageUpdated>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const TokenUsageUpdated::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
             // Persist per-turn deltas into the session row (the DB is the
             // cumulative source of truth across restarts / session switches).
@@ -124,9 +227,8 @@ std::vector<qcode::bus::Subscription> subscribe_session(
             session->live_prompt_tokens = p.prompt_tokens;
             session->live_completion_tokens = p.completion_tokens;
             session->live_total_tokens = p.total_tokens;
-            auto j = qcode::server::token_usage_to_json(p);
             std::lock_guard<std::mutex> lock(session->queue_mutex);
-            session->event_queue.push_back(std::move(j));
+            push_event(*session, qcode::server::token_usage_to_json(p));
         }
     ));
 

@@ -81,13 +81,43 @@ TEST(RegistryTest, OpenRouterSucceedsWithKey) {
   EXPECT_TRUE(res.ok());
 }
 
-TEST(RegistryTest, RemovedProvidersRejected) {
+TEST(RegistryTest, UnconfiguredProvidersRejected) {
+  ScopedEnv claudeCreds("CLAUDE_CREDENTIALS_FILE");
+  claudeCreds.set("/tmp/nonexistent_claude_creds_test.json");
+  ScopedEnv antKey("ANTHROPIC_API_KEY");
+  antKey.unset();
+  ScopedEnv oaiKey("OPENAI_API_KEY");
+  oaiKey.unset();
   register_core_providers();
-  // openai, anthropic, qpilot, qgenie are removed in favor of the 4 supported providers
   EXPECT_FALSE(ProviderRegistry::instance().resolve("openai", "").ok());
   EXPECT_FALSE(ProviderRegistry::instance().resolve("anthropic", "").ok());
   EXPECT_FALSE(ProviderRegistry::instance().resolve("qpilot", "").ok());
   EXPECT_FALSE(ProviderRegistry::instance().resolve("qgenie", "").ok());
+}
+
+TEST(RegistryTest, OpenAIResolvesWithKey) {
+  ScopedEnv key("OPENAI_API_KEY");
+  key.set("sk-test-openai-key");
+  register_core_providers();
+  ClientResolution res = ProviderRegistry::instance().resolve("openai", "");
+  EXPECT_TRUE(res.ok());
+}
+
+TEST(RegistryTest, AnthropicResolvesWithApiKey) {
+  ScopedEnv key("ANTHROPIC_API_KEY");
+  key.set("sk-ant-test-key");
+  register_core_providers();
+  ClientResolution res = ProviderRegistry::instance().resolve("anthropic", "");
+  EXPECT_TRUE(res.ok());
+}
+
+TEST(RegistryTest, CustomOpenAICompatibleResolvesWithBaseUrl) {
+  register_core_providers();
+  ProviderOptions options;
+  options.base_url = "http://localhost:11434/v1";
+  options.api_key = "dummy";
+  ClientResolution res = ProviderRegistry::instance().resolve("custom-ollama", options);
+  EXPECT_TRUE(res.ok());
 }
 
 TEST(RegistryTest, CustomProviderCanBeRegistered) {

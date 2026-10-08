@@ -33,10 +33,15 @@ struct GenerationContext {
     int tool_call_count = 0;
     double total_tool_time_ms = 0.0;
 
-    // Optional query callback to check if the user queued a prompt during this turn.
-    // When true, the tool loop yields after completing the current tool step so the
-    // queued prompt is picked up immediately.
+    // True when the user queued a prompt during this turn. Only streaming /
+    // server-side agent providers use it, to end their turn early.
     std::function<bool()> has_queued_work = nullptr;
+
+    // Drains prompts the user queued during this turn. The tool loop folds
+    // them into its next model request (one user message) and publishes
+    // contract::UserMessageInjected, so a queued prompt steers the running
+    // turn instead of waiting for it to finish. Return {} when there is none.
+    std::function<std::vector<std::string>()> take_queued_prompts = nullptr;
 };
 
 /**
@@ -55,7 +60,7 @@ public:
         const std::string& provider_name,
         const std::string& model_id,
         const std::string& system_prompt,
-        const qcode::Messages& messages,
+        qcode::Messages messages,
         bool enable_tools,
         GenerationContext& ctx);
 
@@ -76,7 +81,7 @@ void run_generation_with_bus(
     const std::string& provider_name,
     const std::string& model_id,
     const std::string& system_prompt,
-    const qcode::Messages& messages,
+    qcode::Messages messages,
     bool enable_tools,
     const std::vector<ProviderInfo>& providers,
     bus::BusPort& bus,

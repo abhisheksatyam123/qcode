@@ -19,7 +19,8 @@
 
 #include <prompt_wrap.h>
 
-#include <qcode/core/file_logger.h>
+#include <qcode/core/perf.h>
+#include <qcode/core/session_file_logger.h>
 #include <qcode/core/jthread.h>
 #include <qcode/generation/generation_service.h>
 #include <qcode/providers/authenticated_providers.h>
@@ -64,6 +65,13 @@ static void print_tui_usage(const char* argv0) {
         << "For non-interactive prompts, use qcode-cli.\n";
 }
 
+// Directory for per-session TUI logs: $QCODE_LOG_DIR, else /tmp/qcode-logs.
+// Same resolution as qcode-server so both processes share one log directory.
+static std::string tui_log_dir() {
+    if (const char* d = std::getenv("QCODE_LOG_DIR")) return d;
+    return "/tmp/qcode-logs";
+}
+
 int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -81,20 +89,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Rotate oversized logs so a prior debug flood cannot keep filling the disk.
-    {
-        namespace fs = std::filesystem;
-        const fs::path log_path{"/tmp/qcode.log"};
-        std::error_code ec;
-        if (fs::exists(log_path, ec) && fs::file_size(log_path, ec) > (32ull << 20)) {
-            fs::rename(log_path, "/tmp/qcode.log.old", ec);
-        }
-    }
+    // One log file per session: <dir>/qcode-tui-<session_id>.log. Lines from
+    // threads with no bound session (the UI thread) land in <dir>/qcode-tui.log.
+    // Each session file has its own rotation budget, so no manual size-based
+    // rotation is needed here.
     // Debug mode serializes complete requests and every stream delta. Keeping it
     // enabled in normal runs produced hundreds of megabytes of logs in minutes.
-    qcode::install_file_logger("/tmp/qcode.log", qcode::logger::LogLevel::kLogLevelInfo);
+    // QCODE_PERF=1 raises the log to DEBUG so the "[perf]" timing lines appear.
+    const std::string log_dir = tui_log_dir();
+    auto session_logger = qcode::install_session_file_logger(
+        log_dir, "qcode-tui",
+        std::getenv("QCODE_PERF") ? qcode::logger::LogLevel::kLogLevelDebug
+                                  : qcode::logger::LogLevel::kLogLevelInfo);
     qcode::logger::set_thread_name("main");
     LOG_INFO("q-code starting (bus architecture)...");
+    LOG_INFO("logs in {}: qcode-tui-<session>.log", log_dir);
 
     auto app_running = std::make_shared<std::atomic<bool>>(true);
     auto compaction_thread = std::make_shared<qcode::compat::jthread>();
@@ -125,10 +134,8 @@ int main(int argc, char* argv[]) {
             subagent_data["metadata"].contains("tasks")) {
             for (const auto& t : subagent_data["metadata"]["tasks"]) {
                 qcode::SubagentEntry entry;
-                entry.background_task_id = t.value("background_task_id", "");
                 entry.status = t.value("status", "");
-                entry.agent = t.value("agent", "general");
-                entry.mode = t.value("mode", "explore");
+                entry.mode = t.value("mode", "");
                 entry.model = t.value("model", "");
                 entry.description = t.value("description", "");
                 entry.task_id = t.value("task_id", t.value("sessionId", ""));
@@ -142,6 +149,7 @@ int main(int argc, char* argv[]) {
     };
 
     qcode::GenerationController generation(store, bus, app_running);
+    qcode::tui::TuiGitMonitor git_monitor;
 
     // ── Spinner: advance frame periodically + queue watchdog ──
     std::thread spinner_thread([&store, &generation, app_running, &screen]() {
@@ -149,7 +157,7 @@ int main(int argc, char* argv[]) {
         try {
             while (app_running->load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                const auto& st = store.status();
+                const std::string st = store.status_snapshot();
                 if (store.is_generating() || st == "generating" || st == "agent") {
                     store.advance_frame();
                 } else if (store.has_queued_prompt() && !generation.is_busy() && st != "error") {
@@ -210,13 +218,10 @@ int main(int argc, char* argv[]) {
         // matches what was used when the session was last active.
         std::string loaded_prov_id;
         std::string loaded_model_id;
-        for (const auto& s : qcode::session::list_sessions_full()) {
-            if (s.id == last_session) {
-                loaded_prov_id = s.provider;
-                loaded_model_id = s.model;
-                if (state.session_title) *state.session_title = s.title;
-                break;
-            }
+        if (auto s = qcode::session::get_session_info(last_session)) {
+            loaded_prov_id = s->provider;
+            loaded_model_id = s->model;
+            if (state.session_title) *state.session_title = s->title;
         }
         if (state.session_title && state.session_title->empty()) {
             *state.session_title =
@@ -237,6 +242,7 @@ int main(int argc, char* argv[]) {
     qcode::tui::TuiOverlayState overlays;
     overlays.model_entries = qcode::build_model_entries(providers_list);
     overlays.session_entries = qcode::session::list_sessions_full();
+    bool sessions_dirty = false;
     overlays.theme_entries = qcode::builtin_theme_entries();
     overlays.palette_commands = qcode::builtin_palette_commands();
     overlays.slash_commands = qcode::builtin_slash_commands();
@@ -427,7 +433,6 @@ int main(int argc, char* argv[]) {
         store.clear_error();
         store.add_toast("Retrying: " + (retry_prompt.size() > 30 ? retry_prompt.substr(0, 27) + "…" : retry_prompt), "info", 1500);
         generation.spawn(retry_prompt, std::move(req));
-        screen.Post(Event::Custom);
         return true;
     };
 
@@ -467,10 +472,9 @@ int main(int argc, char* argv[]) {
         if (state.retry_available) *state.retry_available = false;
         if (state.last_user_prompt) state.last_user_prompt->clear();
         prompt_input.clear();
-        overlays.session_entries = qcode::session::list_sessions_full();
+        sessions_dirty = true;
         persist_session_variant();
         store.add_toast("Started new session", "success", 2000);
-        screen.Post(Event::Custom);
     };
 
     auto open_chat_session = [&](const std::string& id, const std::string& title,
@@ -478,7 +482,6 @@ int main(int argc, char* argv[]) {
         if (id.empty()) return;
         if (state.session_id && *state.session_id == id) {
             state.tab_selected = 0;
-            screen.Post(Event::Custom);
             return;
         }
         if (remember_return && state.session_id && !state.session_id->empty() &&
@@ -516,7 +519,6 @@ int main(int argc, char* argv[]) {
         state.tab_selected = 0;
         store.add_toast("Opened session: " + (use_title.empty() ? id : use_title),
                         "info", 1500);
-        screen.Post(Event::Custom);
     };
 
     auto return_to_parent_session = [&]() -> bool {
@@ -545,6 +547,7 @@ int main(int argc, char* argv[]) {
     auto open_session_picker = [&]() {
         close_overlays();
         overlays.session_entries = qcode::session::list_sessions_full();
+        sessions_dirty = false;
         if (overlays.session_entries.empty()) {
             store.append_chat_message("System", "No saved sessions found.");
             return;
@@ -643,7 +646,6 @@ int main(int argc, char* argv[]) {
                                 ? "Copy mode ON - select text with mouse, press F3 to return"
                                 : "Copy mode OFF",
                             "info", *state.copy_mode ? 4000 : 1500);
-            screen.Post(Event::Custom);
         } else if (cmd.id == "help") {
             overlays.show_help = true;
         } else if (cmd.id == "exit") {
@@ -680,7 +682,6 @@ int main(int argc, char* argv[]) {
             } else {
                 store.add_toast("No queued prompts to clear", "info", 1500);
             }
-            screen.Post(Event::Custom);
             return;
         }
         if (slash_cmd == "stop" || slash_cmd == "abort") {
@@ -703,13 +704,11 @@ int main(int argc, char* argv[]) {
             } else {
                 store.add_toast("No generation active", "info", 1500);
             }
-            screen.Post(Event::Custom);
             return;
         }
         if (slash_cmd == "force-stop" || slash_cmd == "forcestop" || slash_cmd == "kill") {
             prompt_input = "";
             generation.force_stop_ui();
-            screen.Post(Event::Custom);
             return;
         }
         if (slash_cmd == "exit" || slash_cmd == "quit" || slash_cmd == "q") {
@@ -737,7 +736,6 @@ int main(int argc, char* argv[]) {
             LOG_INFO("Main: prompt queued/merged (queue_size={})", store.queue_size());
             prompt_input = "";
             *state.auto_scroll = true;
-            screen.Post(Event::Custom);
             return;
         }
 
@@ -775,7 +773,6 @@ int main(int argc, char* argv[]) {
                 } else {
                     store.add_toast("No generation active", "info", 1500);
                 }
-                screen.Post(Event::Custom);
                 return;
             }
 
@@ -791,7 +788,6 @@ int main(int argc, char* argv[]) {
                 } else {
                     store.add_toast("No queued prompts to clear", "info", 1500);
                 }
-                screen.Post(Event::Custom);
                 return;
             }
 
@@ -832,7 +828,6 @@ int main(int argc, char* argv[]) {
                         std::to_string(snapshot.size()) + " queued prompt(s) · /queue rm <n> to remove",
                         "info", 2500);
                 }
-                screen.Post(Event::Custom);
                 return;
             }
 
@@ -874,7 +869,7 @@ int main(int argc, char* argv[]) {
                                           compaction_thread, *bus);
             sync_tool_config_and_system_prompt();
             clamp_variant_to_current_model();
-            overlays.session_entries = qcode::session::list_sessions_full();
+            sessions_dirty = true;
             return;
         }
 
@@ -927,7 +922,7 @@ int main(int argc, char* argv[]) {
                     providers_list[selected_provider].name,
                     providers_list[selected_provider].models[selected_model].name);
             }
-            overlays.session_entries = qcode::session::list_sessions_full();
+            sessions_dirty = true;
             store.add_toast("Switched model: " + entry.model_name, "info", 1500);
         })) return true;
 
@@ -1174,7 +1169,6 @@ int main(int argc, char* argv[]) {
             } else {
                 store.add_toast("Copy mode OFF", "info", 1500);
             }
-            screen.Post(Event::Custom);
             return true;
         }
         // ── New Session shortcut (Ctrl-N) ──
@@ -1197,7 +1191,6 @@ int main(int argc, char* argv[]) {
             if (state.tab_selected == 1 && state.files_detail_open) {
                 state.files_detail_open = false;
                 *state.scroll_line = 0;
-                screen.Post(Event::Custom);
                 return true;
             }
 
@@ -1218,7 +1211,6 @@ int main(int argc, char* argv[]) {
                     store.add_toast(
                         "Stopping… (Esc again to force)", "warning", 3000);
                 }
-                screen.Post(Event::Custom);
                 return true;
             }
             if (!prompt_input.empty()) {
@@ -1232,7 +1224,6 @@ int main(int argc, char* argv[]) {
                     n == 1 ? "Cleared 1 queued prompt"
                            : ("Cleared " + std::to_string(n) + " queued prompts"),
                     "info", 1500);
-                screen.Post(Event::Custom);
                 return true;
             }
         }
@@ -1266,7 +1257,6 @@ int main(int argc, char* argv[]) {
                 cur = std::max(0, std::min(n - 1, cur + delta));
             }
             *state.focused_tool_index = cur;
-            screen.Post(Event::Custom);
             return true;
         };
         auto set_focused_tool_collapsed = [&](bool collapsed) -> bool {
@@ -1278,19 +1268,16 @@ int main(int argc, char* argv[]) {
                     std::make_shared<std::unordered_map<std::string, bool>>();
             }
             (*state.tool_collapse_state)[id] = collapsed;
-            screen.Post(Event::Custom);
             return true;
         };
         if (tool_keys_active) {
             if (e == Event::ArrowUp) {
                 *state.auto_scroll = false;
                 *state.scroll_line = std::max(0, *state.scroll_line - 2);
-                screen.Post(Event::Custom);
                 return true;
             }
             if (e == Event::ArrowDown) {
                 *state.scroll_line = *state.scroll_line + 2;
-                screen.Post(Event::Custom);
                 return true;
             }
             if (e == Event::Character('k') || e == Event::Character('K')) {
@@ -1319,41 +1306,35 @@ int main(int argc, char* argv[]) {
             if (state.files_detail_open) {
                 if (e == Event::ArrowUp || e == Event::Character('k')) {
                     *state.scroll_line = std::max(0, *state.scroll_line - 2);
-                    screen.Post(Event::Custom);
                     return true;
                 }
                 if (e == Event::ArrowDown || e == Event::Character('j')) {
                     *state.scroll_line = *state.scroll_line + 2;
-                    screen.Post(Event::Custom);
                     return true;
                 }
             } else if (file_count > 0) {
                 if (e == Event::ArrowUp || e == Event::Character('k')) {
                     state.selected_file =
                         std::max(0, state.selected_file - 1);
-                    screen.Post(Event::Custom);
                     return true;
                 }
                 if (e == Event::ArrowDown || e == Event::Character('j')) {
                     state.selected_file = std::min(
                         state.selected_file + 1,
                         static_cast<int>(file_count) - 1);
-                    screen.Post(Event::Custom);
                     return true;
                 }
                 if (e == Event::Return) {
                     state.files_detail_open = true;
                     *state.scroll_line = 0;
                     *state.auto_scroll = true;
-                    screen.Post(Event::Custom);
                     return true;
                 }
             }
             if (e == Event::Character('r') || e == Event::Character('R')) {
-                qcode::update_modified_files(state);
+                git_monitor.request_refresh(screen);
                 state.files_detail_open = false;
                 store.add_toast("Refreshed git changes", "info", 1000);
-                screen.Post(Event::Custom);
                 return true;
             }
         }
@@ -1376,7 +1357,6 @@ int main(int argc, char* argv[]) {
                         *state.total_tool_time_ms = stats.total_tool_time_ms;
                 }
                 store.add_toast("Refreshed session stats", "info", 1000);
-                screen.Post(Event::Custom);
                 return true;
             }
         }
@@ -1390,7 +1370,6 @@ int main(int argc, char* argv[]) {
             if (e == Event::Character('r') || e == Event::Character('R')) {
                 refresh_subagents();
                 store.add_toast("Refreshed subagents", "info", 1000);
-                screen.Post(Event::Custom);
                 return true;
             }
             if (e == Event::Character('b') || e == Event::Character('B')) {
@@ -1402,14 +1381,12 @@ int main(int argc, char* argv[]) {
                     e == Event::Character('K')) {
                     state.selected_session_item =
                         std::max(0, state.selected_session_item - 1);
-                    screen.Post(Event::Custom);
                     return true;
                 }
                 if (e == Event::ArrowDown || e == Event::Character('j') ||
                     e == Event::Character('J')) {
                     state.selected_session_item = std::min(
                         state.selected_session_item + 1, child_count - 1);
-                    screen.Post(Event::Custom);
                     return true;
                 }
                 if (e == Event::Return) {
@@ -1431,12 +1408,10 @@ int main(int argc, char* argv[]) {
             if (e == Event::Special("[1;2A") || e == Event::Special("[1;5A") || e == Event::Special("[1;3A")) {
                 *state.auto_scroll = false;
                 *state.scroll_line = std::max(0, *state.scroll_line - 3);
-                screen.Post(Event::Custom);
                 return true;
             }
             if (e == Event::Special("[1;2B") || e == Event::Special("[1;5B") || e == Event::Special("[1;3B")) {
                 *state.scroll_line = *state.scroll_line + 3;
-                screen.Post(Event::Custom);
                 return true;
             }
         }
@@ -1451,7 +1426,6 @@ int main(int argc, char* argv[]) {
             } else {
                 *state.scroll_line = std::max(0, *state.scroll_line - page);
             }
-            screen.Post(Event::Custom);
             return true;
         }
         if (e == Event::PageDown) {
@@ -1466,7 +1440,6 @@ int main(int argc, char* argv[]) {
             } else {
                 *state.scroll_line = *state.scroll_line + page;
             }
-            screen.Post(Event::Custom);
             return true;
         }
         if (e == Event::Home) {
@@ -1476,7 +1449,6 @@ int main(int argc, char* argv[]) {
             } else {
                 *state.scroll_line = 0;
             }
-            screen.Post(Event::Custom);
             return true;
         }
         if (e == Event::End) {
@@ -1490,7 +1462,6 @@ int main(int argc, char* argv[]) {
                 *state.auto_scroll = true;
                 *state.scroll_line = INT_MAX;
             }
-            screen.Post(Event::Custom);
             return true;
         }
         if (e.is_mouse()) {
@@ -1523,13 +1494,11 @@ int main(int argc, char* argv[]) {
                 if (file_count > 0) {
                     if (e.mouse().button == Mouse::WheelUp) {
                         state.selected_file = std::max(0, state.selected_file - 1);
-                        screen.Post(Event::Custom);
                         return true;
                     }
                     if (e.mouse().button == Mouse::WheelDown) {
                         state.selected_file = std::min(
                             static_cast<int>(file_count) - 1, state.selected_file + 1);
-                        screen.Post(Event::Custom);
                         return true;
                     }
                 }
@@ -1543,13 +1512,11 @@ int main(int argc, char* argv[]) {
                     if (e.mouse().button == Mouse::WheelUp) {
                         state.selected_session_item =
                             std::max(0, state.selected_session_item - 1);
-                        screen.Post(Event::Custom);
                         return true;
                     }
                     if (e.mouse().button == Mouse::WheelDown) {
                         state.selected_session_item =
                             std::min(child_count - 1, state.selected_session_item + 1);
-                        screen.Post(Event::Custom);
                         return true;
                     }
                 }
@@ -1557,12 +1524,10 @@ int main(int argc, char* argv[]) {
             if (e.mouse().button == Mouse::WheelUp) {
                 *state.auto_scroll = false;
                 *state.scroll_line = std::max(0, *state.scroll_line - kLinesPerWheel);
-                screen.Post(Event::Custom);
                 return true;
             }
             if (e.mouse().button == Mouse::WheelDown) {
                 *state.scroll_line = *state.scroll_line + kLinesPerWheel;
-                screen.Post(Event::Custom);
                 return true;
             }
             if (e.mouse().button == Mouse::Left && e.mouse().motion == Mouse::Pressed) {
@@ -1573,7 +1538,6 @@ int main(int argc, char* argv[]) {
                         state.files_detail_open = false;
                         *state.scroll_line = 0;
                         *state.auto_scroll = true;
-                        screen.Post(Event::Custom);
                         return true;
                     }
                 }
@@ -1586,7 +1550,6 @@ int main(int argc, char* argv[]) {
                             state.files_detail_open = true;
                             *state.scroll_line = 0;
                             *state.auto_scroll = true;
-                            screen.Post(Event::Custom);
                             return true;
                         }
                     }
@@ -1611,7 +1574,6 @@ int main(int argc, char* argv[]) {
                                 store.add_toast("Opened child session: " + desc,
                                                 "info", 1500);
                             }
-                            screen.Post(Event::Custom);
                             return true;
                         }
                     }
@@ -1639,7 +1601,6 @@ int main(int argc, char* argv[]) {
                                 !state.tool_collapse_state->count(id) ||
                                 (*state.tool_collapse_state)[id];
                             (*state.tool_collapse_state)[id] = !currently_collapsed;
-                            screen.Post(Event::Custom);
                             return true;
                         }
                     }
@@ -1655,7 +1616,6 @@ int main(int argc, char* argv[]) {
                                 expanded = it->second;
                             }
                             (*state.thinking_expand_state)[key] = !expanded;
-                            screen.Post(Event::Custom);
                             return true;
                         }
                     }
@@ -1677,15 +1637,21 @@ int main(int argc, char* argv[]) {
     // ═══════════════════════════════════════════════════════════
     //  6. Renderer
     // ═══════════════════════════════════════════════════════════
-    // Subscribe to store changes to trigger re-render
-    auto render_trigger = store.on_change([&screen]() {
-        screen.Post(Event::Custom);
+    // Subscribe to store changes to trigger re-render. Notifications raised on
+    // the UI thread (bus drain inside the Renderer, event handlers) are already
+    // followed by a redraw, so only worker-thread notifications need a Post.
+    const std::thread::id ui_thread_id = std::this_thread::get_id();
+    auto render_trigger = store.on_change([&screen, ui_thread_id]() {
+        if (std::this_thread::get_id() != ui_thread_id) {
+            screen.Post(Event::Custom);
+        }
     });
 
     bool was_generating = store.is_generating();
     int previous_tab = state.tab_selected;
-    qcode::tui::TuiGitMonitor git_monitor;
+    qcode::perf::RollingTimer frame_timer("tui_frame");
     auto renderer = Renderer(main_container, [&] {
+        const qcode::perf::RollingTimer::Scope frame_scope(frame_timer);
         // Track terminal height for mouse selection calculations. Use the
         // debounced stable size so transient PTY size churn during long bash
         // tool runs does not flip FTXUI's resize detection / force clears.
@@ -1700,7 +1666,11 @@ int main(int argc, char* argv[]) {
         }
 
         // Start queued work only after the prior worker has fully exited.
-        generation.maybe_start_queued(make_generation_request());
+        // Build the request (provider catalog + system prompt) only when a
+        // queued prompt is actually waiting.
+        if (store.has_queued_prompt()) {
+            generation.maybe_start_queued(make_generation_request());
+        }
         was_generating = store.is_generating();
         if (state.tab_selected == 1 && previous_tab != 1) {
             git_monitor.request_refresh(screen);
@@ -1728,11 +1698,33 @@ int main(int argc, char* argv[]) {
 
         // Status rendered inline in header strip
 
-        auto filtered_model_entries = qcode::tui::filter_models(overlays.model_entries, overlays.model_query);
-        auto filtered_session_entries = qcode::tui::filter_sessions(overlays.session_entries, overlays.session_query);
-        auto filtered_theme_entries = qcode::tui::filter_themes(overlays.theme_entries, overlays.theme_query);
-        auto filtered_variant_entries = qcode::tui::filter_variants(overlays.variant_entries, overlays.variant_query);
-        auto filtered_palette_entries = qcode::tui::filter_palette(overlays.palette_commands, overlays.palette_query);
+        // Model/theme/variant/palette lists are only read by their popups, so
+        // filter them only while open (avoids copying the lists every frame).
+        // The session list is also read by the inline /session autocomplete.
+        auto filtered_model_entries = overlays.show_model_select
+            ? qcode::tui::filter_models(overlays.model_entries, overlays.model_query)
+            : std::vector<qcode::ModelEntry>{};
+        // The session list is read only by the session picker and the inline
+        // /session autocomplete; refresh it lazily when one of them is visible.
+        const bool session_list_visible =
+            overlays.show_session_select ||
+            (prompt_input.size() >= 9 && prompt_input.compare(0, 9, "/session ") == 0);
+        if (session_list_visible && sessions_dirty) {
+            overlays.session_entries = qcode::session::list_sessions_full();
+            sessions_dirty = false;
+        }
+        auto filtered_session_entries = session_list_visible
+            ? qcode::tui::filter_sessions(overlays.session_entries, overlays.session_query)
+            : std::vector<qcode::session::SessionInfo>{};
+        auto filtered_theme_entries = overlays.show_theme_select
+            ? qcode::tui::filter_themes(overlays.theme_entries, overlays.theme_query)
+            : std::vector<qcode::ThemeEntry>{};
+        auto filtered_variant_entries = overlays.show_variant_select
+            ? qcode::tui::filter_variants(overlays.variant_entries, overlays.variant_query)
+            : std::vector<qcode::VariantEntry>{};
+        auto filtered_palette_entries = overlays.show_palette
+            ? qcode::tui::filter_palette(overlays.palette_commands, overlays.palette_query)
+            : std::vector<qcode::PaletteCommand>{};
 
         auto main_view = qcode::tui::render_view(
             state, providers_list, selected_provider, selected_model,
@@ -1784,5 +1776,7 @@ int main(int argc, char* argv[]) {
     }
     if (spinner_thread.joinable()) spinner_thread.join();
     LOG_DEBUG("Main: exit complete");
+    // Flush and close every per-session log file so buffered lines reach disk.
+    session_logger->close_all();
     return 0;
 }

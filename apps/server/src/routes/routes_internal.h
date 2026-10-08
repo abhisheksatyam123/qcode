@@ -13,6 +13,21 @@ namespace server {
 std::string load_persona_prompt(const std::string& persona, const std::string& workspace);
 nlohmann::json list_available_personas(const std::string& workspace);
 
+// A provider/model resolved against the configured providers.
+struct ResolvedModel {
+    const qcode::ProviderInfo* provider = nullptr;
+    const qcode::ModelInfo* model = nullptr;  // null when the provider lists no models
+};
+
+// Resolve `provider` / `model` by id or name. An empty provider means the
+// first configured one; an empty or unknown model the provider's first model
+// (logged when unknown). A provider that is named but not configured yields
+// a null provider and a 400 on `res` listing the configured provider ids.
+ResolvedModel resolve_provider_model(const std::vector<qcode::ProviderInfo>& providers,
+                                     const std::string& provider,
+                                     const std::string& model,
+                                     httplib::Response& res);
+
 void register_system_routes(
     httplib::Server& svr,
     std::shared_ptr<std::vector<qcode::ProviderInfo>> providers,

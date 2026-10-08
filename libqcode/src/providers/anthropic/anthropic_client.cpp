@@ -3,6 +3,7 @@
 #include <qcode/providers/anthropic.h>
 #include <qcode/core/logger.h>
 #include "anthropic_request_builder.h"
+#include "anthropic_oauth.h"
 #include "anthropic_response_parser.h"
 #include "anthropic_stream.h"
 
@@ -16,10 +17,38 @@ namespace qcode {
 namespace anthropic {
 namespace {
 
+bool detect_oauth(const std::string& api_key, const CompatibleOptions& options) {
+  if (options.is_oauth) return true;
+  if (api_key.starts_with("sk-ant-oat")) return true;
+  if (options.bearer_auth && (options.base_url.find("anthropic.com") != std::string::npos || options.base_url.empty())) {
+    return true;
+  }
+  for (const auto& [k, v] : options.headers) {
+    if (k == "User-Agent" && v.find("claude-cli") != std::string::npos) return true;
+  }
+  return false;
+}
+
 httplib::Headers extra_headers(
-    const std::map<std::string, std::string>& headers) {
+    const std::map<std::string, std::string>& headers,
+    bool is_oauth,
+    const std::string& token) {
   httplib::Headers extra{{"anthropic-version", "2023-06-01"}};
-  for (const auto& [name, value] : headers) extra.emplace(name, value);
+  if (is_oauth) {
+    extra.emplace("anthropic-beta", kAnthropicBetaHeaders);
+    extra.emplace("User-Agent", "claude-cli/2.1.300 (ext, cli)");
+    extra.emplace("x-app", "cli");
+    extra.emplace("x-anthropic-billing-header",
+                  format_billing_header_value());
+    const std::string token_suffix = token.size() > 8 ? token.substr(token.size() - 8) : token;
+    extra.emplace("x-claude-code-session-id", sha1_hex("anthropic" + token_suffix));
+  }
+  for (const auto& [name, value] : headers) {
+    if (is_oauth && (name == "User-Agent" || name == "anthropic-beta" || name == "x-app" || name == "x-claude-code-session-id" || name == "x-anthropic-billing-header")) {
+      extra.erase(name);
+    }
+    extra.emplace(name, value);
+  }
   return extra;
 }
 
@@ -48,21 +77,25 @@ AnthropicClient::AnthropicClient(const std::string& api_key,
 AnthropicClient::AnthropicClient(const std::string& api_key,
                                  const CompatibleOptions& options)
     : BaseProviderClient(
-          providers::ProviderConfig{
-              .api_key = api_key,
-              .base_url = options.base_url,
-              .completions_endpoint_path =
-                  messages_path(options.base_url, options.completions_path),
-              .embeddings_endpoint_path = "/v1/embeddings",
-              .auth_header_name =
-                  options.bearer_auth ? "Authorization" : "x-api-key",
-              .auth_header_prefix = options.bearer_auth ? "Bearer " : "",
-              .extra_headers = extra_headers(options.headers),
-              .retry_config = options.retry_config},
-          std::make_unique<AnthropicRequestBuilder>(),
+          [&]() {
+            const bool oauth = detect_oauth(api_key, options);
+            const bool bearer = options.bearer_auth || oauth;
+            return providers::ProviderConfig{
+                .api_key = api_key,
+                .base_url = options.base_url,
+                .completions_endpoint_path =
+                    messages_path(options.base_url, options.completions_path),
+                .embeddings_endpoint_path = "/v1/embeddings",
+                .auth_header_name = bearer ? "Authorization" : "x-api-key",
+                .auth_header_prefix = bearer ? "Bearer " : "",
+                .extra_headers = extra_headers(options.headers, oauth, api_key),
+                .retry_config = options.retry_config};
+          }(),
+          std::make_unique<AnthropicRequestBuilder>(detect_oauth(api_key, options)),
           std::make_unique<AnthropicResponseParser>()) {
-  LOG_DEBUG("Anthropic client initialized with base_url: {} bearer={}",
-            options.base_url, options.bearer_auth);
+  const bool oauth = detect_oauth(api_key, options);
+  LOG_DEBUG("Anthropic client initialized with base_url: {} bearer={} oauth={}",
+            options.base_url, options.bearer_auth || oauth, oauth);
 }
 
 StreamResult AnthropicClient::stream_text(const StreamOptions& options) {

@@ -57,7 +57,7 @@ Messages rich_history() {
 TEST(TransformMatrixTest, AnthropicNeverEmitsSystemRole) {
   anthropic::AnthropicRequestBuilder builder;
   GenerateOptions opts;
-  opts.model = "claude-sonnet-4-6";
+  opts.model = "claude-sonnet-5-5";
   opts.messages = {Message::system("Conversation compacted"),
                    Message::user("hi")};
 
@@ -78,7 +78,7 @@ TEST(TransformMatrixTest, AnthropicNeverEmitsSystemRole) {
 TEST(TransformMatrixTest, AnthropicRichHistoryAlternatesAndPairs) {
   anthropic::AnthropicRequestBuilder builder;
   GenerateOptions opts;
-  opts.model = "claude-sonnet-4-6";
+  opts.model = "claude-sonnet-5-5";
   opts.system = "BASE SYSTEM";
   opts.messages = rich_history();
 
@@ -271,7 +271,7 @@ TEST(TransformMatrixTest, CursorPromptCoversEveryTurn) {
 // ── Normalization invariants shared by every transport ──
 
 TEST(TransformMatrixTest, NormalizeClaudeKeepsImagesDropsUnsignedReasoning) {
-  const Model model("claude-sonnet-4-6", "anthropic");
+  const Model model("claude-sonnet-5-5", "anthropic");
   Messages in;
   MessageContent user_parts;
   user_parts.emplace_back(TextContentPart{"with image"});

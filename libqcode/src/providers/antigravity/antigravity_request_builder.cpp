@@ -12,10 +12,9 @@ nlohmann::json AntigravityRequestBuilder::build_request_json(
   // Reuse the OpenAI message/tool/parameter assembly, then translate to the
   // Gemini generateContent shape and wrap in the Antigravity envelope.
   openai::OpenAIRequestBuilder inner;
-  auto openai_req = inner.build_request_json(options);
-  auto gemini_req = qcode::gemini::convert_openai_to_gemini(openai_req);
   return qcode::gemini::wrap_antigravity_envelope(
-      gemini_req, options.model, project_id_);
+      qcode::gemini::convert_openai_to_gemini(inner.build_request_json(options)),
+      options.model, project_id_);
 }
 
 nlohmann::json AntigravityRequestBuilder::build_request_json(

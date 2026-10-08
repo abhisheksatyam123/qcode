@@ -11,10 +11,10 @@ size_t estimate_tokens(const qcode::Messages& messages);
 // Estimate tokens for the system prompt text.
 size_t estimate_system_tokens(const std::string& system_prompt);
 
-// Returns a pruned COPY that fits within the context budget.
-// The original messages are never modified.
+// Returns the messages pruned to fit within the context budget. Takes them by
+// value: pass std::move(history) to avoid a copy, or an lvalue to keep yours.
 // Escalating passes: tool results → reasoning → assistant text → drop old messages.
-qcode::Messages prune_context(const qcode::Messages& messages,
+qcode::Messages prune_context(qcode::Messages messages,
                            size_t context_window,
                            size_t keep_recent = 8);
 

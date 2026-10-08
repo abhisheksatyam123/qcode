@@ -379,7 +379,7 @@ TEST(TuiConfigTest, FormatProviderCatalogForPrompt) {
   EXPECT_THAT(catalog_md, testing::HasSubstr("model: \"<provider>:<model_id>\""));
 }
 
-TEST(TuiConfigTest, FiltersOutUnsupportedProviders) {
+TEST(TuiConfigTest, LoadsEveryConfiguredProvider) {
   ScopedConfig config(R"({
       "provider": {
         "opencode": {"name": "OpenCode", "models": {"m1": {}}},
@@ -395,17 +395,17 @@ TEST(TuiConfigTest, FiltersOutUnsupportedProviders) {
     })");
 
   const auto providers = config.load();
-  // Only the 4 supported providers must be loaded
-  ASSERT_EQ(providers.size(), 4u);
+  // Every provider in the config is loaded: the app is cross-provider.
+  ASSERT_EQ(providers.size(), 9u);
   EXPECT_NE(FindProvider(providers, "opencode"), nullptr);
   EXPECT_NE(FindProvider(providers, "openrouter"), nullptr);
   EXPECT_NE(FindProvider(providers, "cursor"), nullptr);
   EXPECT_NE(FindProvider(providers, "antigravity"), nullptr);
-  EXPECT_EQ(FindProvider(providers, "openai"), nullptr);
-  EXPECT_EQ(FindProvider(providers, "anthropic"), nullptr);
-  EXPECT_EQ(FindProvider(providers, "qpilot"), nullptr);
-  EXPECT_EQ(FindProvider(providers, "qgenie"), nullptr);
-  EXPECT_EQ(FindProvider(providers, "unknown_vendor"), nullptr);
+  EXPECT_NE(FindProvider(providers, "openai"), nullptr);
+  EXPECT_NE(FindProvider(providers, "anthropic"), nullptr);
+  EXPECT_NE(FindProvider(providers, "qpilot"), nullptr);
+  EXPECT_NE(FindProvider(providers, "qgenie"), nullptr);
+  EXPECT_NE(FindProvider(providers, "unknown_vendor"), nullptr);
 }
 
 TEST(TuiConfigTest, AntigravityTokenRefreshHelpers) {

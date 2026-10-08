@@ -31,6 +31,7 @@ bool dispatch_json(const nlohmann::json& msg, qcode::bus::BusPort& bus);
 nlohmann::json message_delta_to_json(const qcode::contract::MessageDelta::Payload& p);
 nlohmann::json tool_call_started_to_json(const qcode::contract::ToolCallStarted::Payload& p);
 nlohmann::json tool_call_completed_to_json(const qcode::contract::ToolCallCompleted::Payload& p);
+nlohmann::json user_message_injected_to_json(const qcode::contract::UserMessageInjected::Payload& p);
 nlohmann::json session_status_to_json(const qcode::contract::SessionStatusChanged::Payload& p);
 nlohmann::json error_occurred_to_json(const qcode::contract::ErrorOccurred::Payload& p);
 nlohmann::json reasoning_delta_to_json(const qcode::contract::ReasoningDelta::Payload& p);

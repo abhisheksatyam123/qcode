@@ -66,14 +66,19 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
         "Extracted message content - length: {}, thinking_len: {}, tool calls: {}",
         result.text.length(), thinking_text.size(), result.tool_calls.size());
 
-    // Add assistant response to messages (keep thinking for display/replay)
-    if (!result.text.empty() || !thinking_text.empty()) {
-      if (!thinking_text.empty()) {
-        result.response_messages.push_back(Message::assistant_with_reasoning(
-            result.text, thinking_text, thinking_signature));
-      } else {
-        result.response_messages.push_back(Message::assistant(result.text));
+    // Add the assistant response to messages: thinking (kept for replay),
+    // then text, then tool_use. The tool loop appends this message as the
+    // step's assistant turn, so the calls must be in it — otherwise their
+    // results have no tool_use to answer and the next request drops them.
+    if (!result.text.empty() || !thinking_text.empty() ||
+        !result.tool_calls.empty()) {
+      Message assistant = Message::assistant_with_reasoning(
+          result.text, thinking_text, thinking_signature);
+      for (const auto& call : result.tool_calls) {
+        assistant.content.emplace_back(ToolCallContentPart{
+            call.id, call.tool_name, call.arguments, call.thought_signature});
       }
+      result.response_messages.push_back(std::move(assistant));
     }
   } else {
     LOG_DEBUG("Response has no content array");

@@ -1,3 +1,4 @@
+#include <qcode/core/perf.h>
 #include <qcode/session/session_store.h>
 #include "session_db_internal.h"
 
@@ -101,6 +102,7 @@ static std::string generate_uuid() {
 }
 
 void init_database() {
+    PERF_SCOPE("init_database");
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
     if (!db) return;
@@ -321,9 +323,59 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
+    // ── Migration v9 → v10: subagent router evidence (subagent_stats.h) ──
+    // No foreign keys: runs are learning data and outlive their sessions.
+    if (user_version < 10) {
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS subagent_runs ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  task_id TEXT NOT NULL,"
+            "  attempt INTEGER NOT NULL,"
+            "  parent_session_id TEXT DEFAULT '',"
+            "  provider TEXT,"
+            "  model TEXT,"
+            "  mode TEXT,"
+            "  difficulty TEXT,"
+            "  outcome TEXT,"
+            "  error TEXT DEFAULT '',"
+            "  latency_ms REAL DEFAULT 0,"
+            "  started_at INTEGER,"
+            "  rating INTEGER,"
+            "  rating_note TEXT DEFAULT '',"
+            "  quality REAL DEFAULT -1,"
+            "  UNIQUE(task_id, attempt)"
+            ");", nullptr, nullptr, nullptr);
+        // UNIQUE(task_id, attempt) already indexes lookups by task_id.
+        sqlite3_exec(db,
+            "CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent "
+            "ON subagent_runs(parent_session_id, started_at);",
+            nullptr, nullptr, nullptr);
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS subagent_arms ("
+            "  key TEXT PRIMARY KEY,"
+            "  alpha REAL DEFAULT 0,"
+            "  beta REAL DEFAULT 0,"
+            "  runs INTEGER DEFAULT 0,"
+            "  failures INTEGER DEFAULT 0,"
+            "  rated INTEGER DEFAULT 0,"
+            "  rating_sum REAL DEFAULT 0,"
+            "  latency_ms REAL DEFAULT 0,"
+            "  cooldown_until INTEGER DEFAULT 0,"
+            "  consecutive_transient INTEGER DEFAULT 0,"
+            "  updated_at INTEGER DEFAULT 0"
+            ");", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 10;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    }
+
     // Ensure performance indexes exist on messages and sessions
     sqlite3_exec(db,
-        "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);",
+        "CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at);",
+        nullptr, nullptr, nullptr);
+    // Superseded by idx_messages_session_created (leading column is session_id).
+    sqlite3_exec(db,
+        "DROP INDEX IF EXISTS idx_messages_session_id;",
         nullptr, nullptr, nullptr);
     sqlite3_exec(db,
         "CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);",
@@ -426,6 +478,20 @@ bool is_valid_session_id(const std::string& id) {
         }
     }
     return true;
+}
+
+bool session_exists(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return false;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return false;
+    const char* sql = "SELECT 1 FROM sessions WHERE id = ? LIMIT 1;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+    bool exists = (sqlite3_step(stmt) == SQLITE_ROW);
+    sqlite3_finalize(stmt);
+    return exists;
 }
 
 void ensure_session_row(const std::string& id,
@@ -760,7 +826,7 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
                 try {
                     auto j = nlohmann::json::parse(content);
                     if (j.is_object() && j.contains("tool_call_id")) {
-                        auto result = j.contains("result") ? j.at("result")
+                        auto result = j.contains("result") ? std::move(j["result"])
                                                            : nlohmann::json();
                         history.push_back(qcode::Message::tool_results(
                             {{j.at("tool_call_id").get<std::string>(),
@@ -854,6 +920,120 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
     state.files_detail_open = false;
 }
 
+// Inserts the rows for one overwrite_session_history() call using a single
+// prepared INSERT statement. Returns false on the first prepare/step failure;
+// the caller is responsible for rolling back the surrounding transaction.
+static bool write_session_history_rows(sqlite3* db, const std::string& session_id,
+                                       const std::vector<qcode::Message>& messages) {
+    const char* delete_sql = "DELETE FROM messages WHERE session_id = ?;";
+    sqlite3_stmt* del_stmt = nullptr;
+    if (!prepare_stmt(db, delete_sql, &del_stmt)) return false;
+    sqlite3_bind_text(del_stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+    const int del_rc = sqlite3_step(del_stmt);
+    sqlite3_finalize(del_stmt);
+    if (del_rc != SQLITE_DONE) {
+        LOG_ERROR("SQLite: overwrite delete failed: {}", sqlite3_errmsg(db));
+        return false;
+    }
+
+    const char* insert_sql =
+        "INSERT INTO messages (session_id, sender, content, created_at) "
+        "VALUES (?, ?, ?, ?);";
+    sqlite3_stmt* ins_stmt = nullptr;
+    if (!prepare_stmt(db, insert_sql, &ins_stmt)) return false;
+
+    auto now = std::chrono::system_clock::now();
+    const long long created_at =
+        std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
+    auto insert_row = [&](const char* sender, const std::string& content,
+                          const char* label) -> bool {
+        sqlite3_reset(ins_stmt);
+        sqlite3_clear_bindings(ins_stmt);
+        sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(ins_stmt, 2, sender, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(ins_stmt, 4, created_at);
+        if (sqlite3_step(ins_stmt) == SQLITE_DONE) return true;
+        LOG_ERROR("SQLite: overwrite insert {} failed: {}", label, sqlite3_errmsg(db));
+        return false;
+    };
+
+    bool ok = true;
+    for (const auto& m : messages) {
+        if (!ok) break;
+        // User messages carrying image attachments persist as one
+        // envelope row so reloads restore text + images together; the
+        // per-part loop below would silently drop ImageContentPart.
+        if (m.role == qcode::kMessageRoleUser && m.has_images()) {
+            nlohmann::json env{{"text", m.get_text()},
+                               {"images", nlohmann::json::array()}};
+            for (const auto& part : m.content) {
+                if (const auto* ip = std::get_if<qcode::ImageContentPart>(&part)) {
+                    nlohmann::json ji{{"mime_type", ip->mime_type},
+                                      {"data", ip->data}};
+                    if (!ip->description.empty()) {
+                        ji["description"] = ip->description;
+                    }
+                    env["images"].push_back(std::move(ji));
+                }
+            }
+            const std::string content =
+                env.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+            ok = insert_row("User", content, "User(envelope)");
+            continue;
+        }
+        for (const auto& part : m.content) {
+            if (!ok) break;
+            if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
+                if (rcp->text.empty()) continue;
+                ok = insert_row("Reasoning", rcp->text, "Reasoning");
+            } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
+                nlohmann::json call_json = {
+                    {"id", tcp->id},
+                    {"name", tcp->tool_name},
+                    {"arguments", tcp->arguments},
+                };
+                if (!tcp->thought_signature.empty()) {
+                    call_json["thought_signature"] = tcp->thought_signature;
+                }
+                const std::string content =
+                    call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+                ok = insert_row("ToolCall", content, "ToolCall");
+            } else if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
+                nlohmann::json result_json = {
+                    {"tool_call_id", trp->tool_call_id},
+                    {"result", trp->result},
+                    {"is_error", trp->is_error},
+                    {"duration_ms", trp->duration_ms},
+                };
+                const std::string content =
+                    result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+                ok = insert_row("ToolResult", content, "ToolResult");
+            } else if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
+                if (tp->text.empty() && m.content.size() > 1) continue;
+                const char* sender = "Assistant";
+                if (m.role == qcode::kMessageRoleUser) sender = "User";
+                else if (m.role == qcode::kMessageRoleAssistant) sender = "Assistant";
+                else if (m.role == qcode::kMessageRoleSystem) sender = "System";
+                ok = insert_row(sender, tp->text, "Text");
+            }
+        }
+    }
+    sqlite3_finalize(ins_stmt);
+    return ok;
+}
+
+// Best-effort rollback of any transaction left open on this handle.
+static void rollback_if_open(sqlite3* db) {
+    if (sqlite3_get_autocommit(db)) return;  // no transaction active
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        LOG_ERROR("SQLite: failed to roll back transaction: {}", err_msg ? err_msg : "unknown");
+        sqlite3_free(err_msg);
+    }
+}
+
 void overwrite_session_history(const std::string& session_id, const std::vector<qcode::Message>& messages) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
@@ -866,141 +1046,26 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
         return;
     }
 
+    // All-or-nothing: the DELETE and every INSERT commit together, or the
+    // previous history is left untouched.
     char* err_msg = nullptr;
     if (sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
         LOG_ERROR("SQLite: failed to begin transaction: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
-            return;
+        return;
     }
 
-    const char* delete_sql = "DELETE FROM messages WHERE session_id = ?;";
-    sqlite3_stmt* del_stmt = nullptr;
-    if (prepare_stmt(db, delete_sql, &del_stmt)) {
-        sqlite3_bind_text(del_stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
-        sqlite3_step(del_stmt);
-        sqlite3_finalize(del_stmt);
-    }
-
-    const char* insert_sql =
-        "INSERT INTO messages (session_id, sender, content, created_at) "
-        "VALUES (?, ?, ?, ?);";
-    sqlite3_stmt* ins_stmt = nullptr;
-    if (prepare_stmt(db, insert_sql, &ins_stmt)) {
-        auto now = std::chrono::system_clock::now();
-        long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-
-        for (const auto& m : messages) {
-            // User messages carrying image attachments persist as one
-            // envelope row so reloads restore text + images together; the
-            // per-part loop below would silently drop ImageContentPart.
-            if (m.role == qcode::kMessageRoleUser && m.has_images()) {
-                nlohmann::json env{{"text", m.get_text()},
-                                   {"images", nlohmann::json::array()}};
-                for (const auto& part : m.content) {
-                    if (const auto* ip =
-                            std::get_if<qcode::ImageContentPart>(&part)) {
-                        nlohmann::json ji{{"mime_type", ip->mime_type},
-                                          {"data", ip->data}};
-                        if (!ip->description.empty()) {
-                            ji["description"] = ip->description;
-                        }
-                        env["images"].push_back(std::move(ji));
-                    }
-                }
-                const std::string content =
-                    env.dump(-1, ' ', false,
-                             nlohmann::json::error_handler_t::replace);
-                sqlite3_reset(ins_stmt);
-                sqlite3_clear_bindings(ins_stmt);
-                sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1,
-                                   SQLITE_TRANSIENT);
-                sqlite3_bind_text(ins_stmt, 2, "User", -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1,
-                                   SQLITE_TRANSIENT);
-                sqlite3_bind_int64(ins_stmt, 4, created_at);
-                if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                    LOG_ERROR("SQLite: overwrite insert User(envelope) failed: {}",
-                              sqlite3_errmsg(db));
-                }
-                continue;
-            }
-            for (const auto& part : m.content) {
-                if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
-                    if (rcp->text.empty()) continue;
-                    sqlite3_reset(ins_stmt);
-                    sqlite3_clear_bindings(ins_stmt);
-                    sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 2, "Reasoning", -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 3, rcp->text.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_int64(ins_stmt, 4, created_at);
-                    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                        LOG_ERROR("SQLite: overwrite insert Reasoning failed: {}", sqlite3_errmsg(db));
-                    }
-                } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
-                    nlohmann::json call_json = {
-                        {"id", tcp->id},
-                        {"name", tcp->tool_name},
-                        {"arguments", tcp->arguments},
-                    };
-                    if (!tcp->thought_signature.empty()) {
-                        call_json["thought_signature"] = tcp->thought_signature;
-                    }
-                    std::string content = call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-
-                    sqlite3_reset(ins_stmt);
-                    sqlite3_clear_bindings(ins_stmt);
-                    sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 2, "ToolCall", -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_int64(ins_stmt, 4, created_at);
-                    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                        LOG_ERROR("SQLite: overwrite insert ToolCall failed: {}", sqlite3_errmsg(db));
-                    }
-                } else if (const auto* trp = std::get_if<qcode::ToolResultContentPart>(&part)) {
-                    nlohmann::json result_json = {
-                        {"tool_call_id", trp->tool_call_id},
-                        {"result", trp->result},
-                        {"is_error", trp->is_error},
-                        {"duration_ms", trp->duration_ms},
-                    };
-                    std::string content = result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-
-                    sqlite3_reset(ins_stmt);
-                    sqlite3_clear_bindings(ins_stmt);
-                    sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 2, "ToolResult", -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_int64(ins_stmt, 4, created_at);
-                    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                        LOG_ERROR("SQLite: overwrite insert ToolResult failed: {}", sqlite3_errmsg(db));
-                    }
-                } else if (const auto* tp = std::get_if<qcode::TextContentPart>(&part)) {
-                    if (tp->text.empty() && m.content.size() > 1) continue;
-                    std::string sender = "Assistant";
-                    if (m.role == qcode::kMessageRoleUser) sender = "User";
-                    else if (m.role == qcode::kMessageRoleAssistant) sender = "Assistant";
-                    else if (m.role == qcode::kMessageRoleSystem) sender = "System";
-
-                    sqlite3_reset(ins_stmt);
-                    sqlite3_clear_bindings(ins_stmt);
-                    sqlite3_bind_text(ins_stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(ins_stmt, 3, tp->text.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_int64(ins_stmt, 4, created_at);
-                    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-                        LOG_ERROR("SQLite: overwrite insert Text failed: {}", sqlite3_errmsg(db));
-                    }
-                }
-            }
-        }
-        sqlite3_finalize(ins_stmt);
+    if (!write_session_history_rows(db, session_id, messages)) {
+        LOG_ERROR("SQLite: overwrite of session '{}' rolled back", session_id);
+        rollback_if_open(db);
+        return;
     }
 
     if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
         LOG_ERROR("SQLite: failed to commit transaction: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
+        rollback_if_open(db);
     }
-
 }
 
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
@@ -1088,6 +1153,27 @@ std::vector<std::pair<std::string, std::string>> list_sessions(bool include_suba
     return sessions;
 }
 
+static SessionInfo read_session_info_row(sqlite3_stmt* stmt) {
+    SessionInfo info;
+    const unsigned char* id_txt = sqlite3_column_text(stmt, 0);
+    const unsigned char* title_txt = sqlite3_column_text(stmt, 1);
+    const unsigned char* ws_txt = sqlite3_column_text(stmt, 2);
+    const unsigned char* prov_txt = sqlite3_column_text(stmt, 3);
+    const unsigned char* model_txt = sqlite3_column_text(stmt, 4);
+    const unsigned char* pid_txt = sqlite3_column_text(stmt, 7);
+    info.id = id_txt ? reinterpret_cast<const char*>(id_txt) : "";
+    info.title = title_txt ? reinterpret_cast<const char*>(title_txt) : "";
+    info.workspace = ws_txt ? reinterpret_cast<const char*>(ws_txt) : "";
+    info.provider = prov_txt ? reinterpret_cast<const char*>(prov_txt) : "";
+    info.model = model_txt ? reinterpret_cast<const char*>(model_txt) : "";
+    info.last_active_at = sqlite3_column_int64(stmt, 5);
+    info.message_count = sqlite3_column_int(stmt, 6);
+    info.parent_session_id = pid_txt ? reinterpret_cast<const char*>(pid_txt) : "";
+    const unsigned char* persona_txt = sqlite3_column_text(stmt, 8);
+    info.persona = persona_txt ? reinterpret_cast<const char*>(persona_txt) : "";
+    return info;
+}
+
 std::vector<SessionInfo> list_sessions_full(bool include_subagents, const std::string& parent_session_id) {
     std::vector<SessionInfo> sessions;
     auto db_lock = SharedDbHandle::instance().acquire();
@@ -1141,29 +1227,46 @@ std::vector<SessionInfo> list_sessions_full(bool include_subagents, const std::s
             sqlite3_bind_text(stmt, 2, parent_session_id.c_str(), -1, SQLITE_TRANSIENT);
         }
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            SessionInfo info;
-            const unsigned char* id_txt = sqlite3_column_text(stmt, 0);
-            const unsigned char* title_txt = sqlite3_column_text(stmt, 1);
-            const unsigned char* ws_txt = sqlite3_column_text(stmt, 2);
-            const unsigned char* prov_txt = sqlite3_column_text(stmt, 3);
-            const unsigned char* model_txt = sqlite3_column_text(stmt, 4);
-            const unsigned char* pid_txt = sqlite3_column_text(stmt, 7);
-            info.id = id_txt ? reinterpret_cast<const char*>(id_txt) : "";
-            info.title = title_txt ? reinterpret_cast<const char*>(title_txt) : "";
-            info.workspace = ws_txt ? reinterpret_cast<const char*>(ws_txt) : "";
-            info.provider = prov_txt ? reinterpret_cast<const char*>(prov_txt) : "";
-            info.model = model_txt ? reinterpret_cast<const char*>(model_txt) : "";
-            info.last_active_at = sqlite3_column_int64(stmt, 5);
-            info.message_count = sqlite3_column_int(stmt, 6);
-            info.parent_session_id = pid_txt ? reinterpret_cast<const char*>(pid_txt) : "";
-            const unsigned char* persona_txt = sqlite3_column_text(stmt, 8);
-            info.persona = persona_txt ? reinterpret_cast<const char*>(persona_txt) : "";
-            sessions.push_back(std::move(info));
+            sessions.push_back(read_session_info_row(stmt));
         }
         sqlite3_finalize(stmt);
     }
 
     return sessions;
+}
+
+std::optional<SessionInfo> get_session_info(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return std::nullopt;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return std::nullopt;
+
+    const char* sql =
+        "SELECT sessions.id, sessions.title, COALESCE(sessions.workspace, ''), "
+        "       COALESCE(sessions.provider, ''), COALESCE(sessions.model, ''), "
+        "       COALESCE(m.last_msg_time, sessions.created_at) AS last_active, "
+        "       COALESCE(m.msg_count, 0) AS msg_count, "
+        "       COALESCE(sessions.parent_session_id, '') AS parent_id, "
+        "       COALESCE(sessions.persona, '') AS persona "
+        "FROM sessions "
+        "LEFT JOIN ( "
+        "    SELECT session_id, MAX(created_at) AS last_msg_time, COUNT(*) AS msg_count "
+        "    FROM messages "
+        "    WHERE session_id = ? "
+        "    GROUP BY session_id "
+        ") m ON m.session_id = sessions.id "
+        "WHERE sessions.id = ?;";
+    std::optional<SessionInfo> result;
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, sql, &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            result = read_session_info_row(stmt);
+        }
+        sqlite3_finalize(stmt);
+    }
+    return result;
 }
 
 std::string get_session_workspace(const std::string& session_id) {
@@ -1215,6 +1318,7 @@ SessionStats get_session_stats(const std::string& session_id,
     SessionStats stats;
     stats.id = session_id;
     if (session_id.empty() || !is_valid_session_id(session_id)) return stats;
+    PERF_SCOPE("get_session_stats");
 
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
@@ -1255,37 +1359,37 @@ SessionStats get_session_stats(const std::string& session_id,
 
     // ── Message counts + token/tool accumulation from stored JSON ──
     {
-        const char* sql =
-            "SELECT sender, content FROM messages WHERE session_id = ?;";
+        // Persisted token/tool counters from prior runs live in ToolResult JSON.
+        auto tool_field = [](const char* key, bool as_int) {
+            std::string path = std::string("'$.") + key + "'";
+            std::string value = "json_extract(content, " + path + ")";
+            if (as_int) value = "CAST(" + value + " AS INTEGER)";
+            return "COALESCE(SUM(CASE WHEN sender = 'ToolResult' AND json_valid(content) "
+                   "AND json_type(content, " + path + ") IN ('integer', 'real') "
+                   "THEN " + value + " ELSE 0 END), 0)";
+        };
+        std::string sql =
+            "SELECT COUNT(*), "
+            "COALESCE(SUM(sender = 'User'), 0), "
+            "COALESCE(SUM(sender = 'Assistant'), 0), "
+            "COALESCE(SUM(sender = 'ToolCall'), 0), " +
+            tool_field("prompt_tokens", true) + ", " +
+            tool_field("completion_tokens", true) + ", " +
+            tool_field("total_tokens", true) + ", " +
+            tool_field("duration_ms", false) +
+            " FROM messages WHERE session_id = ?;";
         sqlite3_stmt* stmt = nullptr;
-        if (prepare_stmt(db, sql, &stmt)) {
+        if (prepare_stmt(db, sql.c_str(), &stmt)) {
             sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
-            while (sqlite3_step(stmt) == SQLITE_ROW) {
-                const unsigned char* sender_txt = sqlite3_column_text(stmt, 0);
-                const unsigned char* content_txt = sqlite3_column_text(stmt, 1);
-                std::string sender = sender_txt ? reinterpret_cast<const char*>(sender_txt) : "";
-                std::string content = content_txt ? reinterpret_cast<const char*>(content_txt) : "";
-                stats.message_count++;
-                if (sender == "User") stats.user_messages++;
-                else if (sender == "Assistant") stats.assistant_messages++;
-                else if (sender == "ToolCall") stats.tool_calls++;
-                else if (sender == "ToolResult") {
-                    // Try to read persisted token/tool counters from a prior run.
-                    try {
-                        auto j = nlohmann::json::parse(content);
-                        if (j.is_object()) {
-                            auto add = [&](const char* key, int& dst) {
-                                if (j.contains(key) && j[key].is_number())
-                                    dst += j[key].get<int>();
-                            };
-                            add("prompt_tokens", stats.prompt_tokens);
-                            add("completion_tokens", stats.completion_tokens);
-                            add("total_tokens", stats.total_tokens);
-                            if (j.contains("duration_ms") && j["duration_ms"].is_number())
-                                stats.total_tool_time_ms += j["duration_ms"].get<double>();
-                        }
-                    } catch (...) {}
-                }
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                stats.message_count = sqlite3_column_int(stmt, 0);
+                stats.user_messages = sqlite3_column_int(stmt, 1);
+                stats.assistant_messages = sqlite3_column_int(stmt, 2);
+                stats.tool_calls = sqlite3_column_int(stmt, 3);
+                stats.prompt_tokens += sqlite3_column_int(stmt, 4);
+                stats.completion_tokens += sqlite3_column_int(stmt, 5);
+                stats.total_tokens += sqlite3_column_int(stmt, 6);
+                stats.total_tool_time_ms += sqlite3_column_double(stmt, 7);
             }
             sqlite3_finalize(stmt);
         }

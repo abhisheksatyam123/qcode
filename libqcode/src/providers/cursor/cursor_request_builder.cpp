@@ -33,7 +33,14 @@ std::string build_conversation_prompt(const GenerateOptions& options) {
     prompt << "System:\n" << options.system << "\n\n";
   }
 
-  for (const auto& message : options.messages) {
+  // Image tool results become text plus a user image (rendered as a
+  // placeholder below): this text-prompt wire cannot carry pixels, and the
+  // base64 must never reach the prompt. The history is copied only when it
+  // actually holds an image result.
+  Messages lifted;
+  const bool lift = ProviderTransform::has_tool_result_images(options.messages);
+  if (lift) lifted = ProviderTransform::lift_tool_result_images(options.messages);
+  for (const auto& message : lift ? lifted : options.messages) {
     prompt << message.roleToString() << ":\n";
     for (const auto& part : message.content) {
       if (const auto* text = std::get_if<TextContentPart>(&part)) {

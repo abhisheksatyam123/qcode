@@ -36,6 +36,8 @@ public:
     }
     const std::string& session_id() const { return *state_.session_id; }
     const std::string& status() const { return status_; }
+    // Lock-protected copy for readers on other threads (spinner).
+    std::string status_snapshot() const;
     const std::string& last_error() const { return last_error_; }
 
     void enqueue_prompt(const std::string& prompt);
@@ -52,6 +54,10 @@ public:
     bool remove_queued_prompt(size_t index_1based);
     // Snapshot of queued prompt bodies for the message list (thread-safe copy).
     std::vector<std::string> queued_prompts_snapshot() const;
+    // Worker-thread drain for mid-turn injection: takes every queued prompt
+    // if the queue still belongs to `session_id`. The view mirror refreshes
+    // when the matching UserMessageInjected event reaches the UI thread.
+    std::vector<std::string> take_queued_prompts(const std::string& session_id);
 
     std::vector<Toast> toasts() const;
     void add_toast(const std::string& message, const std::string& variant = "info", int duration_ms = 5000);
@@ -84,6 +90,8 @@ private:
     ChatState state_;
     bus::BusPort& bus_;
     std::string status_ = "idle";
+    mutable std::mutex status_mutex_;
+    void store_status(const std::string& s);
     std::string last_error_;
     std::vector<Toast> toasts_;
     mutable std::mutex toast_mutex_;
@@ -92,6 +100,7 @@ private:
     mutable std::mutex session_texts_mutex_;
 
     std::deque<std::string> prompt_queue_; // Changed to deque for append access
+    std::string queue_session_id_;          // session prompt_queue_ belongs to
     mutable std::mutex queue_mutex_;
 
     std::vector<std::pair<uint64_t, Callback>> callbacks_;

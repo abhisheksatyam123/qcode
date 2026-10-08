@@ -20,7 +20,7 @@ struct ToolDescriptor {
 
 struct ToolConfig {
   bool enable_bash{true};
-  bool enable_task{true};
+  bool enable_task{true};  // task + rate_task (the lead only)
   bool enable_image{false};
 
   static ToolConfig orchestrator(bool vision = false) {
@@ -49,13 +49,6 @@ class ToolCatalog {
                                       const std::string& args,
                                       int step_number = 0,
                                       int max_steps = 0);
-
-  // Format a single tool result for display
-  static std::string format_tool_result(const std::string& tool_name,
-                                        bool success,
-                                        const std::string& result_or_error,
-                                        int truncate_at = 500,
-                                        double duration_seconds = -1.0);
 };
 
 } // namespace qcode

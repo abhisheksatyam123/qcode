@@ -6,6 +6,7 @@
 #include <qcode/ui/chat_state.h>
 #include <qcode/ui/markdown.h>
 #include <qcode/ui/message_render.h>
+#include <qcode/tools/image_tool.h>
 #include <qcode/tools/task_tool.h>
 #include <qcode/ui/themes.h>
 #include <qcode/ui/tool_renderers.h>
@@ -47,13 +48,16 @@ ftxui::Decorator reflect_simple(HitBox& box) {
   };
 }
 
-int plain_wrap_width() {
-    int w = 80;
-    try {
-        w = Terminal::Size().dimx;
-    } catch (...) {
+int plain_wrap_width(int term_w) {
+    int w = term_w;
+    if (w <= 0) {
+        w = 80;
+        try {
+            w = Terminal::Size().dimx;
+        } catch (...) {
+        }
+        if (w <= 0) w = 80;
     }
-    if (w <= 0) w = 80;
     // Role gutter ("┃ " / "  ") + scrollbar + margin.
     return std::max(24, w - 8);
 }
@@ -435,12 +439,7 @@ static std::string extract_result_output(const qcode::ToolResultContentPart& par
     // Upstream toolError(): prefer trimmed message, never a raw JSON dump.
     if (part.result.is_string()) return part.result.get<std::string>();
     if (!part.result.is_object()) return part.result.dump();
-    if (part.result.contains("data") && part.result.contains("mime_type")) {
-        std::string p = json_string(part.result, {"path", "file"});
-        std::string mime = json_string(part.result, {"mime_type"});
-        auto bytes = part.result.value("size_bytes", 0);
-        return "Image loaded: " + (p.empty() ? "image" : p) + " (" + mime + ", " + std::to_string(bytes) + " bytes)";
-    }
+    if (ImageTool::is_image_result(part)) return ImageTool::summary(part.result);
     auto output = json_string(part.result, {"output", "content", "result",
                                             "summary", "matches", "error", "message"});
     if (!output.empty()) return output;
@@ -560,7 +559,9 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
                                  const std::string& theme,
                                  bool expanded = true,
                                  bool busy = false,
-                                 HitBox* header_box = nullptr) {
+                                 HitBox* header_box = nullptr,
+                                 int terminal_width = 0,
+                                 bool cache_markdown = true) {
     if (rp.text.empty()) return emptyElement();
 
     auto thought_line = [&](const char* marker) {
@@ -595,7 +596,7 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
                bgcolor(panel_bg(theme));
     }
 
-    Elements md = render_markdown(rp.text, theme);
+    Elements md = render_markdown(rp.text, theme, terminal_width, cache_markdown);
     Elements indented;
     for (auto& el : md) {
         indented.push_back(
@@ -625,7 +626,9 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
                         int selected_provider, int selected_model,
                         const std::string& theme,
                         const qcode::Message* adjacent_tool_results,
-                        int message_index) {
+                        int message_index, int terminal_width,
+                        bool in_flight,
+                        std::span<const qcode::Message* const> paired_tool_results) {
     Elements parts;
 
     const bool has_text = msg.has_text();
@@ -646,7 +649,7 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
         // Opencode-style user block: left border in the agent colour with a
         // subtle panel background — no label chrome.
         Elements user_lines;
-        const int wrap_w = plain_wrap_width();
+        const int wrap_w = plain_wrap_width(terminal_width);
         for (const auto& part : msg.content) {
             if (const auto* img =
                     std::get_if<qcode::ImageContentPart>(&part)) {
@@ -685,14 +688,16 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
             tool_results[result_part->tool_call_id] = result_part;
         }
     }
-    if (adjacent_tool_results != nullptr) {
-        for (const auto& part : adjacent_tool_results->content) {
+    auto collect_results = [&](const qcode::Message& rows) {
+        for (const auto& part : rows.content) {
             if (const auto* result_part =
                     std::get_if<qcode::ToolResultContentPart>(&part)) {
                 tool_results[result_part->tool_call_id] = result_part;
             }
         }
-    }
+    };
+    if (adjacent_tool_results != nullptr) collect_results(*adjacent_tool_results);
+    for (const auto* rows : paired_tool_results) collect_results(*rows);
 
     std::unordered_set<std::string> rendered_tool_results;
 
@@ -711,6 +716,13 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
         thinking_expanded =
             it != state.thinking_expand_state->end() && it->second;
     }
+    const std::string* focused_tool_id = nullptr;
+    if (state.tool_block_order && state.focused_tool_index &&
+        *state.focused_tool_index >= 0 &&
+        *state.focused_tool_index <
+            static_cast<int>(state.tool_block_order->size())) {
+        focused_tool_id = &(*state.tool_block_order)[*state.focused_tool_index];
+    }
 
     for (const auto& part : msg.content) {
         if (const auto* reasoning_part =
@@ -725,7 +737,8 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
                 }
                 Element block = render_reasoning(*reasoning_part, theme,
                                                  thinking_expanded, turn_busy,
-                                                 header_box);
+                                                 header_box, terminal_width,
+                                                 !in_flight);
                 parts.push_back(std::move(block));
             }
         } else if (const auto* tool_part =
@@ -738,16 +751,8 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
                     collapsed = (*state.tool_collapse_state)[tool_part->id];
                 }
 
-                bool focused = false;
-                if (state.tool_block_order) {
-                    const int idx =
-                        static_cast<int>(state.tool_block_order->size());
-                    state.tool_block_order->push_back(tool_part->id);
-                    if (state.focused_tool_index &&
-                        *state.focused_tool_index == idx) {
-                        focused = true;
-                    }
-                }
+                const bool focused =
+                    focused_tool_id && *focused_tool_id == tool_part->id;
 
                 parts.push_back(render_tool_pair(
                     *tool_part, *result_it->second, theme, collapsed, true,
@@ -770,14 +775,15 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
             }
             if (msg.role == kMessageRoleSystem) {
                 Elements sys_lines;
-                for (auto& chunk :
-                     wrap_plain_block(text_part->text, plain_wrap_width())) {
+                for (auto& chunk : wrap_plain_block(
+                         text_part->text, plain_wrap_width(terminal_width))) {
                     sys_lines.push_back(
                         hbox({text("  "), std::move(chunk) | dim}));
                 }
                 parts.push_back(vbox(std::move(sys_lines)));
             } else {
-                Elements md = render_markdown(text_part->text, theme);
+                Elements md = render_markdown(text_part->text, theme,
+                                              terminal_width, !in_flight);
                 Elements indented;
                 for (auto& el : md) {
                     indented.push_back(hbox({text("   "), std::move(el) | flex}));

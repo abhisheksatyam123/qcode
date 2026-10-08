@@ -55,10 +55,11 @@ struct ReasoningContentPart {
 };
 
 // An image attached to a conversation turn (base64 payload, wire and storage).
-// Emitted from server `attachments`; each provider's request builder converts
-// it to its own format: OpenAI-compatible `image_url` data URL (or
-// `input_image` on the Responses API), Anthropic base64 `image` block,
-// Gemini/Antigravity `inlineData` part.
+// Emitted from server `attachments`, and per request from `image` tool
+// results (ProviderTransform::lift_tool_result_images). Each provider's
+// request builder converts it to its own format: OpenAI-compatible
+// `image_url` data URL (or `input_image` on the Responses API), Anthropic
+// base64 `image` block, Gemini/Antigravity `inlineData` part.
 struct ImageContentPart {
   std::string data;       // base64-encoded image bytes
   std::string mime_type;  // e.g. "image/png"
@@ -259,7 +260,8 @@ struct Message {
 using Messages = std::vector<Message>;
 
 // Apply compaction cutoff: discard all messages before the latest compaction summary message.
-inline Messages apply_compaction_cutoff(const Messages& messages) {
+// Takes the history by value: pass an rvalue to avoid copying it.
+inline Messages apply_compaction_cutoff(Messages messages) {
   for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
     if (it->role == kMessageRoleUser) {
       std::string text;
@@ -269,8 +271,8 @@ inline Messages apply_compaction_cutoff(const Messages& messages) {
         }
       }
       if (text.find("This conversation was compacted into a handoff packet") != std::string::npos) {
-        auto forward_it = (it + 1).base();
-        return Messages(forward_it, messages.end());
+        messages.erase(messages.begin(), (it + 1).base());
+        return messages;
       }
     }
   }

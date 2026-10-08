@@ -90,10 +90,10 @@ TEST(ProviderProfileTest, PrepareZenAndOpenRouter) {
 
   providers::ProviderOptions claude;
   const auto claude_call =
-      prepare_provider_call(claude, "opencode", "claude-sonnet-4-6");
+      prepare_provider_call(claude, "opencode", "claude-sonnet-5-5");
   EXPECT_EQ(claude.protocol, "messages");
   EXPECT_EQ(claude.completions_path, "/messages");
-  EXPECT_EQ(claude_call.wire_model_id, "claude-sonnet-4-6");
+  EXPECT_EQ(claude_call.wire_model_id, "claude-sonnet-5-5");
 
   providers::ProviderOptions gemini;
   prepare_provider_call(gemini, "opencode", "gemini-3-pro");
@@ -696,7 +696,7 @@ TEST(ProviderTransformTest, DropsUnsignedReasoningForGeminiAndClaude) {
             "gemini-thought-sig");
 
   const auto claude = ProviderTransform::normalize_messages(
-      history, Model("claude-sonnet-4-6", "anthropic"));
+      history, Model("claude-sonnet-5-5", "anthropic"));
   EXPECT_TRUE(claude[1].get_reasoning().empty());
   ASSERT_TRUE(claude[1].has_tool_calls());
   EXPECT_TRUE(claude[1].get_tool_calls()[0].thought_signature.empty())
@@ -739,7 +739,7 @@ TEST(ProviderTransformTest, KeepsSignedReasoningForNativeFamily) {
   history.push_back(std::move(assistant));
 
   const auto claude = ProviderTransform::normalize_messages(
-      history, Model("claude-opus-4-6", "anthropic"));
+      history, Model("claude-opus-5-5", "anthropic"));
   EXPECT_EQ(claude[1].get_reasoning(), "claude thinking");
 
   Message gem = Message::assistant("done");

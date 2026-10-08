@@ -7,6 +7,7 @@ add_executable(qcode_tests
     unit/tool_timeout_test.cpp
     unit/openai_responses_test.cpp
     unit/anthropic_client_test.cpp
+    unit/anthropic_oauth_test.cpp
     unit/anthropic_request_builder_test.cpp
     unit/types_test.cpp
     unit/openai_stream_test.cpp
@@ -26,15 +27,19 @@ add_executable(qcode_tests
     unit/model_performance_telemetry_test.cpp
     unit/session_stats_test.cpp
     unit/queued_prompt_store_test.cpp
+    unit/queue_injection_test.cpp
     unit/session_reliability_test.cpp
     unit/dedupe_user_prompt_test.cpp
     unit/task_tool_test.cpp
     unit/task_target_test.cpp
+    unit/subagent_router_test.cpp
+    unit/subagent_stats_test.cpp
     unit/generation_continue_test.cpp
     unit/bus_json_codec_test.cpp
     unit/study_store_test.cpp
     unit/git_workspace_test.cpp
     unit/session_store_test.cpp
+    unit/session_file_logger_test.cpp
     unit/token_budget_test.cpp
     unit/tool_catalog_test.cpp
     unit/workspace_fs_test.cpp
@@ -124,7 +129,6 @@ target_compile_definitions(qcode_tests PRIVATE
     $<$<CONFIG:Debug>:QCODE_DEBUG_TESTS=1>
     CPPHTTPLIB_OPENSSL_SUPPORT=1
     CPPHTTPLIB_BROTLI_SUPPORT=1
-    CPPHTTPLIB_THREAD_POOL_COUNT=8
     QCODE_SERVER_WEBUI_DIR="${CMAKE_SOURCE_DIR}/apps/webui/src"
     QCODE_VERSION="${PROJECT_VERSION}" 
 )

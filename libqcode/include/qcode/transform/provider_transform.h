@@ -60,7 +60,8 @@ std::optional<int> top_k(const Model& model);
 ///   (unsigned thoughts 400 Gemini; signed Gemini/Claude blobs 400 Muse/OpenAI)
 /// - Closes unpaired tool calls (see close_unpaired_tool_calls)
 /// - Applies provider-specific adjustments
-Messages normalize_messages(const Messages& messages, const Model& model);
+/// Takes the history by value: pass an rvalue to avoid copying it.
+Messages normalize_messages(Messages messages, const Model& model);
 
 /// Scrub + bound a tool-call id so every provider can replay it. Stable.
 [[nodiscard]] std::string canonicalize_tool_call_id(std::string_view id);
@@ -68,7 +69,21 @@ Messages normalize_messages(const Messages& messages, const Model& model);
 /// Insert synthetic error tool results immediately after assistant tool_calls
 /// that have no matching result. OpenAI/Claude 400 when a function_call is
 /// replayed without an output — common after a TUI restart or abort mid-tool.
-Messages close_unpaired_tool_calls(const Messages& messages);
+Messages close_unpaired_tool_calls(Messages messages);
+
+/// Every request builder runs this before serializing, so none of them looks
+/// inside tool-result JSON. Each `image` tool result (ImageTool) becomes a
+/// short text result, and its pixels a typed ImageContentPart in one user
+/// message placed after that run of tool-result messages: OpenAI Chat and
+/// Responses reject images in tool output and need tool messages contiguous,
+/// and Anthropic needs tool_result blocks before other user content.
+/// Formats outside png/jpeg/webp/gif (old sessions) are described, not sent.
+Messages lift_tool_result_images(Messages messages);
+
+/// True when lift_tool_result_images would change `messages`, i.e. some tool
+/// result is an `image` tool result. Lets callers holding a const history
+/// skip copying it.
+[[nodiscard]] bool has_tool_result_images(const Messages& messages);
 
 // ── Provider options ──
 

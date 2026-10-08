@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -36,6 +37,12 @@ Http2PostResult http2_post(
 // timeout_sec 0 means no total-time cap (agent turns regularly exceed 5 min).
 // should_abort is polled from curl's progress callback so Esc/queue can stop
 // a silent RunSSE that never delivers a chunk.
+// on_sent fires once, from the transfer thread, when the request body is fully
+// uploaded or response data arrives (or the transfer ends first), so a caller
+// can sequence a follow-up request behind this one without a fixed sleep.
+// result.body keeps only the first kStreamBodyCap bytes (chunks go to
+// on_chunk); it serves error excerpts and the empty-text fallback.
+inline constexpr std::size_t kStreamBodyCap = 64 * 1024;
 Http2PostResult http2_post_stream(
     const std::string& url,
     const std::vector<std::pair<std::string, std::string>>& headers,
@@ -43,7 +50,8 @@ Http2PostResult http2_post_stream(
     const std::string& content_type,
     const std::function<bool(std::string_view chunk)>& on_chunk,
     int timeout_sec = 0,
-    std::function<bool()> should_abort = nullptr);
+    std::function<bool()> should_abort = nullptr,
+    std::function<void()> on_sent = nullptr);
 
 // Reuses one curl easy handle so TLS/HTTP2 connections stay warm across
 // BidiAppend calls (a new handshake per KV ack was ~1.2s).

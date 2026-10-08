@@ -3,6 +3,7 @@
 #include <qcode/core/logger.h>
 #include <qcode/core/random.h>
 
+#include <algorithm>
 #include <chrono>
 #include <unordered_map>
 
@@ -93,7 +94,7 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
   if (openai_req.contains("messages") && openai_req["messages"].is_array()) {
     for (const auto& msg : openai_req["messages"]) {
       const auto role = msg.value("role", "");
-      const auto text_content = openai_message_text(msg);
+      auto text_content = openai_message_text(msg);
       if (role == "system") {
         if (!system_instruction.empty()) system_instruction += "\n\n";
         system_instruction += text_content;
@@ -102,17 +103,20 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
 
       nlohmann::json parts = nlohmann::json::array();
       if (role != "tool" && !text_content.empty()) {
-        parts.push_back({{"text", text_content}});
+        parts.push_back({{"text", std::move(text_content)}});
       }
       // Chat-completions image_url data URLs -> Gemini inlineData parts.
       if (role == "user" && msg.contains("content") &&
           msg["content"].is_array()) {
         for (const auto& item : msg["content"]) {
           if (item.value("type", "") != "image_url" ||
-              !item.contains("image_url") || !item["image_url"].is_object()) {
+              !item.contains("image_url") || !item["image_url"].is_object() ||
+              !item["image_url"].contains("url")) {
             continue;
           }
-          const std::string url = item["image_url"].value("url", "");
+          // By reference: the url carries the whole base64 payload.
+          const auto& url =
+              item["image_url"]["url"].get_ref<const std::string&>();
           if (url.rfind("data:", 0) == 0 &&
               url.find(";base64,") != std::string::npos) {
             const auto comma = url.find(";base64,");
@@ -138,7 +142,8 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
           auto args = function.value("arguments", nlohmann::json{});
           if (args.is_string()) {
             try {
-              args = nlohmann::json::parse(args.get<std::string>());
+              args = nlohmann::json::parse(
+                  args.get_ref<const std::string&>());
             } catch (...) {
               args = nlohmann::json::object();
             }
@@ -177,37 +182,16 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
           continue;
         }
         auto response = msg.value("content", nlohmann::json{});
-        std::string inline_mime;
-        std::string inline_data;
-
         if (response.is_string()) {
           try {
-            response = nlohmann::json::parse(response.get<std::string>());
+            response = nlohmann::json::parse(
+                response.get_ref<const std::string&>());
           } catch (...) {
-            response = {{"result", response}};
           }
-        } else if (response.is_array()) {
-          nlohmann::json clean_resp = nlohmann::json::object();
-          for (const auto& item : response) {
-            if (item.is_object() && item.value("type", "") == "text") {
-              clean_resp["result"] = item.value("text", "");
-            } else if (item.is_object() && item.value("type", "") == "image_url") {
-              std::string url = item["image_url"].value("url", "");
-              if (url.starts_with("data:") && url.find(";base64,") != std::string::npos) {
-                auto comma = url.find(";base64,");
-                inline_mime = url.substr(5, comma - 5);
-                inline_data = url.substr(comma + 8);
-              }
-            }
-          }
-          response = std::move(clean_resp);
         }
-
-        if (response.is_object() && response.contains("data") && response.contains("mime_type")) {
-          inline_mime = response["mime_type"].get<std::string>();
-          inline_data = response["data"].get<std::string>();
-          response.erase("data");
-          response["status"] = "ok";
+        // functionResponse.response must be an object.
+        if (!response.is_object()) {
+          response = {{"result", std::move(response)}};
         }
 
         parts.push_back(
@@ -215,17 +199,18 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
               {{"id", call_id},
                {"name", tool_names.contains(call_id) ? tool_names[call_id] : ""},
                {"response", std::move(response)}}}});
-
-        if (!inline_mime.empty() && !inline_data.empty()) {
-          parts.push_back({
-              {"inlineData", {
-                  {"mimeType", std::move(inline_mime)},
-                  {"data", std::move(inline_data)}
-              }}
-          });
-        }
       }
-      if (!parts.empty()) {
+      if (parts.empty()) continue;
+      // Images lifted out of a tool result (lift_tool_result_images) ride in
+      // the functionResponse turn they belong to.
+      const bool images_only =
+          std::all_of(parts.begin(), parts.end(), [](const nlohmann::json& p) {
+            return p.contains("inlineData");
+          });
+      if (role == "user" && images_only && !contents.empty() &&
+          contents.back()["parts"][0].contains("functionResponse")) {
+        for (auto& p : parts) contents.back()["parts"].push_back(std::move(p));
+      } else {
         contents.push_back(
             {{"role", role == "assistant" ? "model" : "user"},
              {"parts", std::move(parts)}});
@@ -233,7 +218,7 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
     }
   }
 
-  gemini_req["contents"] = contents;
+  gemini_req["contents"] = std::move(contents);
 
   if (!system_instruction.empty()) {
     gemini_req["systemInstruction"] = {
@@ -268,7 +253,7 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
                                     {"thinkingBudget", 24576},
                                     {"includeThoughts", true}};
   }
-  gemini_req["generationConfig"] = gen_config;
+  gemini_req["generationConfig"] = std::move(gen_config);
 
   if (openai_req.contains("tools") && openai_req["tools"].is_array()) {
     nlohmann::json declarations = nlohmann::json::array();
@@ -307,7 +292,7 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
   return gemini_req;
 }
 
-nlohmann::json wrap_antigravity_envelope_impl(const nlohmann::json& gemini_req,
+nlohmann::json wrap_antigravity_envelope_impl(nlohmann::json gemini_req,
                                               const std::string& model,
                                               const std::string& project_id) {
   nlohmann::json env = nlohmann::json::object();
@@ -321,17 +306,18 @@ nlohmann::json wrap_antigravity_envelope_impl(const nlohmann::json& gemini_req,
 
   env["requestId"] =
       "agent/" + req_uuid + "/" + std::to_string(timestamp) + "/" + req_uuid + "/0";
-  env["request"] = gemini_req;
+  env["request"] = std::move(gemini_req);
 
   std::string mapped_model = model;
   constexpr std::string_view antigravity_prefix = "antigravity-";
   if (mapped_model.starts_with(antigravity_prefix)) {
     mapped_model.erase(0, antigravity_prefix.size());
   }
-  const auto thinking_level = [&gemini_req]() -> std::string {
-    if (gemini_req.contains("generationConfig") &&
-        gemini_req["generationConfig"].contains("thinkingConfig")) {
-      return gemini_req["generationConfig"]["thinkingConfig"].value(
+  const auto thinking_level = [&env]() -> std::string {
+    const auto& request = env["request"];
+    if (request.contains("generationConfig") &&
+        request["generationConfig"].contains("thinkingConfig")) {
+      return request["generationConfig"]["thinkingConfig"].value(
           "thinkingLevel", "");
     }
     return {};
@@ -497,10 +483,11 @@ nlohmann::json convert_openai_to_gemini(const nlohmann::json& openai_req) {
   return convert_openai_to_gemini_impl(openai_req);
 }
 
-nlohmann::json wrap_antigravity_envelope(const nlohmann::json& gemini_req,
+nlohmann::json wrap_antigravity_envelope(nlohmann::json gemini_req,
                                          const std::string& model,
                                          const std::string& project_id) {
-  return wrap_antigravity_envelope_impl(gemini_req, model, project_id);
+  return wrap_antigravity_envelope_impl(std::move(gemini_req), model,
+                                        project_id);
 }
 
 nlohmann::json unwrap_envelope(const nlohmann::json& json) {

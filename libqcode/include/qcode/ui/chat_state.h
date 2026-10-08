@@ -30,12 +30,10 @@ struct FileChangeEntry {
     bool binary = false;
 };
 
-// One row in the Subagents tab list (from task tool background/durable tasks).
+// One row in the Subagents tab list (TaskTool::list_tasks).
 struct SubagentEntry {
     std::string task_id;
-    std::string background_task_id;
     std::string description;
-    std::string agent;
     std::string mode;
     std::string model;
     std::string status;
@@ -75,9 +73,10 @@ struct ChatState {
     // Per-message thinking trace expansion, toggled by CLICKING the
     // "+/- Thought" header (opencode behaviour). Keyed by the history row
     // index (views pass `i`); unit tests fall back to message address.
-    // Header boxes are rebuilt every frame; expand state persists across
-    // frames and is cleared on session switch. Reasoning stays
-    // captured/replayed regardless of this.
+    // Header boxes persist with the view's message cache (cached trees
+    // reference them) and are parked off-screen each frame until laid out;
+    // expand state persists across frames and is cleared on session switch.
+    // Reasoning stays captured/replayed regardless of this.
     std::shared_ptr<std::unordered_map<unsigned long, bool>>
         thinking_expand_state =
             std::make_shared<std::unordered_map<unsigned long, bool>>();
@@ -154,9 +153,14 @@ struct ChatState {
     // emulator can do native text selection (clean copy/paste).
     std::shared_ptr<bool> copy_mode = std::make_shared<bool>(false);
 
+    // Ids of the collapsible tool blocks in render order (built by the view
+    // when the history changes); focused_tool_index indexes into it.
     std::shared_ptr<std::vector<std::string>> tool_block_order =
         std::make_shared<std::vector<std::string>>();
     std::shared_ptr<int> focused_tool_index = std::make_shared<int>(-1);
+    // Hit boxes below are referenced by the view's cached message trees:
+    // clearing or erasing entries is only safe together with that cache
+    // (or alongside replacing messages_history, which invalidates it).
     std::shared_ptr<std::unordered_map<std::string, HitBox>> tool_arrow_boxes =
         std::make_shared<std::unordered_map<std::string, HitBox>>();
     // Clickable task-tool titles → subagent session id.

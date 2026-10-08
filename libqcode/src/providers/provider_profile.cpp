@@ -65,6 +65,15 @@ ProviderCall prepare_provider_call(providers::ProviderOptions& options,
     case ProviderKind::kCursor:
     case ProviderKind::kAntigravity:
     case ProviderKind::kCompatible:
+      if (to_lower(provider_id) == "anthropic") {
+        if (call.wire_model_id.ends_with("-thinking")) {
+          call.wire_model_id =
+              call.wire_model_id.substr(0, call.wire_model_id.size() - 9);
+        }
+        if (options.protocol.empty()) {
+          options.protocol = "messages";
+        }
+      }
       break;
   }
   return call;

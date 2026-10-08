@@ -65,6 +65,7 @@ svr.Get("/session/([^/]+)/files", [](const httplib::Request& req, httplib::Respo
     j["is_git_repo"] = false;
     j["files"] = nlohmann::json::array();
     j["diff"] = "";
+    j["diff_truncated"] = false;
 
     if (ws.empty()) {
         res.set_content(j.dump(2), "application/json");
@@ -111,7 +112,9 @@ svr.Get("/session/([^/]+)/files", [](const httplib::Request& req, httplib::Respo
             j["files"].push_back(fobj);
         }
 
-        // Per-file insertion/deletion counts (ignores chmod noise).
+        // Per-file insertion/deletion counts (ignores chmod noise). `add -N`
+        // (once per request: it writes the index) lets the diffs below
+        // include untracked files.
         std::string numstat_cmd = "cd " + shell_quote(ws) +
             " && git --no-pager add -N . >/dev/null 2>&1; "
             "git --no-pager diff HEAD --numstat -- . 2>/dev/null";
@@ -146,10 +149,18 @@ svr.Get("/session/([^/]+)/files", [](const httplib::Request& req, httplib::Respo
         // Unified diff of all changes (tracked + untracked), with stat summary.
         // Split into per-file sections and drop sections that have no real
         // content (pure chmod / mode-only changes) so the diff stays useful.
+        // Capped at whole lines, so a huge change (lockfiles, generated code)
+        // cannot bloat the response.
+        constexpr size_t kMaxDiffBytes = 512 * 1024;
         std::string diff_cmd = "cd " + shell_quote(ws) +
-            " && git --no-pager add -N . >/dev/null 2>&1; "
-            "git --no-pager diff HEAD -- . 2>/dev/null";
+            " && git --no-pager diff HEAD -- . 2>/dev/null | head -c " +
+            std::to_string(kMaxDiffBytes + 1);
         std::string raw_diff = exec_capture(diff_cmd);
+        const bool diff_truncated = raw_diff.size() > kMaxDiffBytes;
+        if (diff_truncated) {
+            const auto nl = raw_diff.rfind('\n', kMaxDiffBytes - 1);
+            raw_diff.resize(nl == std::string::npos ? 0 : nl + 1);
+        }
 
         std::vector<std::vector<std::string>> sections;
         std::vector<std::string> cur;
@@ -180,6 +191,7 @@ svr.Get("/session/([^/]+)/files", [](const httplib::Request& req, httplib::Respo
             for (const auto& l : sec) filtered_diff += l + "\n";
         }
         j["diff"] = filtered_diff;
+        j["diff_truncated"] = diff_truncated;
         j["insertions"] = insertions;
         j["deletions"] = deletions;
         j["untracked"] = untracked;

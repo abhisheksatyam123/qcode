@@ -5,6 +5,11 @@
 namespace qcode {
 namespace providers {
 
+namespace {
+// Max response-body characters emitted at DEBUG level.
+constexpr std::size_t kMaxLoggedBodyChars = 2000;
+}  // namespace
+
 BaseProviderClient::BaseProviderClient(
     const ProviderConfig& config,
     std::unique_ptr<RequestBuilder> request_builder,
@@ -80,12 +85,18 @@ GenerateResult BaseProviderClient::generate_text_single_step(
       json_response = nlohmann::json::parse(result.text);
     } catch (const nlohmann::json::exception& e) {
       LOG_ERROR("Failed to parse response JSON: {}", e.what());
-      LOG_INFO("Raw response text: {}", result.text);
+      // Body is DEBUG-only and truncated; the view avoids copying the body.
+      LOG_DEBUG("Raw response text ({} bytes, truncated to {}): {}",
+                result.text.size(), kMaxLoggedBodyChars,
+                std::string_view(result.text).substr(0, kMaxLoggedBodyChars));
       return GenerateResult("Failed to parse response: " +
                             std::string(e.what()));
     }
 
-    LOG_INFO("Raw response text: {}", result.text);
+    LOG_INFO("Response received - bytes: {}", result.text.size());
+    LOG_DEBUG("Raw response text ({} bytes, truncated to {}): {}",
+              result.text.size(), kMaxLoggedBodyChars,
+              std::string_view(result.text).substr(0, kMaxLoggedBodyChars));
 
     LOG_INFO(
         "Text generation successful - model: {}, response_id: {}",

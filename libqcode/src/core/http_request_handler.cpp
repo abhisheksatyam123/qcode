@@ -1,3 +1,4 @@
+#include <qcode/core/perf.h>
 #include "core/http_request_handler.h"
 
 #include <qcode/core/ssl_config.h>
@@ -6,19 +7,208 @@
 #include "providers/internal/opencode_zen_headers.h"
 #include "core/response_utils.h"
 
+#include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <ctime>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
+#include <thread>
+#include <vector>
 
 namespace qcode {
 namespace http {
+
+namespace {
+
+// httplib has no cancel token for a blocking Post. Client::stop() is its
+// thread-safe abort: it shuts the in-flight socket so the read fails at once.
+// Without this, Esc only cut the retry schedule and the turn kept waiting on
+// the model call for up to max_timeout_sec. stop() is repeated while aborted
+// because a call that lands before the socket connects is a no-op. The flag
+// is polled (its owners store() without notifying); the cv only ends the
+// watcher the moment the POST returns.
+httplib::Result post_abortable(httplib::ClientImpl& cli, const std::string& path,
+                               const httplib::Headers& headers,
+                               const std::string& body,
+                               const std::string& content_type,
+                               const std::shared_ptr<std::atomic<bool>>& abort_flag) {
+  if (!abort_flag) return cli.Post(path, headers, body, content_type);
+  // Already stopped (e.g. Esc during a retry back-off): skip the round trip.
+  if (abort_flag->load()) return httplib::Result{nullptr, httplib::Error::Canceled};
+
+  std::mutex mu;
+  std::condition_variable cv;
+  bool done = false;
+  std::thread watcher([&] {
+    std::unique_lock<std::mutex> lock(mu);
+    while (!cv.wait_for(lock, std::chrono::milliseconds(50), [&] { return done; })) {
+      if (abort_flag->load()) {
+        lock.unlock();
+        cli.stop();
+        lock.lock();
+      }
+    }
+  });
+  auto finish = [&] {
+    {
+      std::lock_guard<std::mutex> lock(mu);
+      done = true;
+    }
+    cv.notify_one();
+    watcher.join();
+  };
+  try {
+    auto res = cli.Post(path, headers, body, content_type);
+    finish();
+    return res;
+  } catch (...) {
+    finish();  // a joinable std::thread would std::terminate on unwind
+    throw;
+  }
+}
+
+// Builds a fresh client (TCP+TLS not yet connected; httplib connects lazily).
+std::unique_ptr<httplib::ClientImpl> new_client(bool use_ssl,
+                                                const std::string& host,
+                                                int port, bool verify_ssl_cert,
+                                                int connection_timeout_sec,
+                                                int read_timeout_sec) {
+  std::unique_ptr<httplib::ClientImpl> cli;
+  if (use_ssl) {
+    auto ssl = std::make_unique<httplib::SSLClient>(
+        host, port != 0 ? port : 443);
+    configure_client_tls(*ssl, verify_ssl_cert);
+    cli = std::move(ssl);
+  } else {
+    cli = std::make_unique<httplib::ClientImpl>(host, port != 0 ? port : 80);
+  }
+  cli->set_connection_timeout(connection_timeout_sec, 0);
+  cli->set_read_timeout(read_timeout_sec, 0);
+  // httplib checks a parked socket is still alive before reusing it.
+  cli->set_keep_alive(true);
+  return cli;
+}
+
+// Keep-alive pools: idle clients keyed by "scheme://host:port". They are
+// process-wide because handlers and streams are created per turn/subagent, so
+// a per-owner slot would redo the TCP/TLS handshake on every turn. A borrowed
+// client is owned exclusively until released: concurrent requests never share
+// a socket, and an abort watcher's stop() only cancels its own request.
+class IdlePool {
+ public:
+  std::unique_ptr<httplib::ClientImpl> take(const std::string& key) {
+    std::lock_guard<std::mutex> lock(mu_);
+    // Newest first: the most recently used socket is the likeliest alive.
+    for (std::size_t i = idle_.size(); i-- > 0;) {
+      if (idle_[i].key != key) continue;
+      auto cli = std::move(idle_[i].cli);
+      idle_.erase(idle_.begin() + static_cast<std::ptrdiff_t>(i));
+      return cli;
+    }
+    return nullptr;
+  }
+
+  void put(const std::string& key, std::unique_ptr<httplib::ClientImpl> cli) {
+    std::lock_guard<std::mutex> lock(mu_);
+    const auto same_key = std::count_if(
+        idle_.begin(), idle_.end(), [&](const Idle& e) { return e.key == key; });
+    if (same_key >= kMaxIdlePerKey) return;  // cli closes
+    idle_.push_back({key, std::move(cli)});
+  }
+
+ private:
+  static constexpr std::ptrdiff_t kMaxIdlePerKey = 4;
+  struct Idle {
+    std::string key;
+    std::unique_ptr<httplib::ClientImpl> cli;
+  };
+  std::mutex mu_;
+  std::vector<Idle> idle_;
+};
+
+// Separate pools because the clients differ: streams always verify TLS and
+// have no max_timeout cap (a stream can run long); posts carry their
+// handler's cap.
+IdlePool g_stream_pool;
+IdlePool g_post_pool;
+
+std::string pool_key(bool use_ssl, const std::string& host, int port) {
+  return std::string(use_ssl ? "https://" : "http://") + host + ":" +
+         std::to_string(port != 0 ? port : (use_ssl ? 443 : 80));
+}
+
+// TLS verification is part of a client's setup, so it partitions the pool.
+std::string post_pool_key(const HttpConfig& config) {
+  return pool_key(config.use_ssl, config.host, config.port) +
+         (config.verify_ssl_cert ? "" : "#noverify");
+}
+
+struct StreamTarget {
+  bool use_ssl = true;
+  std::string host;
+  int port = 0;  // 0 = scheme default
+  std::string key;
+};
+
+// Accepts "https://host[:port][/...]", "http://host[:port]" or a bare host.
+StreamTarget parse_stream_target(const std::string& scheme_host) {
+  StreamTarget t;
+  std::string rest = scheme_host;
+  if (rest.starts_with("http://")) {
+    t.use_ssl = false;
+    rest.erase(0, 7);
+  } else if (rest.starts_with("https://")) {
+    rest.erase(0, 8);
+  }
+  if (auto slash = rest.find('/'); slash != std::string::npos) {
+    rest.resize(slash);
+  }
+  // Skip port parsing for IPv6 literals ("[::1]:8080"), as parse_base_url does.
+  if (auto colon = rest.find(':');
+      colon != std::string::npos && rest.front() != '[') {
+    try {
+      t.port = std::stoi(rest.substr(colon + 1));
+    } catch (...) {
+      t.port = 0;
+    }
+    rest.resize(colon);
+  }
+  t.host = rest;
+  t.key = pool_key(t.use_ssl, t.host, t.port);
+  return t;
+}
+
+}  // namespace
 
 HttpRequestHandler::HttpRequestHandler(const HttpConfig& config)
     : config_(config) {
   LOG_DEBUG(
       "HttpRequestHandler initialized - host: {}, use_ssl: {}", config_.host,
       config_.use_ssl);
+}
+
+std::unique_ptr<httplib::ClientImpl> HttpRequestHandler::acquire_client() {
+  auto cli = g_post_pool.take(post_pool_key(config_));
+  PERF_LOG("http connection={} host={}", cli ? "reused" : "new", config_.host);
+  if (cli) {
+    // Another handler for this host may have parked it with other timeouts.
+    cli->set_connection_timeout(config_.connection_timeout_sec, 0);
+    cli->set_read_timeout(config_.read_timeout_sec, 0);
+  } else {
+    cli = new_client(config_.use_ssl, config_.host, config_.port,
+                     config_.verify_ssl_cert, config_.connection_timeout_sec,
+                     config_.read_timeout_sec);
+  }
+  // 0 = no cap.
+  cli->set_max_timeout(std::chrono::milliseconds(
+      static_cast<long long>(std::max(config_.max_timeout_sec, 0)) * 1000));
+  return cli;
+}
+
+void HttpRequestHandler::release_client(std::unique_ptr<httplib::ClientImpl> cli) {
+  g_post_pool.put(post_pool_key(config_), std::move(cli));
 }
 
 HttpConfig HttpRequestHandler::parse_base_url(const std::string& base_url) {
@@ -86,9 +276,9 @@ GenerateResult HttpRequestHandler::post(
   }
 
   // Define the function to execute with retry
-  auto execute_request = [this, &path, &headers, &body,
-                          &content_type]() -> GenerateResult {
-    return execute_single_request(path, headers, body, content_type);
+  auto execute_request = [this, &path, &headers, &body, &content_type,
+                          &abort_flag]() -> GenerateResult {
+    return execute_single_request(path, headers, body, content_type, abort_flag);
   };
 
   // Define the function to check if a result is retryable
@@ -111,9 +301,18 @@ GenerateResult HttpRequestHandler::execute_single_request(
     const std::string& path,
     const httplib::Headers& headers,
     const std::string& body,
-    const std::string& content_type) {
-  auto handler = [](const httplib::Result& res,
-                    const std::string& protocol) -> GenerateResult {
+    const std::string& content_type,
+    const std::shared_ptr<std::atomic<bool>>& abort_flag) {
+  auto handler = [&abort_flag](httplib::Result& res,
+                               const std::string& protocol) -> GenerateResult {
+    if (!res && abort_flag && abort_flag->load()) {
+      // Our own cli.stop() — report the sentinel generation_service treats
+      // as a clean user stop, not a retryable network error.
+      LOG_INFO("{} request cancelled by abort", protocol);
+      GenerateResult stopped("Aborted by user");
+      stopped.is_retryable = false;
+      return stopped;
+    }
     if (!res) {
       LOG_ERROR("{} request failed - no response ({})", protocol,
                 httplib::to_string(res.error()));
@@ -127,20 +326,24 @@ GenerateResult HttpRequestHandler::execute_single_request(
                           res->body.size());
 
     if (res->status == 200) {
-      try {
-        const auto json = nlohmann::json::parse(res->body);
-        if (qcode::utils::is_empty_upstream_network_drop(json)) {
-          LOG_WARN(
-              "HTTP 200 empty completion with native_finish_reason=network_error");
-          GenerateResult dropped("Upstream network error: empty completion");
-          dropped.is_retryable = true;
-          return dropped;
+      // The drop check needs native_finish_reason == "network_error"; skip
+      // the extra full-body parse (the caller parses it again) otherwise.
+      if (res->body.find("network_error") != std::string::npos) {
+        try {
+          const auto json = nlohmann::json::parse(res->body);
+          if (qcode::utils::is_empty_upstream_network_drop(json)) {
+            LOG_WARN(
+                "HTTP 200 empty completion with native_finish_reason=network_error");
+            GenerateResult dropped("Upstream network error: empty completion");
+            dropped.is_retryable = true;
+            return dropped;
+          }
+        } catch (const nlohmann::json::exception&) {
         }
-      } catch (const nlohmann::json::exception&) {
       }
 
       GenerateResult result;
-      result.text = res->body;
+      result.text = std::move(res->body);
       result.finish_reason = kFinishReasonStop;  // HTTP request succeeded
       return result;
     }
@@ -215,14 +418,15 @@ GenerateResult HttpRequestHandler::execute_single_request(
     return error_result;
   };
 
-  return make_request(path, headers, body, content_type, handler);
+  return make_request(path, headers, body, content_type, handler, abort_flag);
 }
 
 GenerateResult HttpRequestHandler::make_request(const std::string& path,
                                                 const httplib::Headers& headers,
                                                 const std::string& body,
                                                 const std::string& content_type,
-                                                ResponseHandler handler) {
+                                                ResponseHandler handler,
+                                                const std::shared_ptr<std::atomic<bool>>& abort_flag) {
   try {
     // Combine base_path with the endpoint path
     std::string full_path = config_.base_path + path;
@@ -231,41 +435,51 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
       qcode::providers::apply_opencode_zen_headers(request_headers);
     }
 
-    LOG_DEBUG("Making {} request to {}:{}{}",
-                          config_.use_ssl ? "HTTPS" : "HTTP", config_.host,
-                          full_path,
-                          " with body size: " + std::to_string(body.size()));
+    const char* protocol = config_.use_ssl ? "HTTPS" : "HTTP";
+    LOG_DEBUG("Making {} request to {}:{} with body size: {}", protocol,
+              config_.host, full_path, body.size());
 
-    if (config_.use_ssl) {
-      httplib::SSLClient cli(config_.host, config_.port != 0 ? config_.port : 443);
-      cli.set_connection_timeout(config_.connection_timeout_sec, 0);
-      cli.set_read_timeout(config_.read_timeout_sec, 0);
-      if (config_.max_timeout_sec > 0) {
-        cli.set_max_timeout(std::chrono::milliseconds(
-            static_cast<long long>(config_.max_timeout_sec) * 1000));
-      }
-      configure_client_tls(cli, config_.verify_ssl_cert);
-
-      auto res = cli.Post(full_path, request_headers, body, content_type);
-      return handler(res, "HTTPS");
-    } else {
-      httplib::Client cli(config_.host, config_.port != 0 ? config_.port : 80);
-      cli.set_connection_timeout(config_.connection_timeout_sec, 0);
-      cli.set_read_timeout(config_.read_timeout_sec, 0);
-      if (config_.max_timeout_sec > 0) {
-        cli.set_max_timeout(std::chrono::milliseconds(
-            static_cast<long long>(config_.max_timeout_sec) * 1000));
-      }
-
-      auto res = cli.Post(full_path, request_headers, body, content_type);
-      return handler(res, "HTTP");
+    auto cli = acquire_client();
+    const qcode::perf::Stopwatch post_watch;
+    auto res = post_abortable(*cli, full_path, request_headers, body,
+                              content_type, abort_flag);
+    PERF_LOG("http post_ms={:.1f} status={} bytes_out={} bytes_in={} aborted={}",
+             post_watch.ms(), res ? res->status : 0, body.size(),
+             res ? res->body.size() : 0, abort_flag && abort_flag->load());
+    // The watcher has joined, so nothing can stop() this client any more.
+    // Only a clean 200 keeps its socket for reuse; errors and aborts drop it.
+    const bool aborted = abort_flag && abort_flag->load();
+    if (res && res->status == 200 && !aborted) {
+      release_client(std::move(cli));
     }
+    return handler(res, protocol);
   } catch (const std::exception& e) {
     LOG_ERROR("Exception in make_request: {}", e.what());
     GenerateResult error_result("Exception: " + std::string(e.what()));
     error_result.is_retryable = true;  // Exceptions (like network issues) are retryable
     return error_result;
   }
+}
+
+std::unique_ptr<httplib::ClientImpl> acquire_stream_client(
+    const std::string& scheme_host, int connection_timeout_sec,
+    int read_timeout_sec) {
+  const StreamTarget target = parse_stream_target(scheme_host);
+  if (auto cli = g_stream_pool.take(target.key)) {
+    // Timeouts may differ per call site; re-apply them to the reused client.
+    cli->set_connection_timeout(connection_timeout_sec, 0);
+    cli->set_read_timeout(read_timeout_sec, 0);
+    return cli;
+  }
+  return new_client(target.use_ssl, target.host, target.port,
+                    /*verify_ssl_cert=*/true, connection_timeout_sec,
+                    read_timeout_sec);
+}
+
+void release_stream_client(const std::string& scheme_host,
+                           std::unique_ptr<httplib::ClientImpl> cli) {
+  if (!cli) return;
+  g_stream_pool.put(parse_stream_target(scheme_host).key, std::move(cli));
 }
 
 }  // namespace http

@@ -40,6 +40,14 @@ nlohmann::json tool_call_completed_to_json(const ToolCallCompleted::Payload& p) 
     };
 }
 
+nlohmann::json user_message_injected_to_json(const UserMessageInjected::Payload& p) {
+    return {
+        {"type", UserMessageInjected::type},
+        {"session_id", p.session_id},
+        {"text", p.text}
+    };
+}
+
 nlohmann::json session_status_to_json(const SessionStatusChanged::Payload& p) {
     return {
         {"type", SessionStatusChanged::type},
@@ -92,6 +100,9 @@ std::optional<nlohmann::json> serialize_event(
     }
     if (event_type == ToolCallCompleted::type) {
         return tool_call_completed_to_json(std::any_cast<const ToolCallCompleted::Payload&>(payload));
+    }
+    if (event_type == UserMessageInjected::type) {
+        return user_message_injected_to_json(std::any_cast<const UserMessageInjected::Payload&>(payload));
     }
     if (event_type == SessionStatusChanged::type) {
         return session_status_to_json(std::any_cast<const SessionStatusChanged::Payload&>(payload));

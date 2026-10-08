@@ -1,7 +1,9 @@
 #include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
+#include <qcode/tools/subagent_router.h>
 #include <qcode/core/ssl_config.h>
 #include <qcode/transform/provider_transform.h>
+#include "providers/anthropic/anthropic_oauth.h"
 
 #include <algorithm>
 #include <cctype>
@@ -123,6 +125,20 @@ static void fill_known_provider_defaults(ProviderInfo& provider) {
             provider.api_url =
                 "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
         }
+    } else if (provider.id == "anthropic") {
+        if (provider.api_url.empty()) {
+            provider.api_url = "https://api.anthropic.com";
+        }
+        if (provider.protocol.empty()) {
+            provider.protocol = "messages";
+        }
+    } else if (provider.id == "openai") {
+        if (provider.api_url.empty()) {
+            provider.api_url = "https://api.openai.com/v1";
+        }
+        if (provider.protocol.empty()) {
+            provider.protocol = "chat_completions";
+        }
     }
 }
 
@@ -134,6 +150,8 @@ static void finalize_configured_models(const ProviderInfo& provider,
         if (!model.protocol.empty()) continue;
         if (provider.id == "opencode") {
             model.protocol = ProviderTransform::zen_api_protocol(model.id);
+        } else if (provider.id == "anthropic") {
+            model.protocol = "messages";
         } else if (!provider.protocol.empty()) {
             model.protocol = provider.protocol;
         } else {
@@ -338,6 +356,65 @@ std::string get_cursor_access_token() {
     return access;
 }
 
+std::string get_anthropic_token(bool force_refresh) {
+    if (const char* key = std::getenv("ANTHROPIC_API_KEY");
+        key != nullptr && *key != '\0') {
+        return key;
+    }
+    const auto creds = anthropic::read_claude_credentials();
+    if (!creds || creds->access_token.empty()) {
+        return "";
+    }
+    if (!force_refresh && !anthropic::is_claude_token_expired(creds->expires_at_ms)) {
+        return creds->access_token;
+    }
+
+    static std::mutex refresh_mutex;
+    std::lock_guard<std::mutex> lock(refresh_mutex);
+
+    // Cross-process recovery: check if external process refreshed token on disk
+    const auto fresh_disk = anthropic::read_claude_credentials();
+    if (fresh_disk && fresh_disk->access_token != creds->access_token &&
+        !anthropic::is_claude_token_expired(fresh_disk->expires_at_ms)) {
+        return fresh_disk->access_token;
+    }
+
+    if (creds->refresh_token.empty()) {
+        return creds->access_token;
+    }
+
+    const auto refreshed = anthropic::refresh_claude_token(creds->refresh_token);
+    if (refreshed) {
+        return refreshed->access_token;
+    }
+    return creds->access_token;
+}
+
+bool is_anthropic_oauth() {
+    if (const char* key = std::getenv("ANTHROPIC_API_KEY");
+        key != nullptr && *key != '\0') {
+        return std::string_view(key).starts_with("sk-ant-oat");
+    }
+    const auto creds = anthropic::read_claude_credentials();
+    return creds.has_value() && !creds->access_token.empty();
+}
+
+bool anthropic_token_needs_refresh() {
+    if (const char* key = std::getenv("ANTHROPIC_API_KEY");
+        key != nullptr && *key != '\0') {
+        return false;
+    }
+    const auto creds = anthropic::read_claude_credentials();
+    if (!creds || creds->access_token.empty()) {
+        return true;
+    }
+    return anthropic::is_claude_token_expired(creds->expires_at_ms);
+}
+
+bool login_anthropic_oauth(std::string* out_error) {
+    return anthropic::login_anthropic_oauth(out_error);
+}
+
 std::string config_path() {
     if (const char* configured = std::getenv("OPENCODE_CONFIG");
         configured != nullptr && *configured != '\0') {
@@ -408,6 +485,17 @@ static void apply_provider_runtime_defaults(ProviderInfo& provider) {
             provider.api_key = token;
         }
     }
+    if (provider.id == "anthropic" && provider.api_key.empty()) {
+        const auto token = get_anthropic_token();
+        if (!token.empty()) {
+            provider.api_key = token;
+        }
+    }
+    if (provider.id == "openai" && provider.api_key.empty()) {
+        if (const char* key = std::getenv("OPENAI_API_KEY"); key && *key != '\0') {
+            provider.api_key = key;
+        }
+    }
     finalize_configured_models(provider, provider.models);
     LOG_INFO("{} from config: {} models api={}", provider.id,
              provider.models.size(),
@@ -416,8 +504,8 @@ static void apply_provider_runtime_defaults(ProviderInfo& provider) {
 
 }  // namespace
 
-static bool is_supported_provider(std::string_view id) {
-    return id == "cursor" || id == "opencode" || id == "openrouter" || id == "antigravity";
+static bool is_supported_provider(std::string_view /*id*/) {
+    return true;
 }
 
 std::vector<ProviderInfo> load_providers_from_config() {
@@ -432,8 +520,29 @@ std::vector<ProviderInfo> load_providers_from_config() {
     try {
         std::ifstream file(path);
         ordered_json config = ordered_json::parse(file);
+        std::unordered_set<std::string> disabled_providers;
+        if (config.contains("disabled_providers") && config["disabled_providers"].is_array()) {
+            for (const auto& item : config["disabled_providers"]) {
+                if (item.is_string()) disabled_providers.insert(item.get<std::string>());
+            }
+        }
+        std::optional<std::unordered_set<std::string>> enabled_providers;
+        if (config.contains("enabled_providers") && config["enabled_providers"].is_array()) {
+            std::unordered_set<std::string> set;
+            for (const auto& item : config["enabled_providers"]) {
+                if (item.is_string()) set.insert(item.get<std::string>());
+            }
+            enabled_providers = std::move(set);
+        }
+
         if (config.contains("provider")) {
             for (auto& [prov_id, prov_data] : config["provider"].items()) {
+                if (enabled_providers.has_value() && !enabled_providers->contains(prov_id)) {
+                    continue;
+                }
+                if (disabled_providers.contains(prov_id)) {
+                    continue;
+                }
                 if (!is_supported_provider(prov_id)) {
                     continue;
                 }
@@ -552,6 +661,8 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 loaded.push_back(std::move(prov));
             }
         }
+
+
         for (auto& provider : loaded) {
             apply_provider_runtime_defaults(provider);
         }
@@ -573,6 +684,15 @@ bool is_provider_authenticated(const ProviderInfo& provider) {
     }
     if (provider.id == "cursor" || provider.name == "Cursor") {
         if (!get_cursor_access_token().empty()) return true;
+    }
+    if (provider.id == "anthropic" || provider.name == "Anthropic") {
+        const char* key = std::getenv("ANTHROPIC_API_KEY");
+        if (key && *key != '\0') return true;
+        if (!get_anthropic_token().empty()) return true;
+    }
+    if (provider.id == "openai" || provider.name == "OpenAI") {
+        const char* key = std::getenv("OPENAI_API_KEY");
+        if (key && *key != '\0') return true;
     }
     // Unit tests / mocks where api_url is empty
     if (provider.api_url.empty() && provider.api_key.empty()) return true;
@@ -616,17 +736,12 @@ std::string format_provider_catalog_for_prompt(
     ss << "### Available Providers & Models (from opencode.json)\n\n";
 
     const bool has_lead = !current_provider_id.empty() && !current_model_id.empty();
-    if (has_lead) {
-        ss << "**CRITICAL DELEGATION RULE:** As Lead Orchestrator, your current model is `"
-           << current_provider_id << ":" << current_model_id << "`\n"
-           << "Subagents MUST run on a DIFFERENT provider:model than you. Delegating to your own model is strictly forbidden.\n"
-           << "You MUST assign subagents an alternate working model from the catalog below using `model: \"<provider>:<model_id>\"`:\n\n";
-    } else {
-        ss << "You have access to the following configured and working models. "
-           << "When delegating subtasks with `task` (`op: \"spawn\"`), assign any catalog model "
-           << "using `model: \"<provider>:<model_id>\"` (colon — model ids may contain slashes), "
-           << "`provider` + `model`, or a bare `model_id`:\n\n";
-    }
+    ss << "Subagents started with `task` run on a different model than yours ("
+       << (has_lead ? "`" + std::string(current_provider_id) + ":" + std::string(current_model_id) + "`"
+                    : std::string("the lead"))
+       << "). Omit `model` and the router picks a free model by learned success; "
+       << "[paid] models run only when you name one with "
+       << "`model: \"<provider>:<model_id>\"`:\n\n";
 
     for (const auto& provider : catalog) {
         if (provider.models.empty()) continue;
@@ -650,21 +765,22 @@ std::string format_provider_catalog_for_prompt(
             if (model->reasoning) {
                 ss << " [reasoning]";
             }
+            if (routing::is_paid(provider, *model)) {
+                ss << " [paid]";
+            }
             if (is_lead) {
-                ss << " [CURRENT ORCHESTRATOR - DO NOT ASSIGN TO SUBAGENT]";
+                ss << " [you]";
             }
             ss << "\n";
         }
     }
 
-    ss << "\n#### Multi-Agent Parallel Delegation Guidelines\n"
-       << "- Run independent subtasks concurrently by specifying `background: true` on `task.spawn`.\n"
-       << "- Subagents execute concurrently on worker threads in parallel and will not block each other.\n"
-       << "- Subagents MUST use a different provider:model than the orchestrator ("
-       << (has_lead ? (std::string(current_provider_id) + ":" + std::string(current_model_id)) : "lead") << ").\n"
-       << "- Match tasks to model strengths (e.g. fast models for search/inspection, reasoning models for architecture/refactoring).\n"
-       << "- Collect results with `task` operation `result` and `background_task_id`.\n";
-
+    ss << "\nTo run subagents in parallel, issue several `task` calls in one message; "
+       << "each call returns its subagent's final report. Omit `model` and the router "
+       << "picks a free model from learned success; `rate_task` with no ratings shows "
+       << "that board.\n";
+    // The board itself is not included here: it changes after every run, and
+    // this text heads the provider's prompt cache.
     return ss.str();
 }
 

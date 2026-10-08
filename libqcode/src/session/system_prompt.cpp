@@ -38,7 +38,7 @@ You are the Lead Orchestrator software engineering agent. You and the user share
 
 ### Tool Execution Guideline
 
-For long-running tasks or commands that might take time (e.g., more than a few seconds, running tests, launching servers, or heavy tasks), you MUST use background execution (e.g. `run_in_background: true` for the bash tool or run with a short timeout) so they run in the background and do not block.
+For long-running tasks or commands that might take time (e.g., more than a few seconds, running tests, launching servers, or heavy tasks), you MUST use background execution (bash `mode: "background"`, or a short timeout) so they run in the background and do not block.
 
 ### Todo File Contract
 

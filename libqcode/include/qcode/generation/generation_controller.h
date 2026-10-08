@@ -57,8 +57,8 @@ public:
     // True while a turn is visible as in-progress or a worker is still alive.
     bool is_active() const noexcept;
 
-    // Cooperative stop (checked between tool steps / stream events).
-    // Does not clear the prompt queue.
+    // Stop the current turn: cancels its in-flight model request and tools.
+    // Keeps queued prompts but pauses them until the user sends again.
     void request_abort();
 
     // Unstick the UI immediately without joining the worker.
@@ -69,7 +69,8 @@ public:
     // Does not join the worker (it may still be blocked in HTTP).
     void prepare_session_switch();
 
-    // Start a turn, or queue the prompt if a worker is still alive.
+    // Start a turn, or queue the prompt if a worker is still alive. A prompt
+    // queued while a turn runs is folded into that turn's next model request.
     void spawn(std::string prompt, GenerationRequest request);
 
     // Drain one queued prompt when idle. Call from the UI render loop.
@@ -89,6 +90,12 @@ private:
     // After Esc, wait before auto-starting a queued prompt so "Esc again to
     // force" cannot abort the next Grok/Cursor turn that just spawned.
     std::chrono::steady_clock::time_point queue_resume_at_{};
+    // Set by Esc, cleared by the next send: queued prompts never auto-start
+    // after the user stopped a turn. UI thread only.
+    bool queue_paused_ = false;
+    // steady_clock ns of the last request_abort(), 0 when none pending. Only
+    // read to log how long a stopped turn took to wind down.
+    std::atomic<long long> abort_requested_ns_{0};
     mutable std::mutex active_session_mutex_;
     std::string active_session_id_;
 };

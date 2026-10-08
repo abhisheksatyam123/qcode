@@ -83,7 +83,7 @@ TEST_F(AnthropicClientTest, SupportedModelsIsNotABuiltinCatalog) {
 }
 
 TEST_F(AnthropicClientTest, SupportsAnyNonEmptyModel) {
-  EXPECT_TRUE(client_->supports_model("claude-sonnet-4-6"));
+  EXPECT_TRUE(client_->supports_model("claude-sonnet-5-5"));
   EXPECT_TRUE(client_->supports_model("any-configured-id"));
   EXPECT_FALSE(client_->supports_model(""));
 }

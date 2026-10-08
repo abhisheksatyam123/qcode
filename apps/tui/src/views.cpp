@@ -21,11 +21,17 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <ftxui/screen/string.hpp>
 
 namespace qcode {
 namespace tui {
+
+// Defined in pickers.cpp: time-throttled session::get_model_performance_summary.
+const session::ModelPerformanceSummary& cached_model_performance_summary(
+    const std::string& model_id, const std::string& provider);
 
 using namespace ftxui;
 
@@ -81,6 +87,74 @@ int prompt_input_height(const std::string& prompt_input, int max_lines,
     // Exact wrapped-row count (same wrap the renderer uses) — a ceil(w/avail)
     // estimate under-counts rows for word wrapping and over-counts for CJK.
     return wrapped_line_count(prompt_input, width, max_lines);
+}
+
+// Move every box to an empty sentinel (x_min > x_max never contains a
+// point); nodes laid out this frame write real coordinates back in SetBox.
+template <typename Map>
+void park_hit_boxes(Map* boxes) {
+    if (!boxes) return;
+    for (auto& entry : *boxes) entry.second = HitBox{0, -1, 0, -1};
+}
+
+// Tool calls and their results are separate history rows, and a parallel
+// batch lands as [callA][callB][resA][resB], so results pair with their call
+// by id rather than by adjacency.
+struct ToolPairing {
+    // Call row -> later rows holding results for its calls.
+    std::unordered_map<size_t, std::vector<size_t>> result_rows;
+    std::vector<char> consumed;  // result-only row drawn by its call rows
+    std::vector<char> pending;   // call row with a call still awaiting a result
+};
+
+// Pairs every tool result with its call row. Also fills the ids of the
+// collapsible (call + result) tool blocks in render order; j/k focus indexes
+// into `order`, and `rows` maps each id to the history row that renders it.
+void build_tool_pairing(const qcode::Messages& history,
+                        std::vector<std::string>& order,
+                        std::unordered_multimap<std::string, size_t>& rows,
+                        ToolPairing& pairing) {
+    order.clear();
+    rows.clear();
+    pairing.result_rows.clear();
+    pairing.consumed.assign(history.size(), 0);
+    pairing.pending.assign(history.size(), 0);
+
+    std::unordered_map<std::string_view, size_t> call_row;
+    std::unordered_set<std::string_view> answered;
+    for (size_t i = 0; i < history.size(); ++i) {
+        bool any_result = false;
+        bool all_paired = true;
+        for (const auto& part : history[i].content) {
+            if (const auto* tp = std::get_if<qcode::ToolCallContentPart>(&part)) {
+                call_row.emplace(tp->id, i);
+            } else if (const auto* rp =
+                           std::get_if<qcode::ToolResultContentPart>(&part)) {
+                any_result = true;
+                answered.insert(rp->tool_call_id);
+                auto c = call_row.find(rp->tool_call_id);
+                if (c == call_row.end() || c->second == i) {
+                    all_paired = false;  // orphan, or drawn by its own row
+                    continue;
+                }
+                auto& later = pairing.result_rows[c->second];
+                if (later.empty() || later.back() != i) later.push_back(i);
+            }
+        }
+        if (any_result && all_paired) pairing.consumed[i] = 1;
+    }
+    for (size_t i = 0; i < history.size(); ++i) {
+        for (const auto& part : history[i].content) {
+            const auto* tp = std::get_if<qcode::ToolCallContentPart>(&part);
+            if (tp == nullptr) continue;
+            if (answered.count(tp->id) == 0) {
+                pairing.pending[i] = 1;
+                continue;
+            }
+            order.push_back(tp->id);
+            rows.emplace(tp->id, i);
+        }
+    }
 }
 
 }  // namespace
@@ -250,7 +324,7 @@ ftxui::Element render_view(
                                   : 0);
     int window_size = hdr_model_info.context_window;
     if (window_size <= 0) {
-        auto summary = session::get_model_performance_summary(hdr_model_info.id);
+        const auto& summary = cached_model_performance_summary(hdr_model_info.id, "");
         if (summary.context_window > 0) {
             window_size = summary.context_window;
         } else {
@@ -346,12 +420,18 @@ ftxui::Element render_view(
     // Folder for the header: ~/a/b/c shortened to b/c (last 2 segments,
     // footer is dropped so everything lives in one designed header).
     // Folder for the header: the SESSION workspace (not process cwd), so it
-    // matches opencode's per-session directory. Falls back to cwd.
-    std::string hdr_folder;
-    {
+    // matches opencode's per-session directory. Falls back to cwd. Resolved
+    // once per session id: the lookup is a SQLite query under the DB mutex.
+    static std::optional<std::string> folder_session;
+    static std::string folder_cached;
+    const std::string cur_session =
+        state.session_id ? *state.session_id : std::string{};
+    if (folder_session != cur_session) {
+        folder_session = cur_session;
+        std::string& hdr_folder = folder_cached;
         std::string ws;
-        if (state.session_id && !state.session_id->empty())
-            ws = session::get_session_workspace(*state.session_id);
+        if (!cur_session.empty())
+            ws = session::get_session_workspace(cur_session);
         hdr_folder = ws.empty() ? format_workspace_path() : ws;
         const char* home = std::getenv("HOME");
         if (home && home[0] && hdr_folder.rfind(home, 0) == 0)
@@ -370,6 +450,7 @@ ftxui::Element render_view(
             hdr_folder = segs.back();
         if (hdr_folder.size() > 32) hdr_folder = "…/" + hdr_folder.substr(hdr_folder.size()-31);
     }
+    const std::string& hdr_folder = folder_cached;
 
     std::string variant_label;
     {
@@ -500,6 +581,12 @@ ftxui::Element render_view(
             separatorLight() | color(theme_border(theme)),
         });
     }
+
+    // Chat hit boxes outlive frames (cached message trees reference them);
+    // only boxes laid out this frame — on the chat tab — are clickable.
+    park_hit_boxes(state.tool_arrow_boxes.get());
+    park_hit_boxes(state.tool_task_boxes.get());
+    park_hit_boxes(state.thinking_header_boxes.get());
 
     Element body;
 
@@ -649,9 +736,12 @@ ftxui::Element render_view(
                 *state.history_window_start = first;
             }
 
-            // Completed messages and tools are cached as parsed FTXUI trees.
-            // Cache is invalidated on provider/model/theme/session/width/collapse changes.
-            static const qcode::Messages* cache_owner = nullptr;
+            // Every message but the last (still streaming, or awaiting its
+            // tool result) is cached as a rendered FTXUI tree. Everything a
+            // cached row's rendering depends on must invalidate it below.
+            // Owner is held (not a raw pointer) so a new history can never
+            // reuse the old one's address.
+            static std::shared_ptr<const qcode::Messages> cache_owner;
             static size_t cached_history_size = 0;
             static int cached_width = 0;
             static int cached_provider = -1;
@@ -659,68 +749,87 @@ ftxui::Element render_view(
             static std::string cached_theme;
             static std::string cached_session;
             static bool cached_thinking = false;
-            static size_t cached_collapse_rev = 0;
-            static int cached_focused_tool = -1;
+            static std::unordered_map<std::string, bool> cached_collapse;
+            static std::unordered_map<unsigned long, bool> cached_expand;
+            static std::string cached_focused_tool;
             static std::unordered_map<size_t, Element> message_cache;
+            // History row that renders each focusable tool block (by call id).
+            static std::unordered_multimap<std::string, size_t> tool_block_rows;
+            static ToolPairing tool_pairing;
+            static std::vector<std::string> unused_tool_order;
 
-            size_t current_collapse_rev = 0;
-            if (state.tool_collapse_state) {
-                for (const auto& [k, v] : *state.tool_collapse_state) {
-                    current_collapse_rev ^= std::hash<std::string>{}(k) + (v ? 1 : 0);
-                }
-            }
-            if (state.thinking_expand_state) {
-                for (const auto& [k, v] : *state.thinking_expand_state) {
-                    current_collapse_rev ^= std::hash<unsigned long>{}(k) + (v ? 2 : 0);
-                }
-            }
-            const int current_focused_tool =
-                state.focused_tool_index ? *state.focused_tool_index : -1;
+            // Cached trees hold HitBox& into these maps and fill
+            // tool_task_sessions only when rendered, so the maps are dropped
+            // only together with the trees (boxes are parked per frame).
+            auto reset_message_cache = [&] {
+                message_cache.clear();
+                if (state.tool_arrow_boxes) state.tool_arrow_boxes->clear();
+                if (state.tool_task_boxes) state.tool_task_boxes->clear();
+                if (state.tool_task_sessions) state.tool_task_sessions->clear();
+                if (state.thinking_header_boxes)
+                    state.thinking_header_boxes->clear();
+            };
+
             const auto terminal_width = stable_terminal_size().dimx;
+            const bool history_replaced =
+                cache_owner != state.messages_history ||
+                history_size < cached_history_size;
+            const bool history_changed =
+                history_replaced || history_size != cached_history_size;
 
-            if (cache_owner != state.messages_history.get() ||
-                history_size < cached_history_size ||
+            if (history_replaced ||
                 terminal_width != cached_width ||
                 cached_provider != selected_provider ||
                 cached_model != selected_model ||
                 cached_theme != *state.theme ||
                 cached_session != *state.session_id ||
                 cached_thinking != *state.show_thinking ||
-                cached_collapse_rev != current_collapse_rev ||
-                cached_focused_tool != current_focused_tool) {
-                message_cache.clear();
-                cache_owner = state.messages_history.get();
+                (state.tool_collapse_state &&
+                 cached_collapse != *state.tool_collapse_state) ||
+                (state.thinking_expand_state &&
+                 cached_expand != *state.thinking_expand_state)) {
+                reset_message_cache();
                 cached_width = terminal_width;
                 cached_provider = selected_provider;
                 cached_model = selected_model;
                 cached_theme = *state.theme;
                 cached_session = *state.session_id;
                 cached_thinking = *state.show_thinking;
-                cached_collapse_rev = current_collapse_rev;
-                cached_focused_tool = current_focused_tool;
+                if (state.tool_collapse_state)
+                    cached_collapse = *state.tool_collapse_state;
+                if (state.thinking_expand_state)
+                    cached_expand = *state.thinking_expand_state;
             }
+            cache_owner = state.messages_history;
             cached_history_size = history_size;
 
             if (message_cache.size() > 1000) {
-                message_cache.clear();
+                reset_message_cache();
             }
 
-            if (state.tool_block_order) {
-                state.tool_block_order->clear();
-                for (size_t mi = 0; mi < history_size; ++mi) {
-                    const auto& m = (*state.messages_history)[mi];
-                    for (const auto& part : m.content) {
-                        if (const auto* tp = std::get_if<qcode::ToolCallContentPart>(&part)) {
-                            state.tool_block_order->push_back(tp->id);
-                        }
-                    }
-                }
+            if (history_changed) {
+                build_tool_pairing(*state.messages_history,
+                                   state.tool_block_order
+                                       ? *state.tool_block_order
+                                       : unused_tool_order,
+                                   tool_block_rows, tool_pairing);
             }
-            if (state.tool_arrow_boxes) state.tool_arrow_boxes->clear();
-            if (state.tool_task_boxes) state.tool_task_boxes->clear();
-            if (state.tool_task_sessions) state.tool_task_sessions->clear();
-            if (state.thinking_header_boxes)
-                state.thinking_header_boxes->clear();
+            // j/k focus restyles two tool blocks: re-render only their rows.
+            std::string focused_tool;
+            if (state.tool_block_order && state.focused_tool_index &&
+                *state.focused_tool_index >= 0 &&
+                *state.focused_tool_index <
+                    static_cast<int>(state.tool_block_order->size())) {
+                focused_tool =
+                    (*state.tool_block_order)[*state.focused_tool_index];
+            }
+            if (focused_tool != cached_focused_tool) {
+                for (const std::string* id : {&cached_focused_tool, &focused_tool}) {
+                    auto [row, end] = tool_block_rows.equal_range(*id);
+                    for (; row != end; ++row) message_cache.erase(row->second);
+                }
+                cached_focused_tool = focused_tool;
+            }
 
             if (first > 0) {
                 msgs.push_back(
@@ -729,30 +838,38 @@ ftxui::Element render_view(
                     dim | hcenter);
                 msgs.push_back(separatorLight() | color(dim_gray()));
             }
+            std::vector<const qcode::Message*> paired_results;
             for (size_t i = first; i < last; ++i) {
+                // Result rows are drawn inside their call's tool block.
+                if (tool_pairing.consumed[i]) continue;
                 const auto& msg = (*state.messages_history)[i];
-                const qcode::Message* adjacent_tool_results = nullptr;
-                if (msg.has_tool_calls() && i + 1 < history_size &&
-                    (*state.messages_history)[i + 1].has_tool_results()) {
-                    adjacent_tool_results =
-                        &(*state.messages_history)[i + 1];
+                paired_results.clear();
+                if (auto rows = tool_pairing.result_rows.find(i);
+                    rows != tool_pairing.result_rows.end()) {
+                    for (size_t r : rows->second) {
+                        paired_results.push_back(&(*state.messages_history)[r]);
+                    }
                 }
-                const bool cacheable = (i + 1 < history_size) && !msg.has_tool_calls() && !msg.has_tool_results() && !msg.has_reasoning();
-                auto cached = message_cache.find(i);
-                if (cacheable && cached != message_cache.end()) {
+                // A call still running re-renders until its result lands.
+                const bool cacheable =
+                    i + 1 < history_size && !tool_pairing.pending[i];
+                auto cached = cacheable ? message_cache.find(i)
+                                        : message_cache.end();
+                if (cached != message_cache.end()) {
                     msgs.push_back(cached->second);
                 } else {
+                    const bool in_flight =
+                        !cacheable && state.is_generating->load();
                     auto rendered = render_message(
                         msg, state, providers_list, selected_provider,
-                        selected_model, *state.theme,
-                        adjacent_tool_results, static_cast<int>(i));
+                        selected_model, *state.theme, nullptr,
+                        static_cast<int>(i), terminal_width, in_flight,
+                        paired_results);
                     if (cacheable) message_cache[i] = rendered;
                     msgs.push_back(std::move(rendered));
                 }
                 // No separator line between messages: the role header
                 // ("❯ You" / "❯ Assistant") is delimiter enough.
-                // Skip the paired result row when it is also inside this window.
-                if (adjacent_tool_results != nullptr && i + 1 < last) ++i;
             }
             if (last < history_size) {
                 msgs.push_back(
@@ -931,35 +1048,23 @@ ftxui::Element render_view(
                 state.selected_file, 0,
                 static_cast<int>(changes->size()) - 1);
             const auto& entry = (*changes)[selected];
-            std::string content;
             const bool untracked_dir =
                 entry.untracked && !entry.path.empty() &&
                 entry.path.back() == '/';
-            if (untracked_dir) {
-                content = "Untracked directory — sample paths:\n\n";
-                const std::string cmd =
-                    "git -c core.quotepath=false ls-files --others "
-                    "--exclude-standard -- " +
-                    shell_quote(entry.path) + " 2>/dev/null | head -n 80";
-                std::array<char, 512> buf{};
-                FILE* pipe = popen(cmd.c_str(), "r");
-                int n = 0;
-                if (pipe) {
-                    while (fgets(buf.data(), static_cast<int>(buf.size()),
-                                pipe) != nullptr) {
-                        content += "+";
-                        content += buf.data();
-                        ++n;
-                    }
-                    pclose(pipe);
-                }
-                if (n == 0) {
-                    content += "(empty or ignored)\n";
-                } else if (n >= 80) {
-                    content += "\n… truncated\n";
-                }
-            } else {
-                content = get_file_diff(entry.path, *state.files_revision);
+            // git runs on a background worker, memoized per
+            // (files_revision, path); a placeholder shows until it lands.
+            const auto preview = get_file_preview(
+                entry.path, *state.files_revision,
+                untracked_dir ? FilePreviewKind::kUntrackedDirSample
+                              : FilePreviewKind::kDiff);
+            const std::string& content = *preview;
+            // Tokenizing a diff (up to 2 MiB) into per-line nodes every
+            // frame is costly; preview text is immutable per shared_ptr.
+            static std::shared_ptr<const std::string> diff_source;
+            static Element diff_element;
+            if (preview != diff_source) {
+                diff_source = preview;
+                diff_element = render_diff_content(content);
             }
 
             Element back_btn = text(" ← Esc ") | dim;
@@ -990,7 +1095,7 @@ ftxui::Element render_view(
                 separatorLight() | color(accent(theme)),
                 content.empty()
                     ? text("  (no diff output)") | dim
-                    : hbox({text("  "), render_diff_content(content) | flex}),
+                    : hbox({text("  "), diff_element | flex}),
                 text(""),
             }) | borderLight | color(accent(theme)));
 
@@ -1040,7 +1145,7 @@ ftxui::Element render_view(
                 if (m.context_window > 0) {
                     hard_limit = m.context_window;
                 } else {
-                    auto summary = session::get_model_performance_summary(m.id);
+                    const auto& summary = cached_model_performance_summary(m.id, "");
                     if (summary.context_window > 0) {
                         hard_limit = summary.context_window;
                     } else {
@@ -1142,9 +1247,7 @@ ftxui::Element render_view(
             ));
             for (size_t row_i = 0; row_i < tasks.size(); ++row_i) {
                 const auto& t = tasks[row_i];
-                const std::string& bg_id = t.background_task_id;
                 const std::string& status = t.status;
-                const std::string& agent_type = t.agent;
                 const std::string& mode_str = t.mode;
                 const std::string& model_str = t.model;
                 const std::string& desc = t.description;
@@ -1155,15 +1258,14 @@ ftxui::Element render_view(
                 Color status_col = Color::Default;
                 if (status == "running") status_col = Color::Yellow;
                 else if (status == "done") status_col = Color::Green;
-                else if (status == "error" || status == "killed") status_col = Color::Red;
+                else if (status == "error" || status == "interrupted") status_col = Color::Red;
 
                 std::string marker = is_active_cursor ? "▶ " : (is_current ? "● " : "  ");
                 Element row = hbox(
                     text(marker) | color(is_active_cursor ? accent2(theme)
                                          : (is_current ? accent(theme) : Color::Default)),
-                    text(bg_id + " ") | dim,
                     text("[" + status + "] ") | bold | color(status_col),
-                    text("(" + agent_type + " · " + mode_str + ") ") | color(accent(theme)),
+                    text(!mode_str.empty() ? ("(" + mode_str + ") ") : "") | color(accent(theme)),
                     text(!model_str.empty() ? ("{" + model_str + "} ") : "") | dim,
                     text(desc) | bold,
                     filler(),

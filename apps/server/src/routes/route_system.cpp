@@ -19,6 +19,15 @@ void register_system_routes(
         if (fs::is_directory(options.webui_dir)) {
             LOG_INFO("Serving Web UI from {}", options.webui_dir);
             svr.set_mount_point("/", options.webui_dir);
+            // vendor-* libraries are cached for a day (their names carry no
+            // version, so an upgrade must reach clients); the app's own files
+            // (index.html, app.js, style.css, ...) are revalidated every load.
+            svr.set_file_request_handler([](const httplib::Request& req, httplib::Response& res) {
+                const std::string name = req.path.substr(req.path.find_last_of('/') + 1);
+                res.set_header("Cache-Control", name.rfind("vendor-", 0) == 0
+                                                    ? "public, max-age=86400"
+                                                    : "no-cache");
+            });
         } else {
             LOG_WARN("Web UI directory not found at {}", options.webui_dir);
         }

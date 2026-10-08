@@ -55,6 +55,7 @@ target_sources(qcode-engine PRIVATE
     src/providers/openai/openai_cache.cpp
     src/providers/openai/openai_responses.cpp
     src/providers/openai/openai_factory.cpp
+    src/providers/anthropic/anthropic_oauth.cpp
     src/providers/anthropic/anthropic_client.cpp
     src/providers/anthropic/anthropic_request_builder.cpp
     src/providers/anthropic/anthropic_response_parser.cpp
@@ -89,6 +90,7 @@ target_sources(qcode-engine PRIVATE
     src/compaction/compaction_request.cpp
     src/session/session_store.cpp
     src/session/session_telemetry.cpp
+    src/session/subagent_stats.cpp
     src/session/study_store.cpp
     src/session/study_assistant.cpp
     src/session/system_prompt.cpp
@@ -101,6 +103,7 @@ target_sources(qcode-engine PRIVATE
     src/tools/bash_tool.cpp
     src/tools/task_tool.cpp
     src/tools/task_target.cpp
+    src/tools/subagent_router.cpp
     src/tools/image_tool.cpp
     src/tools/multi_step_coordinator.cpp
     src/tools/tool_catalog.cpp

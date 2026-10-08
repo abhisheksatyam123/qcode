@@ -39,12 +39,10 @@ target_link_libraries(httplib INTERFACE
     $<$<PLATFORM_ID:Windows>:crypt32>
 )
 
-# Set compile definitions for httplib features
+# Set compile definitions for httplib features. HTTPLIB_COMPILE_DEFS (root
+# CMakeLists) is the single source, so every target sees the same values.
 target_compile_definitions(httplib INTERFACE
-    CPPHTTPLIB_OPENSSL_SUPPORT
-    CPPHTTPLIB_ZLIB_SUPPORT
-    CPPHTTPLIB_BROTLI_SUPPORT
-    CPPHTTPLIB_THREAD_POOL_COUNT=8
+    ${HTTPLIB_COMPILE_DEFS}
 )
 
 # Require C++11 minimum (httplib's requirement)

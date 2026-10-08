@@ -21,25 +21,27 @@ TEST(ToolCatalogTest, DescriptorsIncludeBashAndImage) {
 }
 
 TEST(ToolCatalogTest, OrchestratorAndSubagentToolSets) {
-    // Orchestrator without vision has exactly 2 tools: bash and task (subagent)
+    // Orchestrator without vision: bash, task and rate_task
     auto orch_tools = ToolCatalog::build_definitions(ToolConfig::orchestrator(false));
-    EXPECT_EQ(orch_tools.size(), 2u);
+    EXPECT_EQ(orch_tools.size(), 3u);
     EXPECT_TRUE(orch_tools.count("bash"));
     EXPECT_TRUE(orch_tools.count("task"));
+    EXPECT_TRUE(orch_tools.count("rate_task"));
     EXPECT_FALSE(orch_tools.count("image"));
 
-    // Orchestrator with vision has 3 tools: bash, task, and image
+    // Orchestrator with vision adds image
     auto orch_vis_tools = ToolCatalog::build_definitions(ToolConfig::orchestrator(true));
-    EXPECT_EQ(orch_vis_tools.size(), 3u);
+    EXPECT_EQ(orch_vis_tools.size(), 4u);
     EXPECT_TRUE(orch_vis_tools.count("bash"));
     EXPECT_TRUE(orch_vis_tools.count("task"));
     EXPECT_TRUE(orch_vis_tools.count("image"));
 
-    // Subagent without vision has exactly 1 tool: bash
+    // Subagent without vision has exactly 1 tool: bash (it cannot delegate or rate)
     auto sub_tools = ToolCatalog::build_definitions(ToolConfig::subagent(false));
     EXPECT_EQ(sub_tools.size(), 1u);
     EXPECT_TRUE(sub_tools.count("bash"));
     EXPECT_FALSE(sub_tools.count("task"));
+    EXPECT_FALSE(sub_tools.count("rate_task"));
     EXPECT_FALSE(sub_tools.count("image"));
 
     // Subagent with vision has 2 tools: bash and image
@@ -72,9 +74,7 @@ TEST(ToolCatalogTest, BuildDefinitionsHonorsConfig) {
 
 TEST(ToolCatalogTest, FormatHelpersNonEmpty) {
     EXPECT_FALSE(ToolCatalog::format_tool_call("bash", "{}", 1, 2).empty());
-    EXPECT_FALSE(ToolCatalog::format_tool_result("bash", true, "ok", 50).empty());
     EXPECT_FALSE(ToolCatalog::format_tool_call("image", "{\"path\":\"diagram.png\"}", 1, 2).empty());
-    EXPECT_FALSE(ToolCatalog::format_tool_result("image", true, "{\"path\":\"diagram.png\",\"mime_type\":\"image/png\",\"size_bytes\":1024}", 50).empty());
 }
 
 TEST(ToolExecutorTest, ToolExistsAndMissingCall) {

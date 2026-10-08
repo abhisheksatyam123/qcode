@@ -27,19 +27,23 @@ std::vector<ToolDescriptor> ToolCatalog::descriptors() {
     },
     {
       "task",
-      "Delegate bounded work to subagents (spawn, result, kill, pause, resume, resurrect).",
-      R"(task.spawn = { op?: "spawn", prompt: string, provider?: string, model?: string,
-    background?: boolean, description?: string, mode?: "explore"|"implement"|"verify" }
-    // model can be specified as "provider:model" (colon), e.g. openrouter:deepseek/foo or provider + model
-task.result = { op: "result", background_task_id: string, timeout_ms?: number }
-task.list = { op: "list" }
-task.kill = { op: "kill", background_task_id: string, reason?: string })",
+      "Delegate a self-contained job to a subagent and wait for its report. "
+      "Several task calls in one message run in parallel.",
+      R"(task = { prompt: string, description?: string,
+         mode?: "explore"|"implement"|"verify",
+         difficulty?: "easy"|"medium"|"hard", model?: "provider:model" })",
+      true
+    },
+    {
+      "rate_task",
+      "Rate finished task reports 1-5 so future tasks go to the free models that do well.",
+      R"(rate_task = { ratings: { task_id: string, score: 1..5, note?: string }[] })",
       true
     },
     {
       "image",
-      "Inspect and load image files into the model context for visual reasoning (png, jpg, webp, gif, bmp, svg).",
-      R"(image = { path: string, detail?: "auto"|"low"|"high", description?: string })",
+      "Load a local image (png, jpeg, webp, gif; max 3.75 MB) so you can see it.",
+      R"(image = { path: string })",
       true
     },
   };
@@ -54,18 +58,18 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. You have three sets of tools available:\n\n"
           "1. **Bash tool** - works as a Swiss Army knife; it can execute anything in the shell and read the output. Prefer relative paths under the session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n"
-          "2. **Task tool** - used to delegate tasks to other agents.\n"
-          "3. **Image tool** - used to inspect and load local images for visual reasoning.\n\n";
+          "2. **Task tools** - `task` delegates a job to a subagent; `rate_task` scores its report 1-5 so future jobs go to models that do well.\n"
+          "3. **Image tool** - loads a local png/jpeg/webp/gif image so you can see it.\n\n";
   } else if (cfg.enable_task) {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. You have two sets of tools available:\n\n"
           "1. **Bash tool** - works as a Swiss Army knife; it can execute anything in the shell and read the output. Prefer relative paths under the session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n"
-          "2. **Task tool** - used to delegate tasks to other agents.\n\n";
+          "2. **Task tools** - `task` delegates a job to a subagent; `rate_task` scores its report 1-5 so future jobs go to models that do well.\n\n";
   } else if (cfg.enable_image) {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. You have two sets of tools available:\n\n"
           "1. **Bash tool** - works as a Swiss Army knife; it can execute anything in the shell and read the output. Prefer relative paths under the session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n"
-          "2. **Image tool** - used to inspect and load local images for visual reasoning.\n\n";
+          "2. **Image tool** - loads a local png/jpeg/webp/gif image so you can see it.\n\n";
   } else {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. The only exposed tool is **bash**.\n\n";
@@ -80,7 +84,7 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
 
   for (const auto& d : descriptors()) {
     if ((d.name == "bash" && !cfg.enable_bash) ||
-        (d.name == "task" && !cfg.enable_task) ||
+        ((d.name == "task" || d.name == "rate_task") && !cfg.enable_task) ||
         (d.name == "image" && !cfg.enable_image))
       continue;
     ss << d.schema_text << "\n\n";
@@ -125,8 +129,10 @@ qcode::ToolSet ToolCatalog::build_definitions(const ToolConfig& cfg) {
   qcode::ToolSet tools;
   if (cfg.enable_bash)
     tools["bash"] = qcode::BashTool::definition();
-  if (cfg.enable_task)
+  if (cfg.enable_task) {
     tools["task"] = qcode::TaskTool::definition();
+    tools["rate_task"] = qcode::TaskTool::rate_definition();
+  }
   if (cfg.enable_image)
     tools["image"] = qcode::ImageTool::definition();
   return tools;
@@ -201,12 +207,6 @@ std::string ToolCatalog::format_tool_call(const std::string& tool_name,
       if (json.contains("path")) {
         formatted += "  Path: " + json["path"].get<std::string>() + "\n";
       }
-      if (json.contains("description") && !json["description"].get<std::string>().empty()) {
-        formatted += "  Description: " + json["description"].get<std::string>() + "\n";
-      }
-      if (json.contains("detail") && !json["detail"].get<std::string>().empty()) {
-        formatted += "  Detail: " + json["detail"].get<std::string>() + "\n";
-      }
     } else {
       // Generic tool: show all args
       formatted += "Input: " + pretty_json(json) + "\n";
@@ -214,159 +214,6 @@ std::string ToolCatalog::format_tool_call(const std::string& tool_name,
   } catch (...) {
     // If JSON parsing fails, show raw string
     formatted += "Input (raw): " + args + "\n";
-  }
-  
-  // Trim trailing newline
-  while (!formatted.empty() && formatted.back() == '\n')
-    formatted.pop_back();
-  
-  return formatted;
-}
-
-std::string ToolCatalog::format_tool_result(const std::string& tool_name,
-                                      bool success,
-                                      const std::string& result_or_error,
-                                      int truncate_at,
-                                      double duration_seconds) {
-  // Parse JSON FIRST, before any truncation
-  nlohmann::json parsed;
-  bool parsed_ok = false;
-  try {
-    parsed = nlohmann::json::parse(result_or_error);
-    parsed_ok = true;
-  } catch (...) {
-    parsed_ok = false;
-  }
-
-  std::string formatted;
-  
-  // Status header
-  if (success) {
-    formatted = "Completed successfully";
-    if (duration_seconds >= 0.0) {
-      char buf[32];
-      if (duration_seconds < 1.0) {
-        std::snprintf(buf, sizeof(buf), " (%.0fms)", duration_seconds * 1000.0);
-      } else if (duration_seconds < 60.0) {
-        std::snprintf(buf, sizeof(buf), " (%.1fs)", duration_seconds);
-      } else {
-        std::snprintf(buf, sizeof(buf), " (%.1fm)", duration_seconds / 60.0);
-      }
-      formatted += buf;
-    }
-  } else {
-    formatted = "Failed";
-    if (duration_seconds >= 0.0) {
-      char buf[32];
-      std::snprintf(buf, sizeof(buf), " (%.1fs)", duration_seconds);
-      formatted += buf;
-    }
-  }
-  formatted += "\n";
-
-  // Output content
-  if (tool_name == "bash" && success && parsed_ok) {
-    // Bash success result: {title, output, metadata: {exit, description, backgrounded}}
-    if (parsed.contains("output")) {
-      std::string output = parsed["output"].get<std::string>();
-      // Apply truncation AFTER parse, on the output field
-      if (truncate_at > 0 && static_cast<int>(output.length()) > truncate_at)
-        output = output.substr(0, truncate_at) + "...";
-      
-      if (!output.empty()) {
-        // Indent output lines
-        std::istringstream ss(output);
-        std::string line;
-        while (std::getline(ss, line)) {
-          formatted += line + "\n";
-        }
-      }
-    }
-    // Show metadata (exit code etc)
-    if (parsed.contains("metadata") && parsed["metadata"].is_object()) {
-      auto& meta = parsed["metadata"];
-      if (meta.contains("exit")) {
-        formatted += "(exit: " + std::to_string(meta["exit"].get<int>()) + ")";
-        if (meta.contains("backgrounded") && meta["backgrounded"].get<bool>()) {
-          formatted += " [background]";
-        }
-        formatted += "\n";
-      }
-    }
-    // Show title if present and output was empty
-    if (parsed.contains("title") && (!parsed.contains("output") || parsed["output"].get<std::string>().empty())) {
-      formatted += parsed["title"].get<std::string>() + "\n";
-    }
-  } else if (tool_name == "bash" && !success && parsed_ok) {
-    // Bash failure result: {error: "..."} or has error field
-    // Check if parsed has "error" key (bash returns {error: "..."} for validation errors)
-    if (parsed.contains("error")) {
-      std::string err = parsed["error"].get<std::string>();
-      if (truncate_at > 0 && static_cast<int>(err.length()) > truncate_at)
-        err = err.substr(0, truncate_at) + "...";
-      formatted += err + "\n";
-    } else {
-      // Fallback
-      std::string s = result_or_error;
-      if (truncate_at > 0 && static_cast<int>(s.length()) > truncate_at)
-        s = s.substr(0, truncate_at) + "...";
-      formatted += s + "\n";
-    }
-  } else if (tool_name == "image" && parsed_ok) {
-    if (success) {
-      formatted += "  Loaded image: " + parsed.value("path", "image") + " (" +
-                   parsed.value("mime_type", "image") + ", " +
-                   std::to_string(parsed.value("size_bytes", 0)) + " bytes)\n";
-      if (parsed.contains("description") && !parsed["description"].get<std::string>().empty()) {
-        formatted += "  Description: " + parsed["description"].get<std::string>() + "\n";
-      }
-    } else {
-      if (parsed.contains("error")) {
-        formatted += "  Error: " + parsed["error"].get<std::string>() + "\n";
-      } else {
-        formatted += "  " + result_or_error + "\n";
-      }
-    }
-  } else if (tool_name == "task" && parsed_ok) {
-    // Task result
-    if (success) {
-      if (parsed.contains("result")) {
-        std::string r = parsed["result"].dump(2);
-        if (truncate_at > 0 && static_cast<int>(r.length()) > truncate_at)
-          r = r.substr(0, truncate_at) + "...";
-        formatted += r + "\n";
-      } else if (parsed.contains("output")) {
-        std::string output = parsed["output"].get<std::string>();
-        if (truncate_at > 0 && static_cast<int>(output.length()) > truncate_at)
-          output = output.substr(0, truncate_at) + "...";
-        formatted += output + "\n";
-      } else if (parsed.contains("summary")) {
-        formatted += parsed["summary"].get<std::string>() + "\n";
-      } else {
-        std::string r = parsed.dump(2);
-        if (truncate_at > 0 && static_cast<int>(r.length()) > truncate_at)
-          r = r.substr(0, truncate_at) + "...";
-        formatted += r + "\n";
-      }
-    } else {
-      if (parsed.contains("error")) {
-        formatted += parsed["error"].get<std::string>() + "\n";
-      } else {
-        std::string s = result_or_error;
-        if (truncate_at > 0 && static_cast<int>(s.length()) > truncate_at)
-          s = s.substr(0, truncate_at) + "...";
-        formatted += s + "\n";
-      }
-    }
-  } else {
-    // Generic / unknown tool or unparseable JSON
-    std::string s = result_or_error;
-    if (parsed_ok) {
-      s = parsed.dump(2);
-    }
-    if (truncate_at > 0 && static_cast<int>(s.length()) > truncate_at)
-      s = s.substr(0, truncate_at) + "...";
-    formatted += s + "\n";
   }
   
   // Trim trailing newline

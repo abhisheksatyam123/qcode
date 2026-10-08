@@ -41,6 +41,9 @@ std::string get_session_title(const std::string& session_id);
 // Validate that an id has the canonical 36-char RFC 4122 UUID form.
 bool is_valid_session_id(const std::string& id);
 
+// Check if a session exists in the database.
+bool session_exists(const std::string& session_id);
+
 // Save a single chat message into the SQLite database
 void save_message(const std::string& session_id, const std::string& sender, const std::string& content);
 
@@ -90,6 +93,8 @@ struct SessionInfo {
     int message_count = 0;
 };
 std::vector<SessionInfo> list_sessions_full(bool include_subagents = false, const std::string& parent_session_id = "");
+// Single session lookup by id (no subagent filtering)
+std::optional<SessionInfo> get_session_info(const std::string& session_id);
 
 // Rename a session title
 void rename_session(const std::string& session_id, const std::string& new_title);

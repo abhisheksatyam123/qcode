@@ -42,14 +42,14 @@ TEST(AntigravityClientTest, RequestBuilderProducesAntigravityEnvelope) {
 TEST(AntigravityClientTest, ClaudeRequestMarksCacheAndThinking) {
   AntigravityRequestBuilder builder("project-1");
   GenerateOptions opts;
-  opts.model = "claude-sonnet-4-6";
+  opts.model = "claude-sonnet-5-5";
   opts.system = "be careful";
   opts.reasoning_effort = "high";
   opts.messages = {Message::user("hi"), Message::assistant("ok"),
                    Message::user("again")};
 
   const auto req = builder.build_request_json(opts);
-  EXPECT_EQ(req["model"].get<std::string>(), "claude-sonnet-4-6");
+  EXPECT_EQ(req["model"].get<std::string>(), "claude-sonnet-5-5");
   const auto& inner = req["request"];
   EXPECT_EQ(inner["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "high");

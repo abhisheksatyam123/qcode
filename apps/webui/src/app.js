@@ -235,7 +235,7 @@ const state = {
   model: '',
   reasoning: 'low',
   toolsEnabled: true,
-  openSessions: [], // Array of { id, title, workspace, messages, generating, reader, provider, model }
+  openSessions: [], // Array of { id, title, workspace, messages, generating, stream, provider, model }
   providers: [],
   sessionId: null,  // Active session ID
   sessionTitle: '',
@@ -364,6 +364,72 @@ let fitAddon = null;   // xterm fit addon
 let termId = null;     // server terminal session id
 let termPollFails = 0; // T6.1 consecutive stream failures
 let termPollTimer = null;
+// Self-scheduling output poll: one request in flight, backing off while idle,
+// paused while the document is hidden. termPollGen invalidates stale loops.
+const TERM_POLL_MIN_MS = 80;
+const TERM_POLL_MAX_MS = 1000;
+let termPollDelay = TERM_POLL_MIN_MS;
+let termPollGen = 0;
+let termPollBusy = false;  // a /stream request is in flight
+function scheduleTermPoll(delay) {
+  if (termPollTimer) clearTimeout(termPollTimer);
+  termPollTimer = null;
+  if (!termId) return;
+  const gen = termPollGen;
+  termPollTimer = setTimeout(() => { termPollTimer = null; pollTerminalOnce(gen); }, delay);
+}
+function stopTerminalPoll() {
+  termPollGen++;
+  termPollBusy = false;
+  if (termPollTimer) clearTimeout(termPollTimer);
+  termPollTimer = null;
+}
+function resetTerminalPollBackoff() {
+  termPollDelay = TERM_POLL_MIN_MS;
+  if (termPollTimer) scheduleTermPoll(TERM_POLL_MIN_MS);
+}
+async function pollTerminalOnce(gen) {
+  if (gen !== termPollGen || !termId) return;
+  if (document.hidden) return;  // resumed by the visibilitychange handler
+  termPollBusy = true;
+  try {
+    const res = await fetch('/terminal/' + termId + '/stream');
+    if (gen !== termPollGen) return;
+    if (res.ok) {
+      termPollFails = 0;
+      const text = await res.text();
+      if (gen !== termPollGen) return;
+      if (text) {
+        if (term) term.write(text);
+        termPollDelay = TERM_POLL_MIN_MS;
+      } else {
+        termPollDelay = Math.min(TERM_POLL_MAX_MS, termPollDelay * 2);
+      }
+    } else {
+      termPollFails = (termPollFails || 0) + 1;
+      termPollDelay = Math.min(TERM_POLL_MAX_MS, termPollDelay * 2);
+    }
+  } catch (e) {
+    if (gen !== termPollGen) return;
+    termPollFails = (termPollFails || 0) + 1;
+    termPollDelay = Math.min(TERM_POLL_MAX_MS, termPollDelay * 2);
+  }
+  termPollBusy = false;
+  if ((termPollFails || 0) >= 12) {
+    termPollFails = 0;
+    if (term) term.write('\r\n[reconnecting…]\r\n');
+    try { await startTerminal(state.sessionWorkspace || ''); }
+    catch (_) { showToast('Terminal reconnect failed'); }
+    return;  // startTerminal starts a new poll loop
+  }
+  scheduleTermPoll(termPollDelay);
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && termId && !termPollTimer && !termPollBusy) {
+    termPollDelay = TERM_POLL_MIN_MS;
+    scheduleTermPoll(0);
+  }
+});
 
 // ── Slash commands ──
 
@@ -1115,7 +1181,7 @@ async function init() {
       if (Array.isArray(sessions) && sessions.length > 0) {
         let lastId = getSessionIdFromHash();
         if (!lastId) {
-          const lastRes = await fetch('/session/last');
+          const lastRes = await fetch('/session/last?messages=0');
           if (lastRes.ok) {
             const lastData = await lastRes.json();
             if (lastData && lastData.id) {
@@ -1128,11 +1194,12 @@ async function init() {
           lastId = sessions[0].id;
         }
 
+        // Sidebar entries come from the list rows; only the active session loads history.
         for (const s of sessions) {
-          const session = await loadSessionData(s.id);
-          state.openSessions.push(session);
+          state.openSessions.push(makeSessionStub(s));
         }
-        
+        renderSessionTabs();
+
         switchSession(lastId);
         return;
       }
@@ -1560,20 +1627,13 @@ function setupEventListeners() {
   window.addEventListener('offline', updateConnectionStatus);
   updateConnectionStatus();
   setInterval(updateConnectionStatus, 30000);
-  // Background message sync: heal stale lists when the tab becomes visible,
-  // the window regains focus, the browser comes back online, or (every 15s)
-  // while the tab is visible and no stream is active.
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) syncActiveSessionMessages({ silent: true });
-  });
-  window.addEventListener('focus', () => { syncActiveSessionMessages({ silent: true }); });
-  window.addEventListener('online', () => { syncActiveSessionMessages({ silent: true }); });
-  setInterval(() => {
-    if (document.hidden || !state.sessionId) return;
-    const active = state.openSessions.find(s => s.id === state.sessionId);
-    if (!active || active.generating) return;
-    syncActiveSessionMessages({ silent: true });
-  }, 15000);
+  // Event-driven session refresh (see refreshSession): visibility, focus and
+  // reconnect trigger a cheap check; a light poll covers changes made
+  // elsewhere. Full history is fetched only when the session changed.
+  document.addEventListener('visibilitychange', refreshActiveSession);
+  window.addEventListener('focus', refreshActiveSession);
+  window.addEventListener('online', refreshActiveSession);
+  setInterval(refreshActiveSession, 5000);
 }
 
 // ── Status Bar ──
@@ -1749,6 +1809,7 @@ function changeTerminalFontSize(delta) {
 
 function sendTerminalInput(data) {
   if (!termId) return;
+  resetTerminalPollBackoff();
   fetch('/terminal/' + termId + '/input', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1759,7 +1820,7 @@ function sendTerminalInput(data) {
 async function startTerminal(workspace) {
   // Cleanup existing terminal
   if (term) { term.dispose(); term = null; }
-  if (termPollTimer) { clearInterval(termPollTimer); termPollTimer = null; }
+  stopTerminalPoll();
   if (termId) {
     try { await fetch('/terminal/' + termId, { method: 'DELETE' }); } catch(e) {}
     termId = null;
@@ -1821,25 +1882,8 @@ async function startTerminal(workspace) {
 
     // Poll for output (T6.1: auto-reconnect after repeated failures)
     termPollFails = 0;
-    termPollTimer = setInterval(async () => {
-      if (!termId) return;
-      try {
-        const res = await fetch('/terminal/' + termId + '/stream');
-        if (res.ok) {
-          termPollFails = 0;
-          const text = await res.text();
-          if (text) term.write(text);
-        } else {
-          termPollFails = (termPollFails || 0) + 1;
-        }
-      } catch (e) { termPollFails = (termPollFails || 0) + 1; }
-      if ((termPollFails || 0) >= 12) {
-        termPollFails = 0;
-        if (term) term.write('\r\n[reconnecting…]\r\n');
-        try { await startTerminal(state.sessionWorkspace || ''); }
-        catch (_) { showToast('Terminal reconnect failed'); }
-      }
-    }, 80);
+    termPollDelay = TERM_POLL_MIN_MS;
+    scheduleTermPoll(0);
 
   } catch (e) {
     showToast('Terminal error: ' + e.message);
@@ -1854,7 +1898,7 @@ async function startTerminal(workspace) {
 
 async function closeTerminal() {
   state.terminalOpen = false;
-  if (termPollTimer) { clearInterval(termPollTimer); termPollTimer = null; }
+  stopTerminalPoll();
   if (term) { term.dispose(); term = null; }
   if (termId) {
     try { await fetch('/terminal/' + termId, { method: 'DELETE' }); } catch(e) {}
@@ -2361,7 +2405,8 @@ function handleQueueCommand(args) {
       showToast('Usage: /queue rm <1-based index>');
       return;
     }
-    session.promptQueue.splice(n - 1, 1);
+    const [removed] = session.promptQueue.splice(n - 1, 1);
+    withdrawQueuedPrompts(session.id, removed);
     updateQueueIndicator();
     renderMessages();
     showToast('Removed queued prompt #' + n);
@@ -2383,6 +2428,7 @@ function handleClearQueueCommand() {
     return;
   }
   session.promptQueue = [];
+  withdrawQueuedPrompts(session.id);
   updateQueueIndicator();
   renderMessages();
   showToast(n === 1 ? 'Cleared 1 queued prompt' : ('Cleared ' + n + ' queued prompts'));
@@ -2462,7 +2508,7 @@ function executePaletteCommand(id) {
 function renderQueuedBlock(queue) {
   const wrap = document.createElement('div');
   wrap.className = 'queued-block';
-  let html = '<div class="queued-head">⏳ Queued <span class="queued-hint">· /clear-queue to cancel</span></div>';
+  let html = '<div class="queued-head loading-spinner"><span>Queued <span class="queued-hint">· /clear-queue to cancel</span></span></div>';
   queue.forEach((text, i) => {
     if (i > 0) html += '<div class="queued-sep">---</div>';
     html += '<div class="queued-body">' + esc(text) + '</div>';
@@ -2656,7 +2702,7 @@ async function loadSessionData(id) {
     workspace: '',
     messages: [],
     generating: false,
-    reader: null,
+    stream: null,
     provider: '',
     model: ''
   };
@@ -2673,6 +2719,8 @@ async function loadSessionData(id) {
       session.reasoning = info.reasoning_mode || session.reasoning || state.reasoning || 'low';
       session.parentSessionId = info.parent_session_id || state.parentSessionId || '';
       session.persona = info.persona || '';
+      // Taken before /messages, so a write in between still reads as a change.
+      session.serverRev = sessionRev(info);
     }
   } catch (e) {}
 
@@ -2692,12 +2740,52 @@ async function loadSessionData(id) {
   return session;
 }
 
-// ── Background message sync ──
-// Reconciles the active session's message list with the server so the UI
-// does not go stale when the SSE stream drops silently or updates land
-// from another client/retry path. NEVER interrupts a live stream: skips
-// while the session is generating, has an open reader, or was cancelled.
-let syncingMessages = false;
+// Lightweight session built from a /sessions row. History is fetched on first open.
+function makeSessionStub(row) {
+  const id = row.id;
+  const agentMode = row.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+  return {
+    id: id,
+    title: row.title || ((agentMode === 'subagent' ? 'Subagent ' : 'Session ') + id.substring(0, 8)),
+    workspace: row.workspace || '',
+    messages: [],
+    generating: false,
+    stream: null,
+    provider: row.provider || '',
+    model: row.model || '',
+    agentMode: agentMode,
+    reasoning: row.reasoning_mode || '',
+    parentSessionId: row.parent_session_id || '',
+    persona: row.persona || '',
+    serverRev: null,
+    stub: true
+  };
+}
+
+// Fills a stub from the server (session info + history). Safe to call
+// repeatedly; a failed load is retried on the next call.
+function ensureSessionLoaded(session) {
+  if (!session.stub) return Promise.resolve();
+  if (!session.loadPromise) {
+    session.loadPromise = loadSessionData(session.id).then(full => {
+      // loadSessionData swallows fetch errors; serverRev is set only when
+      // GET /session/:id succeeded, so keep the stub (and retry) otherwise.
+      if (full.serverRev === undefined) throw new Error('session info unavailable');
+      Object.assign(session, full, { stub: false });
+    }).finally(() => {
+      delete session.loadPromise;
+    });
+  }
+  return session.loadPromise;
+}
+
+// ── Session refresh ──
+// Live turns are rendered from their stream. Everything else is
+// event-driven: a turn's end, Stop, session switch, tab focus/visibility and
+// reconnect call refreshSession(), a cheap GET /session/:id (no history)
+// that reattaches to a running turn or refetches /messages only when
+// message_count / updated_at moved. A short light poll catches changes made
+// elsewhere (TUI, other tabs).
 function messageSignature(msgs) {
   if (!Array.isArray(msgs) || msgs.length === 0) return '0|empty';
   const last = msgs[msgs.length - 1] || {};
@@ -2706,44 +2794,72 @@ function messageSignature(msgs) {
   const tools = (last.toolEvents || []).map(t => (t.tool_call_id || '') + ':' + (t.status || '')).join(',');
   return msgs.length + '|' + (last.role || '') + '|' + content.length + ':' + content + '|' + timelineLen + '|' + tools;
 }
-async function syncActiveSessionMessages(opts) {
-  const silent = !!(opts && opts.silent);
-  void silent; // syncs never toast; the flag only documents intent
-  if (!state.sessionId) return false;
-  if (syncingMessages) return false;
-  const session = state.openSessions.find(s => s.id === state.sessionId);
-  if (!session) return false;
-  if (session.generating || session.reader || session.cancelRequested) return false;
-  syncingMessages = true;
+
+function sessionRev(info) {
+  return (info.message_count || 0) + ':' + (info.updated_at || 0);
+}
+
+// Replace the session's messages with the server history. Never touches a
+// session that is following a live turn.
+async function syncSessionMessages(session) {
+  const res = await fetch('/session/' + session.id + '/messages', { cache: 'no-store' });
+  if (!res.ok) return false;
+  const msgs = await res.json();
+  if (!Array.isArray(msgs) || session.stream) return false;
+  const tmp = { messages: [] };
+  parseMessages(msgs, tmp);
+  if (messageSignature(tmp.messages) === messageSignature(session.messages)) return false;
+  const stickToBottom = nearBottom();
+  session.messages = tmp.messages;
+  if (session.id === state.sessionId) {
+    renderMessages();
+    // Only follow new messages when the user was already near the bottom;
+    // otherwise the jump pill is the affordance.
+    if (stickToBottom) scrollToBottom(true);
+    else updateJumpPill();
+  }
+  return true;
+}
+
+// opts.force refetches the history even when the revision looks unchanged.
+async function refreshSession(session, opts) {
+  if (!session || !session.id || session.stub) return;
+  const force = !!(opts && opts.force);
+  if (session.refreshing) {
+    if (force || !session.refreshAgain) session.refreshAgain = force ? 'force' : 'light';
+    return;
+  }
+  if (session.stream) return;  // the live stream is authoritative while it runs
+  session.refreshing = true;
   try {
-    const res = await fetch('/session/' + session.id + '/messages');
-    if (!res.ok) return false;
-    const msgs = await res.json();
-    if (!Array.isArray(msgs)) return false;
-    const tmp = { messages: [] };
-    parseMessages(msgs, tmp);
-    if (messageSignature(tmp.messages) === messageSignature(session.messages)) return false;
-    const stickToBottom = nearBottom();
-    session.messages = tmp.messages;
-    if (session.id === state.sessionId) {
-      renderMessages();
-      // Subtle, non-blocking: only follow new messages when the user was
-      // already near the bottom; otherwise leave scroll alone (the jump
-      // pill refreshed below is the affordance). No toast on sync.
-      if (stickToBottom) scrollToBottom(true);
-      else updateJumpPill();
+    const res = await fetch('/session/' + session.id, { cache: 'no-store' });
+    if (!res.ok) return;
+    const info = await res.json();
+    if (session.stream) return;
+    if (info.generating) {
+      // Reattach unless it is the turn the user just stopped winding down.
+      if (session.id === state.sessionId && info.turn !== session.stoppedTurn) {
+        attachToRunningTurn(session);
+      }
+      return;
     }
-    return true;
+    const rev = sessionRev(info);
+    if (!force && rev === session.serverRev) return;
+    session.serverRev = rev;
+    await syncSessionMessages(session);
   } catch (_) {
-    return false;
+    // Offline or server restarting: the next trigger retries.
   } finally {
-    syncingMessages = false;
+    session.refreshing = false;
+    const again = session.refreshAgain;
+    session.refreshAgain = null;
+    if (again) refreshSession(session, { force: again === 'force' });
   }
 }
-function schedulePostStreamSync() {
-  // Reconcile any deltas the stream missed. syncActiveSessionMessages
-  // still skips if a new generation started in the meantime.
-  setTimeout(() => { syncActiveSessionMessages({ silent: true }); }, 800);
+
+function refreshActiveSession() {
+  if (document.hidden) return;
+  refreshSession(state.openSessions.find(s => s.id === state.sessionId));
 }
 
 async function loadSessionById(id) {
@@ -2839,173 +2955,170 @@ async function handleCompactCommand() {
 //  SEND MESSAGE + STREAMING
 // ═══════════════════════════════════════════════════════════════════
 
-async function runGeneration(session, text) {
-  session.cancelRequested = false;
-  session.lastUserPrompt = text;
-  session.messages.push({ role: 'user', content: text, createdAt: Date.now() });
-  
-  const assistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [], createdAt: Date.now() };
-  session.messages.push(assistantMsg);
+// A turn runs and persists itself on the server; the WebUI only mirrors it.
+// session.stream = { msg, turn, reader, stopped, complete } follows one turn:
+// `msg` is the assistant message being streamed into, `turn` the server turn
+// id every NDJSON line carries. Lines of another turn, or of a turn the user
+// stopped (session.stoppedTurn), are dropped. A dropped connection
+// reattaches with {resume: true}: the server replays a snapshot (history
+// plus the turn's unsaved text) and continues with the turn's later events.
 
-  if (session.id === state.sessionId) {
-    renderMessages();
-    scrollToBottom();
-    setGenerating(true);
+const kMaxStreamRetries = 3;
+
+function isNetworkError(e) {
+  return !!e && (e.name === 'AbortError' || e.name === 'TypeError'
+    || /network|fetch|abort|interrupted|failed/i.test(e.message || ''));
+}
+
+async function responseError(res) {
+  const text = await res.text().catch(() => '');
+  try { return JSON.parse(text).error || text; } catch (_) { return text || ('HTTP ' + res.status); }
+}
+
+function postGenerate(session, text) {
+  // Prefer the live dropdown selection, then the session's stored pair.
+  // Always resolve against /providers so stale/empty DB values cannot
+  // produce "Unknown provider:".
+  const resolved = resolveProviderModel(
+    state.provider || session.provider,
+    state.model || session.model
+  );
+  if (!resolved.ok) {
+    return Promise.reject(new Error('No provider/model configured. Check the sidebar selectors.'));
   }
-  
-  session.generating = true;
-  renderSessionTabs();
-
-  let receivedComplete = false;
-  try {
-    // Prefer the live dropdown selection, then the session's stored pair.
-    // Always resolve against /providers so stale/empty DB values cannot
-    // produce "Unknown provider:".
-    const resolved = resolveProviderModel(
-      state.provider || session.provider,
-      state.model || session.model
-    );
-    if (!resolved.ok) {
-      throw new Error('No provider/model configured. Check the sidebar selectors.');
-    }
-    session.provider = resolved.provider;
-    session.model = resolved.model;
-    state.provider = resolved.provider;
-    state.model = resolved.model;
-
-    const body = JSON.stringify({
+  session.provider = resolved.provider;
+  session.model = resolved.model;
+  state.provider = resolved.provider;
+  state.model = resolved.model;
+  return fetch(`/session/${session.id}/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       text,
       provider: resolved.provider,
       model: resolved.model,
-      agent_mode: session.agentMode || state.agentMode || "orchestrator",
+      agent_mode: session.agentMode || state.agentMode || 'orchestrator',
       reasoning_mode: state.reasoning,
       session_id: session.id
-    });
-    
-    const res = await fetch(`/session/${session.id}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    if (!res.ok) throw new Error(await res.text());
-    
-    if (!res.body) throw new Error('The server returned an empty response stream');
-    const reader = res.body.getReader();
-    session.reader = reader;
-    session._retries = session._retries || 0;
-    const decoder = new TextDecoder();
-    let buffer = '';
+    })
+  });
+}
 
-    const consumeLine = (line) => {
-      if (!line.trim()) return;
-      try {
-        const event = JSON.parse(line);
-        handleEvent(event, assistantMsg, session);
-        if (event.type === 'generation.complete') receivedComplete = true;
-      } catch (error) {
-        console.warn('Ignoring malformed stream event:', error, line);
-      }
-    };
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) consumeLine(line);
-    }
-    buffer += decoder.decode();
-    consumeLine(buffer);
+function postResume(session) {
+  return fetch(`/session/${session.id}/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resume: true, session_id: session.id })
+  });
+}
 
-    if (!receivedComplete && !session.cancelRequested && !assistantMsg.streamError) {
-      assistantMsg.stoppedEarly = true;
-      throw new Error('The response stream ended before generation completed');
-    }
-  } catch (e) {
-    // Automatic resume on transport abort (keeps same assistantMsg, no duplicate user prompt)
-    const maxRetries = 3;
-    if ((e.name === 'AbortError' || /network|fetch|aborted|interrupted/i.test(e.message || '')) && !session.cancelRequested && !receivedComplete && (session._retries || 0) < maxRetries) {
-      session._retries = (session._retries || 0) + 1;
-      const backoffMs = Math.min(1000 * Math.pow(1.5, session._retries - 1), 5000);
-      showToast(`Connection dropped — reconnecting (attempt ${session._retries}/${maxRetries})…`);
-      await new Promise(r => setTimeout(r, backoffMs));
-      session.reader = null;
-      return runGenerationResume(session, assistantMsg);
-    }
-    // Some browsers report a transport error after receiving the final chunk.
-    // The generation.complete event is authoritative in that case.
-    if (e.name !== 'AbortError' && !session.cancelRequested && !receivedComplete && !assistantMsg.streamError) {
-      const isNet = /network|fetch|abort|interrupted|failed/i.test(e.message || '');
-      const message = isNet ? 'Connection lost — click Retry to continue' : (e.message || 'Connection interrupted');
-      showToast(isNet ? 'Connection lost' : ('Generation interrupted: ' + message));
-      assistantMsg.streamError = message;
-      assistantMsg.stoppedEarly = true;
-    }
-  } finally {
-    session.reader = null;
+function postCancel(sessionId) {
+  return fetch('/session/' + sessionId + '/cancel', { method: 'POST' }).catch(() => {});
+}
 
-    const exists = state.openSessions.some(s => s.id === session.id);
-    const hasNext = exists && !session.cancelRequested && session.promptQueue && session.promptQueue.length > 0;
+function beginStream(session, msg) {
+  const stream = { msg, turn: null, reader: null, stopped: false, complete: false };
+  session.stream = stream;
+  session.generating = true;
+  renderSessionTabs();
+  if (session.id === state.sessionId) setGenerating(true);
+  return stream;
+}
 
-    if (hasNext) {
-      session.generating = true;
-      const nextPrompt = session.promptQueue.shift();
-      renderSessionTabs();
-      updateQueueIndicator();
-      setTimeout(() => {
-        if (session.cancelRequested) {
-          session.generating = false;
-          renderSessionTabs();
-          if (session.id === state.sessionId) {
-            setGenerating(false);
-          }
-          return;
-        }
-        runGeneration(session, nextPrompt);
-      }, 50);
-    } else {
-      session.generating = false;
-      renderSessionTabs();
-      if (session.id === state.sessionId) {
-        setGenerating(false);
-        renderMessages();
-        scrollToBottom();
-      }
-      updateQueueIndicator();
-      schedulePostStreamSync();
-    }
+// Reset the UI when `stream` ends, unless Stop or a newer turn took over.
+function endStream(session, stream) {
+  if (session.stream !== stream) return;
+  session.stream = null;
+  session.generating = false;
+  renderSessionTabs();
+  if (session.id === state.sessionId) {
+    setGenerating(false);
+    renderMessages();
+    scrollToBottom();
+  }
+  updateQueueIndicator();
+  // Reconcile with what the server persisted for the turn.
+  setTimeout(() => refreshSession(session, { force: true }), 300);
+}
+
+function failStream(stream, message) {
+  showToast(message);
+  if (stream.msg) {
+    stream.msg.streamError = message;
+    stream.msg.stoppedEarly = true;
   }
 }
 
-// Resume streaming into the SAME assistantMsg (no duplicate user prompt).
-async function runGenerationResume(session, assistantMsg) {
+function dropQueuedPrompt(session, text) {
+  const queue = session.promptQueue || [];
+  const i = queue.indexOf(text);
+  if (i >= 0) queue.splice(i, 1);
+  updateQueueIndicator();
+}
+
+// Rebuild the session from a resume snapshot: persisted history plus the
+// running turn's not-yet-persisted text, which later deltas extend.
+function applySnapshot(session, stream, evt) {
+  parseMessages(Array.isArray(evt.messages) ? evt.messages : [], session);
+  let msg = session.messages[session.messages.length - 1];
+  if (!msg || msg.role !== 'assistant') {
+    msg = { role: 'assistant', content: '', toolEvents: [], timeline: [], createdAt: Date.now() };
+    session.messages.push(msg);
+  }
+  if (evt.reasoning_text) appendThoughtChunk(msg, evt.reasoning_text);
+  if (evt.assistant_text) msg.content = (msg.content || '') + evt.assistant_text;
+  stream.msg = msg;
+  if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+}
+
+// A prompt queued during the turn reached the model: show it where the model
+// read it and continue the reply in a new assistant message.
+function applyInjectedPrompt(session, stream, text) {
+  closeOpenThought(stream.msg);
+  session.promptQueue = (session.promptQueue || []).filter(q => !text.includes(q));
+  session.messages.push({ role: 'user', content: text, createdAt: Date.now() });
+  const msg = { role: 'assistant', content: '', toolEvents: [], timeline: [], createdAt: Date.now() };
+  session.messages.push(msg);
+  stream.msg = msg;
+  updateQueueIndicator();
+  if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+}
+
+function applyTurnEvent(session, stream, evt) {
+  if (evt.turn != null) {
+    if (evt.turn === session.stoppedTurn) { stream.stopped = true; return; }
+    if (stream.turn == null) stream.turn = evt.turn;
+    else if (evt.turn !== stream.turn) return;
+  }
+  if (evt.type === 'session.snapshot') { applySnapshot(session, stream, evt); return; }
+  if (evt.type === 'generation.complete') stream.complete = true;
+  if (!stream.msg) return;  // resume found no running turn
+  if (evt.type === 'backend.user.message.injected') {
+    applyInjectedPrompt(session, stream, evt.text || '');
+    return;
+  }
+  handleEvent(evt, stream.msg, session);
+}
+
+// Read one NDJSON response into `stream` until it ends, completes or stops.
+async function readTurnStream(session, stream, res) {
+  const reader = res.body.getReader();
+  stream.reader = reader;
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const consume = (line) => {
+    if (!line.trim() || stream.stopped) return;
+    let evt;
+    try {
+      evt = JSON.parse(line);
+    } catch (error) {
+      console.warn('Ignoring malformed stream event:', error, line);
+      return;
+    }
+    applyTurnEvent(session, stream, evt);
+  };
   try {
-    const res = await fetch(`/session/${session.id}/generate?resume=1`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: '',
-        resume: true,
-        provider: session.provider,
-        model: session.model,
-        agent_mode: session.agentMode || state.agentMode || "orchestrator",
-        reasoning_mode: state.reasoning,
-        session_id: session.id
-      })
-    });
-    if (!res.ok) throw new Error(await res.text());
-    if (!res.body) throw new Error('empty resume stream');
-    const reader = res.body.getReader();
-    session.reader = reader;
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let gotComplete = false;
-    const consume = (line) => {
-      if (!line.trim()) return;
-      try {
-        const event = JSON.parse(line);
-        handleEvent(event, assistantMsg, session);
-        if (event.type === 'generation.complete') gotComplete = true;
-      } catch (_) {}
-    };
-    while (true) {
+    while (!stream.stopped && !stream.complete) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -3015,40 +3128,137 @@ async function runGenerationResume(session, assistantMsg) {
     }
     buffer += decoder.decode();
     consume(buffer);
-    if (!gotComplete) {
-      assistantMsg.stoppedEarly = true;
-    } else {
-      assistantMsg.streamError = null;
-      assistantMsg.stoppedEarly = false;
-    }
-  } catch (e2) {
-    const maxRetries = 3;
-    if ((e2.name === 'AbortError' || /network|fetch|aborted|interrupted/i.test(e2.message || '')) && !session.cancelRequested && !gotComplete && (session._retries || 0) < maxRetries) {
-      session._retries = (session._retries || 0) + 1;
-      const backoffMs = Math.min(1000 * Math.pow(1.5, session._retries - 1), 5000);
-      showToast(`Resume connection dropped — retrying (attempt ${session._retries}/${maxRetries})…`);
-      await new Promise(r => setTimeout(r, backoffMs));
-      session.reader = null;
-      return runGenerationResume(session, assistantMsg);
-    }
-    assistantMsg.stoppedEarly = true;
-    const isNet = /network|fetch|abort|interrupted|failed/i.test(e2.message || '');
-    const msg = isNet ? 'Connection lost — click Retry to continue' : (e2.message || 'Connection interrupted');
-    assistantMsg.streamError = assistantMsg.streamError || msg;
-    showToast(isNet ? 'Connection lost' : ('Resume failed: ' + assistantMsg.streamError));
   } finally {
-    session.reader = null;
-    session._retries = 0;
-    session.generating = false;
-    renderSessionTabs();
-    if (session.id === state.sessionId) {
-      setGenerating(false);
-      renderMessages();
-      scrollToBottom();
-    }
-    updateQueueIndicator();
-    schedulePostStreamSync();
+    stream.reader = null;
+    if (stream.stopped || stream.complete) reader.cancel().catch(() => {});
   }
+}
+
+// Follow `stream` until its turn completes or the user stops it. `res` is the
+// response that started the turn, or null to reattach to the running turn.
+async function followTurn(session, stream, res) {
+  let retries = 0;
+  try {
+    for (;;) {
+      let error = null;
+      try {
+        if (!res) res = await postResume(session);
+        if (!res.ok) throw new Error(await responseError(res));
+        if (!res.body) throw new Error('The server returned an empty response stream');
+        await readTurnStream(session, stream, res);
+      } catch (e) {
+        error = e;
+      }
+      res = null;
+      if (stream.stopped || stream.complete) return;
+      if (error && !isNetworkError(error)) {
+        failStream(stream, 'Generation interrupted: ' + (error.message || 'unknown error'));
+        return;
+      }
+      if (retries >= kMaxStreamRetries) {
+        failStream(stream, 'Connection lost — click Retry to continue');
+        return;
+      }
+      retries++;
+      showToast(`Connection dropped — reconnecting (attempt ${retries}/${kMaxStreamRetries})…`);
+      await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(1.5, retries - 1), 5000)));
+      if (stream.stopped) return;
+    }
+  } finally {
+    endStream(session, stream);
+  }
+}
+
+// Start a turn for `text`. `res` is passed when the POST was already made
+// (a queued prompt that found the previous turn over).
+async function runGeneration(session, text, res) {
+  session.lastUserPrompt = text;
+  const userMsg = { role: 'user', content: text, createdAt: Date.now() };
+  const assistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [], createdAt: Date.now() };
+  session.messages.push(userMsg, assistantMsg);
+  const stream = beginStream(session, assistantMsg);
+  if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+
+  if (!res) {
+    try {
+      res = await postGenerate(session, text);
+    } catch (e) {
+      failStream(stream, isNetworkError(e) ? 'Connection lost — click Retry to continue' : (e.message || 'Failed to send'));
+      endStream(session, stream);
+      return;
+    }
+  }
+  if (stream.stopped) {
+    // Stopped before the server answered: stop the turn it may have started.
+    if (res.ok) postCancel(session.id);
+    if (res.body) res.body.cancel().catch(() => {});
+    return;
+  }
+  if (res.status === 202) {
+    // A turn was already running (another tab, the TUI): it takes the prompt
+    // mid-turn. Follow that turn; its snapshot replaces the optimistic rows.
+    session.messages = session.messages.filter(m => m !== userMsg && m !== assistantMsg);
+    (session.promptQueue = session.promptQueue || []).push(text);
+    updateQueueIndicator();
+    stream.msg = null;
+    res = null;
+  }
+  await followTurn(session, stream, res);
+}
+
+// Reattach to the server's running turn (page load, reconnect, a turn
+// started elsewhere). The resume snapshot rebuilds history and live text.
+function attachToRunningTurn(session) {
+  if (session.stream) return;
+  followTurn(session, beginStream(session, null), null);
+}
+
+// Send a prompt while a turn runs: the server queues it and the running turn
+// takes it at its next model request (backend.user.message.injected).
+async function queuePrompt(session, text) {
+  if (!session.promptQueue) session.promptQueue = [];
+  session.promptQueue.push(text);
+  updateQueueIndicator();
+  if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+  const stops = session.stops || 0;
+  let res;
+  try {
+    res = await postGenerate(session, text);
+  } catch (e) {
+    dropQueuedPrompt(session, text);
+    if (session.id === state.sessionId) renderMessages();
+    showToast('Failed to queue prompt: ' + e.message);
+    return;
+  }
+  if ((session.stops || 0) !== stops) {
+    // Stopped while sending. Stop drops queued prompts, so this one too
+    // (the server already dropped it, or started a turn for it to cancel).
+    if (res.ok && res.status !== 202) postCancel(session.id);
+    if (res.body) res.body.cancel().catch(() => {});
+    return;
+  }
+  if (res.status === 202) {
+    showToast('Prompt queued');
+    return;
+  }
+  dropQueuedPrompt(session, text);
+  if (res.ok && res.body) {
+    // The turn ended meanwhile, so the prompt started a new one.
+    await runGeneration(session, text, res);
+    return;
+  }
+  if (session.id === state.sessionId) renderMessages();
+  showToast('Failed to queue prompt: ' + await responseError(res));
+}
+
+// Withdraw queued prompts the running turn has not taken yet (all when
+// `text` is omitted).
+function withdrawQueuedPrompts(sessionId, text) {
+  fetch('/session/' + sessionId + '/queue', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: text == null ? '' : JSON.stringify({ text })
+  }).catch(() => {});
 }
 
 function updateQueueIndicator() {
@@ -3081,26 +3291,112 @@ async function sendMessage() {
   const session = state.openSessions.find(s => s.id === state.sessionId);
   if (!session) return;
 
-  if (session.generating) {
-    if (!session.promptQueue) session.promptQueue = [];
-    if (session.promptQueue.length > 0) {
-      session.promptQueue[session.promptQueue.length - 1] += '\n' + text;
-      showToast('Prompt merged into queued message');
-    } else {
-      session.promptQueue.push(text);
-      showToast('Prompt queued');
-    }
-    promptInput.value = '';
-    resizePromptInput();
-    updateQueueIndicator();
-    renderMessages();
-    scrollToBottom();
-    return;
-  }
-
   promptInput.value = '';
   resizePromptInput();
+  if (session.generating) {
+    await queuePrompt(session, text);
+    return;
+  }
   await runGeneration(session, text);
+}
+
+
+// Mermaid is ~3.5 MB; fetch it on the first diagram instead of at page load.
+let mermaidLoadPromise = null;
+function loadMermaid() {
+  if (typeof mermaid !== 'undefined' && mermaid.render) return Promise.resolve(mermaid);
+  if (!mermaidLoadPromise) {
+    mermaidLoadPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '/vendor-mermaid.min.js';
+      s.onload = () => {
+        if (typeof mermaid !== 'undefined' && mermaid.render) resolve(mermaid);
+        else reject(new Error('Mermaid did not initialize'));
+      };
+      s.onerror = () => {
+        s.remove();
+        mermaidLoadPromise = null;
+        reject(new Error('Mermaid failed to load'));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  return mermaidLoadPromise;
+}
+
+// Coalesces bursts of full rebuilds (tool/usage events) into one render + scroll per frame.
+let fullRenderPending = false;
+function scheduleFullRender() {
+  if (fullRenderPending) return;
+  fullRenderPending = true;
+  requestAnimationFrame(() => {
+    fullRenderPending = false;
+    renderMessages();
+    scrollToBottom();
+  });
+}
+
+let streamRenderPending = false;
+function scheduleStreamingRender(session, msg) {
+  if (streamRenderPending) return;
+  streamRenderPending = true;
+  requestAnimationFrame(() => {
+    streamRenderPending = false;
+    if (session.id !== state.sessionId) return;
+    renderStreamingIncremental(msg);
+  });
+}
+
+function renderStreamingIncremental(msg) {
+  // A queued-prompt block is always the last child; look past it for the message.
+  let lastChild = messagesEl.lastElementChild;
+  if (lastChild && lastChild.classList.contains('queued-block')) lastChild = lastChild.previousElementSibling;
+  // renderMessage() stamps _msgRef on every message element, so no post-render stamping is needed.
+  if (!lastChild || !lastChild.classList.contains('assistant') || lastChild._msgRef !== msg) {
+    renderMessages();
+  } else {
+    // Fast path: in-place update of current streaming assistant message
+    if (msg.reasoning && state.showThinking) {
+      const thoughts = msg.timeline ? msg.timeline.filter(e => e.kind === 'thought' && e.text) : null;
+      const thoughtText = thoughts && thoughts.length ? thoughts[thoughts.length - 1].text : msg.reasoning;
+      const thoughtEls = lastChild.querySelectorAll('.reasoning-block');
+      const thoughtEl = thoughtEls[thoughtEls.length - 1];
+      // Fast path only when the DOM already has one block per thought entry; otherwise rebuild.
+      if (thoughts && thoughtEls.length !== thoughts.length) {
+        renderMessages();
+        scrollToBottom();
+        return;
+      }
+      if (!thoughtEl) {
+        const liveThought = renderThoughtBlock(thoughtText, { open: true });
+        const contentEl = lastChild.querySelector('.message-content');
+        if (contentEl) contentEl.prepend(liveThought);
+      } else {
+        const textEl = thoughtEl.querySelector('.reasoning-text');
+        if (textEl) {
+          textEl.innerHTML = renderMarkdown(thoughtText);
+          tagMarkdownLinks(textEl);
+        }
+      }
+    }
+    if (msg.content) {
+      const contentEl = lastChild.querySelector('.message-content');
+      let textEl = contentEl ? contentEl.querySelector('.md-content') : null;
+      if (!textEl && contentEl) {
+        textEl = document.createElement('div');
+        textEl.className = 'md-content streaming-cursor';
+        contentEl.appendChild(textEl);
+      }
+      if (textEl) {
+        textEl.innerHTML = renderMarkdown(msg.content);
+        tagMarkdownLinks(textEl);
+        if (!textEl.classList.contains('streaming-cursor')) {
+          textEl.classList.add('streaming-cursor');
+        }
+      }
+    }
+  }
+  scrollToBottom();
 }
 
 function handleEvent(evt, msg, session) {
@@ -3126,8 +3422,7 @@ function handleEvent(evt, msg, session) {
         msg.streamError = null;
       }
       if (session.id === state.sessionId) {
-        renderMessages();
-        scrollToBottom();
+        scheduleStreamingRender(session, msg);
       }
       break;
     case 'backend.reasoning.delta':
@@ -3135,7 +3430,9 @@ function handleEvent(evt, msg, session) {
         appendThoughtChunk(msg, evt.text);
         msg.streamError = null;
       }
-      if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+      if (session.id === state.sessionId) {
+        scheduleStreamingRender(session, msg);
+      }
       break;
     case 'backend.token.usage.updated': {
       const parts = [];
@@ -3147,7 +3444,7 @@ function handleEvent(evt, msg, session) {
       else if (state.reasoning !== 'off') parts.push('thinking 0');
       if (parts.length > 0) {
         msg.usage = 'Tokens — ' + parts.join(' · ');
-        if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+        if (session.id === state.sessionId) scheduleFullRender();
       }
       break;
     }
@@ -3157,10 +3454,7 @@ function handleEvent(evt, msg, session) {
       msg.toolEvents.push({ type: 'tool_call', tool_call_id: evt.tool_call_id, tool_name: evt.tool_name, arguments: evt.arguments, status: 'running' });
       if (!msg.timeline) msg.timeline = [];
       msg.timeline.push({ kind: 'tool', tool_call_id: evt.tool_call_id });
-      if (session.id === state.sessionId) {
-        renderMessages();
-        scrollToBottom();
-      }
+      if (session.id === state.sessionId) scheduleFullRender();
       break;
     case 'backend.tool.call.completed':
       if (msg.toolEvents) {
@@ -3171,10 +3465,7 @@ function handleEvent(evt, msg, session) {
           tc.duration_ms = evt.duration_ms;
         }
       }
-      if (session.id === state.sessionId) {
-        renderMessages();
-        scrollToBottom();
-      }
+      if (session.id === state.sessionId) scheduleFullRender();
       break;
     case 'backend.error.occurred':
       if (evt.severity === 'info') {
@@ -3200,7 +3491,6 @@ function handleEvent(evt, msg, session) {
         msg.stoppedEarly = false;
       }
       if (session.id === state.sessionId) renderMessages();
-      schedulePostStreamSync();
       break;
   }
 }
@@ -3423,7 +3713,7 @@ async function loadFsListing(relPath) {
 
   state.fsDir = relPath || '';
   renderFsBreadcrumb(state.fsDir);
-  fsListing.innerHTML = '<div class="files-empty">Loading…</div>';
+  fsListing.innerHTML = '<div class="files-empty loading-spinner"><span>Loading…</span></div>';
   const runIndex = (state.fsListingRunIndex || 0) + 1;
   state.fsListingRunIndex = runIndex;
   try {
@@ -3799,7 +4089,7 @@ async function openFsFile(relPath, fragment = null) {
     return;
   }
 
-  if (fsEditorStatus) fsEditorStatus.textContent = 'Loading…';
+  if (fsEditorStatus) { fsEditorStatus.classList.add('loading-spinner'); fsEditorStatus.textContent = 'Loading…'; }
   try {
     const readyState = await fetch('/session/' + state.sessionId + '/fs',
       { method: 'HEAD', cache: 'no-store' }).then(r => r.ok).catch(() => false);
@@ -3918,7 +4208,7 @@ async function returnToParentSession() {
   }
   if (!pid) {
     try {
-      const res = await fetch('/session/last');
+      const res = await fetch('/session/last?messages=0');
       if (res.ok) {
         const last = await res.json();
         if (last && last.id && last.id !== state.sessionId) pid = last.id;
@@ -4118,7 +4408,7 @@ async function loadStatsTab() {
     return;
   }
   statsContent.innerHTML = `
-    <div class="stats-loading">
+    <div class="stats-loading loading-spinner">
       <div class="stats-skeleton-banner"></div>
       <div class="stats-skeleton-grid">
         <div class="stats-skeleton-card"></div>
@@ -4420,6 +4710,7 @@ function renderMessages() {
 
 function renderMessage(msg) {
   const div = document.createElement('div'); div.className = 'message ' + msg.role;
+  div._msgRef = msg;
   const content = document.createElement('div'); content.className = 'message-content';
   if (msg.role !== 'user') {
     const header = document.createElement('div'); header.className = 'message-header';
@@ -4644,7 +4935,7 @@ function renderToolBlock(tc) {
   
   const statusEl = document.createElement('span');
   statusEl.className = 'tool-status-icon';
-  if (tc.status === 'running') statusEl.textContent = '⠋';
+  if (tc.status === 'running') statusEl.innerHTML = '<span class="qcode-spinner"></span>';
   else if (tc.status === 'error') statusEl.textContent = '✗';
   else statusEl.textContent = '✓';
 
@@ -4668,60 +4959,72 @@ function renderToolBlock(tc) {
   const body = document.createElement('div');
   body.className = 'tool-body collapsed';
 
-  // Command row
-  const cmdRow = document.createElement('div');
-  cmdRow.className = 'tool-cmd-row';
-  cmdRow.innerHTML = `<span class="tool-prompt">$</span> <span class="tool-cmd">${esc(command)}</span>`;
-  body.appendChild(cmdRow);
+  // The body (potentially large output) is built on first expand only.
+  let bodyFilled = false;
+  const fillBody = () => {
+    bodyFilled = true;
 
-  // Workdir row
-  if (workdir) {
-    const wdRow = document.createElement('div');
-    wdRow.className = 'tool-wd-row';
-    wdRow.innerHTML = `<span class="tool-in">in</span> <span class="tool-path">${esc(workdir)}</span>`;
-    body.appendChild(wdRow);
-  }
+    // Command row
+    const cmdRow = document.createElement('div');
+    cmdRow.className = 'tool-cmd-row';
+    cmdRow.innerHTML = `<span class="tool-prompt">$</span> <span class="tool-cmd">${esc(command)}</span>`;
+    body.appendChild(cmdRow);
 
-  // Output row
-  if (output) {
-    const outPre = document.createElement('pre');
-    outPre.className = 'tool-output' + (tc.status === 'error' ? ' error' : '');
-    outPre.textContent = output;
-    body.appendChild(outPre);
-  }
-
-  // Exit code row
-  if (hasExit) {
-    const exitRow = document.createElement('div');
-    exitRow.className = 'tool-exit-row ' + (exitCode === 0 ? 'success' : 'error');
-    exitRow.textContent = `${exitCode === 0 ? '✓' : '✗'} exit ${exitCode}`;
-    body.appendChild(exitRow);
-  }
-
-  if (childSid) {
-    const childActionRow = document.createElement('div');
-    childActionRow.className = 'tool-child-action-row';
-    childActionRow.innerHTML = `<button type="button" class="tool-open-child-btn"><span>🤖 Open child session (${esc(childSid)})</span> <span>→</span></button>`;
-    const openBtn = childActionRow.querySelector('.tool-open-child-btn');
-    if (openBtn) {
-      openBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        openChildSession(childSid);
-      });
+    // Workdir row
+    if (workdir) {
+      const wdRow = document.createElement('div');
+      wdRow.className = 'tool-wd-row';
+      wdRow.innerHTML = `<span class="tool-in">in</span> <span class="tool-path">${esc(workdir)}</span>`;
+      body.appendChild(wdRow);
     }
-    body.appendChild(childActionRow);
-  }
 
-  let expanded = false;
+    // Output row
+    if (output) {
+      const outPre = document.createElement('pre');
+      outPre.className = 'tool-output' + (tc.status === 'error' ? ' error' : '');
+      outPre.textContent = output;
+      body.appendChild(outPre);
+    }
+
+    // Exit code row
+    if (hasExit) {
+      const exitRow = document.createElement('div');
+      exitRow.className = 'tool-exit-row ' + (exitCode === 0 ? 'success' : 'error');
+      exitRow.textContent = `${exitCode === 0 ? '✓' : '✗'} exit ${exitCode}`;
+      body.appendChild(exitRow);
+    }
+
+    if (childSid) {
+      const childActionRow = document.createElement('div');
+      childActionRow.className = 'tool-child-action-row';
+      childActionRow.innerHTML = `<button type="button" class="tool-open-child-btn"><span>🤖 Open child session (${esc(childSid)})</span> <span>→</span></button>`;
+      const openBtn = childActionRow.querySelector('.tool-open-child-btn');
+      if (openBtn) {
+        openBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          openChildSession(childSid);
+        });
+      }
+      body.appendChild(childActionRow);
+    }
+  };
+
+  // Expanded state lives on the tool-call object so it survives re-renders.
+  const applyExpanded = () => {
+    const expanded = !!tc._open;
+    if (expanded && !bodyFilled) fillBody();
+    body.classList.toggle('collapsed', !expanded);
+    chevron.textContent = expanded ? '▾' : '▸';
+  };
   header.addEventListener('click', (ev) => {
     if (childSid && ev.target.classList && ev.target.classList.contains('task-open-child')) {
       openChildSession(childSid);
       return;
     }
-    expanded = !expanded;
-    body.classList.toggle('collapsed', !expanded);
-    chevron.textContent = expanded ? '▾' : '▸';
+    tc._open = !tc._open;
+    applyExpanded();
   });
+  applyExpanded();
 
   block.appendChild(header);
   block.appendChild(body);
@@ -5032,16 +5335,14 @@ function getMarkedRenderer() {
     if (displayLang === 'mermaid') {
       const diagramId = 'mermaid-' + Math.random().toString(36).substring(2, 9);
       setTimeout(() => {
-        if (typeof mermaid !== 'undefined' && mermaid.render) {
+        if (!document.getElementById(diagramId)) return;
+        loadMermaid().then((m) => m.render(diagramId + '-svg', cleanCode)).then(({ svg }) => {
           const el = document.getElementById(diagramId);
-          if (el) {
-            mermaid.render(diagramId + '-svg', cleanCode).then(({ svg }) => {
-              el.innerHTML = svg;
-            }).catch((err) => {
-              el.innerHTML = '<div style="color:#f87171;font-size:12px;padding:8px;">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
-            });
-          }
-        }
+          if (el) el.innerHTML = svg;
+        }).catch((err) => {
+          const el = document.getElementById(diagramId);
+          if (el) el.innerHTML = '<div style="color:#f87171;font-size:12px;padding:8px;">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
+        });
       }, 50);
       return `<div class="mermaid-diagram-container"><div id="${diagramId}" class="mermaid-target">${esc(cleanCode)}</div></div>`;
     }
@@ -5410,7 +5711,7 @@ async function createNewSession(title = '', workspace = '', persona = '') {
         workspace: (data.workspace !== undefined ? data.workspace : workspace) || '',
         messages: [],
         generating: false,
-        reader: null,
+        stream: null,
         provider: resolved.provider,
         model: resolved.model,
         persona: data.persona || persona || ''
@@ -5440,26 +5741,20 @@ function pauseActiveGeneration() {
   }
 }
 
-async function cancelSession(id) {
+// Stop the session's turn. The UI resets at once and the stream's late events
+// are dropped; the server sets the turn's abort flag, drops its queued
+// prompts and persists the partial reply, which the refresh then shows.
+function cancelSession(id) {
   const session = state.openSessions.find(s => s.id === id);
   if (!session) return;
-  session.cancelRequested = true;
-
-  if (session.reader) {
-    try {
-      await session.reader.cancel();
-    } catch (e) {}
-    session.reader = null;
+  const stream = session.stream;
+  session.stops = (session.stops || 0) + 1;
+  if (stream) {
+    stream.stopped = true;
+    if (stream.turn != null) session.stoppedTurn = stream.turn;
+    if (stream.reader) stream.reader.cancel().catch(() => {});
   }
-
-  try {
-    await fetch('/session/cancel', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: id })
-    });
-  } catch (e) {}
-
+  session.stream = null;
   session.generating = false;
   session.promptQueue = [];
   renderSessionTabs();
@@ -5469,8 +5764,11 @@ async function cancelSession(id) {
     renderMessages();
     updateQueueIndicator();
   }
+
+  postCancel(id).then(() => refreshSession(session, { force: true }));
 }
 
+let pendingSwitchId = null;
 async function switchSession(id) {
   if (id === 'terminal') {
     if (window.location.hash !== '#/terminal') {
@@ -5486,6 +5784,20 @@ async function switchSession(id) {
 
   const session = state.openSessions.find(s => s.id === id);
   if (!session) return;
+
+  // Unloaded sessions (stubs from the startup list) fetch their history first.
+  // Only the most recent switch request is applied once the fetch resolves.
+  pendingSwitchId = id;
+  if (session.stub) {
+    try {
+      await ensureSessionLoaded(session);
+    } catch (e) {
+      console.error('Failed to load session', id, e);
+      if (pendingSwitchId === id) showToast('Could not load session — try again');
+      return;
+    }
+    if (pendingSwitchId !== id) return;
+  }
 
   state.sessionId = id;
   state.sessionTitle = stripTags(session.title || '');
@@ -5540,7 +5852,9 @@ async function switchSession(id) {
   if (state.activeTab === 'files') loadFilesTab();
   else if (state.activeTab === 'stats') loadStatsTab();
   else if (state.activeTab === 'sessions') loadDelegatedSessionsTab();
-  syncActiveSessionMessages({ silent: true });
+  // Reattaches to a running turn (e.g. after a reload) or picks up history
+  // written while this session was in the background.
+  refreshSession(session);
 }
 
 function closeSessionTab(id) {
@@ -5616,7 +5930,7 @@ function renderSessionTabs() {
     const pinned = (state.pinned||[]).includes(session.id) ? ' pinned' : '';
     const activeClass = isActive && state.activeTab === 'chat' ? 'active' : '';
     const title = session.title || 'Session';
-    const genIndicator = session.generating ? '<span class="session-gen-indicator">⏳</span> ' : '';
+    const genIndicator = session.generating ? '<span class="session-gen-indicator" aria-label="generating"></span> ' : '';
     const ws = session.workspace ? shortPath(session.workspace) : '';
     
     const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));

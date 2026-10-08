@@ -66,6 +66,14 @@ nlohmann::json strip_markers(const nlohmann::json& j) {
   if (j.is_array()) {
     nlohmann::json out = nlohmann::json::array();
     for (const auto& el : j) out.push_back(strip_markers(el));
+    // Collapse a lone text block [{type:text, text:X}] back to "X": the
+    // rolling cache window wraps marked turns in block form, which is
+    // semantically identical content for prefix comparison.
+    if (out.size() == 1 && out[0].is_object() && out[0].size() == 2 &&
+        out[0].value("type", "") == "text" && out[0].contains("text") &&
+        out[0]["text"].is_string()) {
+      return out[0]["text"];
+    }
     return out;
   }
   return j;

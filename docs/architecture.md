@@ -104,6 +104,8 @@ Key database characteristics:
 ## Subagent & Task Architecture
 
 QCode supports concurrent subagent delegation via `TaskTool`:
-1. **Live Registry**: Active in-flight subagents are registered in `TaskTool::active_tasks()` and visible via `GET /tasks`.
+1. **Live Registry**: Active in-flight subagents are registered in `TaskTool::list_tasks()` and visible via `GET /tasks`.
 2. **Durable Subagent Sessions**: Child sessions receive a unique ID (`ses_...`) and persist with `parent_session_id` pointing to the orchestrator session.
 3. **Cascade Deletion**: When an orchestrator session is deleted, all associated child subagent sessions are recursively deleted.
+4. **Model Routing**: `task { prompt, mode?, difficulty?: easy|medium|hard, model? }`. Without `model`, the router (`qcode/tools/subagent_router.h`) ranks free models (antigravity, opencode, openrouter) by learned success per mode, difficulty, latency, load and cooldown; paid models (`QCODE_PAID_PROVIDERS`, default `anthropic,openai`) run only when named. A task tries up to 4 models; a provider-wide 429/quota skips that provider's other models, and empty output counts as a failure.
+5. **Learning**: Every attempt is stored in `subagent_runs` and folded into `subagent_arms` (`qcode/session/subagent_stats.h`). The lead scores reports with `rate_task { ratings: [{task_id, score 1-5, note?}] }`; the task result's last line names the `task_id`. The lead's prompt carries a compact table of the free models' records.

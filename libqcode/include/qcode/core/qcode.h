@@ -84,7 +84,7 @@
 /// ```cpp
 /// auto client = qcode::anthropic::create_client();
 /// auto result = client.generate_text({
-///     .model = qcode::anthropic::models::kClaudeSonnet46,
+///     .model = qcode::anthropic::models::kClaudeSonnet55,
 ///     .system = "You are a helpful assistant.",
 ///     .prompt = "Explain quantum computing in simple terms."
 /// });

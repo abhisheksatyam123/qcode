@@ -72,7 +72,7 @@ Set provider API keys via environment variables (e.g. `OPENAI_API_KEY`, `ANTHROP
 ./build/host-debug/apps/tui/qcode-tui
 ```
 
-Logs go to `/tmp/qcode.log`.
+Logs go to `$QCODE_LOG_DIR/qcode-tui-<session>.log` (default `/tmp/qcode-logs/`); lines from the UI thread go to `qcode-tui.log`.
 
 ### Start the server
 

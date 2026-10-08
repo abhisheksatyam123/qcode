@@ -90,7 +90,7 @@ TEST(ImageAttachmentTest, OpenAIResponsesEmitsInputImage) {
 TEST(ImageAttachmentTest, AnthropicEmitsBase64ImageBlock) {
   anthropic::AnthropicRequestBuilder builder;
   GenerateOptions opts;
-  opts.model = "claude-sonnet-4-6";
+  opts.model = "claude-sonnet-5-5";
   opts.messages = {make_attachment_message()};
 
   const auto req = builder.build_request_json(opts);

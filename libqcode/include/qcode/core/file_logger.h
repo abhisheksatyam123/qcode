@@ -31,8 +31,13 @@ class FileLogger final : public logger::Logger {
     open_locked();
   }
 
+  // Flush any buffered tail so the last lines are never lost at shutdown.
   ~FileLogger() override {
-    if (log_file_.is_open()) log_file_.close();
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (log_file_.is_open()) {
+      log_file_.flush();
+      log_file_.close();
+    }
   }
 
   void log(logger::LogLevel level, std::string_view message,
@@ -69,13 +74,22 @@ class FileLogger final : public logger::Logger {
     line += logger::thread_name_string();
     line += "] ";
     line += message;
-    line += "\n";
+    line += '\n';
 
     rotate_if_needed(line.size());
     if (!log_file_.is_open()) return;
     log_file_ << line;
-    log_file_.flush();
     bytes_written_ += line.size();
+
+    // WARN/ERROR are flushed immediately. Lower levels are flushed at most
+    // every kFlushInterval or every kFlushMaxLines lines, whichever comes first.
+    ++pending_lines_;
+    const bool urgent = level == logger::LogLevel::kLogLevelWarn ||
+                        level == logger::LogLevel::kLogLevelError;
+    if (urgent || pending_lines_ >= kFlushMaxLines ||
+        std::chrono::steady_clock::now() - last_flush_ >= kFlushInterval) {
+      flush_locked();
+    }
   }
 
   bool is_enabled(logger::LogLevel level) const override {
@@ -100,9 +114,20 @@ class FileLogger final : public logger::Logger {
     std::error_code ec;
     bytes_written_ = fs::exists(path_, ec) && !ec ? fs::file_size(path_, ec) : 0;
     if (ec) bytes_written_ = 0;
+    if (log_file_.is_open()) log_file_.flush();
     log_file_.close();
     log_file_.clear();
     log_file_.open(path_, std::ios::app);
+    pending_lines_ = 0;
+    last_flush_ = std::chrono::steady_clock::now();
+  }
+
+  // Caller must hold mutex_. Pushes buffered lines to the OS and resets the
+  // flush bookkeeping.
+  void flush_locked() {
+    if (log_file_.is_open()) log_file_.flush();
+    pending_lines_ = 0;
+    last_flush_ = std::chrono::steady_clock::now();
   }
 
   // Caller must hold mutex_. Renames the active file to "<path>.old" once
@@ -120,12 +145,19 @@ class FileLogger final : public logger::Logger {
     open_locked();
   }
 
+  static constexpr std::size_t kFlushMaxLines = 64;
+  static constexpr std::chrono::milliseconds kFlushInterval{200};
+
   std::string path_;
   std::ofstream log_file_;
   std::mutex mutex_;
   logger::LogLevel min_level_;
   std::uintmax_t max_bytes_ = kDefaultMaxBytes;
   std::uintmax_t bytes_written_ = 0;
+  // Guarded by mutex_.
+  std::size_t pending_lines_ = 0;
+  std::chrono::steady_clock::time_point last_flush_ =
+      std::chrono::steady_clock::now();
 };
 
 /// Install a file logger at the given path

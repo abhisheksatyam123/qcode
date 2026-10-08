@@ -4,6 +4,7 @@
 #include <qcode/core/logger.h>
 #include <chrono>
 #include <future>
+#include <optional>
 #include <random>
 #include <thread>
 
@@ -16,7 +17,6 @@ namespace qcode {
 
 ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
                                       const ToolSet& tools,
-                                      const Messages& messages,
                                       const GenerateOptions* options) {
   LOG_DEBUG("ToolExecutor: execute_tool tool={}", tool_call.tool_name);
   // Validate tool call
@@ -74,13 +74,13 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   // Create execution context
   ToolExecutionContext context;
   context.tool_call_id = tool_call.id;
-  context.messages = messages;
   if (options) {
     context.workspace = options->workspace;
     context.session_id = options->session_id;
   }
   if (options && options->subagent_runner) {
     context.subagent_runner = options->subagent_runner;
+    context.routing_board = options->routing_board;
   }
   if (options) {
     context.can_edit = options->can_edit;
@@ -108,7 +108,6 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
 std::vector<ToolResult> ToolExecutor::execute_tools(
     const std::vector<ToolCall>& tool_calls,
     const ToolSet& tools,
-    const Messages& messages,
     bool parallel,
     const GenerateOptions* options) {
   std::vector<ToolResult> results;
@@ -156,14 +155,14 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
         options->on_tool_call_start.value()(tool_call);
       }
 
-      auto result = execute_tool(tool_call, tools, messages, options);
+      auto result = execute_tool(tool_call, tools, options);
 
       // Call the on_tool_call_finish callback if provided
       if (options && options->on_tool_call_finish.has_value()) {
         options->on_tool_call_finish.value()(result);
       }
 
-      results.push_back(result);
+      results.push_back(std::move(result));
     }
   } else {
     // Execute in parallel using futures, but bound concurrency so we never
@@ -207,14 +206,23 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
         }
 
         // Capture by VALUE to avoid dangling ref (tool_call is a loop variable)
-        batch.emplace_back(
-            std::async(std::launch::async, [tool_call, &tools, &messages, options]() {
+        const std::string current_session =
+            (options && !options->session_id.empty())
+                ? options->session_id
+                : qcode::logger::thread_session_id();
+        batch.push_back(
+            std::async(std::launch::async, [tool_call, &tools, options, current_session]() {
+              std::optional<qcode::logger::ScopedThreadSession> bind;
+              if (!current_session.empty()) {
+                bind.emplace(current_session);
+                qcode::logger::set_thread_name("tool:" + tool_call.tool_name);
+              }
               if (options && options->abort_flag && options->abort_flag->load()) {
                 ToolResult aborted_res(tool_call.id, tool_call.tool_name, tool_call.arguments,
                                        std::string("Tool execution aborted"));
                 return aborted_res;
               }
-              ToolResult result = execute_tool(tool_call, tools, messages, options);
+              ToolResult result = execute_tool(tool_call, tools, options);
               // Fire on_tool_call_finish callback from the async thread
               if (options && options->on_tool_call_finish.has_value()) {
                 options->on_tool_call_finish.value()(result);
@@ -224,6 +232,11 @@ std::vector<ToolResult> ToolExecutor::execute_tools(
       }
 
       // Collect this batch before launching the next one (bounds concurrency).
+      // get() is bounded: execute_tool() supervises each tool itself — a user
+      // abort releases it within 50 ms and the per-tool timeout abandons a
+      // stalled tool (detached with by-value captures). Abandoning the future
+      // here instead left threads referencing `tools` and `options` after
+      // this function returned, and double-reported results.
       for (auto& future : batch) {
         results.push_back(future.get());
       }
@@ -237,8 +250,7 @@ std::vector<ToolResult> ToolExecutor::execute_tools_with_options(
     const std::vector<ToolCall>& tool_calls,
     const GenerateOptions& options,
     bool parallel) {
-  return execute_tools(tool_calls, options.tools, options.messages, parallel,
-                       &options);
+  return execute_tools(tool_calls, options.tools, parallel, &options);
 }
 
 bool ToolExecutor::validate_tool_call(const ToolCall& tool_call,
@@ -253,13 +265,23 @@ bool ToolExecutor::tool_exists(const std::string& tool_name,
 }
 
 static std::chrono::milliseconds get_tool_timeout(const ToolCall& tool_call) {
+  // NOTE: this deliberately does NOT reuse the tool's own "timeout" argument.
+  // BashTool::exec_run reads that same argument as its shell timeout
+  // (default 120s), so sharing one number made the executor deadline and the
+  // shell deadline expire at the same instant and race. The executor is the
+  // outer supervision layer and must always outlive the inner tool, so it
+  // applies a grace margin on top of whatever the tool asks for.
+  constexpr auto kToolTimeoutGrace = std::chrono::seconds(30);
+  // A subagent runs a whole multi-step turn. It is bounded by its own model
+  // calls and the parent's abort, not by a per-tool deadline.
+  if (tool_call.tool_name == "task") return std::chrono::milliseconds::max();
   if (tool_call.arguments.is_object() && tool_call.arguments.contains("timeout")) {
     try {
       auto t = tool_call.arguments["timeout"];
       if (t.is_number()) {
         int val = t.get<int>();
         if (val > 0) {
-          return std::chrono::milliseconds(val);
+          return std::chrono::milliseconds(val) + kToolTimeoutGrace;
         }
       }
     } catch (...) {}
@@ -283,8 +305,10 @@ ToolResult ToolExecutor::execute_sync_tool(
   auto exec_func = tool.execute.value();
   auto args = tool_call.arguments;
   auto ctx = context;
+  const std::string caller_session = qcode::logger::thread_session_id();
 
-  auto future = std::async(std::launch::async, [exec_func, args, ctx]() {
+  auto future = std::async(std::launch::async, [exec_func, args, ctx, caller_session]() {
+    qcode::logger::ScopedThreadSession bind(caller_session);
     return exec_func(args, ctx);
   });
 
@@ -345,7 +369,7 @@ ToolResult ToolExecutor::execute_sync_tool(
     JsonValue result = future.get();
     qcode::utils::sanitize_json_strings(result);
     return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments,
-                      result);
+                      std::move(result));
   } catch (const std::exception& e) {
     return ToolResult(
         tool_call.id, tool_call.tool_name, tool_call.arguments,
@@ -416,7 +440,7 @@ ToolResult ToolExecutor::execute_async_tool(
 
     JsonValue result = future.get();
     qcode::utils::sanitize_json_strings(result);
-    return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments, result);
+    return ToolResult(tool_call.id, tool_call.tool_name, tool_call.arguments, std::move(result));
   } catch (const std::exception& e) {
     return ToolResult(
         tool_call.id, tool_call.tool_name, tool_call.arguments,

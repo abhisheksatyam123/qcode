@@ -4,6 +4,7 @@
 #include <qcode/session/session_store.h>
 #include <algorithm>
 #include <climits>
+#include <iterator>
 #include <qcode/core/message.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/errors.h>
@@ -20,6 +21,16 @@ AppStore::AppStore(bus::BusPort& bus) : bus_(bus) {
             }
         }));
     }
+}
+
+std::string AppStore::status_snapshot() const {
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    return status_;
+}
+
+void AppStore::store_status(const std::string& s) {
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    status_ = s;
 }
 
 std::vector<Toast> AppStore::toasts() const {
@@ -146,6 +157,9 @@ bool AppStore::is_live_session(const std::string& id) const {
 std::string AppStore::latest_assistant_text() const {
     for (auto message = state_.messages_history->rbegin();
          message != state_.messages_history->rend(); ++message) {
+        // Stop at the turn's user prompt (or an injected one): text before it
+        // was already saved and must not be saved again.
+        if (message->role == qcode::kMessageRoleUser && !message->has_tool_results()) break;
         if (message->role != qcode::kMessageRoleAssistant) continue;
         std::string text;
         for (const auto& part : message->content) {
@@ -162,10 +176,10 @@ std::string AppStore::latest_assistant_text() const {
 void AppStore::set_generating(bool v) {
     *state_.is_generating = v;
     if (v) {
-        status_ = "generating";
+        store_status("generating");
         if (state_.status) *state_.status = "generating";
     } else if (status_ == "generating" || status_ == "agent") {
-        status_ = "idle";
+        store_status("idle");
         if (state_.status) *state_.status = "idle";
     }
     notify();
@@ -182,6 +196,7 @@ void AppStore::set_session_id(const std::string& id) {
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         prompt_queue_.clear();
+        queue_session_id_ = id;
         sync_queue_mirror_unlocked();
     }
     for (auto& prompt : qcode::session::queued_prompt_load(id)) {
@@ -212,7 +227,7 @@ void AppStore::set_status(const std::string& s) {
     if (status_ == "error" && s == "idle") {
         return;
     }
-    status_ = s;
+    store_status(s);
     if (state_.status) *state_.status = s;
     if (s == "idle" || s == "error") {
         *state_.is_generating = false;
@@ -225,7 +240,7 @@ void AppStore::set_error(const std::string& msg) {
     // (formatError order); no retry badge — backend auto-retries.
     LOG_ERROR("Store: set_error msg={}", msg);
     last_error_ = msg;
-    status_ = "error";
+    store_status("error");
     if (state_.status) *state_.status = "error";
     if (state_.last_error) *state_.last_error = msg;
     *state_.is_generating = false;
@@ -237,7 +252,7 @@ void AppStore::clear_error() {
     last_error_.clear();
     if (state_.last_error) state_.last_error->clear();
     if (status_ == "error") {
-        status_ = "idle";
+        store_status("idle");
         if (state_.status) *state_.status = "idle";
     }
     {
@@ -281,6 +296,7 @@ void AppStore::enqueue_prompt(const std::string& prompt) {
     // premature history corruption and duplicate rendering in qcode-tui.
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (prompt_queue_.empty()) queue_session_id_ = session_id();
         prompt_queue_.push_back(prompt);
         sync_queue_mirror_unlocked();
         LOG_DEBUG("Store: enqueue_prompt queue_size={}",
@@ -388,6 +404,21 @@ void AppStore::append_to_last_queued_prompt(const std::string& text) {
 std::vector<std::string> AppStore::queued_prompts_snapshot() const {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     return std::vector<std::string>(prompt_queue_.begin(), prompt_queue_.end());
+}
+
+std::vector<std::string> AppStore::take_queued_prompts(const std::string& session_id) {
+    std::vector<std::string> taken;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (session_id != queue_session_id_ || prompt_queue_.empty()) return {};
+        taken.assign(std::make_move_iterator(prompt_queue_.begin()),
+                     std::make_move_iterator(prompt_queue_.end()));
+        prompt_queue_.clear();
+    }
+    for (size_t i = 0; i < taken.size(); ++i) {
+        qcode::session::queued_prompt_pop(session_id);
+    }
+    return taken;
 }
 
 bus::Subscription AppStore::on_change(Callback cb) {
@@ -572,11 +603,37 @@ void AppStore::wire() {
         qcode::session::save_message(sid, "ToolResult", result_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
 
         if (!is_live_session(p.session_id)) return;
-        state_.messages_history->emplace_back(
-            qcode::Message::tool_results(
-                {{p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
+        // Message::tool_results() drops duration_ms, so build the part directly
+        // to keep the timing on live tool blocks.
+        state_.messages_history->emplace_back(qcode::Message(
+            qcode::kMessageRoleUser,
+            qcode::MessageContent{qcode::ToolResultContentPart{
+                p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
         ++*state_.tool_call_count;
         *state_.total_tool_time_ms += p.duration_ms;
+        notify();
+    }));
+
+    subs_.push_back(bus_.subscribe<UserMessageInjected>([this](const UserMessageInjected::Payload& p) {
+        const std::string sid = p.session_id.empty() ? session_id() : p.session_id;
+        // Save the reply streamed so far first so a reload shows the injected
+        // prompt after the text it interrupted, not before it.
+        std::string pending;
+        {
+            std::lock_guard<std::mutex> lock(session_texts_mutex_);
+            auto it = session_assistant_texts_.find(p.session_id);
+            if (it != session_assistant_texts_.end()) {
+                pending = std::move(it->second);
+                session_assistant_texts_.erase(it);
+            }
+        }
+        if (!pending.empty()) qcode::session::save_message(sid, "Assistant", pending);
+        qcode::session::save_message(sid, "User", p.text);
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            sync_queue_mirror_unlocked();
+        }
+        if (is_live_session(p.session_id)) append_chat_message("User", p.text);
         notify();
     }));
 
@@ -652,8 +709,10 @@ void AppStore::wire() {
         *state_.last_cached_prompt_tokens = p.cached_prompt_tokens;
         *state_.last_reasoning_tokens = p.reasoning_tokens;
         std::string sid = p.session_id.empty() ? session_id() : p.session_id;
-        qcode::session::persist_session_token_stats(
-            sid, p.prompt_tokens, p.completion_tokens, p.total_tokens);
+        if (p.prompt_tokens != 0 || p.completion_tokens != 0 || p.total_tokens != 0) {
+            qcode::session::persist_session_token_stats(
+                sid, p.prompt_tokens, p.completion_tokens, p.total_tokens);
+        }
         // Calibration anchor: remember the actual prompt token count so the
         // next heuristic estimate can be corrected against ground truth.
         if (p.prompt_tokens > 0) {

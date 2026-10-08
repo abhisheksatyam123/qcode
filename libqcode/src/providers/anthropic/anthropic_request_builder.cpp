@@ -1,4 +1,5 @@
 #include "anthropic_request_builder.h"
+#include "anthropic_oauth.h"
 
 #include <qcode/core/logger.h>
 #include <qcode/transform/provider_transform.h>
@@ -12,7 +13,11 @@ namespace anthropic {
 nlohmann::json AnthropicRequestBuilder::build_request_json(
     const GenerateOptions& options) {
   nlohmann::json request;
-  request["model"] = options.model;
+  std::string wire_model = options.model;
+  if (wire_model.ends_with("-thinking")) {
+    wire_model = wire_model.substr(0, wire_model.size() - 9);
+  }
+  request["model"] = wire_model;
 
   // Prompt-cache breakpoints (dsh/opencode "auto" policy: tools + system +
   // latest message) — but only for Claude/Anthropic model ids, so generic
@@ -30,9 +35,12 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
                       : effort == "medium" ? 8000
                       : effort == "max"    ? 24000
                                            : 16000;
+  } else if (!thinking_budget && options.model.find("thinking") != std::string::npos) {
+    thinking_budget = 8000;
   }
   if (thinking_budget.has_value()) {
-    // Anthropic requires max_tokens > budget_tokens.
+    // Anthropic requires budget_tokens >= 1024 and max_tokens > budget_tokens.
+    *thinking_budget = std::max(*thinking_budget, 1024);
     max_tokens = std::max(max_tokens, *thinking_budget + 1024);
     request["thinking"] = {{"type", "enabled"},
                            {"budget_tokens", *thinking_budget}};
@@ -40,14 +48,23 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   request["max_tokens"] = max_tokens;
   request["messages"] = nlohmann::json::array();
 
-  // Automatic prompt caching: breakpoint advances with the conversation.
-  request["cache_control"] = {{"type", "ephemeral"}};
+  // Automatic prompt caching: breakpoints live on system/messages/tools
+  // content blocks only (top-level cache_control is not a valid API field).
 
   // Handle system message — content-block form so we can mark it cacheable.
-  if (!options.system.empty()) {
+  // NOTE: the Claude Code billing attribution (x-anthropic-billing-header)
+  // travels as an HTTP header (see extra_headers in anthropic_client.cpp),
+  // never as system-prompt text: any prefix byte change breaks the prompt
+  // cache prefix match (proven live: billing-first system -> 0% hit rate).
+  std::string system_text = options.system;
+  if (is_oauth_) {
+    system_text = rewrite_claude_prompt_tags(system_text);
+  }
+
+  if (!system_text.empty()) {
     request["system"] = nlohmann::json::array(
         {{{"type", "text"},
-          {"text", options.system},
+          {"text", system_text},
           {"cache_control", {{"type", "ephemeral"}}}}});
   }
 
@@ -57,8 +74,17 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
     // orphans left behind by compaction / incomplete history reloads.
     std::unordered_set<std::string> seen_tool_use_ids;
 
-    // Use provided messages
-    for (const auto& msg : options.messages) {
+    // Image tool results arrive as text plus a user image message after the
+    // tool results; the same-role merge below appends that image after the
+    // tool_result blocks, which must lead the user turn. The history is
+    // copied only when it holds an image to lift.
+    const bool lift_images =
+        ProviderTransform::has_tool_result_images(options.messages);
+    const Messages lifted =
+        lift_images ? ProviderTransform::lift_tool_result_images(options.messages)
+                    : Messages{};
+    const Messages& messages = lift_images ? lifted : options.messages;
+    for (const auto& msg : messages) {
       nlohmann::json message;
 
       // Handle different content types
@@ -67,45 +93,29 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
         message["role"] = "user";
         message["content"] = nlohmann::json::array();
 
-        for (const auto& result : msg.get_tool_results()) {
-          if (!result.tool_call_id.empty() &&
-              !seen_tool_use_ids.contains(result.tool_call_id)) {
+        for (const auto& part : msg.content) {
+          const auto* result = std::get_if<ToolResultContentPart>(&part);
+          if (!result) continue;
+          if (!result->tool_call_id.empty() &&
+              !seen_tool_use_ids.contains(result->tool_call_id)) {
             LOG_WARN(
                 "anthropic_request_builder: dropping orphaned tool_result "
                 "tool_use_id={}",
-                result.tool_call_id);
+                result->tool_call_id);
             continue;
           }
           nlohmann::json tool_result_content;
           tool_result_content["type"] = "tool_result";
-          tool_result_content["tool_use_id"] = result.tool_call_id;
+          tool_result_content["tool_use_id"] = result->tool_call_id;
 
-          if (!result.is_error && result.result.is_object() &&
-              result.result.contains("data") && result.result.contains("mime_type")) {
-            nlohmann::json content_arr = nlohmann::json::array();
-            std::string desc = "Image loaded: " + result.result.value("path", "image");
-            if (result.result.contains("description") &&
-                !result.result["description"].get<std::string>().empty()) {
-              desc += " (" + result.result["description"].get<std::string>() + ")";
-            }
-            content_arr.push_back({{"type", "text"}, {"text", desc}});
-            content_arr.push_back({
-                {"type", "image"},
-                {"source", {
-                    {"type", "base64"},
-                    {"media_type", result.result["mime_type"].get<std::string>()},
-                    {"data", result.result["data"].get<std::string>()}
-                }}
-            });
-            tool_result_content["content"] = std::move(content_arr);
-          } else if (!result.is_error) {
-            tool_result_content["content"] = result.result.dump();
+          if (!result->is_error) {
+            tool_result_content["content"] = result->result.dump();
           } else {
-            tool_result_content["content"] = result.result.dump();
+            tool_result_content["content"] = result->result.dump();
             tool_result_content["is_error"] = true;
           }
 
-          message["content"].push_back(tool_result_content);
+          message["content"].push_back(std::move(tool_result_content));
         }
         if (message["content"].empty()) continue;
       } else {
@@ -117,15 +127,12 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
                              ? "user"
                              : utils::message_role_to_string(msg.role);
 
-        // Get text content and tool calls
+        // Get text content; tool calls are read in place below.
         std::string text_content = msg.get_text();
-        auto tool_calls = msg.get_tool_calls();
-        for (const auto& tool_call : tool_calls) {
-          if (!tool_call.id.empty()) seen_tool_use_ids.insert(tool_call.id);
-        }
+        const bool has_tool_calls = msg.has_tool_calls();
 
         // Anthropic expects content as array for mixed content or tool calls
-        if (!tool_calls.empty() ||
+        if (has_tool_calls ||
             (msg.role == kMessageRoleAssistant &&
              (!text_content.empty() || msg.has_reasoning()))) {
           message["content"] = nlohmann::json::array();
@@ -142,7 +149,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
                   thinking["thinking"] = rp->text;
                   thinking["signature"] =
                       rp->signature.empty() ? "" : rp->signature;
-                  message["content"].push_back(thinking);
+                  message["content"].push_back(std::move(thinking));
                 }
               }
             }
@@ -151,32 +158,37 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
           // Add text content if present
           if (!text_content.empty()) {
             message["content"].push_back(
-                {{"type", "text"}, {"text", text_content}});
+                {{"type", "text"}, {"text", std::move(text_content)}});
           }
 
           // Add tool use content
-          for (const auto& tool_call : tool_calls) {
+          for (const auto& part : msg.content) {
+            const auto* tool_call = std::get_if<ToolCallContentPart>(&part);
+            if (!tool_call) continue;
+            if (!tool_call->id.empty()) seen_tool_use_ids.insert(tool_call->id);
             message["content"].push_back({{"type", "tool_use"},
-                                          {"id", tool_call.id},
-                                          {"name", tool_call.tool_name},
-                                          {"input", tool_call.arguments}});
+                                          {"id", tool_call->id},
+                                          {"name", tool_call->tool_name},
+                                          {"input", tool_call->arguments}});
           }
-        } else if (!msg.get_images().empty()) {
-          // Attachment message: text block + base64 image blocks.
+        } else if (msg.has_images()) {
+          // Attachment or image-tool message: text block + base64 images.
           nlohmann::json arr = nlohmann::json::array();
           if (!text_content.empty()) {
-            arr.push_back({{"type", "text"}, {"text", text_content}});
+            arr.push_back({{"type", "text"}, {"text", std::move(text_content)}});
           }
-          for (const auto& img : msg.get_images()) {
+          for (const auto& part : msg.content) {
+            const auto* img = std::get_if<ImageContentPart>(&part);
+            if (!img) continue;
             arr.push_back({{"type", "image"},
                            {"source", {{"type", "base64"},
-                                       {"media_type", img.mime_type},
-                                       {"data", img.data}}}});
+                                       {"media_type", img->mime_type},
+                                       {"data", img->data}}}});
           }
           message["content"] = std::move(arr);
         } else if (!text_content.empty()) {
           // Simple text message (non-assistant or assistant with text only)
-          message["content"] = text_content;
+          message["content"] = std::move(text_content);
         } else {
           // Empty message, skip
           continue;
@@ -189,44 +201,37 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
       if (!request["messages"].empty() &&
           request["messages"].back().value("role", "") ==
               message.value("role", "")) {
-        auto merge_block = [](nlohmann::json& dst_content,
-                              const nlohmann::json& src_content) {
+        // Turn content into a block array in place: a string becomes one
+        // text block (none if empty), anything else but an array is dropped.
+        auto to_blocks = [](nlohmann::json& content) {
+          if (content.is_array()) return;
           nlohmann::json arr = nlohmann::json::array();
-          auto append = [&arr](const nlohmann::json& c) {
-            if (c.is_string()) {
-              const auto& s = c.get_ref<const std::string&>();
-              if (!s.empty()) {
-                arr.push_back({{"type", "text"}, {"text", s}});
-              }
-            } else if (c.is_array()) {
-              for (const auto& b : c) arr.push_back(b);
-            }
-          };
-          if (dst_content.is_array()) {
-            for (const auto& b : dst_content) arr.push_back(b);
-          } else if (dst_content.is_string()) {
-            append(dst_content);
+          if (content.is_string() &&
+              !content.get_ref<const std::string&>().empty()) {
+            arr.push_back({{"type", "text"}, {"text", std::move(content)}});
           }
-          append(src_content);
-          dst_content = std::move(arr);
+          content = std::move(arr);
         };
-        auto& prev = request["messages"].back();
-        if (!prev.contains("content")) prev["content"] = nlohmann::json::array();
-        if (!message.contains("content")) {
-          message["content"] = nlohmann::json::array();
-        }
-        merge_block(prev["content"], message["content"]);
+        auto& prev_content = request["messages"].back()["content"];
+        auto& content = message["content"];
+        to_blocks(prev_content);
+        to_blocks(content);
+        for (auto& block : content) prev_content.push_back(std::move(block));
       } else {
-        request["messages"].push_back(message);
+        request["messages"].push_back(std::move(message));
       }
     }
 
-    // Cache breakpoint on the latest message so the conversation prefix up
-    // to it is written to the provider cache and reusable next request.
+    // Fork-style rolling cache window (opencode applyCaching): mark the last
+    // TWO user/tool turns, not just the latest message. Every server call
+    // carries these breakpoints, so follow-up turns reuse the cached prefix
+    // instead of paying full input again. Assistant-only tails are skipped:
+    // ephemeral assistant chunks are rarely re-read, and marking them would
+    // only pay write cost. Max 4 breakpoints total (Anthropic limit).
     if (claude_route && !request["messages"].empty()) {
-      auto& last_msg = request["messages"].back();
-      if (last_msg.contains("content")) {
-        auto& content = last_msg["content"];
+      auto mark_breakpoint = [](nlohmann::json& msg) {
+        if (!msg.contains("content")) return;
+        auto& content = msg["content"];
         if (content.is_string()) {
           const std::string text = content.get<std::string>();
           content = nlohmann::json::array(
@@ -237,7 +242,19 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
                    content.back().is_object()) {
           content.back()["cache_control"] = {{"type", "ephemeral"}};
         }
+      };
+      int marked = 0;
+      for (auto it = request["messages"].rbegin();
+           it != request["messages"].rend() && marked < 2; ++it) {
+        const std::string role = it->value("role", "");
+        // tool_result turns ride as role=user; assistant text tails are skipped.
+        if (role != "user") continue;
+        mark_breakpoint(*it);
+        ++marked;
       }
+      // Fallback: conversation is assistant-only (e.g. single assistant stub
+      // in tests) — mark the tail so at least one message breakpoint exists.
+      if (marked == 0) mark_breakpoint(request["messages"].back());
     }
   } else {
     // Build from prompt
@@ -281,9 +298,9 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
         nlohmann::json tool_def = {{"name", tool_name},
                                    {"description", tool.description},
-                                   {"input_schema", normalized_schema}};
+                                   {"input_schema", std::move(normalized_schema)}};
 
-        tools_array.push_back(tool_def);
+        tools_array.push_back(std::move(tool_def));
       }
     }
 
@@ -293,7 +310,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
       if (claude_route) {
         tools_array.back()["cache_control"] = {{"type", "ephemeral"}};
       }
-      request["tools"] = tools_array;
+      request["tools"] = std::move(tools_array);
 
       // Add tool choice if specified
       switch (options.tool_choice.type) {
@@ -315,9 +332,13 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
       }
 
       LOG_DEBUG("Added {} tools with choice: {}",
-                            tools_array.size(),
+                            request["tools"].size(),
                             options.tool_choice.to_string());
     }
+  }
+
+  if (is_oauth_ && request.contains("context_management")) {
+    request.erase("context_management");
   }
 
   return request;

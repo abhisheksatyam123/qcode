@@ -291,6 +291,12 @@ static bool looks_like_mutating_command(const std::string& command) {
     if (in_single || in_double) continue;
     if (c == '>') {
       size_t t = i + 1;
+      // fd duplication (2>&1, >&2, >&-) moves streams, it never writes a file.
+      if (t + 1 < command.size() && command[t] == '&' &&
+          (std::isdigit(static_cast<unsigned char>(command[t + 1])) ||
+           command[t + 1] == '-')) {
+        continue;
+      }
       if (t < command.size() && command[t] == '>') ++t;
       if (!is_dev_null_target(command, t)) return true;
     }
@@ -559,7 +565,14 @@ std::string BashTool::run_shell(const std::string& command,
                                 std::optional<int> max_lines, int& exit_code,
                                 std::shared_ptr<std::atomic<bool>> abort_flag) {
   constexpr size_t kReadBufferSize = 4096;
-  const auto char_limit = static_cast<size_t>(max_chars.value_or(4096));
+  // Hard ceiling on inline capture so a huge or negative max_output_chars
+  // (negative values wrap to a huge size_t) can never buffer unbounded output.
+  constexpr size_t kMaxInlineChars = 8 * 1024 * 1024;
+  size_t char_limit = 4096;
+  if (max_chars.has_value()) {
+    char_limit = *max_chars < 0 ? 0 : static_cast<size_t>(*max_chars);
+  }
+  char_limit = std::min(char_limit, kMaxInlineChars);
   const auto line_limit = max_lines.value_or(0);
 
   exit_code = -1;

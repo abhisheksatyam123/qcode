@@ -1,12 +1,36 @@
 #include "routes_internal.h"
 #include "terminal_pty.h"
 
+#include <cerrno>
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 #include <nlohmann/json.hpp>
 
 namespace qcode {
 namespace server {
+
+namespace {
+
+// Write all of `data` to the non-blocking PTY master, waiting (up to 1 s per
+// stall) while the shell is not reading. Returns false when it gives up.
+bool write_pty(int fd, const std::string& data) {
+    size_t off = 0;
+    while (off < data.size()) {
+        ssize_t n = write(fd, data.data() + off, data.size() - off);
+        if (n > 0) {
+            off += static_cast<size_t>(n);
+            continue;
+        }
+        if (n < 0 && errno == EINTR) continue;
+        pollfd pfd{fd, POLLOUT, 0};
+        if (n < 0 && errno == EAGAIN && poll(&pfd, 1, 1000) > 0) continue;
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
 
 void register_terminal_routes(httplib::Server& svr) {
     // ── Terminal: create ──
@@ -24,6 +48,8 @@ void register_terminal_routes(httplib::Server& svr) {
             res.set_content(R"({"error":"failed to create terminal"})", "application/json");
             return;
         }
+        // Set once here: concurrent stream/input requests share the fd.
+        fcntl(ts->master_fd, F_SETFL, fcntl(ts->master_fd, F_GETFL, 0) | O_NONBLOCK);
         int cols = body.value("cols", 80);
         int rows = body.value("rows", 24);
         if (cols > 0 && rows > 0) {
@@ -50,7 +76,7 @@ void register_terminal_routes(httplib::Server& svr) {
         auto ts = find_terminal(id);
         if (!ts) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
         if (ts->master_fd >= 0 && ts->alive) {
-            (void)write(ts->master_fd, data.c_str(), data.size());
+            (void)write_pty(ts->master_fd, data);
         }
         res.set_content(R"({"ok":true})", "application/json");
     });
@@ -75,19 +101,14 @@ void register_terminal_routes(httplib::Server& svr) {
         std::string id = req.matches[1];
         auto ts = find_terminal(id);
         if (!ts) { res.status = 404; res.set_content(R"({"error":"terminal not found"})", "application/json"); return; }
-        // Non-blocking read from PTY master, return available data
+        // Return what is available; the fd is non-blocking (see create).
         std::string output;
         char buf[4096];
-        // Set non-blocking
-        int flags = fcntl(ts->master_fd, F_GETFL, 0);
-        fcntl(ts->master_fd, F_SETFL, flags | O_NONBLOCK);
         while (true) {
             ssize_t n = read(ts->master_fd, buf, sizeof(buf));
             if (n <= 0) break;
             output.append(buf, n);
         }
-        // Restore blocking
-        fcntl(ts->master_fd, F_SETFL, flags);
         res.set_header("Content-Type", "text/plain; charset=utf-8");
         res.set_content(output, "text/plain");
     });

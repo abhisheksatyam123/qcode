@@ -1,4 +1,5 @@
 #include <qcode/core/file_logger.h>
+#include <qcode/core/session_file_logger.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
@@ -6,6 +7,7 @@
 #include <qcode/core/event.h>
 
 #include "server_routes.h"
+#include "routes/session_runtime.h"
 
 #include <httplib.h>
 #include <unistd.h>
@@ -22,25 +24,35 @@
 static std::atomic<bool> g_shutdown_requested{false};
 static std::shared_ptr<qcode::bus::BusRuntime> g_bus;
 
+std::string log_dir() {
+    if (const char* d = std::getenv("QCODE_LOG_DIR")) return d;
+    return "/tmp/qcode-logs";
+}
+
 void handle_signal(int) {
     g_shutdown_requested = true;
 }
 
 int main(int argc, char* argv[]) {
-    qcode::install_file_logger("/tmp/qcode-server.log", qcode::logger::LogLevel::kLogLevelDebug);
-    qcode::logger::set_thread_name("server");
-    LOG_INFO("QCode server starting...");
-
     int port = 9080;
+    std::string custom_log_dir;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--port" && i + 1 < argc) port = std::stoi(argv[++i]);
         if (arg == "-p" && i + 1 < argc) port = std::stoi(argv[++i]);
+        if (arg == "--log-dir" && i + 1 < argc) custom_log_dir = argv[++i];
         if (arg == "--help" || arg == "-h") {
-            std::cerr << "Usage: qcode-server [--port PORT]\n";
+            std::cerr << "Usage: qcode-server [--port PORT] [--log-dir DIR]\n";
             return 0;
         }
     }
+
+    // One log file per session: <dir>/qcode-server-<session_id>.log
+    const std::string active_log_dir = !custom_log_dir.empty() ? custom_log_dir : log_dir();
+    qcode::server::g_session_logger = qcode::install_session_file_logger(
+        active_log_dir, "qcode-server", qcode::logger::LogLevel::kLogLevelDebug);
+    qcode::logger::set_thread_name("server");
+    LOG_INFO("QCode server starting... (logs in {})", active_log_dir);
 
     g_bus = std::make_shared<qcode::bus::BusRuntime>();
     qcode::contract::register_all_events(*g_bus);
@@ -61,6 +73,10 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, handle_signal);
 
     httplib::Server svr;
+    // Each connection holds a pool worker (CPPHTTPLIB_THREAD_POOL_COUNT) while
+    // open, and a turn's NDJSON stream for the whole turn: release idle
+    // keep-alive connections quickly so they do not starve real requests.
+    svr.set_keep_alive_timeout(2);
 
     qcode::server::ServerSetupOptions options;
     {
@@ -103,6 +119,9 @@ int main(int argc, char* argv[]) {
     LOG_INFO("Server stopping, signalling active sessions...");
     qcode::server::shutdown_active_sessions();
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Release session log handles after all workers have joined.
+    if (qcode::server::g_session_logger) qcode::server::g_session_logger->close_all();
 
     LOG_INFO("Server shutdown complete");
     return 0;

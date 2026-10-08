@@ -195,7 +195,7 @@ TEST(GeminiTransformTest, WrapEnvelopeOmitsCacheBreakpointsForClaude) {
     ],
     "tools": [{"functionDeclarations": [{"name": "lookup"}]}]
   })");
-  json env = wrap_antigravity_envelope(gem, "claude-sonnet-4-6");
+  json env = wrap_antigravity_envelope(gem, "claude-sonnet-5-5");
   const auto& req = env["request"];
   EXPECT_FALSE(req["systemInstruction"]["parts"][0].contains("cache_control"));
   EXPECT_FALSE(req["contents"][0]["parts"][0].contains("cache_control"));

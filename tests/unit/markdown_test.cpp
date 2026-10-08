@@ -325,7 +325,50 @@ TEST(MarkdownTest, SyntaxHighlightingPythonAndBash) {
   EXPECT_NE(clean.find("‹bash›"), std::string::npos);
   EXPECT_NE(clean.find("echo 'done'"), std::string::npos);
 }
-}
+
+// A parallel batch persists as [callA][callB][resA][resB]: each call must
+// pick up its result by id from a non-adjacent row.
+TEST(MessageRenderTest, ToolResultPairedFromNonAdjacentRow) {
+  qcode::ToolCallContentPart call_part(
+      "call_a", "bash",
+      nlohmann::json{{"command", "echo a"}, {"description", "Echo the letter a"}});
+  qcode::Message call_msg(qcode::kMessageRoleAssistant, {call_part});
+  qcode::ToolResultContentPart result_part(
+      "call_a", nlohmann::json{{"output", "a\n"}, {"metadata", {{"exit", 0}}}},
+      false, 5.0);
+  qcode::Message result_msg(qcode::kMessageRoleUser, {result_part});
+
+  qcode::ChatState state;
+  state.tool_collapse_state =
+      std::make_shared<std::unordered_map<std::string, bool>>();
+  (*state.tool_collapse_state)["call_a"] = true;
+  std::vector<qcode::ProviderInfo> providers;
+
+  const qcode::Message* rows[] = {&result_msg};
+  auto el = qcode::render_message(call_msg, state, providers, -1, -1,
+                                  "orange", nullptr, 0, 100, false, rows);
+  auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(100),
+                                      ftxui::Dimension::Fit(el));
+  ftxui::Render(screen, el);
+  EXPECT_NE(screen.ToString().find("✓"), std::string::npos);
 }
 
+// Identical texts must not share cached nodes while both are on screen:
+// FTXUI lays a node out in one place only, so the other copy would be blank.
+TEST(MarkdownTest, IdenticalTextsGetDistinctNodesWhileHeld) {
+  const std::string text = "Same **reply** text for two messages.";
+  auto first = qcode::render_markdown(text, "opencode", 100);
+  auto second = qcode::render_markdown(text, "opencode", 100);
+  ASSERT_FALSE(first.empty());
+  ASSERT_FALSE(second.empty());
+  EXPECT_NE(first.front().get(), second.front().get());
 
+  // Once nobody else holds the cached render, a hit reuses it.
+  const auto* cached = first.front().get();
+  first.clear();
+  second.clear();
+  auto again = qcode::render_markdown(text, "opencode", 100);
+  EXPECT_EQ(again.front().get(), cached);
+}
+}
+}

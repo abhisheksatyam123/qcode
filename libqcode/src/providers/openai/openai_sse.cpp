@@ -12,9 +12,6 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
     auto data = line.substr(5);
     if (!data.empty() && data.front() == ' ') data.erase(0, 1);
 
-    LOG_DEBUG("Processing SSE line - data length: {}",
-                          data.length());
-
     if (data == "[DONE]") {
       LOG_DEBUG("Received [DONE] signal, stream ending");
       push_finish_event_if_needed();
@@ -210,8 +207,6 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         if (delta.contains("content") && !delta["content"].is_null()) {
           const auto& content = delta["content"];
           if (content.is_string()) {
-            LOG_DEBUG("Received content chunk - length: {}",
-                      content.get<std::string>().length());
             push_event(StreamEvent(content.get<std::string>()));
           } else if (content.is_array()) {
             // Muse Spark: mixed text + thought parts in one delta.
@@ -251,7 +246,6 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
 
         const auto reasoning = extract_openai_reasoning_text(delta);
         if (!reasoning.empty()) {
-          LOG_DEBUG("Received reasoning chunk - length: {}", reasoning.length());
           push_event(StreamEvent::reasoning(reasoning));
         }
       }
@@ -295,8 +289,6 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       LOG_ERROR("Failed to parse SSE line: {} - Line content: {}",
                             e.what(), data);
     }
-  } else if (!line.empty()) {
-    LOG_DEBUG("Ignoring non-data SSE line: {}", line);
   }
 }
 

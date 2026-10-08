@@ -12,10 +12,11 @@
 #include "md4c.h"
 
 #include <cstring>
-#include <deque>
+#include <list>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -239,6 +240,7 @@ struct Ctx {
   std::vector<std::vector<std::string>> table_grid;
   std::vector<std::vector<MD_ALIGN>> table_align;
   std::string theme = "opencode";
+  int avail = 0;  // wrap width (columns) for this render
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -271,45 +273,44 @@ static std::string decode_entity(const std::string& s) {
   return out;
 }
 
-static int avail_width_cached(int override_w = -1) {
-  if (override_w > 0) return std::max(20, override_w - 6);
-  int w = 100;
-  try {
-    w = ftxui::Terminal::Size().dimx;
-  } catch (...) {
+// Wrap width for a terminal `term_w` columns wide (<= 0: query the terminal).
+static int avail_width_cached(int term_w = -1) {
+  int w = term_w;
+  if (w <= 0) {
+    w = 100;
+    try {
+      w = ftxui::Terminal::Size().dimx;
+    } catch (...) {
+    }
+    if (w <= 0) w = 100;
   }
-  if (w <= 0) w = 100;
   // Account for: 2 chars message indent ("  ") + 2 chars scrollbar + 2 chars right safety margin
   return std::max(20, w - 6);
 }
-static int avail_width() { return avail_width_cached(-1); }
 
-// LRU cache for parsed markdown — eliminates O(n²) re-parse of growing
-// streaming text and repeated parse of completed messages. Keyed by
-// (text hash + theme + width). Streaming deltas coalesce via bus, but each
-// drain still grows the visible text; the cache turns the steady-state
-// completed-message renders into O(1) hits.
+// LRU cache for parsed markdown — completed messages re-rendered after a
+// view-cache invalidation (or the idle last message) become O(1) hits.
+// Indexed by a hash of (text, theme, width); a hit still compares the full
+// key, so a collision is a miss, never a wrong render. Lookups hash the
+// caller's text in place — only inserts copy it.
 namespace {
-struct MdCacheKey {
+struct MdCacheEntry {
+  size_t hash = 0;
   std::string text;
   std::string theme;
   int width = 0;
-  bool operator==(const MdCacheKey& o) const {
-    return width == o.width && theme == o.theme && text == o.text;
-  }
+  ftxui::Elements out;
 };
-struct MdCacheKeyHash {
-  size_t operator()(const MdCacheKey& k) const noexcept {
-    size_t h = std::hash<std::string>{}(k.text);
-    h ^= std::hash<std::string>{}(k.theme) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-    h ^= std::hash<int>{}(k.width) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-    return h;
-  }
-};
-constexpr size_t kMdCacheMax = 32;
+size_t md_cache_hash(std::string_view text, std::string_view theme, int width) {
+  size_t h = std::hash<std::string_view>{}(text);
+  h ^= std::hash<std::string_view>{}(theme) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+  h ^= std::hash<int>{}(width) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+  return h;
+}
+constexpr size_t kMdCacheMax = 256;
 std::mutex g_md_cache_mutex;
-std::unordered_map<MdCacheKey, ftxui::Elements, MdCacheKeyHash> g_md_cache;
-std::deque<MdCacheKey> g_md_cache_order;
+std::list<MdCacheEntry> g_md_lru;  // front = most recently used
+std::unordered_map<size_t, std::list<MdCacheEntry>::iterator> g_md_index;
 }  // namespace
 
 // Flush collected inline items into a word-wrapped block. `first_prefix` is
@@ -862,7 +863,7 @@ static int md_leave_block(MD_BLOCKTYPE type, void* detail, void* ud) {
   }
 
   Element el;
-  int avail = avail_width();
+  const int avail = c->avail;
 
   switch (type) {
     case MD_BLOCK_DOC: {
@@ -1249,24 +1250,35 @@ static int md_text(MD_TEXTTYPE type, const MD_CHAR* txt, MD_SIZE size, void* ud)
 
 // ── Public entry point ─────────────────────────────────────────────────────
 ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme) {
-  return render_markdown(input_text, theme, avail_width_cached(-1));
+  return render_markdown(input_text, theme, -1);
 }
 
-ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme, int avail_w_override) {
+ftxui::Elements render_markdown(const std::string& input_text, const std::string& theme,
+                                int terminal_width, bool cache_result) {
   Elements out;
   if (input_text.empty()) return out;
-  const int avail_for_key = avail_width_cached(avail_w_override);
+  const int avail = avail_width_cached(terminal_width);
+  const size_t hash = md_cache_hash(input_text, theme, avail);
 
-  // Fast LRU lookup — completed messages and stable streaming prefixes hit here.
   {
     std::lock_guard<std::mutex> lock(g_md_cache_mutex);
-    MdCacheKey key{input_text, theme, avail_for_key};
-    auto it = g_md_cache.find(key);
-    if (it != g_md_cache.end()) return it->second;
+    auto it = g_md_index.find(hash);
+    if (it != g_md_index.end()) {
+      const MdCacheEntry& e = *it->second;
+      if (e.width == avail && e.theme == theme && e.text == input_text) {
+        g_md_lru.splice(g_md_lru.begin(), g_md_lru, it->second);
+        // A node can sit in only one place in the tree: while another
+        // message (e.g. one with identical text) still holds these nodes,
+        // render a fresh copy instead of drawing one of the two blank.
+        if (e.out.empty() || e.out.front().use_count() == 1) return e.out;
+        cache_result = false;
+      }
+    }
   }
 
   Ctx ctx;
   ctx.theme = theme;
+  ctx.avail = avail;
   MD_PARSER parser;
   std::memset(&parser, 0, sizeof(parser));
   parser.abi_version = 0;
@@ -1287,17 +1299,21 @@ ftxui::Elements render_markdown(const std::string& input_text, const std::string
     return out;
   }
   out = ctx.result;
+  if (!cache_result) return out;
 
   {
     std::lock_guard<std::mutex> lock(g_md_cache_mutex);
-    MdCacheKey key{input_text, theme, avail_for_key};
-    if (g_md_cache.size() >= kMdCacheMax) {
-      auto oldest = g_md_cache_order.front();
-      g_md_cache_order.pop_front();
-      g_md_cache.erase(oldest);
+    // Same hash already present (collision or a concurrent insert): replace.
+    if (auto it = g_md_index.find(hash); it != g_md_index.end()) {
+      g_md_lru.erase(it->second);
+      g_md_index.erase(it);
     }
-    g_md_cache.emplace(key, out);
-    g_md_cache_order.push_back(std::move(key));
+    g_md_lru.push_front(MdCacheEntry{hash, input_text, theme, avail, out});
+    g_md_index.emplace(hash, g_md_lru.begin());
+    if (g_md_lru.size() > kMdCacheMax) {
+      g_md_index.erase(g_md_lru.back().hash);
+      g_md_lru.pop_back();
+    }
   }
   return out;
 }

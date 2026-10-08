@@ -58,54 +58,21 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         return;
     }
 
-    // Get session info to know which provider/model to use for compaction
-    std::string provider_id = "";
-    std::string model_id = "";
-    for (const auto& s : qcode::session::list_sessions_full()) {
-        if (s.id == sid) {
-            provider_id = s.provider;
-            model_id = s.model;
-            break;
-        }
+    // Use the session's provider/model, resolved exactly as the generate
+    // route does: session rows may store the model's display name (e.g.
+    // "MiMo-V2.6-Flash Free"), and sending it on the wire makes Zen answer
+    // 401 ModelError ("model not supported") so compaction fails.
+    std::string provider_id;
+    std::string model_id;
+    if (auto s = qcode::session::get_session_info(sid)) {
+        provider_id = s->provider;
+        model_id = s->model;
     }
-
-    if (provider_id.empty() || model_id.empty()) {
-        // Fallback to default provider/model
-        provider_id = (*providers_list)[0].id;
-        model_id = (*providers_list)[0].models[0].id;
-    }
-
-    // Find the ProviderInfo
-    int sp = -1;
-    for (int i = 0; i < static_cast<int>(providers_list->size()); ++i) {
-        if ((*providers_list)[i].id == provider_id || (*providers_list)[i].name == provider_id) {
-            sp = i;
-            break;
-        }
-    }
-    if (sp == -1) sp = 0;
-
-    int sm = -1;
-    for (int i = 0; i < static_cast<int>((*providers_list)[sp].models.size()); ++i) {
-        if ((*providers_list)[sp].models[i].id == model_id || (*providers_list)[sp].models[i].name == model_id) {
-            sm = i;
-            break;
-        }
-    }
-    if (sm == -1) sm = 0;
-    // Normalize to the config model id, exactly as the generate route does
-    // (route_session.cpp). Session rows may store the display name (e.g.
-    // "MiMo-V2.6-Flash Free"); sending it on the wire makes Zen answer
-    // 401 ModelError ("model not supported") and compaction fails.
-    if (!(*providers_list)[sp].models.empty()) {
-        model_id = (*providers_list)[sp].models[sm].id;
-    }
-
-    const auto& sel = (*providers_list)[sp];
-    const qcode::ModelInfo* selected_model =
-        (sm >= 0 && sm < static_cast<int>(sel.models.size()))
-            ? &sel.models[sm]
-            : nullptr;
+    const auto resolved = resolve_provider_model(*providers_list, provider_id, model_id, res);
+    if (!resolved.provider) return;
+    const auto& sel = *resolved.provider;
+    const qcode::ModelInfo* selected_model = resolved.model;
+    if (selected_model) model_id = selected_model->id;
 
     qcode::providers::register_authenticated_providers();
     qcode::providers::ProviderOptions provider_options;
@@ -303,23 +270,10 @@ svr.Get("/session/([^/]+)/stats", [](const httplib::Request& req, httplib::Respo
         res.set_content(R"({"error":"invalid session_id"})", "application/json");
         return;
     }
-    // Pull live counters from an in-memory generation session, if present.
-    // Token totals are persisted per-turn in the DB (the cumulative source of
-    // truth), so pass 0 for the live token args; only the tool-call counters
-    // (reconstructed from stored messages for completed turns + in-flight ctx
-    // for the current turn) need the live values.
-    int live_tool_calls = 0;
-    double live_tool_time_ms = 0.0;
-    {
-        std::lock_guard<std::mutex> lock(g_sessions_mutex);
-        auto it = g_sessions.find(sid);
-        if (it != g_sessions.end()) {
-            live_tool_calls = it->second->tool_call_count.load();
-            live_tool_time_ms = it->second->total_tool_time_ms.load();
-        }
-    }
-    auto st = qcode::session::get_session_stats(sid, live_tool_calls, live_tool_time_ms,
-                                             0, 0, 0);
+    // No live counters: a running turn saves each ToolCall / ToolResult row
+    // as it happens and persists its token usage per update, so the stored
+    // totals already include it.
+    auto st = qcode::session::get_session_stats(sid);
     nlohmann::json j = {
         {"id", st.id}, {"title", st.title}, {"workspace", st.workspace},
         {"provider", st.provider}, {"model", st.model},

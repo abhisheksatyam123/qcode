@@ -8,12 +8,19 @@
 #include "providers/cursor/cursor_stream.h"
 
 #include <algorithm>
+#include <chrono>
 #include <future>
 #include <stdexcept>
 #include <thread>
 
 namespace qcode {
 namespace cursor {
+namespace {
+// cursor-agent ordering: RunSSE goes out before the run request is appended.
+// http2_post_stream's on_sent marks it on the wire (or already over); the
+// wait is capped at the fixed sleep this used to be.
+constexpr auto kRunSseSendWait = std::chrono::milliseconds(150);
+}  // namespace
 
 CursorClient::CursorClient(const std::string& access_token,
                            const std::string& session_token,
@@ -113,7 +120,11 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
     };
 
     // Open RunSSE first, then append the run request (cursor-agent ordering).
-    auto stream_future = std::async(std::launch::async, [&]() {
+    std::promise<void> run_sse_sent;
+    auto run_sse_ready = run_sse_sent.get_future();
+    auto sid = qcode::logger::thread_session_id();
+    auto stream_future = std::async(std::launch::async, [&, sid]() {
+      qcode::logger::ScopedThreadSession bind(sid);
       return http2_post_stream(
           run_sse_url, headers, run_sse_body, "application/connect+proto",
           [&](std::string_view chunk) -> bool {
@@ -125,10 +136,11 @@ GenerateResult CursorClient::generate_text(const GenerateOptions& options) {
           [&options]() {
             return (options.abort_flag && options.abort_flag->load()) ||
                    (options.has_queued_work && options.has_queued_work());
-          });
+          },
+          [&run_sse_sent]() { run_sse_sent.set_value(); });
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    (void)run_sse_ready.wait_for(kRunSseSendWait);
 
     const std::string client_message =
         cursor_request_builder_->build_agent_client_run_message(options);
@@ -190,12 +202,14 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
   auto impl = std::make_unique<CursorBufferedStream>();
   auto* impl_ptr = impl.get();
 
+  auto sid = qcode::logger::thread_session_id();
   std::thread t([impl_ptr, options,
                  access_token = access_token_,
                  agent_base_url = agent_base_url_,
                  aiserver_base_url = aiserver_base_url_,
                  builder = cursor_request_builder_,
-                 kv = &kv_]() {
+                 kv = &kv_, sid]() {
+    qcode::logger::ScopedThreadSession bind(sid);
     qcode::logger::set_thread_name("cursor-stream");
     try {
       const std::string request_id = random_id();
@@ -240,7 +254,10 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
         return bidi.append(client_message, /*wait=*/false);
       };
 
-      auto stream_future = std::async(std::launch::async, [&]() {
+      std::promise<void> run_sse_sent;
+      auto run_sse_ready = run_sse_sent.get_future();
+      auto stream_future = std::async(std::launch::async, [&, sid]() {
+        qcode::logger::ScopedThreadSession bind(sid);
         return http2_post_stream(
             run_sse_url, headers, run_sse_body, "application/connect+proto",
             [&](std::string_view chunk) -> bool {
@@ -253,10 +270,11 @@ StreamResult CursorClient::stream_text(const StreamOptions& options) {
               return impl_ptr->is_stopped() ||
                      (abort && abort->load()) ||
                      (has_queued && has_queued());
-            });
+            },
+            [&run_sse_sent]() { run_sse_sent.set_value(); });
       });
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+      (void)run_sse_ready.wait_for(kRunSseSendWait);
       if (impl_ptr->is_stopped()) {
         (void)stream_future.get();
         return;

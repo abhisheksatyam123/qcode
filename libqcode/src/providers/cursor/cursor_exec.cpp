@@ -328,19 +328,13 @@ CursorExecReply handle_mcp_state(const CursorExecRequest& req) {
   return finish(std::move(reply), req, 36, oneof_success(std::string{}));
 }
 
+// The task tool takes {prompt, description?, mode?, model?}. Cursor's native
+// Task fields (subagent_type, task, objective) are still repaired into that
+// shape by TaskTool::normalize_spawn_args, so they also mark a task payload.
 bool looks_like_task_args(const JsonValue& args) {
   if (!args.is_object()) return false;
-  const std::string op = args.value("op", "");
-  if (op == "spawn" || op == "result" || op == "kill" || op == "pause" ||
-      op == "resume" || op == "resurrect" || op == "model" || op == "status" ||
-      op == "list") {
-    return true;
-  }
   return args.contains("prompt") || args.contains("task") ||
-         args.contains("subagent_type") || args.contains("objective") ||
-         args.contains("agent") || args.contains("background_task_id") ||
-         args.contains("run_in_background") ||
-         (args.contains("description") && args.contains("prompt"));
+         args.contains("subagent_type") || args.contains("objective");
 }
 
 bool is_printable_text(const std::string& s) {
@@ -450,16 +444,9 @@ void promote_task_fields(JsonValue& args) {
     }
   }
   if ((!args.contains("prompt") || args.value("prompt", "").empty()) &&
-      (args.contains("subagent_type") || args.contains("agent") || args.contains("op")) &&
+      args.contains("subagent_type") &&
       args.contains("description") && args["description"].is_string()) {
     args["prompt"] = args["description"];
-  }
-  // Only protobuf boolean true (1). Values like 68/115 are leftover lengths
-  // from shredded Task prompts, not a background flag.
-  if (args.contains("4") && args["4"].is_number_unsigned() &&
-      args["4"].get<uint64_t>() == 1 && !args.contains("run_in_background") &&
-      !args.contains("background")) {
-    args["run_in_background"] = true;
   }
 }
 
@@ -561,14 +548,18 @@ CursorExecReply handle_task(const CursorExecRequest& req,
   ToolExecutionContext ctx;
   ctx.workspace = workspace;
   ctx.abort_flag = abort_flag;
-  if (options) ctx.subagent_runner = options->subagent_runner;
+  if (options) {
+    ctx.session_id = options->session_id;  // links the child to its parent
+    ctx.subagent_runner = options->subagent_runner;
+    ctx.routing_board = options->routing_board;
+  }
 
   const std::string label = args.value(
       "description", args.value("prompt", args.value("task", "")));
-  LOG_INFO("Cursor exec task op={} desc={}", args.value("op", "spawn"),
+  LOG_INFO("Cursor exec task desc={}",
            label.size() > 120 ? label.substr(0, 120) : label);
   const auto started = std::chrono::steady_clock::now();
-  auto result = TaskTool::execute(args, ctx);
+  auto result = TaskTool::execute(TaskTool::normalize_spawn_args(args), ctx);
   const auto elapsed_ms = static_cast<int>(
       std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::steady_clock::now() - started)

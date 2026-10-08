@@ -189,24 +189,6 @@ TEST(TaskTargetTest, ModelsFallbackList) {
   EXPECT_EQ(t.model_id, "big-pickle");
 }
 
-TEST(TaskTargetTest, SpawnNormalizesColonModelIntoProvider) {
-  ToolExecutionContext context;
-  context.subagent_runner = [](const nlohmann::json& args,
-                               std::shared_ptr<std::atomic<bool>>) {
-    EXPECT_EQ(args.value("provider", ""), "openrouter");
-    EXPECT_EQ(args.value("model", ""), "deepseek/foo");
-    return nlohmann::json{{"output", "ok"}};
-  };
-  const auto out = TaskTool::execute(
-      nlohmann::json{{"prompt", "scan"},
-                     {"model", "openrouter:deepseek/foo"}},
-      context);
-  EXPECT_EQ(out["metadata"].value("provider", ""), "openrouter");
-  EXPECT_EQ(out["metadata"].value("model", ""), "deepseek/foo");
-  EXPECT_THAT(out.value("output", ""), testing::HasSubstr("ok"));
-}
-
-
 TEST(TaskTargetTest, ExplicitCursorStillBinds) {
   const auto catalog = sample_catalog();
   const auto t = resolve_subagent_target(

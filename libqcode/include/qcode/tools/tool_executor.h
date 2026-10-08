@@ -12,13 +12,11 @@ class ToolExecutor {
  public:
   static ToolResult execute_tool(const ToolCall& tool_call,
                                  const ToolSet& tools,
-                                 const Messages& messages = {},
                                  const GenerateOptions* options = nullptr);
 
   static std::vector<ToolResult> execute_tools(
       const std::vector<ToolCall>& tool_calls,
       const ToolSet& tools,
-      const Messages& messages = {},
       bool parallel = true,
       const GenerateOptions* options = nullptr);
 

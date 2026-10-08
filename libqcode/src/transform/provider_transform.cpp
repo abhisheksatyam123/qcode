@@ -2,6 +2,7 @@
 #include <qcode/core/logger.h>
 #include <qcode/core/utf8.h>
 #include <qcode/providers/zen_route.h>
+#include <qcode/tools/image_tool.h>
 
 #include <algorithm>
 #include <array>
@@ -457,15 +458,8 @@ static bool is_empty_text(const std::string& t) {
 // or lone surrogates, preventing type_error.316 and type_error.302.
 static JsonValue sanitize_json_value(JsonValue value) {
   try {
-    if (value.is_string()) {
-      return utils::sanitize_utf8(value.get<std::string>());
-    }
-    if (value.is_object() || value.is_array()) {
-      utils::sanitize_json_strings(value);
-      return value;
-    }
+    utils::sanitize_json_strings(value);
   } catch (...) {
-    return value;
   }
   return value;
 }
@@ -506,67 +500,61 @@ static bool keep_reasoning_part(const Model& model, const ReasoningContentPart& 
   return rp.signature.empty();
 }
 
-Messages normalize_messages(const Messages& messages, const Model& model) {
-  Messages result;
+Messages normalize_messages(Messages messages, const Model& model) {
   const bool claude_like = is_claude_family(model);
   const bool keep_sig = keep_thought_signature(model);
 
-  for (const auto& msg : messages) {
-    MessageContent filtered_content;
-    for (const auto& part : msg.content) {
-      if (std::holds_alternative<TextContentPart>(part)) {
-        auto tp = std::get<TextContentPart>(part);
-        tp.text = utils::sanitize_utf8(tp.text);
+  // Rewrites parts in place and moves the survivors; the only copies are the
+  // ones the caller makes when passing an lvalue.
+  Messages result;
+  result.reserve(messages.size());
+  for (auto& msg : messages) {
+    MessageContent kept;
+    kept.reserve(msg.content.size());
+    for (auto& part : msg.content) {
+      if (auto* tp = std::get_if<TextContentPart>(&part)) {
+        utils::sanitize_utf8_in_place(tp->text);
         // Anthropic/Bedrock empty-filter: drop empty text parts
-        if (claude_like && is_empty_text(tp.text)) continue;
-        filtered_content.push_back(std::move(tp));
-      } else if (std::holds_alternative<ToolCallContentPart>(part)) {
-        auto tc = std::get<ToolCallContentPart>(part);
-        tc.id = canonicalize_tool_call_id(tc.id);
-        tc.arguments = sanitize_json_value(std::move(tc.arguments));
-        if (!keep_sig) tc.thought_signature.clear();
-        filtered_content.push_back(std::move(tc));
-      } else if (std::holds_alternative<ToolResultContentPart>(part)) {
-        auto tr = std::get<ToolResultContentPart>(part);
-        tr.tool_call_id = canonicalize_tool_call_id(tr.tool_call_id);
-        tr.result = sanitize_json_value(std::move(tr.result));
-        if (claude_like && is_empty_json_text(tr.result)) continue;
-        filtered_content.push_back(std::move(tr));
-      } else if (std::holds_alternative<ReasoningContentPart>(part)) {
-        auto rp = std::get<ReasoningContentPart>(part);
-        rp.text = utils::sanitize_utf8(rp.text);
-        if (!keep_reasoning_part(model, rp)) continue;
-        filtered_content.push_back(std::move(rp));
-      } else if (std::holds_alternative<ImageContentPart>(part)) {
-        auto ip = std::get<ImageContentPart>(part);
+        if (claude_like && is_empty_text(tp->text)) continue;
+      } else if (auto* tc = std::get_if<ToolCallContentPart>(&part)) {
+        tc->id = canonicalize_tool_call_id(tc->id);
+        tc->arguments = sanitize_json_value(std::move(tc->arguments));
+        if (!keep_sig) tc->thought_signature.clear();
+      } else if (auto* tr = std::get_if<ToolResultContentPart>(&part)) {
+        tr->tool_call_id = canonicalize_tool_call_id(tr->tool_call_id);
+        tr->result = sanitize_json_value(std::move(tr->result));
+        if (claude_like && is_empty_json_text(tr->result)) continue;
+      } else if (auto* rp = std::get_if<ReasoningContentPart>(&part)) {
+        utils::sanitize_utf8_in_place(rp->text);
+        if (!keep_reasoning_part(model, *rp)) continue;
+      } else if (auto* ip = std::get_if<ImageContentPart>(&part)) {
         // Base64 payload: strip whitespace/newlines some encoders insert.
-        ip.data.erase(std::remove_if(ip.data.begin(), ip.data.end(),
-                                     [](unsigned char c) {
-                                       return c == '\r' || c == '\n' ||
-                                              c == ' ';
-                                     }),
-                      ip.data.end());
-        ip.mime_type = utils::sanitize_utf8(ip.mime_type);
-        ip.description = utils::sanitize_utf8(ip.description);
-        if (ip.data.empty() || ip.mime_type.rfind("image/", 0) != 0) continue;
-        filtered_content.push_back(std::move(ip));
+        std::erase_if(ip->data, [](unsigned char c) {
+          return c == '\r' || c == '\n' || c == ' ';
+        });
+        utils::sanitize_utf8_in_place(ip->mime_type);
+        utils::sanitize_utf8_in_place(ip->description);
+        if (ip->data.empty() || ip->mime_type.rfind("image/", 0) != 0) continue;
       }
+      kept.push_back(std::move(part));
     }
 
-    if (!filtered_content.empty()) {
-      result.emplace_back(msg.role, std::move(filtered_content));
+    if (!kept.empty()) {
+      result.emplace_back(msg.role, std::move(kept));
     }
   }
 
-  return close_unpaired_tool_calls(result);
+  return close_unpaired_tool_calls(std::move(result));
 }
 
-Messages close_unpaired_tool_calls(const Messages& messages) {
+Messages close_unpaired_tool_calls(Messages messages) {
+  // Ids only: get_tool_results()/get_tool_calls() would copy every payload.
   std::unordered_set<std::string> result_ids;
   for (const auto& msg : messages) {
-    for (const auto& result : msg.get_tool_results()) {
-      if (!result.tool_call_id.empty()) {
-        result_ids.insert(result.tool_call_id);
+    for (const auto& part : msg.content) {
+      if (const auto* tr = std::get_if<ToolResultContentPart>(&part);
+          tr && !tr->tool_call_id.empty()) {
+        result_ids.insert(tr->tool_call_id);
       }
     }
   }
@@ -574,20 +562,19 @@ Messages close_unpaired_tool_calls(const Messages& messages) {
   Messages out;
   out.reserve(messages.size() + 4);
   std::size_t closed = 0;
-  for (const auto& msg : messages) {
-    out.push_back(msg);
-    if (!msg.has_tool_calls()) continue;
-
+  for (auto& msg : messages) {
     std::vector<ToolResultContentPart> missing;
-    for (const auto& call : msg.get_tool_calls()) {
-      if (call.id.empty() || result_ids.contains(call.id)) continue;
+    for (const auto& part : msg.content) {
+      const auto* call = std::get_if<ToolCallContentPart>(&part);
+      if (!call || call->id.empty() || result_ids.contains(call->id)) continue;
       missing.emplace_back(
-          call.id,
+          call->id,
           JsonValue{{"error",
                      "Tool call interrupted before a result was recorded."}},
           true);
-      result_ids.insert(call.id);
+      result_ids.insert(call->id);
     }
+    out.push_back(std::move(msg));
     if (missing.empty()) continue;
     closed += missing.size();
     out.push_back(Message::tool_results(missing));
@@ -599,6 +586,53 @@ Messages close_unpaired_tool_calls(const Messages& messages) {
         "interrupted function calls",
         closed);
   }
+  return out;
+}
+
+bool has_tool_result_images(const Messages& messages) {
+  return std::any_of(messages.begin(), messages.end(), [](const Message& msg) {
+    return std::any_of(
+        msg.content.begin(), msg.content.end(), [](const ContentPart& part) {
+          const auto* tr = std::get_if<ToolResultContentPart>(&part);
+          return tr && ImageTool::is_image_result(*tr);
+        });
+  });
+}
+
+Messages lift_tool_result_images(Messages messages) {
+  if (!has_tool_result_images(messages)) return messages;
+  Messages out;
+  out.reserve(messages.size() + 1);
+  MessageContent images;  // pixels from the current run of tool results
+  const auto flush = [&] {
+    if (images.empty()) return;
+    out.emplace_back(kMessageRoleUser, std::move(images));
+    images.clear();
+  };
+
+  for (auto& msg : messages) {
+    if (!msg.has_tool_results()) flush();
+    for (auto& part : msg.content) {
+      auto* tr = std::get_if<ToolResultContentPart>(&part);
+      if (!tr || !ImageTool::is_image_result(*tr)) continue;
+      auto& result = tr->result;
+      std::string text = ImageTool::summary(result);
+      std::string mime = result["mime_type"].get<std::string>();
+      if (ImageTool::is_supported_mime_type(mime)) {
+        images.emplace_back(ImageContentPart{
+            std::move(result["data"].get_ref<std::string&>()), std::move(mime),
+            result.value("path", std::string())});
+        text += "; the image follows.";
+      } else {
+        // Written by an older image tool; providers reject this format.
+        text += "; this format cannot be shown, convert it to png and load "
+                "that instead.";
+      }
+      result = std::move(text);
+    }
+    out.push_back(std::move(msg));
+  }
+  flush();
   return out;
 }
 

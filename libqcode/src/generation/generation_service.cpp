@@ -1,13 +1,16 @@
 #include <qcode/generation/turn_prefix.h>
 #include <qcode/generation/generation_service.h>
+#include <qcode/core/perf.h>
 #include <qcode/generation/generation_continue.h>
 #include <qcode/config/config.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
+#include <qcode/tools/subagent_router.h>
 #include <qcode/tools/task_target.h>
 #include <qcode/tools/tool_executor.h>
 #include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/session/session_store.h>
+#include <qcode/session/subagent_stats.h>
 #include <qcode/core/event.h>
 #include <qcode/core/errors.h>
 
@@ -16,10 +19,13 @@
 #include <random>
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <functional>
 #include <future>
 #include <map>
 #include <mutex>
+#include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <utility>
@@ -52,44 +58,66 @@ static bool looks_like_auth_error(const std::string& message) {
          message.find("access token") != std::string::npos;
 }
 
-static std::string tool_calls_fingerprint(
-    const std::vector<qcode::ToolCall>& calls) {
-  std::string fp;
+// Fingerprint of one tool step: the calls AND their results, so "same call,
+// new output" is not treated as a stuck loop (e.g. re-read after edit,
+// poll/retry bash). Hashes the JSON in place instead of dumping every tool
+// output to a string (and keeping it) each step.
+static size_t tool_step_fingerprint(const std::vector<qcode::ToolCall>& calls,
+                                    const std::vector<qcode::ToolResult>& results) {
+  size_t h = 0;
+  const auto mix = [&h](size_t v) {
+    h ^= v + 0x9e3779b9u + (h << 6) + (h >> 2);
+  };
+  const std::hash<std::string> str_hash;
+  const std::hash<nlohmann::json> json_hash;
   for (const auto& call : calls) {
-    fp += call.tool_name;
-    fp += ':';
-    fp += call.arguments.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    fp += '|';
+    mix(str_hash(call.tool_name));
+    mix(json_hash(call.arguments));
   }
-  return fp;
-}
-
-// Fingerprint of tool results so "same call, new output" is not treated as a
-// stuck loop (e.g. re-read after edit, poll/retry bash).
-static std::string tool_results_fingerprint(
-    const std::vector<qcode::ToolResult>& results) {
-  std::string fp;
+  mix(calls.size());
   for (const auto& res : results) {
-    fp += res.tool_name;
-    fp += ':';
-    fp += res.is_success() ? "ok:" : "err:";
-    fp += res.result.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    if (res.error) {
-      fp += ':';
-      fp += *res.error;
-    }
-    fp += '|';
+    mix(str_hash(res.tool_name));
+    mix(res.is_success() ? 1 : 2);
+    mix(json_hash(res.result));
+    if (res.error) mix(str_hash(*res.error));
   }
-  return fp;
+  return h;
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Multi-agent: nested subagent turn (parallel multi-provider & multi-model)
+//  Multi-agent: nested subagent turn (routed model with fallback)
 // ──────────────────────────────────────────────────────────────
 namespace {
-// P0.2: random-model fallback across working providers (zen + antigravity
-// preferred, openrouter shuffled best-effort). Cursor only when explicit.
-constexpr int kSubagentFallbackMaxAttempts = 4;
+// Models tried per task: the one the lead named (if any), then free models
+// ranked by the subagent router (qcode/tools/subagent_router.h).
+constexpr int kSubagentMaxAttempts = 4;
+
+// The lead named a provider/model (not inherit/parent/default).
+bool subagent_model_named(const nlohmann::json& args) {
+  const auto named = [](const nlohmann::json& v) {
+    return v.is_string() && !v.get<std::string>().empty() &&
+           !is_inherit_model_id(v.get<std::string>());
+  };
+  if ((args.contains("provider") && named(args["provider"])) ||
+      (args.contains("model") && named(args["model"]))) {
+    return true;
+  }
+  return args.contains("models") && args["models"].is_array() &&
+         std::any_of(args["models"].begin(), args["models"].end(), named);
+}
+
+// An account-wide limit (OpenRouter's free-models-per-day, exhausted credits)
+// covers every model of the provider, so the rest of this task's chain skips
+// it. Plain 429s are per model (antigravity meters each model family on its
+// own): only that model rests, the provider's other models are still tried.
+bool provider_wide_limit(std::string msg) {
+  std::transform(msg.begin(), msg.end(), msg.begin(), ::tolower);
+  if (msg.find("upstream") != std::string::npos) return false;
+  for (const char* s : {"per-day", "per day", "daily", "credits", "insufficient balance"}) {
+    if (msg.find(s) != std::string::npos) return true;
+  }
+  return false;
+}
 
 bool subagent_wants_cursor(const nlohmann::json& args) {
   auto has = [](const std::string& v) {
@@ -102,23 +130,6 @@ bool subagent_wants_cursor(const nlohmann::json& args) {
     for (const auto& m : args["models"])
       if (m.is_string() && has(m.get<std::string>())) return true;
   return false;
-}
-
-bool subagent_failover_worthy(const std::string& msg, const GenerateResult& res) {
-  if (res.is_retryable.value_or(false)) return true;
-  if (msg.find("ModelError") != std::string::npos) return true;
-  if (msg.find("FreeTierError") != std::string::npos) return true;
-  if (msg.find("AuthError") != std::string::npos) return true;
-  if (msg.find("Missing API key") != std::string::npos) return true;
-  if (msg.find("free tier can only be used") != std::string::npos) return true;
-  if (msg.find("is not supported") != std::string::npos) return true;
-  if (msg.find("Failed to resolve subagent client") != std::string::npos) return true;
-  if (msg.find("subagent generation failed") != std::string::npos) return true;
-  if (msg.find("401") != std::string::npos || msg.find("403") != std::string::npos ||
-      msg.find("404") != std::string::npos || msg.find("429") != std::string::npos ||
-      msg.find("500") != std::string::npos || msg.find("502") != std::string::npos ||
-      msg.find("503") != std::string::npos || msg.find("504") != std::string::npos) return true;
-  return is_error_message_retryable(msg);
 }
 }  // namespace
 
@@ -159,79 +170,95 @@ static JsonValue run_subagent_turn_multi(
   std::string mode = args.value("mode", "explore");
   std::string description = args.value("description", "");
   std::string objective = args.value("objective", "");
+  const routing::Difficulty difficulty =
+      routing::parse_difficulty(args.value("difficulty", "medium"));
+  const std::string parent_session_id = args.value("parent_session_id", "");
+  const std::string sub_session_id =
+      args.value("sessionId", args.value("session_id", args.value("task_id", "")));
 
-  SubagentTarget target;
-  if (providers) {
-    target = resolve_subagent_target(args, *providers, default_provider_id,
-                                     default_model_id);
-  } else {
-    target.error = "No available AI provider configured for subagent";
-  }
-  if (!target.error.empty() && !target.provider) {
-    return JsonValue{{"error", target.error}};
-  }
-
-  const ProviderInfo* target_provider = target.provider;
-  std::string target_model_id = target.model_id;
-  const ModelInfo* target_model_info = target.model_info;
-
-  if (!target_provider) {
+  if (!providers) {
     return JsonValue{{"error", "No available AI provider configured for subagent"}};
   }
 
-  // P0.2 fallback chain: explicit target, then working-set pool (zen,
-  // antigravity preferred; openrouter tier shuffled; cursor only if explicit).
-  struct FallbackCand { const ProviderInfo* p; const ModelInfo* m; std::string model_id; };
-  std::vector<FallbackCand> chain;
-  chain.push_back({target_provider, target_model_info, target_model_id});
-  {
-    const bool allow_cursor = subagent_wants_cursor(args);
-    std::vector<FallbackCand> rest;
-    for (const auto& pr : *providers) {
-      if (!is_provider_authenticated(pr)) continue;
-      const bool is_cursor = pr.id == "cursor" || pr.id.find("cursor") != std::string::npos;
-      if (is_cursor && !allow_cursor) continue;
-      for (const auto& mo : pr.models) {
-        if (mo.id.empty()) continue;
-        if (!is_model_working(pr, mo)) continue;
-        if (pr.id == target_provider->id && mo.id == target_model_id) continue;
-        if (matches_orchestrator(pr.id, mo.id, default_provider_id, default_model_id)) continue;
-        rest.push_back({&pr, &mo, mo.id});
-      }
+  // Chain: the model the lead named (paid allowed), then free models ranked
+  // by learned success, difficulty, latency and load.
+  struct Candidate {
+    const ProviderInfo* provider;
+    const ModelInfo* model;  // null for a named model missing from the catalog
+    std::string model_id;
+    std::string reason;
+    std::optional<double> expected;
+  };
+  std::vector<Candidate> chain;
+  if (subagent_model_named(args)) {
+    // Resolved without the lead's ids: naming the lead's own model falls
+    // through to the router instead of a fixed alternate.
+    const SubagentTarget t = resolve_subagent_target(args, *providers, "", "");
+    if (!t.provider) {
+      return JsonValue{{"error", t.error.empty() ? "No available AI provider configured for subagent"
+                                                 : t.error}};
     }
-    // OpenCode models configured in opencode.json are supported in the rest pool.
-
-    auto prio = [](const ProviderInfo* q) {
-      if (q->id.find("antigravity") != std::string::npos) return 0;
-      if (q->id == "openrouter") return 1;
-      if (q->id == "opencode") return 2;
-      return 3;
-    };
-    std::stable_sort(rest.begin(), rest.end(),
-                     [&](const FallbackCand& a, const FallbackCand& b) { return prio(a.p) < prio(b.p); });
-    auto oit = std::find_if(rest.begin(), rest.end(),
-                            [](const FallbackCand& c) { return c.p->id == "openrouter"; });
-    if (oit != rest.end()) {
-      std::random_device rd;
-      std::mt19937 g(rd());
-      std::shuffle(oit, rest.end(), g);
+    if (!matches_orchestrator(t.provider_id, t.model_id, default_provider_id, default_model_id)) {
+      chain.push_back({t.provider, t.model_info, t.model_id, "explicit", std::nullopt});
     }
-    for (auto& c : rest) chain.push_back(c);
   }
-  const int max_attempts = std::min<int>(kSubagentFallbackMaxAttempts, (int)chain.size());
+  routing::RouteRequest req;
+  req.mode = mode;
+  req.difficulty = difficulty;
+  req.lead_provider = default_provider_id;
+  req.lead_model = default_model_id;
+  req.allow_cursor = subagent_wants_cursor(args);
+  req.now = std::time(nullptr);
+  req.inflight_by_provider = routing::inflight_snapshot();
+  static thread_local std::mt19937 rng{std::random_device{}()};
+  for (const auto& r : routing::rank_targets(*providers, session::load_subagent_stats(), req, rng)) {
+    if (!chain.empty() && r.provider == chain.front().provider &&
+        r.model->id == chain.front().model_id) {
+      continue;
+    }
+    chain.push_back({r.provider, r.model, r.model->id, r.reason, r.expected});
+  }
+  if (chain.empty()) {
+    return JsonValue{{"error", "No free working model for subagents; name one with "
+                               "model: \"provider:model\"."}};
+  }
 
   JsonValue out;
   try {
-  std::string fb_last_error;
-  for (int fb_attempt = 0; fb_attempt < max_attempts; ++fb_attempt) {
-    const auto& fb = chain[(size_t)fb_attempt];
-    target_provider = fb.p;
-    target_model_info = fb.m;
-    target_model_id = fb.model_id;
-    if (fb_attempt > 0) {
-      LOG_WARN("subagent fallback attempt {}/{}: {}:{} (prev: {})", fb_attempt + 1, max_attempts,
-               target_provider->id, target_model_id, fb_last_error);
+  std::string last_error;
+  std::set<std::string> limited_providers;  // hit a provider-wide 429/quota
+  int attempt = 0;
+  for (const auto& cand : chain) {
+    if (attempt >= kSubagentMaxAttempts) break;
+    if (limited_providers.contains(cand.provider->id)) continue;
+    ++attempt;
+    const ProviderInfo* target_provider = cand.provider;
+    const ModelInfo* target_model_info = cand.model;
+    const std::string& target_model_id = cand.model_id;
+    if (attempt > 1) {
+      LOG_WARN("subagent attempt {}/{}: {}:{} ({}; prev: {})", attempt, kSubagentMaxAttempts,
+               target_provider->id, target_model_id, cand.reason, last_error);
     }
+
+    routing::ScopedInflight inflight(target_provider->id);
+    const auto started = std::chrono::steady_clock::now();
+    const int64_t started_at = std::time(nullptr);
+    const auto record = [&](routing::Outcome outcome, const std::string& error) {
+      session::SubagentRun run;
+      run.task_id = sub_session_id;
+      run.attempt = attempt;
+      run.parent_session_id = parent_session_id;
+      run.provider = target_provider->id;
+      run.model = target_model_id;
+      run.mode = mode;
+      run.difficulty = std::string(routing::to_string(difficulty));
+      run.outcome = outcome;
+      run.error = error;
+      run.latency_ms = std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - started).count();
+      run.started_at = started_at;
+      session::record_subagent_run(run);
+    };
 
     qcode::providers::ProviderOptions prov_opts;
     prov_opts.base_url = target_provider->api_url;
@@ -256,7 +283,19 @@ static JsonValue run_subagent_turn_multi(
     } else if (target_provider->id == "openrouter") {
       if (prov_opts.api_key.empty()) {
         const char* key = std::getenv("OPENROUTER_API_KEY");
-        if (key && *key != '\0') prov_opts.api_key = key;
+        if (key && *key) prov_opts.api_key = key;
+      }
+    } else if (target_provider->id == "anthropic" ||
+               target_provider->name.find("Anthropic") != std::string::npos) {
+      if (prov_opts.api_key.empty()) {
+        const auto fresh = get_anthropic_token(/*force_refresh=*/false);
+        if (!fresh.empty()) prov_opts.api_key = fresh;
+      }
+    } else if (target_provider->id == "openai" ||
+               target_provider->name.find("OpenAI") != std::string::npos) {
+      if (prov_opts.api_key.empty()) {
+        const char* key = std::getenv("OPENAI_API_KEY");
+        if (key && *key) prov_opts.api_key = key;
       }
     }
 
@@ -266,15 +305,18 @@ static JsonValue run_subagent_turn_multi(
     auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
         target_provider->id, prov_opts);
     if (!resolution.ok()) {
-      fb_last_error = "Failed to resolve subagent client for provider '" +
-                      target_provider->id + "': " + resolution.error;
-      LOG_WARN("subagent fallback: {}", fb_last_error);
+      last_error = "Failed to resolve subagent client for provider '" +
+                   target_provider->id + "': " + resolution.error;
+      LOG_WARN("subagent fallback: {}", last_error);
+      record(routing::Outcome::kTransientError, last_error);  // setup, not model quality
       continue;
     }
     qcode::Client subagent_client = std::move(resolution.client);
 
-    std::string sub_session_id =
-        args.value("sessionId", args.value("session_id", args.value("task_id", "")));
+    // Route this thread's logs to the child's own session file for the
+    // duration of the subagent turn (restored when the scope exits).
+    std::optional<qcode::logger::ScopedThreadSession> child_bind;
+    if (!sub_session_id.empty()) child_bind.emplace(sub_session_id);
     if (!sub_session_id.empty() && target_provider) {
       qcode::session::set_session_provider_model(
           sub_session_id, target_provider->name, target_model_id);
@@ -384,38 +426,41 @@ static JsonValue run_subagent_turn_multi(
           return subagent_client.generate_text(step_opts);
         });
 
-    if (aborted()) {
+    std::string error;
+    if (!res.is_success()) {
+      error = !res.error_message().empty() ? res.error_message() : "subagent generation failed";
+    }
+    routing::Outcome outcome = aborted() ? routing::Outcome::kAborted
+                                         : routing::classify_outcome(res.is_success(), error);
+    if (outcome == routing::Outcome::kSuccess &&
+        res.text.find_first_not_of(" \t\r\n") == std::string::npos) {
+      outcome = routing::Outcome::kModelFailure;
+      error = "empty output";
+    }
+    record(outcome, error);
+
+    if (outcome == routing::Outcome::kAborted) {
       out["error"] = "Subagent cancelled due to abort flag";
       return out;
     }
-    if (!res.is_success()) {
-      const std::string emsg = !res.error_message().empty() ? res.error_message()
-                                                            : "subagent generation failed";
-      if (fb_attempt + 1 < max_attempts && subagent_failover_worthy(emsg, res)) {
-        fb_last_error = emsg;
-        LOG_WARN("subagent attempt {}/{} failed on {}:{}: {}", fb_attempt + 1, max_attempts,
-                 target_provider->id, target_model_id, emsg);
-        continue;
-      }
-      out["error"] = emsg;
+    if (outcome == routing::Outcome::kSuccess) {
+      out = {{"output", res.text},
+             {"provider", target_provider->id},
+             {"model", target_model_id},
+             {"attempts", attempt},
+             {"route_reason", cand.reason}};
+      if (cand.expected) out["expected"] = *cand.expected;
       return out;
     }
-
-    std::string final_text = res.text;
-    if (final_text.empty()) final_text = "(subagent finished without output)";
-    out["output"] = final_text;
-    if (target_provider) {
-      out["provider"] = target_provider->id;
+    last_error = error;
+    LOG_WARN("subagent attempt {}/{} failed on {}:{}: {}", attempt, kSubagentMaxAttempts,
+             target_provider->id, target_model_id, error);
+    if (outcome == routing::Outcome::kTransientError && provider_wide_limit(error)) {
+      limited_providers.insert(target_provider->id);
     }
-    out["model"] = target_model_id;
-    if (fb_attempt > 0) {
-      out["fallback_used"] = true;
-      out["fallback_attempts"] = fb_attempt + 1;
-      out["fallback_model"] = target_provider->id + ":" + target_model_id;
-    }
-    return out;
   }  // end fallback loop
-  out["error"] = fb_last_error.empty() ? "subagent generation failed" : fb_last_error;
+  out["error"] = last_error.empty() ? "subagent generation failed" : last_error;
+  out["attempts"] = attempt;
   } catch (const std::exception& e) {
     out["error"] = std::string("subagent crashed: ") + e.what();
   }
@@ -432,8 +477,6 @@ static void run_tools_generation_bus(
     GenerationContext& ctx,
     const std::function<bool(qcode::Client&)>& refresh_client = nullptr,
     const std::string& provider_id = "") {
-  auto assistant_text    = std::make_shared<std::string>();
-  auto assistant_msg_idx = std::make_shared<int>(-1);
   struct InFlightTool {
     std::chrono::steady_clock::time_point started;
     std::string tool_name;
@@ -441,27 +484,7 @@ static void run_tools_generation_bus(
   auto tool_starts = std::make_shared<std::map<std::string, InFlightTool>>();
   auto callback_mutex    = std::make_shared<std::mutex>();
   auto step_counter      = std::make_shared<std::atomic<int>>(0);
-  int  max_steps         = options.max_steps;
-
-  // ── Step finished: emit MessageDelta ──
-  options.on_step_finish =
-      [&bus, &ctx, assistant_text,
-       callback_mutex](const qcode::GenerateStep& step) {
-        std::lock_guard<std::mutex> lock(*callback_mutex);
-        LOG_DEBUG("generation_service: on_step_finish text_len={}", step.text.size());
-        if (step.text.empty()) return;
-        if (*assistant_text == "  \u23f3 Working...") {
-          *assistant_text = step.text;
-        } else {
-          *assistant_text += step.text;
-        }
-        if (step.text == "  \u23f3 Working...") return;
-        bus.publish<MessageDelta>({
-            .session_id = ctx.session_id,
-            .text = step.text,
-            .done = false
-        });
-      };
+  const int max_steps    = options.max_steps;
 
   // ── Tool call started: emit ToolCallStarted ──
   options.on_tool_call_start =
@@ -483,31 +506,18 @@ static void run_tools_generation_bus(
 
   // ── Tool call finished: emit ToolCallCompleted ──
   options.on_tool_call_finish =
-      [&bus, &ctx, assistant_text, tool_starts,
+      [&bus, &ctx, tool_starts,
        callback_mutex](const qcode::ToolResult& res) {
         std::lock_guard<std::mutex> lock(*callback_mutex);
         double duration_s = 0.0;
-        {
-          auto start_it_tmp = tool_starts->find(res.tool_call_id);
-          if (start_it_tmp != tool_starts->end()) {
-            double d = std::chrono::duration<double>(
-                           std::chrono::steady_clock::now() -
-                           start_it_tmp->second.started)
-                           .count();
-            LOG_DEBUG("generation_service: on_tool_call_finish tool={} success={} duration={:.1f}s", res.tool_name, res.is_success(), d);
-          } else {
-            LOG_DEBUG("generation_service: on_tool_call_finish tool={} success={} duration=unknown", res.tool_name, res.is_success());
-          }
-        }
         auto start_it = tool_starts->find(res.tool_call_id);
         if (start_it != tool_starts->end()) {
           duration_s = std::chrono::duration<double>(
               std::chrono::steady_clock::now() - start_it->second.started).count();
           tool_starts->erase(start_it);
-        }
-
-        if (*assistant_text == "  \u23f3 Working...") {
-          *assistant_text = "";
+          LOG_DEBUG("generation_service: on_tool_call_finish tool={} success={} duration={:.1f}s", res.tool_name, res.is_success(), duration_s);
+        } else {
+          LOG_DEBUG("generation_service: on_tool_call_finish tool={} success={} duration=unknown", res.tool_name, res.is_success());
         }
 
         ctx.tool_call_count++;
@@ -542,19 +552,80 @@ static void run_tools_generation_bus(
     tool_starts->clear();
   };
 
+  // Assistant text of each finished step goes to the UI as one MessageDelta.
+  // Only its length is kept: the text itself lives in the request history.
+  size_t text_chars = 0;
+  auto publish_step_text = [&bus, &ctx, &text_chars](std::string text) {
+    if (text.empty()) return;
+    text_chars += text.size();
+    bus.publish<MessageDelta>({
+        .session_id = ctx.session_id,
+        .text = std::move(text),
+        .done = false
+    });
+  };
+
   // ── Multi-step generation loop ──
+  // Turn totals: usage, plus the error that ended the turn (if any).
   qcode::GenerateResult gen_result;
-  gen_result.finish_reason = qcode::kFinishReasonStop;
 
-  qcode::Messages response_messages;
-  qcode::Messages step_messages = options.messages;
-  if (step_messages.empty() && !options.prompt.empty()) {
-    step_messages.push_back(qcode::Message::user(options.prompt));
+  // `options` is the request for every step. Each step's messages are
+  // appended to its history in place, so no step re-copies the conversation
+  // or its tool outputs. (The tool executor reads only tools, workspace,
+  // session, abort flag and callbacks from it.)
+  if (options.messages.empty() && !options.prompt.empty()) {
+    options.messages.push_back(qcode::Message::user(options.prompt));
   }
-  const size_t initial_count = step_messages.size();
+  options.prompt.clear();
+  options.max_steps = 1;
+  options.on_retry = [&bus, &ctx](int attempt, int total_attempts,
+                                  std::chrono::milliseconds delay,
+                                  const std::string& err_msg) {
+    double secs = delay.count() / 1000.0;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%.1fs", secs);
+    const std::string why = format_user_facing_error(err_msg, 80);
+    std::string toast_msg = "Retrying " + std::to_string(attempt) + "/" +
+                            std::to_string(total_attempts) + " in " + buf;
+    if (!why.empty()) toast_msg += " — " + why;
+    bus.publish<contract::ErrorOccurred>({
+        .session_id = ctx.session_id,
+        .message = toast_msg,
+        .severity = "info"
+    });
+  };
 
-  qcode::GenerateOptions step_opts = options;
-  step_opts.prompt.clear();
+  // Heuristic token count of options.messages for the live context display
+  // when the provider reports no prompt_tokens. Computed once on first use,
+  // then grown by each appended message instead of re-walking the history.
+  std::optional<size_t> est_history_tokens;
+  qcode::Messages scratch;  // estimate_tokens() takes a vector: move through it
+  auto append_message = [&options, &est_history_tokens,
+                         &scratch](qcode::Message msg) -> size_t {
+    scratch.push_back(std::move(msg));
+    const size_t tokens = estimate_tokens(scratch);
+    options.messages.push_back(std::move(scratch.back()));
+    scratch.clear();
+    if (est_history_tokens) *est_history_tokens += tokens;
+    return tokens;
+  };
+
+  // A prompt queued while this turn runs joins the next model request instead
+  // of waiting for the turn to end. Returns true when something was injected.
+  auto inject_queued_prompts = [&]() -> bool {
+    if (!ctx.take_queued_prompts) return false;
+    auto prompts = ctx.take_queued_prompts();
+    if (prompts.empty()) return false;
+    std::string text;
+    for (auto& p : prompts) {
+      if (!text.empty()) text += "\n\n";
+      text += std::move(p);
+    }
+    append_message(qcode::Message::user(text));
+    bus.publish<UserMessageInjected>(
+        {.session_id = ctx.session_id, .text = std::move(text)});
+    return true;
+  };
 
   int step = 0;
   bool finished = false;
@@ -566,43 +637,27 @@ static void run_tools_generation_bus(
   // Consecutive steps with the same tool calls AND the same results.
   // Same-args retries with changing output (re-read, poll) are allowed.
   int no_progress_repeat = 0;
-  std::string last_progress_fp;
+  std::optional<size_t> last_progress_fp;
 
-  LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", options.max_steps);
-  while (!finished && (options.max_steps <= 0 || step < options.max_steps)) {
+  LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", max_steps);
+  while (!finished && (max_steps <= 0 || step < max_steps)) {
     if (ctx.abort_flag && ctx.abort_flag->load()) {
       LOG_INFO("run_tools_generation_bus: abort requested at step={}", step);
       aborted = true;
       break;
     }
-    step_messages.erase(std::next(step_messages.begin(), initial_count), step_messages.end());
-    step_messages.insert(step_messages.end(), response_messages.begin(), response_messages.end());
-    step_opts.messages = step_messages;
-    LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, step_messages.size());
-    step_opts.max_steps = 1;
-    step_opts.on_retry = [&bus, &ctx](int attempt, int total_attempts,
-                                      std::chrono::milliseconds delay,
-                                      const std::string& err_msg) {
-      double secs = delay.count() / 1000.0;
-      char buf[16];
-      snprintf(buf, sizeof(buf), "%.1fs", secs);
-      const std::string why = format_user_facing_error(err_msg, 80);
-      std::string toast_msg = "Retrying " + std::to_string(attempt) + "/" +
-                              std::to_string(total_attempts) + " in " + buf;
-      if (!why.empty()) toast_msg += " — " + why;
-      bus.publish<contract::ErrorOccurred>({
-          .session_id = ctx.session_id,
-          .message = toast_msg,
-          .severity = "info"
-      });
-    };
+    LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, options.messages.size());
 
     {
       LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);
       // generate_text is a blocking HTTP POST. Without a heartbeat the TUI
       // sits on "generating" for the full read timeout and looks wedged.
-      auto fut = std::async(std::launch::async, [&client, step_opts]() {
-        return client.generate_text(step_opts);
+      // The request is read by reference: this thread leaves `options`
+      // untouched until fut.get() (and ~future joins on unwind).
+      const qcode::perf::Stopwatch model_watch;
+      auto fut = std::async(std::launch::async, [&client, &options, sid = ctx.session_id]() {
+        qcode::logger::ScopedThreadSession bind(sid);
+        return client.generate_text(options);
       });
       int waited_sec = 0;
       while (fut.wait_for(std::chrono::seconds(15)) !=
@@ -621,6 +676,11 @@ static void run_tools_generation_bus(
         });
       }
       qcode::GenerateResult step_res = fut.get();
+      PERF_LOG("step={} model_ms={:.1f} history_msgs={} prompt_tokens={} "
+               "completion_tokens={} cached_tokens={}",
+               step, model_watch.ms(), options.messages.size(),
+               step_res.usage.prompt_tokens, step_res.usage.completion_tokens,
+               step_res.usage.cached_prompt_tokens);
       if (!step_res.is_success()) {
         const std::string err = step_res.error_message();
         LOG_ERROR("run_tools_generation_bus: step={} generate_text failed: finish_reason={} error=\"{}\" provider_metadata_size={}", step, step_res.finishReasonToString(), err, step_res.provider_metadata.value_or("").size());
@@ -660,8 +720,7 @@ static void run_tools_generation_bus(
         } else {
           gen_result.error = !err.empty() ? err : "Provider request failed";
         }
-        gen_result.finish_reason = qcode::kFinishReasonError;
-        gen_result.provider_metadata = step_res.provider_metadata;
+        gen_result.provider_metadata = std::move(step_res.provider_metadata);
         break;
       }
       if (ctx.abort_flag && ctx.abort_flag->load()) {
@@ -674,16 +733,16 @@ static void run_tools_generation_bus(
       // Thinking tokens from this step: publish as a reasoning event BEFORE
       // the text delta so the TUI renders the thinking block above the
       // assistant text (opencode-style), and replay it in later requests.
-      if (!step_res.reasoning.empty()) {
+      const size_t reasoning_chars = step_res.reasoning.size();
+      if (reasoning_chars > 0) {
         bus.publish<ReasoningDelta>({
             .session_id = ctx.session_id,
-            .text = step_res.reasoning,
+            .text = std::move(step_res.reasoning),
             .signature = "",
             .done = true,
         });
       }
 
-      gen_result.text += step_res.text;
       gen_result.usage.prompt_tokens = step_res.usage.prompt_tokens;
       gen_result.usage.completion_tokens += step_res.usage.completion_tokens;
       gen_result.usage.total_tokens =
@@ -703,9 +762,9 @@ static void run_tools_generation_bus(
           std::max(gen_result.usage.reasoning_completion_tokens,
                    step_res.usage.reasoning_completion_tokens);
       if (gen_result.usage.reasoning_completion_tokens == 0 &&
-          !step_res.reasoning.empty()) {
+          reasoning_chars > 0) {
         gen_result.usage.reasoning_completion_tokens = std::max(
-            1, static_cast<int>(step_res.reasoning.size() / 4));
+            1, static_cast<int>(reasoning_chars / 4));
       }
       // Live header: TokenUsageUpdated at loop end is too late for a
       // 30-step tool run. Zeros keep session totals from double-counting.
@@ -720,53 +779,62 @@ static void run_tools_generation_bus(
             .session_id = ctx.session_id,
         });
       }
-      gen_result.finish_reason = step_res.finish_reason;
-      gen_result.id = step_res.id;
-      gen_result.model = step_res.model;
-      gen_result.created = step_res.created;
-      gen_result.system_fingerprint = step_res.system_fingerprint;
 
       LOG_DEBUG("run_tools_generation_bus: step={} has_tool_calls={} text_len={}", step, step_res.has_tool_calls(), step_res.text.size());
       if (step_res.has_tool_calls()) {
-        std::vector<qcode::ToolCallContentPart> tool_parts;
-        for (const auto& call : step_res.tool_calls) {
-          tool_parts.emplace_back(call.id, call.tool_name, call.arguments,
-                                  call.thought_signature);
-          gen_result.tool_calls.push_back(call);
-        }
-        if (!step_res.response_messages.empty()) {
-          // Parser already attached the reasoning part alongside tool calls —
-          // reuse it so thinking replays across steps.
-          response_messages.push_back(step_res.response_messages.front());
-        } else {
-          response_messages.push_back(
-              qcode::Message::assistant_with_tools(step_res.text, tool_parts));
-        }
-
         // Execute tool calls to produce tool results
+        const qcode::perf::Stopwatch tools_watch;
         std::vector<qcode::ToolResult> executed_results =
             qcode::ToolExecutor::execute_tools_with_options(step_res.tool_calls, options, /*parallel=*/true);
-
-        std::vector<qcode::ToolResultContentPart> result_parts;
-        for (const auto& res : executed_results) {
-          result_parts.emplace_back(res.tool_call_id, res.result, !res.is_success());
-          gen_result.tool_results.push_back(res);
-        }
-        response_messages.push_back(qcode::Message::tool_results(result_parts));
+        PERF_LOG("step={} tools_ms={:.1f} tool_calls={}", step, tools_watch.ms(),
+                 step_res.tool_calls.size());
 
         // Detect true no-progress wedges only: identical calls *and* identical
         // results. Do not stop on long tool-only streaks or same-args retries
         // that return new data. Uncapped: instead of halting, inject a
         // corrective nudge so the model breaks the repetition itself.
-        const auto progress_fp =
-            tool_calls_fingerprint(step_res.tool_calls) + "#" +
-            tool_results_fingerprint(executed_results);
-        if (!progress_fp.empty() && progress_fp == last_progress_fp) {
+        // (Fingerprint before the calls/results are moved into history.)
+        const size_t progress_fp =
+            tool_step_fingerprint(step_res.tool_calls, executed_results);
+        if (last_progress_fp == progress_fp) {
           ++no_progress_repeat;
         } else {
           last_progress_fp = progress_fp;
           no_progress_repeat = 1;
         }
+
+        // History: the assistant tool-call turn, then its results. Both are
+        // moved in; tool outputs can be large.
+        if (!step_res.response_messages.empty()) {
+          // Parser already attached the reasoning part alongside tool calls —
+          // reuse it so thinking replays across steps.
+          append_message(std::move(step_res.response_messages.front()));
+        } else {
+          // Message::assistant_with_tools, without copying the arguments.
+          qcode::MessageContent call_parts;
+          call_parts.reserve(step_res.tool_calls.size() + 1);
+          if (!step_res.text.empty()) {
+            call_parts.emplace_back(qcode::TextContentPart{step_res.text});
+          }
+          for (auto& call : step_res.tool_calls) {
+            call_parts.emplace_back(qcode::ToolCallContentPart{
+                std::move(call.id), std::move(call.tool_name),
+                std::move(call.arguments), std::move(call.thought_signature)});
+          }
+          append_message(qcode::Message(qcode::kMessageRoleAssistant,
+                                        std::move(call_parts)));
+        }
+        // Message::tool_results, without copying the outputs.
+        qcode::MessageContent result_parts;
+        result_parts.reserve(executed_results.size());
+        for (auto& res : executed_results) {
+          const bool is_error = !res.is_success();
+          result_parts.emplace_back(qcode::ToolResultContentPart{
+              std::move(res.tool_call_id), std::move(res.result), is_error});
+        }
+        const size_t tool_res_tok = append_message(
+            qcode::Message(qcode::kMessageRoleUser, std::move(result_parts)));
+
         constexpr int kNoProgressNudgeAfter = 2;
         constexpr int kMaxNoProgressRepeats = 4;
         if (no_progress_repeat >= kMaxNoProgressRepeats) {
@@ -780,7 +848,7 @@ static void run_tools_generation_bus(
               "run_tools_generation_bus: no-progress tool loop repeating "
               "(no_progress_repeat={} step={}); nudging for a different approach",
               no_progress_repeat, step);
-          response_messages.push_back(qcode::Message::user(
+          append_message(qcode::Message::user(
               "[System Note: Your previous tool call produced the exact same result. "
               "Do not repeat the identical call or command; change parameters, "
               "try a different approach, inspect a different file, or conclude if finished.]"));
@@ -791,63 +859,37 @@ static void run_tools_generation_bus(
         {
             size_t live = 0;
             if (step_res.usage.prompt_tokens > 0) {
-                const size_t tool_res_tok = estimate_tokens(
-                    qcode::Messages{qcode::Message::tool_results(result_parts)});
                 live = step_res.usage.prompt_tokens + tool_res_tok;
             } else {
-                qcode::Messages temp_messages = options.messages;
-                temp_messages.insert(temp_messages.end(), response_messages.begin(), response_messages.end());
-                live = estimate_system_tokens(options.system) + estimate_tokens(temp_messages);
+                if (!est_history_tokens) {
+                    est_history_tokens = estimate_tokens(options.messages);
+                }
+                live = estimate_system_tokens(options.system) + *est_history_tokens;
             }
             bus.publish<ContextSizeUpdated>({.context_tokens = static_cast<int>(live)});
             LOG_INFO("run_tools_generation_bus: step={} live context={} tokens", step, live);
         }
 
-        if (options.on_step_finish) {
-          qcode::GenerateStep step_data;
-          step_data.text = step_res.text;
-          step_data.tool_calls = step_res.tool_calls;
-          step_data.tool_results = step_res.tool_results;
-          step_data.finish_reason = step_res.finish_reason;
-          step_data.usage = step_res.usage;
-          options.on_step_finish.value()(step_data);
-        }
+        publish_step_text(std::move(step_res.text));
         if (stuck) break;
-        if (ctx.has_queued_work && ctx.has_queued_work()) {
-          LOG_INFO(
-              "run_tools_generation_bus: queued prompt pending after tool step={}; "
-              "yielding turn to pick it up immediately",
-              step);
-          finished = true;
-          break;
-        }
+        inject_queued_prompts();
       } else {
         no_progress_repeat = 0;
-        last_progress_fp.clear();
-        response_messages.push_back(qcode::Message::assistant(step_res.text));
-        if (options.on_step_finish) {
-          qcode::GenerateStep step_data;
-          step_data.text = step_res.text;
-          step_data.finish_reason = step_res.finish_reason;
-          step_data.usage = step_res.usage;
-          options.on_step_finish.value()(step_data);
-        }
-        if (should_auto_continue_build(plan_mode, auto_continues,
-                                       step_res.text)) {
-          if (ctx.has_queued_work && ctx.has_queued_work()) {
-            LOG_INFO(
-                "run_tools_generation_bus: queued prompt pending; skipping "
-                "auto-continue to pick up queued prompt immediately");
-            finished = true;
-          } else {
-            ++auto_continues;
-            LOG_INFO(
-                "run_tools_generation_bus: auto-continue {} after text-only "
-                "stop (text_len={})",
-                auto_continues, step_res.text.size());
-            response_messages.push_back(
-                qcode::Message::user(std::string(kBuildContinueNudge)));
-          }
+        last_progress_fp.reset();
+        const size_t text_len = step_res.text.size();
+        const bool wants_continue =
+            should_auto_continue_build(plan_mode, auto_continues, step_res.text);
+        append_message(qcode::Message::assistant(step_res.text));
+        publish_step_text(std::move(step_res.text));
+        if (inject_queued_prompts()) {
+          // The queued prompt is the next request's input; keep going.
+        } else if (wants_continue) {
+          ++auto_continues;
+          LOG_INFO(
+              "run_tools_generation_bus: auto-continue {} after text-only "
+              "stop (text_len={})",
+              auto_continues, text_len);
+          append_message(qcode::Message::user(std::string(kBuildContinueNudge)));
         } else {
           LOG_DEBUG(
               "run_tools_generation_bus: step={} no tool calls, finishing",
@@ -861,44 +903,31 @@ static void run_tools_generation_bus(
   }
 
   LOG_DEBUG("run_tools_generation_bus: loop complete steps={} total_text_len={} tool_calls={} aborted={} stuck={}",
-           step, gen_result.text.size(), gen_result.tool_calls.size(), aborted, stuck);
-  gen_result.response_messages = response_messages;
+           step, text_chars, ctx.tool_call_count, aborted, stuck);
 
   // If we reached the tool step limit without producing any text, synthesize a
   // final textual summary of the findings with tools disabled so the turn completes
   // naturally instead of leaving the user with an empty error.
-  const bool capped = (options.max_steps > 0);
-  if (!aborted && !stuck && !finished && capped && step >= options.max_steps &&
-      (assistant_text->empty() || *assistant_text == "  \u23f3 Working...") &&
-      (gen_result.text.empty() || gen_result.text == "  \u23f3 Working...")) {
+  const bool capped = (max_steps > 0);
+  if (!aborted && !stuck && !finished && capped && step >= max_steps &&
+      text_chars == 0) {
     LOG_INFO("run_tools_generation_bus: step cap reached ({} steps); synthesizing final response without tools",
-             options.max_steps);
-    qcode::GenerateOptions synth_opts = options;
-    synth_opts.tools.clear();
-    synth_opts.max_steps = 1;
-    qcode::Messages synth_messages = options.messages;
-    synth_messages.insert(synth_messages.end(), response_messages.begin(), response_messages.end());
-    synth_messages.push_back(qcode::Message::user(
+             max_steps);
+    // The loop is over: reuse its request with tools off and a closing note.
+    options.tools.clear();
+    options.on_retry.reset();
+    options.messages.push_back(qcode::Message::user(
         "[System Note: You have reached the maximum tool steps for this turn. Please summarize your progress, key findings, what changes were made, and your next recommended steps directly to the user now without requesting any further tools.]"
     ));
-    synth_opts.messages = std::move(synth_messages);
 
-    auto synth_res = client.generate_text(synth_opts);
+    auto synth_res = client.generate_text(options);
     if (synth_res.is_success() && !synth_res.text.empty()) {
       finished = true;
-      gen_result.text = synth_res.text;
-      *assistant_text = synth_res.text;
       gen_result.usage.prompt_tokens = synth_res.usage.prompt_tokens;
       gen_result.usage.completion_tokens += synth_res.usage.completion_tokens;
       gen_result.usage.total_tokens =
           gen_result.usage.prompt_tokens + gen_result.usage.completion_tokens;
-      response_messages.push_back(qcode::Message::assistant(synth_res.text));
-      gen_result.response_messages = response_messages;
-      bus.publish<MessageDelta>({
-          .session_id = ctx.session_id,
-          .text = synth_res.text,
-          .done = false
-      });
+      publish_step_text(std::move(synth_res.text));
     }
   }
 
@@ -942,11 +971,12 @@ static void run_tools_generation_bus(
     return;
   }
 
-  bool fatal_error = false;
-  const bool has_error = gen_result.error.has_value() && !gen_result.error->empty();
+  // Every non-error exit leaves gen_result successful, so the error string
+  // alone decides the outcome.
+  const bool fatal_error =
+      gen_result.error.has_value() && !gen_result.error->empty();
 
-  if (has_error) {
-    fatal_error = true;
+  if (fatal_error) {
     const std::string raw = gen_result.error_message();
     if (gen_result.provider_metadata.has_value() &&
         !gen_result.provider_metadata->empty()) {
@@ -965,78 +995,32 @@ static void run_tools_generation_bus(
         .text = "",
         .done = true
     });
-  } else if (gen_result.is_success()) {
-    std::string final_text;
-    if (!assistant_text->empty()) final_text = *assistant_text;
-    else final_text = gen_result.text;
-
-    LOG_DEBUG("run_tools_generation_bus: final assistant_text empty={} gen_result.text empty={}",
-             assistant_text->empty(), gen_result.text.empty());
-    bool is_placeholder = (final_text == "  \u23f3 Working...");
-    if (!finished && capped && step >= options.max_steps) {
-      if (final_text.empty() || is_placeholder) {
-        final_text = "I reached the tool execution limit (" + std::to_string(options.max_steps) +
-                     " steps) for this turn while working on your request. Send 'continue' to proceed with the next steps.";
-        if (assistant_text) *assistant_text = final_text;
-        gen_result.text = final_text;
-        is_placeholder = false;
-        bus.publish<MessageDelta>({
-            .session_id = ctx.session_id,
-            .text = final_text,
-            .done = false
-        });
-      }
-      bus.publish<MessageDelta>({
-          .session_id = ctx.session_id,
-          .text = "",
-          .done = true
-      });
-    } else if (!final_text.empty() && !is_placeholder) {
-      LOG_DEBUG("run_tools_generation_bus: publishing final MessageDelta text_len={}", final_text.size());
-      bus.publish<MessageDelta>({
-          .session_id = ctx.session_id,
-          .text = assistant_text->empty() ? final_text : std::string{},
-          .done = true
-      });
-    } else if (!final_text.empty() && is_placeholder) {
-      // Model left only the in-progress placeholder; treat as no real text.
-      LOG_WARN("run_tools_generation_bus: model returned only the in-progress placeholder");
-      bus.publish<ErrorOccurred>({
-          .session_id = ctx.session_id,
-          .message = "The model returned an empty response (no text generated).",
-          .severity = "warning"
-      });
-    } else {
-      // LLM produced no text and no tool output. Surface a non-error notice
-      // instead of leaving the user with a silently blank turn.
-      LOG_WARN("run_tools_generation_bus: model returned empty response (no text, no tool output)");
-      bus.publish<ErrorOccurred>({
-          .session_id = ctx.session_id,
-          .message = "The model returned an empty response (no text generated).",
-          .severity = "warning"
-      });
+  } else if (!finished && capped && step >= max_steps) {
+    if (text_chars == 0) {
+      publish_step_text(
+          "I reached the tool execution limit (" + std::to_string(max_steps) +
+          " steps) for this turn while working on your request. Send 'continue' to proceed with the next steps.");
     }
-
+    bus.publish<MessageDelta>({
+        .session_id = ctx.session_id,
+        .text = "",
+        .done = true
+    });
+  } else if (text_chars > 0) {
+    LOG_DEBUG("run_tools_generation_bus: publishing final MessageDelta text_len={}", text_chars);
+    bus.publish<MessageDelta>({
+        .session_id = ctx.session_id,
+        .text = "",
+        .done = true
+    });
   } else {
-    fatal_error = true;
-    std::string err_str = format_user_facing_error(gen_result.error_message());
-    while (err_str.starts_with("Error: Error")) {
-      err_str.erase(0, 7);
-    }
-    if (err_str.empty() || err_str == "Error" || err_str == "Error:" || err_str == "Error: Error") {
-      err_str = "Error: Model generation failed (unknown error)";
-    } else if (!err_str.starts_with("Error:") && !err_str.starts_with("Exception:")) {
-      err_str = "Error: " + err_str;
-    }
-    if (gen_result.provider_metadata.has_value() &&
-        !gen_result.provider_metadata->empty()) {
-      LOG_ERROR("run_tools_generation_bus: provider_metadata {}",
-                gen_result.provider_metadata->substr(0, 500));
-    }
+    // LLM produced no text and no tool output. Surface a non-error notice
+    // instead of leaving the user with a silently blank turn.
+    LOG_WARN("run_tools_generation_bus: model returned empty response (no text, no tool output)");
     bus.publish<ErrorOccurred>({
         .session_id = ctx.session_id,
-        .message = err_str,
-        .severity = "error"
+        .message = "The model returned an empty response (no text generated).",
+        .severity = "warning"
     });
   }
 
@@ -1124,7 +1108,6 @@ static void run_stream_generation_bus(qcode::Client& client,
     if (event.is_text_delta()) {
       text_buffer += event.text_delta;
       text_size += event.text_delta.size();
-      LOG_DEBUG("run_stream_generation_bus: text_delta buffer_size={}", text_buffer.size());
       auto now = std::chrono::steady_clock::now();
       if (now - last_text_flush >= kFlushInterval) {
         flush_text();
@@ -1132,7 +1115,7 @@ static void run_stream_generation_bus(qcode::Client& client,
       }
     } else if (event.is_reasoning_delta()) {
       // OpenRouter encrypts reasoning as [REDACTED]; drop those chunks.
-      std::string chunk = event.text_delta;
+      const std::string& chunk = event.text_delta;
       if (chunk.find("[REDACTED]") != std::string::npos) {
         LOG_DEBUG("ChatBus: dropping redacted reasoning chunk");
       } else {
@@ -1270,7 +1253,7 @@ void run_generation_with_bus(
     const std::string& provider_name,
     const std::string& model_id,
     const std::string& system_prompt,
-    const qcode::Messages& messages,
+    qcode::Messages messages,
     bool enable_tools,
     const std::vector<ProviderInfo>& providers,
     bus::BusPort& bus,
@@ -1328,6 +1311,15 @@ void run_generation_with_bus(
     }
     if (provider_id == "cursor" && provider_options.api_key.empty()) {
       provider_options.api_key = get_cursor_access_token();
+    } else if ((provider_id == "anthropic" || provider_name == "Anthropic") &&
+               provider_options.api_key.empty()) {
+      provider_options.api_key = get_anthropic_token(/*force_refresh=*/false);
+    } else if ((provider_id == "openai" || provider_name == "OpenAI") &&
+               provider_options.api_key.empty()) {
+      const char* key = std::getenv("OPENAI_API_KEY");
+      if (key && *key) {
+        provider_options.api_key = key;
+      }
     }
 
     const auto call = prepare_provider_call(
@@ -1405,7 +1397,7 @@ void run_generation_with_bus(
     }
 
     Model transform_model(resolved_model_id, provider_id);
-    base_opts.messages = ProviderTransform::normalize_messages(messages, transform_model);
+    base_opts.messages = ProviderTransform::normalize_messages(std::move(messages), transform_model);
     if (!base_opts.temperature.has_value()) {
       base_opts.temperature = ProviderTransform::temperature(transform_model);
     }
@@ -1495,6 +1487,12 @@ void run_generation_with_bus(
                   providers_ptr, current_prov_id, current_model_id,
                   current_workspace, main_abort, std::move(task_abort), args);
             };
+        base_opts.routing_board = [providers_ptr, current_prov_id, current_model_id] {
+          return routing::format_routing_table(*providers_ptr,
+                                               qcode::session::load_subagent_stats(),
+                                               current_prov_id, current_model_id,
+                                               std::time(nullptr));
+        };
       }
     }
     if (enable_tools && !is_server_duplex_agent) {
@@ -1505,6 +1503,13 @@ void run_generation_with_bus(
           const auto fresh = get_antigravity_token(/*force_refresh=*/true);
           if (fresh.empty()) {
             LOG_ERROR("generation_service: Antigravity token refresh returned empty");
+            return false;
+          }
+          provider_options.api_key = fresh;
+        } else if (provider_id == "anthropic" || provider_name == "Anthropic") {
+          const auto fresh = get_anthropic_token(/*force_refresh=*/true);
+          if (fresh.empty()) {
+            LOG_ERROR("generation_service: Anthropic token refresh returned empty");
             return false;
           }
           provider_options.api_key = fresh;
@@ -1555,11 +1560,11 @@ void qcode::GenerationService::run_generation(
     const std::string& provider_name,
     const std::string& model_id,
     const std::string& system_prompt,
-    const qcode::Messages& messages,
+    qcode::Messages messages,
     bool enable_tools,
     GenerationContext& ctx)
 {
     qcode::run_generation_with_bus(provider_name, model_id, system_prompt,
-                            messages, enable_tools, providers_, bus_, ctx);
+                            std::move(messages), enable_tools, providers_, bus_, ctx);
 }
 } // namespace qcode

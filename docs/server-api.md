@@ -1,6 +1,8 @@
 # qcode-server HTTP API
 
-Unversioned JSON API served by `qcode-server` (default port 9080). WebUI static files are mounted at `/` when present.
+Unversioned JSON API served by `qcode-server` (default port 9080). WebUI static files are mounted at `/` when present:
+`vendor-*` files are sent with `Cache-Control: public, max-age=86400` (one day; the names carry no version), all others
+(`index.html`, `app.js`, `style.css`, ...) with `Cache-Control: no-cache`.
 
 `GET /api/version` returns `{"name":"qcode-server","version":"<PROJECT_VERSION>"}`.
 
@@ -21,18 +23,50 @@ Unversioned JSON API served by `qcode-server` (default port 9080). WebUI static 
 | POST | `/sessions` | Create a new session with provider, model, workspace, and optional title |
 | GET | `/sessions` | List parent sessions; `?include_subagents=1` includes child rows; `&parent_session_id=<id>` scopes to parent |
 | GET | `/tasks` | Live `TaskTool` subagent registry (`metadata.tasks`); `?parent_session_id=<id>` scopes to parent session |
-| GET | `/session/last` | Last active session metadata and message history |
-| GET | `/session/:id` | Session metadata (includes subagent rows, `agent_mode`, `reasoning_mode`, `parent_session_id`) |
+| GET | `/session/last` | Last active session metadata and message history; `?messages=0` omits `messages` |
+| GET | `/session/:id` | Session metadata (includes subagent rows, `agent_mode`, `reasoning_mode`, `parent_session_id`) plus `generating`, `turn`, `message_count`, `updated_at`; no history, cheap to poll |
 | POST | `/rename` | Rename session: `{"session_id": "...", "title": "..."}` |
-| POST | `/session/cancel` | Cancel generation for active session: `{"session_id": "..."}` |
+| POST | `/session/cancel` | Stop the running turn: `{"session_id": "..."}`; also `POST /session/:id/cancel` (alias `/abort`) |
 | POST | `/session/:id/mode` | Set agent mode: `{"agent_mode": "plan"|"orchestrator"}` |
 | DELETE | `/session/:id` | Permanently delete session and cascade delete all messages |
 | POST | `/session/:id/clear` | Truncate message history for a session |
 | GET | `/session/:id/messages` | List historical messages for session |
-| POST | `/session/:id/compact` | Summarize/compact session context with LLM; optional `{"keep": N}` |
-| GET | `/session/:id/stats` | Aggregate session token and tool runtime statistics |
-| POST | `/session/:id/generate` | NDJSON stream of generation bus events (tokens, tool calls, results) |
+| POST | `/session/:id/compact` | Summarize/compact session context with LLM (the session's provider/model, resolved as for generate); optional `{"keep": N}` |
+| GET | `/session/:id/stats` | Aggregate session token and tool runtime statistics, read from persisted rows (a running turn's tool calls are saved as they happen) |
+| GET | `/session/:id/logs` | Retrieve isolated session logs; optional `?raw=1` or `?lines=N` |
+| GET | `/logs` | Retrieve server unscoped log; optional `?raw=1` or `?lines=N` |
+| POST | `/session/:id/generate` | NDJSON stream of generation bus events (tokens, tool calls, results); see [Generation turns](#generation-turns) |
+| DELETE | `/session/:id/queue` | Withdraw prompts the running turn has not taken yet: `{"text": "..."}` drops that prompt, empty body drops all |
 | POST | `/generate` | Legacy single-turn generate: `{"session_id": "...", "text": "..."}` |
+
+### Generation turns
+
+A turn runs on the server and persists itself (user prompt, reasoning, tool calls/results,
+assistant reply) whether or not an HTTP client stays attached; the NDJSON stream only
+mirrors it. Every stream line carries `"turn": <id>`; ids are unique across sessions and
+restarts, so a client drops lines whose `turn` is not the one it follows (e.g. late events
+of a turn it stopped).
+
+- `POST /session/:id/generate {"text": ...}` when idle starts a turn. The stream opens with
+  `{"type":"session.started","turn":N}` and ends with `generation.complete`
+  (`error` set when the turn failed).
+- `provider` / `model` (id or name) default to the session's stored ones, then to the first
+  configured provider. A provider that is given or stored but not configured is rejected with
+  **400** `{"error":"provider '<p>' is not configured","providers":["<id>",...]}` (also for
+  `/compact`); an unknown model falls back to the provider's first model (logged).
+- The same call while a turn runs returns **202** `{"queued":true,"turn":N}`: the running
+  turn takes the prompt at its next model request and emits
+  `{"type":"backend.user.message.injected","text":...}` on its stream (the reply so far
+  and the prompt are persisted at that point). Attachments are rejected with **409**.
+  A turn being stopped is awaited first (up to 10 s, then **409**), so a prompt sent right
+  after Stop starts a new turn.
+- `{"resume": true}` reattaches to the running turn (reload, dropped stream, other tab).
+  It opens with `{"type":"session.snapshot","messages":[...],"reasoning_text":...,
+  "assistant_text":...}` — the persisted history plus the turn's not-yet-persisted text —
+  followed by the turn's later events, with no gap or overlap between the two. When nothing
+  runs it returns only `generation.complete`.
+- `POST /session/:id/cancel` sets the turn's abort flag, drops its queued prompts and waits
+  briefly (≤ 3 s) for it to end; the partial reply is persisted.
 
 ### Session Endpoints Detail
 
@@ -102,7 +136,7 @@ Creates a session row in SQLite and returns the generated UUID and resolved disp
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/session/:id/files` | Recursive file tree within session workspace |
+| GET | `/session/:id/files` | Git changes in the session workspace: `files` (porcelain status + per-file `insertions`/`deletions`), counts, and `diff` against `HEAD`. Runs `git add -N .` so untracked files show in the diff. `diff` is cut at 512 KiB (whole lines); `diff_truncated` is then `true` |
 | GET | `/session/:id/fs/list` | List directory contents (`?path=...`) |
 | GET | `/session/:id/fs/read` | Read file text content (`?path=...`) |
 | GET | `/session/:id/fs/raw` | Stream raw binary file (`?path=...`) |
@@ -119,7 +153,7 @@ Creates a session row in SQLite and returns the generated UUID and resolved disp
 | DELETE | `/terminal/:id` | Terminate active terminal process |
 | POST | `/terminal/:id/input` | Send raw keystrokes/input to terminal: `{"data": "..."}` |
 | POST | `/terminal/:id/resize` | Resize terminal PTY window: `{"cols": 120, "rows": 36}` |
-| GET | `/terminal/:id/stream` | EventStream/WebSocket raw output stream |
+| GET | `/terminal/:id/stream` | Poll: the PTY output available since the last call, as `text/plain` (empty when none) |
 
 ## Study
 
@@ -158,9 +192,10 @@ the user message in the provider's own format (OpenAI `image_url` data URL / Res
 }
 ```
 
-`path` resolves against the session workspace (or `~`/absolute); `mime_type` is required
-with raw `data`. Max 10 MiB decoded, `image/*` only. Attachments persist in the session
-history across reloads and compaction.
+`path` resolves against the session workspace (or absolute) and loads like the agent's
+`image` tool: png/jpeg/webp/gif, max 3.75 MB. Raw `data` requires `mime_type` (`image/*`,
+max 10 MiB decoded). Attachments persist in the session history across reloads and
+compaction.
 
 ### Generate image (`POST /api/images/generate`)
 

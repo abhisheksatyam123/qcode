@@ -90,6 +90,16 @@ struct ToolCallCompleted {
     };
 };
 
+// A prompt the user queued while a turn was running, folded into that turn's
+// next model request. Subscribers persist and render it as a user message.
+struct UserMessageInjected {
+    static constexpr const char* type = "backend.user.message.injected";
+    struct Payload {
+        std::string session_id;
+        std::string text;
+    };
+};
+
 struct SessionStatusChanged {
     static constexpr const char* type = "backend.session.status.changed";
     struct Payload {
@@ -177,6 +187,7 @@ inline void register_all_events(bus::BusPort& bus) {
     bus.register_event<MessageDelta>();
     bus.register_event<ToolCallStarted>();
     bus.register_event<ToolCallCompleted>();
+    bus.register_event<UserMessageInjected>();
     bus.register_event<SessionStatusChanged>();
     bus.register_event<ErrorOccurred>();
     bus.register_event<TokenUsageUpdated>();

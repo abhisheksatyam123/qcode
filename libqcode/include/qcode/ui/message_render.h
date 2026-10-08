@@ -4,6 +4,8 @@
 #include <qcode/config/provider_info.h>
 #include <qcode/ui/chat_state.h>
 
+#include <span>
+
 namespace qcode {
 
 // OpenCode-inspired shell session block:
@@ -38,13 +40,24 @@ ftxui::Element BlockTool(const std::string& title, ftxui::Element content,
 // message_index is the stable row in messages_history (views loop `i`); it
 // keys the per-message Thought expand state so vector reallocs can't orphan
 // the toggle. Defaults to -1 (address fallback) for unit tests.
+// terminal_width is the width the caller caches renders under (<= 0: query
+// the terminal); in_flight marks a message still streaming, whose markdown
+// is not inserted into the markdown cache.
+// A tool block is focused when its id is tool_block_order[focused_tool_index];
+// the view owns building tool_block_order.
+// paired_tool_results are later history rows holding results for this
+// message's tool calls (paired by id; a parallel batch is not adjacent).
 ftxui::Element render_message(const qcode::Message& msg,
                                const ChatState& state,
                                const std::vector<ProviderInfo>& providers_list,
                                int selected_provider, int selected_model,
                                const std::string& theme,
                                const qcode::Message* adjacent_tool_results = nullptr,
-                               int message_index = -1);
+                               int message_index = -1,
+                               int terminal_width = 0,
+                               bool in_flight = false,
+                               std::span<const qcode::Message* const>
+                                   paired_tool_results = {});
 
 // Colored, truncated shell-style stdout/stderr.
 ftxui::Element render_truncated_output(const std::string& output,

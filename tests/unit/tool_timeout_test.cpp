@@ -26,16 +26,18 @@ TEST(ToolTimeoutTest, SyncToolTimeout) {
       }
   );
 
-  nlohmann::json args = nlohmann::json::object();
-  args["timeout"] = 100;
-  ToolCall call("1", "sleep_tool", args);
+  // The executor deadline comes from the environment, not the tool's own
+  // "timeout" argument (which gets a 30 s grace on top).
+  setenv("QCODE_TOOL_TIMEOUT_MS", "100", 1);
+  ToolCall call("1", "sleep_tool", nlohmann::json::object());
   
   auto start = std::chrono::steady_clock::now();
   auto result = ToolExecutor::execute_tool(call, tools);
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - start);
+  unsetenv("QCODE_TOOL_TIMEOUT_MS");
 
-  EXPECT_TRUE(result.error.has_value());
+  ASSERT_TRUE(result.error.has_value());
   EXPECT_NE(result.error.value().find("timed out"), std::string::npos);
   EXPECT_LT(duration.count(), 1000);
 }
@@ -67,7 +69,7 @@ TEST(ToolTimeoutTest, GlobalAbortInterception) {
   });
 
   auto start = std::chrono::steady_clock::now();
-  auto result = ToolExecutor::execute_tool(call, tools, {}, &options);
+  auto result = ToolExecutor::execute_tool(call, tools, &options);
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - start);
 

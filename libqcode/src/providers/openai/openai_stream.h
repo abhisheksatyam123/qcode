@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <concurrentqueue.h>
+#include <condition_variable>
 #include <httplib.h>
 #include <mutex>
 #include <thread>
@@ -51,11 +52,14 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   std::chrono::seconds event_timeout_{30};
   void run_stream(const std::string& url,
                   const httplib::Headers& headers,
-                  const nlohmann::json& request_body);
+                  std::string body);
   void parse_sse_line(const std::string& line);
   void push_event(StreamEvent event);
   void push_finish_event_if_needed();
   void mark_complete();
+  // Wakes a consumer blocked in get_next_event(). Called after every enqueue,
+  // on completion and on stop.
+  void notify_consumer();
 
   // Helper functions
   StreamEvent create_error_event(const std::string& message);
@@ -63,6 +67,8 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   Usage parse_usage(const nlohmann::json& usage_json);
 
   moodycamel::ConcurrentQueue<StreamEvent> event_queue_;
+  std::mutex wait_mutex_;  // guards only the sleep/wake handshake
+  std::condition_variable wait_cv_;
   std::thread stream_thread_;
   std::mutex thread_mutex_;
   std::atomic<bool> is_complete_{false};

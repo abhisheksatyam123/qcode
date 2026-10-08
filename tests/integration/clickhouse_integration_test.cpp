@@ -236,7 +236,7 @@ class ClickHouseIntegrationTest : public ::testing::TestWithParam<std::string> {
         return;
       }
       client_ = std::make_shared<Client>(anthropic::create_client());
-      model_ = anthropic::models::kClaudeSonnet4;
+      model_ = anthropic::models::kClaudeSonnet55;
     }
     use_real_api_ = true;
   }

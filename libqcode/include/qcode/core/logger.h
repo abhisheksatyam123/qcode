@@ -35,11 +35,51 @@ enum class LogLevel {
 /* local name for the current thread */
 inline thread_local std::string t_thread_name;
 
+/* local session id for the current thread.
+ *
+ * Logging is a process-wide singleton, so the sink cannot be swapped per
+ * session. Instead the sink stays global and reads this thread-local to
+ * decide WHICH per-session file a line belongs to. Threads that serve one
+ * agent session (generation workers, tool executors) publish their session
+ * id once at thread start; every log line they emit is then routed to that
+ * session's own file. See qcode::SessionFileLogger.
+ */
+inline thread_local std::string t_session_id;
+
 /* Set a human-readable name for the current thread.
  * Here std::move move the pointer  of name string to t_thread_name
  *
  */
 inline void set_thread_name(std::string name) { t_thread_name = std::move(name); }
+
+/* Bind the current thread to a session id for session-scoped logging. */
+inline void set_thread_session_id(std::string id) { t_session_id = std::move(id); }
+
+/* Current thread's session id, or empty for unscoped (server) threads. */
+inline const std::string& thread_session_id() { return t_session_id; }
+
+/* Binds the current thread to `id` for the lifetime of the object and restores
+ * the previous binding after. Use it at the top of every thread body that
+ * works for a session; a new thread starts unbound, so capture
+ * thread_session_id() before spawning and pass it in:
+ *
+ *   std::thread([sid = logger::thread_session_id()] {
+ *     logger::ScopedThreadSession bind(sid);
+ *     ...
+ *   });
+ */
+class ScopedThreadSession {
+ public:
+  explicit ScopedThreadSession(std::string id) : previous_(t_session_id) {
+    t_session_id = std::move(id);
+  }
+  ~ScopedThreadSession() { t_session_id = std::move(previous_); }
+  ScopedThreadSession(const ScopedThreadSession&) = delete;
+  ScopedThreadSession& operator=(const ScopedThreadSession&) = delete;
+
+ private:
+  std::string previous_;
+};
 
 /*
  * this API returns the string name of the current thread if set
@@ -148,6 +188,12 @@ class ConsoleLogger final : public Logger {
   explicit ConsoleLogger(LogLevel min_level = LogLevel::kLogLevelInfo)
       : min_level_(min_level) {}
 
+  // Flush any buffered tail so the last lines are never lost at shutdown.
+  ~ConsoleLogger() override {
+    std::lock_guard<std::mutex> lock(mu_);
+    flush_streams_locked();
+  }
+
   void log(LogLevel level, std::string_view message,
            std::source_location loc) override {
     if (!is_enabled(level)) return;
@@ -163,14 +209,25 @@ class ConsoleLogger final : public Logger {
     portable_localtime(&time_t_now, &tm_buf);
     std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &tm_buf);
 
+    std::lock_guard<std::mutex> lock(mu_);
     auto& stream = (level == LogLevel::kLogLevelError) ? std::cerr : std::cout;
     stream << "[" << time_buf << "." << std::setfill('0') << std::setw(3)
            << ms.count() << "]"
            << " [" << level_to_string(level) << "]"
            << " [" << short_file_name(loc.file_name()) << ":" << loc.line() << "]"
            << " [" << thread_name_string() << "]"
-           << " " << message << std::endl;
-    stream.flush();
+           << " " << message << '\n';
+
+    // WARN/ERROR are flushed immediately. Lower levels are flushed at most
+    // every kFlushInterval or every kFlushMaxLines lines, whichever comes first.
+    ++pending_lines_;
+    const auto steady_now = std::chrono::steady_clock::now();
+    const bool urgent = level == LogLevel::kLogLevelWarn ||
+                        level == LogLevel::kLogLevelError;
+    if (urgent || pending_lines_ >= kFlushMaxLines ||
+        steady_now - last_flush_ >= kFlushInterval) {
+      flush_streams_locked();
+    }
   }
 
   bool is_enabled(LogLevel level) const override {
@@ -193,6 +250,22 @@ class ConsoleLogger final : public Logger {
   // Atomic so set_min_level() is safe to call from any thread while other
   // threads are logging through is_enabled()/log().
   std::atomic<LogLevel> min_level_;
+
+  // Guards the stream writes and the flush bookkeeping below.
+  void flush_streams_locked() {
+    std::cout.flush();
+    std::cerr.flush();
+    pending_lines_ = 0;
+    last_flush_ = std::chrono::steady_clock::now();
+  }
+
+  static constexpr std::size_t kFlushMaxLines = 64;
+  static constexpr std::chrono::milliseconds kFlushInterval{200};
+
+  std::mutex mu_;
+  std::size_t pending_lines_ = 0;
+  std::chrono::steady_clock::time_point last_flush_ =
+      std::chrono::steady_clock::now();
 };
 
 // ── Global logger management ──
