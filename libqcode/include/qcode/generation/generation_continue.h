@@ -256,7 +256,7 @@ inline constexpr std::string_view kOrchestratorReminder =
     "Work directly with bash, or delegate self-contained jobs with the task tool "
     "(mode: explore | implement | verify). Issue several task calls in one message to "
     "run them in parallel; each returns its subagent's final report for you to "
-    "synthesize.\n"
+    "synthesize. Keep the workspace task file (Tasks / Systems / Log) current.\n"
     "</system-reminder>";
 
 inline constexpr std::string_view kBuildModeReminder =

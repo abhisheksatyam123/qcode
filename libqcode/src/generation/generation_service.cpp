@@ -1,5 +1,6 @@
 #include <qcode/generation/turn_prefix.h>
 #include <qcode/generation/generation_service.h>
+#include <qcode/session/task_notes.h>
 #include <qcode/core/perf.h>
 #include <qcode/generation/generation_continue.h>
 #include <qcode/config/config.h>
@@ -366,6 +367,16 @@ static JsonValue run_subagent_turn_multi(
       sub_sys << "- Work independently and execute the required operations.\n";
     }
     sub_sys << "- Do not prompt or query the user. Use the bash tool to inspect files and execute commands.\n";
+    {
+      const auto notes = qcode::task_notes::resolve(workspace);
+      if (notes.exists) {
+        sub_sys << "- Task file: `" << notes.path
+                << "` (sections: Tasks, Systems, Log). Read it first for context. "
+                   "Do NOT rewrite it; you may only append one-line entries to its "
+                   "Log section with a single `>>` append, formatted "
+                   "`- YYYY-MM-DD HH:MM [sub:" << mode << "] <event>`.\n";
+      }
+    }
     sub_sys << "- Conclude with a clear, concise, structured summary detailing findings, changes, or test outcomes.\n\n";
     const bool subagent_vision = (target_model_info != nullptr && target_model_info->vision);
     const auto subagent_tool_cfg = ToolConfig::subagent(subagent_vision);
@@ -446,6 +457,13 @@ static JsonValue run_subagent_turn_multi(
       return out;
     }
     if (outcome == routing::Outcome::kSuccess) {
+      if (qcode::task_notes::resolve(workspace).exists) {
+        const std::string label = !description.empty() ? description : prompt_text;
+        qcode::task_notes::append_log(
+            workspace, "sub:" + mode,
+            "done (" + target_provider->id + ":" + target_model_id + "): " +
+                label.substr(0, 120));
+      }
       out = {{"output", res.text},
              {"provider", target_provider->id},
              {"model", target_model_id},

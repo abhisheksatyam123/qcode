@@ -4,6 +4,7 @@ add_executable(qcode_tests
     # Unit tests
     unit/openai_client_test.cpp
     unit/markdown_test.cpp
+    unit/task_notes_test.cpp
     unit/tool_timeout_test.cpp
     unit/openai_responses_test.cpp
     unit/anthropic_client_test.cpp

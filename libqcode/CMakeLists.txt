@@ -95,6 +95,7 @@ target_sources(qcode-engine PRIVATE
     src/session/study_store.cpp
     src/session/study_assistant.cpp
     src/session/system_prompt.cpp
+    src/session/task_notes.cpp
     src/session/git_workspace.cpp
     src/session/clipboard.cpp
     src/session/token_budget.cpp
