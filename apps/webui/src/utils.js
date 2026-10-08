@@ -55,6 +55,264 @@ export function formatNumber(n) {
   return num.toLocaleString();
 }
 
+// USD for session costs: sub-cent precision below $100 ($0.0123).
+export function formatUsd(n) {
+  const v = Number(n) || 0;
+  return '$' + (v >= 100 ? v.toFixed(2) : v.toFixed(4));
+}
+
+// Cost lines for the Stats tab from /session/<id>/stats `usage`. Every call
+// was priced at its own model's opencode.json rates when it ran, so the
+// total survives model switches; legacy sessions carry an estimate flag.
+export function usageCostSummary(usage) {
+  const u = usage || {};
+  const c = u.session_cost || {};
+  const calls = Number(u.model_calls) || 0;
+  const unpriced = Number(c.unpriced_calls) || 0;
+  const legacy = Number(c.legacy_calls) || 0;
+  const out = {
+    available: !!c.available,
+    estimated: !!c.estimated,
+    total: Number(c.total) || 0,
+    parts: [
+      { label: 'Input (uncached)', value: Number(c.input) || 0 },
+      { label: 'Cache read', value: Number(c.cache_read) || 0 },
+      { label: 'Cache write', value: Number(c.cache_write) || 0 },
+      { label: 'Output', value: Number(c.output) || 0 },
+    ],
+    notes: [],
+  };
+  if (out.estimated) {
+    out.notes.push("Estimate at the current model's price (recorded before per-call pricing).");
+  }
+  if (unpriced > 0) {
+    out.notes.push(unpriced + ' call' + (unpriced === 1 ? '' : 's') +
+      ' on models without a price ' + (unpriced === 1 ? 'is' : 'are') + ' not included.');
+  }
+  if (legacy > 0 && !out.estimated) {
+    out.notes.push(legacy + ' earlier call' + (legacy === 1 ? '' : 's') +
+      ' predate' + (legacy === 1 ? 's' : '') + ' per-call pricing and ' +
+      (legacy === 1 ? 'is' : 'are') + ' not included.');
+  }
+  if (!out.available && calls > 0 && !unpriced && !legacy) {
+    out.notes.push('No price configured: add cost.input/output/cache_read/cache_write to opencode.json.');
+  }
+  return out;
+}
+
+// Per-model rows ("provider/model") from usage.by_model, most expensive first.
+export function usageModelRows(usage) {
+  const byModel = (usage && usage.by_model) || {};
+  return Object.keys(byModel).map((key) => {
+    const m = byModel[key] || {};
+    const cost = m.cost || {};
+    return {
+      key,
+      calls: Number(m.calls) || 0,
+      inputTokens: Number(m.input_tokens) || 0,
+      cacheReadTokens: Number(m.cache_read_tokens) || 0,
+      outputTokens: Number(m.output_tokens) || 0,
+      priced: !!cost.priced,
+      cost: Number(cost.total) || 0,
+      unpricedCalls: Number(m.unpriced_calls) || 0,
+    };
+  }).sort((a, b) => (b.cost - a.cost) || (b.calls - a.calls) || a.key.localeCompare(b.key));
+}
+
+// Per-call usage from /session/<id>/stats: cost (each call at its own
+// model's opencode.json prices), billed input with the prompt-cache split,
+// context in use, latency, and the model's configured limits/prices.
+export function renderUsageSections(data) {
+  const u = data.usage || {};
+  const calls = Number(u.model_calls) || 0;
+  const mi = data.model_info || null;
+  const ctx = data.context || {};
+  const cost = usageCostSummary(u);
+  const rows = usageModelRows(u);
+  const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, (part / whole) * 100)) : 0);
+  // One decimal below 10% so a large window does not read as an empty 0%.
+  const pctLabel = (v) => (v > 0 && v < 10 ? v.toFixed(1) : v.toFixed(0)) + '%';
+  const detail = (label, value) =>
+    `<div class="stat-detail-item"><span class="detail-label">${esc(label)}</span><span class="detail-val">${esc(value)}</span></div>`;
+
+  const input = Number(u.input_tokens) || 0;
+  const cacheRead = Number(u.cache_read_tokens) || 0;
+  const cacheWrite = Number(u.cache_write_tokens) || 0;
+  const uncached = Number(u.uncached_input_tokens) || Math.max(0, input - cacheRead - cacheWrite);
+  const output = Number(u.output_tokens) || 0;
+  const thinking = Number(u.reasoning_tokens) || 0;
+  const hit = Number(u.cache_hit_pct) || 0;
+  const tokPerS = Number(u.output_tok_per_s) || 0;
+  const ctxWindow = Number(ctx.window) || 0;
+  const used = Number(ctx.used) || 0;
+
+  const costValue = cost.available ? formatUsd(cost.total) : '—';
+  const costSub = cost.available
+    ? (cost.estimated ? 'estimate · current model price' : 'each call at its model price')
+    : (calls > 0 ? 'no price configured' : 'no model calls yet');
+  const kpis = `
+      <div class="stat-grid stats-kpi-grid">
+        <div class="stat-card kpi-card cost">
+          <div class="stat-card-header">
+            <span class="stat-card-icon">💲</span>
+            <span class="stat-label">Session Cost</span>
+          </div>
+          <div class="stat-value accent">${esc(costValue)}</div>
+          <div class="stat-subtext">${esc(costSub)}</div>
+        </div>
+        <div class="stat-card kpi-card calls">
+          <div class="stat-card-header">
+            <span class="stat-card-icon">⚡</span>
+            <span class="stat-label">Model Calls</span>
+          </div>
+          <div class="stat-value">${esc(formatNumber(calls))}</div>
+          <div class="stat-subtext">${calls > 0 ? 'avg ' + esc(formatMs(u.avg_call_ms)) + ' · ' + esc(tokPerS.toFixed(1)) + ' tok/s' : 'none recorded'}</div>
+        </div>
+        <div class="stat-card kpi-card cache">
+          <div class="stat-card-header">
+            <span class="stat-card-icon">🗄️</span>
+            <span class="stat-label">Prompt Cache Hit</span>
+          </div>
+          <div class="stat-value">${input > 0 ? esc(hit.toFixed(0)) + '%' : '—'}</div>
+          <div class="stat-subtext">${esc(formatNumber(cacheRead))} of ${esc(formatNumber(input))} input tokens</div>
+        </div>
+        <div class="stat-card kpi-card context">
+          <div class="stat-card-header">
+            <span class="stat-card-icon">📐</span>
+            <span class="stat-label">Context In Use</span>
+          </div>
+          <div class="stat-value">${ctxWindow > 0 ? esc(pctLabel(pct(used, ctxWindow))) : esc(formatNumber(used))}</div>
+          <div class="stat-subtext">${ctxWindow > 0 ? esc(formatNumber(used)) + ' / ' + esc(formatNumber(ctxWindow)) + ' tokens' : 'window unknown: set limit.context'}</div>
+        </div>
+      </div>`;
+
+  if (calls === 0) {
+    return kpis + `
+      <div class="stat-card section-card">
+        <div class="stats-note">Per-call input, cache and cost figures start with this session's next model call.</div>
+      </div>`;
+  }
+
+  const usedPct = pct(uncached, input), readPct = pct(cacheRead, input), writePct = pct(cacheWrite, input);
+  const tokens = `
+        <div class="stat-card section-card">
+          <div class="stat-section-header">
+            <div class="stat-section-title-wrap">
+              <span class="stat-section-icon">🧾</span>
+              <span class="stat-section-title">Billed Tokens &amp; Prompt Cache</span>
+            </div>
+          </div>
+          <div class="stat-progress-container">
+            <div class="stat-progress-bar" title="Billed input: uncached / cache read / cache write">
+              <div class="stat-progress-segment uncached" style="width: ${usedPct}%"></div>
+              <div class="stat-progress-segment cache-read" style="width: ${readPct}%"></div>
+              <div class="stat-progress-segment cache-write" style="width: ${writePct}%"></div>
+            </div>
+            <div class="stat-progress-legend">
+              <div class="stat-legend-item"><span class="legend-dot uncached"></span><span class="legend-label">Uncached</span></div>
+              <div class="stat-legend-item"><span class="legend-dot cache-read"></span><span class="legend-label">Cache read</span></div>
+              <div class="stat-legend-item"><span class="legend-dot cache-write"></span><span class="legend-label">Cache write</span></div>
+            </div>
+          </div>
+          <div class="stat-details-list">
+            ${detail('Input (billed)', formatNumber(input))}
+            ${detail('Uncached', formatNumber(uncached))}
+            ${detail('Cache read', formatNumber(cacheRead) + ' (' + hit.toFixed(0) + '% hit)')}
+            ${detail('Cache write', formatNumber(cacheWrite))}
+            ${detail('Output', formatNumber(output))}
+            ${detail('Thinking (in output)', formatNumber(thinking))}
+          </div>
+        </div>`;
+
+  const costParts = cost.available
+    ? cost.parts.map((part) => detail(part.label, formatUsd(part.value))).join('')
+    : '';
+  const notes = cost.notes.map((n) => `<div class="stats-note">${esc(n)}</div>`).join('');
+  const modelTable = rows.length ? `
+          <table class="stats-model-table">
+            <thead><tr><th>Model</th><th class="num">Calls</th><th class="num">In</th><th class="num">Out</th><th class="num">Cost</th></tr></thead>
+            <tbody>
+              ${rows.map((r) => `<tr>
+                <td class="model">${esc(r.key)}</td>
+                <td class="num">${esc(formatNumber(r.calls))}</td>
+                <td class="num">${esc(formatNumber(r.inputTokens))}</td>
+                <td class="num">${esc(formatNumber(r.outputTokens))}</td>
+                <td class="num">${r.priced ? esc(formatUsd(r.cost)) + (r.unpricedCalls ? ' +' + esc(String(r.unpricedCalls)) + ' unpriced' : '') : 'no price'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>` : '';
+  const costCard = `
+        <div class="stat-card section-card">
+          <div class="stat-section-header">
+            <div class="stat-section-title-wrap">
+              <span class="stat-section-icon">💲</span>
+              <span class="stat-section-title">Cost (each call at its model's price)</span>
+            </div>
+            <span class="stat-section-badge">${esc(costValue)}</span>
+          </div>
+          <div class="stat-details-list">${costParts}</div>
+          ${notes}
+          ${modelTable}
+        </div>`;
+
+  const lastEffort = u.last_effort || 'off';
+  const effortLine = u.last_variant && u.last_variant !== lastEffort
+    ? u.last_variant + ' → effort ' + lastEffort : lastEffort;
+  const latency = `
+        <div class="stat-card section-card">
+          <div class="stat-section-header">
+            <div class="stat-section-title-wrap">
+              <span class="stat-section-icon">⏱️</span>
+              <span class="stat-section-title">Model Latency</span>
+            </div>
+          </div>
+          <div class="stat-details-list">
+            ${detail('Avg call', formatMs(u.avg_call_ms))}
+            ${detail('Avg first token', u.avg_ttft_ms == null ? '—' : formatMs(u.avg_ttft_ms))}
+            ${detail('Last call', formatMs(u.model_ms_last) + (Number(u.ttft_ms_last) >= 0 ? ' (first token ' + formatMs(u.ttft_ms_last) + ')' : ''))}
+            ${detail('Slowest call', formatMs(u.model_ms_max))}
+            ${detail('Output speed', tokPerS.toFixed(1) + ' tok/s')}
+            ${detail('Total model time', formatMs(u.model_ms_total))}
+            ${detail('Last effort sent', effortLine)}
+          </div>
+        </div>`;
+
+  let config = '';
+  if (mi) {
+    const c = mi.cost || {};
+    const rate = (v) => '$' + (Number(v) || 0).toFixed(Number(v) < 1 ? 3 : 2);
+    const prices = (Number(c.input) > 0 || Number(c.output) > 0)
+      ? rate(c.input) + ' in · ' + rate(c.output) + ' out' +
+        (Number(c.cache_read) > 0 ? ' · ' + rate(c.cache_read) + ' cache read' : '') +
+        (Number(c.cache_write) > 0 ? ' · ' + rate(c.cache_write) + ' cache write' : '')
+      : 'not set (opencode.json cost)';
+    const th = mi.thinking || {};
+    const thinkingLine = th.type ? th.type + (th.display ? ' (' + th.display + ')' : '') + (th.allow_off === false ? ' · always on' : '') : 'default';
+    config = `
+        <div class="stat-card section-card">
+          <div class="stat-section-header">
+            <div class="stat-section-title-wrap">
+              <span class="stat-section-icon">🧩</span>
+              <span class="stat-section-title">Model Configuration (opencode.json)</span>
+            </div>
+          </div>
+          <div class="stat-details-list">
+            ${detail('Model', mi.name || mi.id || '—')}
+            ${detail('Context window', Number(mi.context_window) > 0 ? formatNumber(mi.context_window) + ' tokens' : 'unknown (set limit.context)')}
+            ${detail('Output limit', Number(mi.output_limit) > 0 ? formatNumber(mi.output_limit) + ' tokens' : 'not set')}
+            ${detail('Default max_tokens', Number(mi.max_tokens) > 0 ? formatNumber(mi.max_tokens) : (Number(mi.output_limit) > 0 ? formatNumber(mi.output_limit) + ' (limit.output)' : 'provider default'))}
+            ${detail('Price / 1M tokens', prices)}
+            ${detail('Thinking', thinkingLine)}
+            ${detail('Variants', (mi.variants || []).join(', ') || '—')}
+          </div>
+        </div>`;
+  }
+
+  return kpis + `
+      <div class="stats-two-col-grid">${tokens}${costCard}</div>
+      <div class="stats-two-col-grid">${latency}${config}</div>`;
+}
+
 export function detectFsLanguage(path) {
   const name = (path || '').split('/').pop() || '';
   const lower = name.toLowerCase();

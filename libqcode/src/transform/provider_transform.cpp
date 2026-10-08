@@ -718,8 +718,13 @@ JsonValue wrap_provider_options(const Model& model, const JsonValue& options) {
 
 // ── Token management ──
 
-int max_output_tokens(int model_limit) {
-  return std::min(model_limit, OUTPUT_TOKEN_MAX);
+std::optional<int> max_output_tokens(const ModelInfo& model) {
+  if (model.max_tokens > 0) {
+    return model.output_limit > 0 ? std::min(model.max_tokens, model.output_limit)
+                                  : model.max_tokens;
+  }
+  if (model.output_limit > 0) return model.output_limit;
+  return std::nullopt;
 }
 
 // ── Schema normalization ──

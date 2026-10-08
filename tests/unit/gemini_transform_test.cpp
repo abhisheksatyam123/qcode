@@ -151,16 +151,52 @@ TEST(GeminiTransformTest, ReasoningObjectEffortMapsToThinkingLevel) {
       gemini["generationConfig"]["thinkingConfig"]["includeThoughts"].get<bool>());
 }
 
-TEST(GeminiTransformTest, MaxEffortMapsToHighBudget) {
+// opencode.json owns the effort mapping: a variant such as
+// "max": {"effort": "high", "budget_tokens": 24576} arrives as wire effort
+// "high" plus a budget; nothing is remapped in code.
+TEST(GeminiTransformTest, VariantBudgetBecomesThinkingBudget) {
   json request = parsed(R"({"messages":[{"role":"user","content":"hi"}],
-    "reasoning_effort":"max"})");
+    "reasoning_effort":"high"})");
+  const auto gemini =
+      convert_openai_to_gemini(request, {.type = {}, .display = {}, .budget_tokens = 24576});
+  const auto& thinking = gemini["generationConfig"]["thinkingConfig"];
+  EXPECT_EQ(thinking["thinkingLevel"], "high");
+  EXPECT_EQ(thinking["thinkingBudget"], 24576);
+  EXPECT_TRUE(thinking["includeThoughts"].get<bool>());
+}
+
+TEST(GeminiTransformTest, WireEffortPassesThroughVerbatim) {
+  // No hardcoded effort table: an unmapped id is sent as configured.
+  json request = parsed(R"({"messages":[{"role":"user","content":"hi"}],
+    "reasoning_effort":"minimal"})");
   const auto gemini = convert_openai_to_gemini(request);
-  EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingLevel"],
-            "high");
-  EXPECT_EQ(gemini["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            24576);
-  EXPECT_TRUE(
-      gemini["generationConfig"]["thinkingConfig"]["includeThoughts"].get<bool>());
+  const auto& thinking = gemini["generationConfig"]["thinkingConfig"];
+  EXPECT_EQ(thinking["thinkingLevel"], "minimal");
+  EXPECT_FALSE(thinking.contains("thinkingBudget"));
+}
+
+TEST(GeminiTransformTest, OmittedDisplayDropsThoughtText) {
+  json request = parsed(R"({"messages":[{"role":"user","content":"hi"}],
+    "reasoning_effort":"low"})");
+  const auto gemini = convert_openai_to_gemini(request, {.type = {}, .display = "omitted", .budget_tokens = 0});
+  EXPECT_FALSE(gemini["generationConfig"]["thinkingConfig"]["includeThoughts"]
+                   .get<bool>());
+}
+
+TEST(GeminiTransformTest, NoEffortOrDisabledThinkingSendsNoThinkingConfig) {
+  json no_effort = parsed(R"({"messages":[{"role":"user","content":"hi"}]})");
+  EXPECT_FALSE(convert_openai_to_gemini(no_effort, {.type = {}, .display = {}, .budget_tokens = 4096})
+                   ["generationConfig"]
+                   .contains("thinkingConfig"));
+  json off = parsed(R"({"messages":[{"role":"user","content":"hi"}],
+    "reasoning_effort":"off"})");
+  EXPECT_FALSE(convert_openai_to_gemini(off)["generationConfig"].contains(
+      "thinkingConfig"));
+  json high = parsed(R"({"messages":[{"role":"user","content":"hi"}],
+    "reasoning_effort":"high"})");
+  EXPECT_FALSE(convert_openai_to_gemini(high, {.type = "disabled", .display = {}, .budget_tokens = 0})
+                   ["generationConfig"]
+                   .contains("thinkingConfig"));
 }
 
 // ---- envelope -------------------------------------------------------------

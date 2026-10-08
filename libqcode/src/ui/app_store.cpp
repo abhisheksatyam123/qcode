@@ -776,7 +776,14 @@ void AppStore::wire() {
                            .output_tokens = p.output_tokens,
                            .reasoning_tokens = p.reasoning_tokens,
                            .effort = p.effort,
-                           .variant = p.variant});
+                           .variant = p.variant,
+                           .provider = p.provider,
+                           .model = p.model,
+                           .cost = {.priced = p.priced,
+                                    .input = p.cost_input,
+                                    .cache_read = p.cost_cache_read,
+                                    .cache_write = p.cost_cache_write,
+                                    .output = p.cost_output}});
         notify();
     }));
 

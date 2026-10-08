@@ -147,6 +147,15 @@ struct StepLatency {
         int cache_read_tokens = 0;
         int cache_write_tokens = 0;
         std::string variant;  // picker variant ("ultra"); effort is the wire value
+        // Who served the call and what it cost at that model's opencode.json
+        // prices when it ran (priced=false: the model has no price).
+        std::string provider;
+        std::string model;
+        bool priced = false;
+        double cost_input = 0.0;
+        double cost_cache_read = 0.0;
+        double cost_cache_write = 0.0;
+        double cost_output = 0.0;
     };
 };
 

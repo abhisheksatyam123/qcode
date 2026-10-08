@@ -33,9 +33,6 @@ using namespace ftxui;
 
 namespace {
 
-// Provider key for model summaries looked up by model id alone.
-const std::string kAnyProvider;
-
 // Reflect layout box into ChatState hit-testing (file list rows, etc.).
 class ReflectSimple : public ftxui::Node {
  public:
@@ -173,31 +170,14 @@ static std::string format_grouped(long long n) {
   std::reverse(out.begin(), out.end());
   return neg ? "-" + out : out;
 }
-// Session cost for the header and the Stats tab. Per-call usage (billed
-// input incl. cache reads/writes) is exact; sessions recorded before it
-// existed fall back to the turn totals. Prices come only from opencode.json
-// (cost.input/output/cache_read/cache_write); unpriced models show no cost.
-struct SessionCostView {
-    bool available = false;
-    bool from_calls = false;
-    session::UsageCost parts;
-    double total = 0.0;
-};
-static SessionCostView session_cost_view(const ChatState& state, const ModelInfo& model) {
-    SessionCostView view;
-    const auto& usage = *state.usage;
-    view.parts = session::estimate_usage_cost(usage, model);
-    if (!view.parts.priced) return view;
-    if (!usage.empty()) {
-        view.available = true;
-        view.from_calls = true;
-        view.total = view.parts.total();
-    } else if (*state.total_prompt_tokens + *state.total_completion_tokens > 0) {
-        view.available = true;
-        view.total = (*state.total_prompt_tokens * model.input_cost +
-                      *state.total_completion_tokens * model.output_cost) / 1000000.0;
-    }
-    return view;
+// Session cost for the header and the Stats tab: the sum of every call priced
+// at its own model's opencode.json rates when it ran (cost.input/output/
+// cache_read/cache_write), so switching models never reprices earlier calls.
+// Sessions recorded before per-call pricing are estimated at the current
+// model's prices (flagged estimated). Unpriced models add nothing.
+static session::SessionCost session_cost_view(const ChatState& state, const ModelInfo* model) {
+    return session::session_cost(*state.usage, model, *state.total_prompt_tokens,
+                                 *state.total_completion_tokens);
 }
 
 static std::string format_usage_upstream(long long total, int window_size,
@@ -301,6 +281,22 @@ static Element build_stats_tab(const ChatState& state,
             }
         }
         rows.push_back(row("Variant", text(line) | color(accent(theme))));
+        if (model) {
+            // What the next request asks for: opencode.json max_tokens capped
+            // by limit.output, raised by the variant (see apply_variant_options).
+            int budget = ProviderTransform::max_output_tokens(m).value_or(0);
+            if (const auto* spec = ProviderTransform::find_variant(m, variant);
+                spec != nullptr && spec->max_tokens > 0 && variant != "off") {
+                const int cap = m.output_limit > 0 ? std::min(spec->max_tokens, m.output_limit)
+                                                   : spec->max_tokens;
+                budget = std::max(budget, cap);
+            }
+            std::string out = budget > 0 ? format_grouped(budget) + " tokens"
+                                         : std::string("provider default");
+            out += m.output_limit > 0 ? "  (limit.output " + format_grouped(m.output_limit) + ")"
+                                      : std::string("  (limit.output not set)");
+            rows.push_back(row_text("Output Budget", out));
+        }
         if (!m.thinking_type.empty()) {
             std::string thinking = m.thinking_type;
             if (!m.thinking_display.empty()) thinking += " (" + m.thinking_display + ")";
@@ -322,13 +318,12 @@ static Element build_stats_tab(const ChatState& state,
     rows.push_back(separatorLight() | color(accent(theme)));
     rows.push_back(section("⎔ CONTEXT WINDOW"));
     {
-        int window = m.context_window;
-        if (window <= 0 && model) {
-            window = cached_model_performance_summary(m.id, kAnyProvider).context_window;
-        }
-        const int used = *state.current_context_tokens > 0
-                             ? *state.current_context_tokens
-                             : std::max(0, *state.last_actual_prompt_tokens);
+        const int window = m.context_window;  // opencode.json limit.context only
+        // Live estimate, else the last prompt this process saw, else the
+        // persisted prompt of the session's latest call (resumed sessions).
+        const int used = *state.current_context_tokens > 0     ? *state.current_context_tokens
+                         : *state.last_actual_prompt_tokens > 0 ? *state.last_actual_prompt_tokens
+                                                                : std::max(0, usage.last_input_tokens);
         if (window > 0) {
             const double pct =
                 std::clamp(static_cast<double>(used) * 100.0 / window, 0.0, 100.0);
@@ -376,21 +371,49 @@ static Element build_stats_tab(const ChatState& state,
 
     // ── Cost ──
     rows.push_back(separatorLight() | color(accent(theme)));
-    rows.push_back(section("⎔ COST (estimate at list price)"));
+    rows.push_back(section("⎔ COST (each call at its model's list price)"));
     {
-        const SessionCostView cost = session_cost_view(state, m);
-        if (!cost.parts.priced) {
-            rows.push_back(text("  No price for this model: add cost.input/output/"
-                                "cache_read/cache_write to opencode.json") | dim);
-        } else if (!cost.available) {
-            rows.push_back(row("Total", text(fmt_usd(0.0)) | color(Color::Green)));
-        } else {
+        const session::SessionCost cost = session_cost_view(state, model);
+        if (cost.available) {
             rows.push_back(row("Total", text(fmt_usd(cost.total)) | color(Color::Green) | bold));
-            if (cost.from_calls) {
-                rows.push_back(row_text("  input", fmt_usd(cost.parts.input)));
+            rows.push_back(row_text("  input", fmt_usd(cost.parts.input)));
+            if (!cost.estimated || usage.cache_read_tokens + usage.cache_write_tokens > 0) {
                 rows.push_back(row_text("  cache read", fmt_usd(cost.parts.cache_read)));
                 rows.push_back(row_text("  cache write", fmt_usd(cost.parts.cache_write)));
-                rows.push_back(row_text("  output", fmt_usd(cost.parts.output)));
+            }
+            rows.push_back(row_text("  output", fmt_usd(cost.parts.output)));
+            if (cost.estimated) {
+                rows.push_back(text("  estimate at the current model's price (recorded "
+                                    "before per-call pricing)") | dim);
+            }
+        } else if (usage.empty() && *state.total_prompt_tokens + *state.total_completion_tokens == 0) {
+            rows.push_back(row("Total", text(fmt_usd(0.0)) | color(Color::Green)));
+        } else {
+            rows.push_back(text("  No price: add cost.input/output/cache_read/"
+                                "cache_write to opencode.json") | dim);
+        }
+        if (cost.available && cost.unpriced_calls > 0) {
+            rows.push_back(text("  " + std::to_string(cost.unpriced_calls) +
+                                " call(s) on models without a price are not included") | dim);
+        }
+        if (cost.legacy_calls > 0 && !cost.estimated) {
+            rows.push_back(text("  " + std::to_string(cost.legacy_calls) +
+                                " earlier call(s) predate per-call pricing; not included") | dim);
+        }
+        // Per-model share: makes model switches inside a session visible.
+        if (!usage.by_model.empty()) {
+            rows.push_back(text("  by model") | dim);
+            for (const auto& [key, share] : usage.by_model) {
+                std::string line = std::to_string(share.calls) + " call" +
+                                   (share.calls == 1 ? "" : "s") + " · " +
+                                   format_grouped(share.input_tokens) + " in · " +
+                                   format_grouped(share.output_tokens) + " out · ";
+                line += share.cost.priced ? fmt_usd(share.cost.total()) : std::string("no price");
+                if (share.cost.priced && share.unpriced_calls > 0) {
+                    line += " (+" + std::to_string(share.unpriced_calls) + " unpriced)";
+                }
+                rows.push_back(hbox({text("  " + key) | color(accent(theme)),
+                                     text("  " + line) | dim}));
             }
         }
     }
@@ -560,19 +583,14 @@ ftxui::Element render_view(
                            ? *state.current_context_tokens
                            : (*state.last_actual_prompt_tokens > 0
                                   ? *state.last_actual_prompt_tokens
-                                  : 0);
-    int window_size = hdr_model_info.context_window;
-    if (window_size <= 0) {
-        // opencode.json limit.context is the source of truth; a learned
-        // window from earlier API errors is the only fallback (0 = unknown).
-        window_size = cached_model_performance_summary(hdr_model_info.id, kAnyProvider)
-                          .context_window;
-    }
+                                  : std::max(0, state.usage->last_input_tokens));
+    // opencode.json limit.context is the only source (0 = unknown: no %).
+    const int window_size = hdr_model_info.context_window;
     const int last_reasoning = state.last_reasoning_tokens ? *state.last_reasoning_tokens : 0;
     const long long usage_total =
         (long long)ctx_snapshot + (long long)std::max(0, last_reasoning);
-    // Session cost at the model's opencode.json prices (same as Stats tab).
-    const SessionCostView hdr_cost = session_cost_view(state, hdr_model_info);
+    // Session cost (same figure as the Stats tab).
+    const session::SessionCost hdr_cost = session_cost_view(state, &hdr_model_info);
     const double use_cost = hdr_cost.total;
     const bool use_have_cost = hdr_cost.available;
     std::string hdr_tokens = format_usage_upstream(usage_total, window_size, use_cost, use_have_cost);

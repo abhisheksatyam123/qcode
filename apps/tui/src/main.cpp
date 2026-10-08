@@ -767,6 +767,26 @@ int main(int argc, char* argv[]) {
                 return;
             }
 
+            // /session <id> (or /load <id>) switches exactly like the picker:
+            // rebind the store (title, totals, usage stats, queue) and the
+            // model. Unknown ids fall through to the usage / not-found text.
+            if (cmd.rfind("session ", 0) == 0 || cmd.rfind("load ", 0) == 0) {
+                std::string id = cmd.substr(cmd.find(' ') + 1);
+                id.erase(0, id.find_first_not_of(" \t"));
+                const auto listed = [&id] {
+                    for (const auto& entry : qcode::session::list_sessions()) {
+                        if (entry.first == id) return true;
+                    }
+                    return false;
+                };
+                if (qcode::session::is_valid_session_id(id) && listed()) {
+                    prompt_input = "";
+                    close_overlays();
+                    open_chat_session(id, "", false);
+                    return;
+                }
+            }
+
             if (cmd == "theme" || cmd == "themes") {
                 prompt_input = "";
                 open_theme_picker();

@@ -81,7 +81,15 @@ nlohmann::json step_latency_to_json(const StepLatency::Payload& p) {
         {"input_tokens", p.input_tokens},
         {"cache_read_tokens", p.cache_read_tokens},
         {"cache_write_tokens", p.cache_write_tokens},
-        {"variant", p.variant}
+        {"variant", p.variant},
+        {"provider", p.provider},
+        {"model", p.model},
+        {"priced", p.priced},
+        {"cost_usd", p.cost_input + p.cost_cache_read + p.cost_cache_write + p.cost_output},
+        {"cost_input", p.cost_input},
+        {"cost_cache_read", p.cost_cache_read},
+        {"cost_cache_write", p.cost_cache_write},
+        {"cost_output", p.cost_output}
     };
 }
 

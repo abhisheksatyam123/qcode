@@ -307,6 +307,84 @@ TEST(TuiConfigTest, VariantObjectsThinkingAndModelDefaults) {
   EXPECT_EQ(ProviderTransform::find_variant(*haiku, "ultra"), nullptr);
 }
 
+TEST(TuiConfigTest, TopLevelModelDefaultsAndOutputBudget) {
+  // Top-level model_defaults < provider model_defaults < model (merge patch).
+  // The request budget is max_tokens capped by limit.output; nothing is
+  // capped in code.
+  ScopedConfig config(R"({
+      "model_defaults": {"max_tokens": 32000, "limit": {"context": 200000}},
+      "provider": {
+        "opencode": {
+          "model_defaults": {"max_tokens": 16000},
+          "models": {
+            "a": {"tool_call": true, "limit": {"context": 1000000, "output": 8192}},
+            "b": {"tool_call": true, "max_tokens": null},
+            "c": {"tool_call": true, "max_tokens": 64000, "limit": {"output": 128000}}
+          }
+        },
+        "openrouter": {
+          "models": {
+            "d": {"tool_call": true},
+            "e": {"tool_call": true, "limit": {"output": 4096}}
+          }
+        }
+      }
+    })");
+  const auto providers = config.load();
+  const auto* zen = FindProvider(providers, "opencode");
+  const auto* openrouter = FindProvider(providers, "openrouter");
+  ASSERT_NE(zen, nullptr);
+  ASSERT_NE(openrouter, nullptr);
+
+  const auto* a = FindModel(zen->models, "a");
+  ASSERT_NE(a, nullptr);
+  EXPECT_EQ(a->max_tokens, 16000);
+  EXPECT_EQ(a->context_window, 1000000);
+  EXPECT_EQ(ProviderTransform::max_output_tokens(*a), std::optional<int>(8192));
+
+  const auto* b = FindModel(zen->models, "b");
+  ASSERT_NE(b, nullptr);
+  EXPECT_EQ(b->max_tokens, 0);  // null removed the inherited default
+  EXPECT_EQ(b->context_window, 200000);
+  EXPECT_EQ(ProviderTransform::max_output_tokens(*b), std::nullopt);
+
+  const auto* c = FindModel(zen->models, "c");
+  ASSERT_NE(c, nullptr);
+  EXPECT_EQ(c->context_window, 200000);  // limit objects merge key by key
+  EXPECT_EQ(c->output_limit, 128000);
+  EXPECT_EQ(ProviderTransform::max_output_tokens(*c), std::optional<int>(64000));
+
+  const auto* d = FindModel(openrouter->models, "d");
+  ASSERT_NE(d, nullptr);
+  EXPECT_EQ(ProviderTransform::max_output_tokens(*d), std::optional<int>(32000));
+  const auto* e = FindModel(openrouter->models, "e");
+  ASSERT_NE(e, nullptr);
+  EXPECT_EQ(ProviderTransform::max_output_tokens(*e), std::optional<int>(4096));
+}
+
+TEST(TuiConfigTest, ContextWindowIsNeverGuessedFromModelName) {
+  // Names that used to map to 2M / 1M / 200k windows stay unknown (0) until
+  // opencode.json sets limit.context.
+  ScopedConfig config(R"({
+      "provider": {
+        "opencode": {
+          "models": {
+            "gemini-3.1-pro": {"tool_call": true},
+            "deepseek-v4-1m": {"tool_call": true},
+            "claude-opus-5-5": {"tool_call": true, "limit": {"context": 1000000}}
+          }
+        }
+      }
+    })");
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  const auto& models = providers.front().models;
+  ASSERT_NE(FindModel(models, "gemini-3.1-pro"), nullptr);
+  EXPECT_EQ(FindModel(models, "gemini-3.1-pro")->context_window, 0);
+  EXPECT_EQ(FindModel(models, "deepseek-v4-1m")->context_window, 0);
+  EXPECT_EQ(FindModel(models, "claude-opus-5-5")->context_window, 1000000);
+}
+
 TEST(TuiConfigTest, MistypedVariantFieldsDoNotAbortConfig) {
   ScopedConfig config(R"({
       "provider": {

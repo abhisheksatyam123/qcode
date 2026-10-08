@@ -73,6 +73,24 @@ TEST(AntigravityClientTest, Gemini38FlashMapsEffortSku) {
             "high");
 }
 
+TEST(AntigravityClientTest, VariantThinkingSettingsReachGeminiConfig) {
+  // apply_variant_options copies opencode.json thinking.display and the
+  // variant budget_tokens into GenerateOptions; the envelope must keep them.
+  AntigravityRequestBuilder builder("project-1");
+  GenerateOptions opts;
+  opts.model = "gemini-3.8-flash";
+  opts.reasoning_effort = "high";
+  opts.budget_tokens = 24576;
+  opts.thinking_display = "omitted";
+  opts.messages = {Message::user("hi")};
+
+  const auto req = builder.build_request_json(opts);
+  const auto& thinking = req["request"]["generationConfig"]["thinkingConfig"];
+  EXPECT_EQ(thinking["thinkingLevel"], "high");
+  EXPECT_EQ(thinking["thinkingBudget"], 24576);
+  EXPECT_FALSE(thinking["includeThoughts"].get<bool>());
+}
+
 TEST(AntigravityClientTest, Gemini38FlashDefaultsToMediumSku) {
   AntigravityRequestBuilder builder("project-1");
   GenerateOptions opts;

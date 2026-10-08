@@ -22,13 +22,16 @@ struct VariantInfo {
 struct ModelInfo {
     std::string name;
     std::string id;
-    int context_window = 0;   // tokens; 0 => unknown (fallback)
+    int context_window = 0;   // limit.context tokens; 0 => unknown (never guessed)
     double input_cost = 0.0;   // USD per 1M input tokens
     double output_cost = 0.0;  // USD per 1M output tokens
     bool reasoning = false;
     bool tool_call = false;
     bool vision = false;
     int output_limit = 0;
+    // From opencode.json "max_tokens": the default request size (output
+    // tokens), capped by output_limit. 0 = not configured.
+    int max_tokens = 0;
     std::string protocol;
     // From opencode.json: reasoning_efforts / variants.
     std::vector<std::string> reasoning_efforts;

@@ -8,6 +8,7 @@
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/event.h>
 #include <qcode/session/session_store.h>
+#include <qcode/session/usage_stats.h>
 #include <qcode/tools/task_tool.h>
 #include "server_routes.h"
 
@@ -255,6 +256,48 @@ TEST_F(ServerRoutesTest, SessionLifecycleAndStats) {
     EXPECT_EQ(j_stats.value("title", ""), "My Renamed Session");
     EXPECT_EQ(j_stats.value("provider", ""), "mock-provider");
     EXPECT_EQ(j_stats.value("model", ""), "mock-model");
+    ASSERT_TRUE(j_stats.contains("usage"));
+    EXPECT_EQ(j_stats["usage"].value("model_calls", -1), 0);
+    ASSERT_TRUE(j_stats["model_info"].is_object());
+    EXPECT_EQ(j_stats["model_info"].value("id", ""), "mock-model");
+
+    // Per-call usage: each call keeps the price of the model that served it.
+    {
+        qcode::ModelInfo opus;
+        opus.id = "opus";
+        opus.input_cost = 4.0;
+        opus.output_cost = 20.0;
+        qcode::ModelInfo haiku;
+        haiku.id = "haiku";
+        haiku.input_cost = 0.1;
+        haiku.output_cost = 0.5;
+        qcode::session::ModelCallUsage first{.model_ms = 2000.0, .ttft_ms = 500.0,
+                                             .input_tokens = 1000000, .output_tokens = 10000,
+                                             .effort = "high", .variant = "high",
+                                             .provider = "mock-provider", .model = "opus", .cost = {}};
+        first.cost = qcode::session::price_call(first, opus);
+        qcode::session::record_session_model_call(session_id, first);
+        qcode::session::ModelCallUsage second{.model_ms = 1000.0, .ttft_ms = -1.0,
+                                              .input_tokens = 2000, .output_tokens = 1000,
+                                              .effort = "low", .variant = "low",
+                                              .provider = "mock-provider", .model = "haiku", .cost = {}};
+        second.cost = qcode::session::price_call(second, haiku);
+        qcode::session::record_session_model_call(session_id, second);
+    }
+    auto res_usage = client_->Get("/session/" + session_id + "/stats");
+    ASSERT_TRUE(res_usage != nullptr);
+    ASSERT_EQ(res_usage->status, 200);
+    const auto j_usage = nlohmann::json::parse(res_usage->body);
+    const auto& usage = j_usage["usage"];
+    EXPECT_EQ(usage.value("model_calls", 0), 2);
+    // opus: $4 + $0.2; haiku: $0.0002 + $0.0005
+    EXPECT_NEAR(usage["session_cost"]["total"].get<double>(), 4.2007, 1e-9);
+    EXPECT_FALSE(usage["session_cost"]["estimated"].get<bool>());
+    EXPECT_TRUE(usage["by_model"].contains("mock-provider/opus"));
+    EXPECT_TRUE(usage["by_model"].contains("mock-provider/haiku"));
+    EXPECT_DOUBLE_EQ(usage["avg_call_ms"].get<double>(), 1500.0);
+    EXPECT_EQ(j_usage["context"].value("used", 0), 2000);  // latest prompt
+    EXPECT_EQ(j_usage["context"].value("window", -1), 0);  // no limit.context
 
     // GET /session/:id/messages
     auto res_msgs = client_->Get("/session/" + session_id + "/messages");

@@ -79,7 +79,7 @@ window.copyPlantUmlCode = function(diagramId, btn) {
 };
 
 import { InfiniteCanvas } from "./canvas/infinite-canvas.js";
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -2921,6 +2921,11 @@ function endStream(session, stream) {
   updateQueueIndicator();
   // Reconcile with what the server persisted for the turn.
   setTimeout(() => refreshSession(session, { force: true }), 300);
+  // Per-call usage/cost is persisted before the turn ends; refresh an open
+  // Stats tab without the skeleton flash.
+  if (session.id === state.sessionId && state.activeTab === 'stats') {
+    setTimeout(() => loadStatsTab({ quiet: true }), 400);
+  }
 }
 
 function failStream(stream, message) {
@@ -4255,11 +4260,20 @@ function copyStatsSummary() {
     `- **Messages:** ${d.message_count || 0} (${d.user_messages || 0} user, ${d.assistant_messages || 0} assistant)`,
     `- **Tokens:** ${formatNumber(totTok)} total (${formatNumber(promptTok)} prompt, ${formatNumber(compTok)} completion)`,
     `- **Tool Invocations:** ${toolCalls} calls across ${formatMs(toolTime)} (avg ${avgToolMs}/call)`,
-  ].join('\n');
-  copyText(md, 'Stats summary copied to clipboard');
+  ];
+  const usage = d.usage || {};
+  if (Number(usage.model_calls) > 0) {
+    const cost = usageCostSummary(usage);
+    md.push(`- **Model Calls:** ${usage.model_calls} (avg ${formatMs(usage.avg_call_ms)}, ${(Number(usage.output_tok_per_s) || 0).toFixed(1)} tok/s)`);
+    md.push(`- **Billed Input:** ${formatNumber(usage.input_tokens)} (${(Number(usage.cache_hit_pct) || 0).toFixed(0)}% cache hit), output ${formatNumber(usage.output_tokens)}`);
+    if (cost.available) md.push(`- **Cost:** ${formatUsd(cost.total)}${cost.estimated ? ' (estimate)' : ''}`);
+  }
+  const mdText = md.join('\n');
+  copyText(mdText, 'Stats summary copied to clipboard');
 }
 
-async function loadStatsTab() {
+async function loadStatsTab(opts) {
+  const quiet = !!(opts && opts.quiet) && lastStatsData != null;
   if (!state.sessionId) {
     lastStatsData = null;
     statsContent.innerHTML = `
@@ -4270,7 +4284,7 @@ async function loadStatsTab() {
       </div>`;
     return;
   }
-  statsContent.innerHTML = `
+  if (!quiet) statsContent.innerHTML = `
     <div class="stats-loading loading-spinner">
       <div class="stats-skeleton-banner"></div>
       <div class="stats-skeleton-grid">
@@ -4281,10 +4295,12 @@ async function loadStatsTab() {
       </div>
       <div class="stats-skeleton-card tall"></div>
     </div>`;
+  const requested = state.sessionId;
   try {
     const res = await fetch('/session/' + state.sessionId + '/stats');
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
+    if (requested !== state.sessionId) return;  // switched sessions meanwhile
     lastStatsData = data;
     renderStatsTab(data);
   } catch (e) {
@@ -4325,6 +4341,8 @@ function renderStatsTab(data) {
       createdRelative = relTime(data.created_at * 1000);
     } catch (_) {}
   }
+
+  const usageHtml = renderUsageSections(data);
 
   const sid = data.id || state.sessionId || '';
   const title = data.title || 'Untitled Session';
@@ -4415,6 +4433,8 @@ function renderStatsTab(data) {
           <div class="stat-subtext">${toolCalls > 0 ? 'avg ' + esc(formatMs(avgToolTime)) + '/call' : '0 ms latency'}</div>
         </div>
       </div>
+
+      ${usageHtml}
 
       <!-- Token Distribution Breakdown Card -->
       <div class="stat-card section-card">

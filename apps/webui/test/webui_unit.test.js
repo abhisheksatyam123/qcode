@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, detectFsLanguage, extractChildSessionId, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from '../src/utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, usageModelRows, detectFsLanguage, extractChildSessionId, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from '../src/utils.js';
 
 test('fuzzyScore: subsequence + ordering', () => {
   assert.equal(fuzzyScore('', 'anything'), 0);
@@ -155,4 +155,88 @@ test('command catalogs: data present', () => {
   assert.ok(SLASH_COMMANDS.some(c => c.name === '/model'));
   assert.ok(PALETTE_COMMANDS.length >= 10, 'palette commands present');
   assert.ok(PALETTE_COMMANDS.some(c => c.id === 'thinking_toggle'));
+});
+
+test('formatUsd precision', () => {
+  assert.equal(formatUsd(0), '$0.0000');
+  assert.equal(formatUsd(0.01234), '$0.0123');
+  assert.equal(formatUsd(123.456), '$123.46');
+  assert.equal(formatUsd(undefined), '$0.0000');
+});
+
+test('usageCostSummary: per-call total, notes for unpriced/legacy/estimated', () => {
+  const priced = usageCostSummary({
+    model_calls: 3,
+    session_cost: { available: true, estimated: false, total: 0.5, input: 0.1, cache_read: 0.05,
+      cache_write: 0.05, output: 0.3, unpriced_calls: 1, legacy_calls: 0 },
+  });
+  assert.equal(priced.available, true);
+  assert.equal(priced.total, 0.5);
+  assert.deepEqual(priced.parts.map((p) => p.value), [0.1, 0.05, 0.05, 0.3]);
+  assert.equal(priced.notes.length, 1);
+  assert.match(priced.notes[0], /1 call on models without a price is not included/);
+
+  const legacy = usageCostSummary({
+    model_calls: 2,
+    session_cost: { available: true, estimated: true, total: 0.2, legacy_calls: 2 },
+  });
+  assert.equal(legacy.estimated, true);
+  assert.match(legacy.notes[0], /Estimate at the current model's price/);
+  assert.equal(legacy.notes.length, 1, 'estimated sessions do not repeat the legacy note');
+
+  const unconfigured = usageCostSummary({ model_calls: 1, session_cost: { available: false } });
+  assert.equal(unconfigured.available, false);
+  assert.match(unconfigured.notes[0], /No price configured/);
+
+  assert.equal(usageCostSummary(undefined).available, false);
+});
+
+test('usageModelRows: sorted by cost, unpriced kept', () => {
+  const rows = usageModelRows({
+    by_model: {
+      'anthropic/claude-haiku-5-5': { calls: 4, input_tokens: 10, output_tokens: 5,
+        cost: { priced: true, total: 0.001 } },
+      'anthropic/claude-opus-5-5': { calls: 1, input_tokens: 100, output_tokens: 50,
+        cost: { priced: true, total: 0.2 } },
+      'antigravity/gemini-3.8-flash': { calls: 2, unpriced_calls: 2, cost: { priced: false, total: 0 } },
+    },
+  });
+  assert.deepEqual(rows.map((r) => r.key),
+    ['anthropic/claude-opus-5-5', 'anthropic/claude-haiku-5-5', 'antigravity/gemini-3.8-flash']);
+  assert.equal(rows[2].priced, false);
+  assert.equal(rows[2].unpricedCalls, 2);
+  assert.deepEqual(usageModelRows({}), []);
+});
+
+test('renderUsageSections: cost, cache, latency and per-model rows', async () => {
+  const { renderUsageSections } = await import('../src/utils.js');
+  const html = renderUsageSections({
+    usage: {
+      model_calls: 2, input_tokens: 2000, cache_read_tokens: 1400, cache_write_tokens: 0,
+      uncached_input_tokens: 600, output_tokens: 1000, reasoning_tokens: 300,
+      cache_hit_pct: 70, avg_call_ms: 1000, avg_ttft_ms: 100, model_ms_last: 900,
+      ttft_ms_last: 80, model_ms_max: 1100, model_ms_total: 2000, output_tok_per_s: 500,
+      last_effort: 'max', last_variant: 'ultra',
+      session_cost: { available: true, estimated: false, total: 0.0123, input: 0.002,
+        cache_read: 0.0003, cache_write: 0, output: 0.01, unpriced_calls: 0, legacy_calls: 0 },
+      by_model: { 'anthropic/claude-opus-5-5': { calls: 2, input_tokens: 2000, output_tokens: 1000,
+        cost: { priced: true, total: 0.0123 } } },
+    },
+    model_info: { id: 'claude-opus-5-5', name: 'Claude <Opus>', context_window: 1000000,
+      output_limit: 128000, max_tokens: 32000, cost: { input: 4, output: 20, cache_read: 0.2,
+      cache_write: 5 }, thinking: { type: 'adaptive', display: 'summarized', allow_off: false },
+      variants: ['low', 'ultra'] },
+    context: { used: 1000, window: 1000000 },
+  });
+  assert.match(html, /\$0\.0123/);
+  assert.match(html, /70% hit/);
+  assert.match(html, /ultra → effort max/);
+  assert.match(html, /anthropic\/claude-opus-5-5/);
+  assert.match(html, /32,000|32000/);
+  assert.match(html, /Claude &lt;Opus&gt;/, 'model names are escaped');
+  assert.ok(!html.includes('Claude <Opus>'));
+
+  const empty = renderUsageSections({ usage: { model_calls: 0 }, context: {} });
+  assert.match(empty, /start with this session's next model call/);
+  assert.match(empty, /window unknown: set limit.context/);
 });

@@ -190,6 +190,59 @@ static void apply_variant_options(qcode::GenerateOptions& opts,
            opts.thinking_type.value_or("default"), model_id);
 }
 
+// opencode.json catalog entry for provider/model (id or display name).
+static const ModelInfo* find_catalog_model(const std::vector<ProviderInfo>& providers,
+                                           const std::string& provider_id,
+                                           const std::string& model_id) {
+  for (const auto& p : providers) {
+    if (p.id != provider_id && p.name != provider_id) continue;
+    for (const auto& m : p.models) {
+      if (m.id == model_id || m.name == model_id) return &m;
+    }
+  }
+  return nullptr;
+}
+
+// Usage key for a call: the opencode.json model id, else the wire id.
+static std::string usage_model_id(const ModelInfo* model_info, const std::string& wire_model) {
+  return model_info != nullptr ? model_info->id : wire_model;
+}
+
+// One finished model call: priced at the serving model's opencode.json rates
+// as it runs (a later model switch never reprices it), persisted to the
+// session's usage stats, then published for live mirrors (Stats tab). Persist
+// first: the mirror reloads from the DB on session switches and must not miss
+// (or double count) this call.
+static void record_model_call(bus::BusPort& bus, const std::string& session_id,
+                              const ModelInfo* model_info,
+                              qcode::session::ModelCallUsage call, int step, bool streamed,
+                              bool ok) {
+  if (model_info != nullptr) call.cost = qcode::session::price_call(call, *model_info);
+  qcode::session::record_session_model_call(session_id, call);
+  bus.publish<qcode::contract::StepLatency>({
+      .session_id = session_id,
+      .step = step,
+      .streamed = streamed,
+      .model_ms = call.model_ms,
+      .ttft_ms = call.ttft_ms,
+      .output_tokens = call.output_tokens,
+      .reasoning_tokens = call.reasoning_tokens,
+      .effort = call.effort,
+      .ok = ok,
+      .input_tokens = call.input_tokens,
+      .cache_read_tokens = call.cache_read_tokens,
+      .cache_write_tokens = call.cache_write_tokens,
+      .variant = call.variant,
+      .provider = call.provider,
+      .model = call.model,
+      .priced = call.cost.priced,
+      .cost_input = call.cost.input,
+      .cost_cache_read = call.cost.cache_read,
+      .cost_cache_write = call.cost.cache_write,
+      .cost_output = call.cost.output,
+  });
+}
+
 static JsonValue run_subagent_turn_multi(
     std::shared_ptr<std::vector<ProviderInfo>> providers,
     const std::string& default_provider_id,
@@ -446,15 +499,18 @@ static JsonValue run_subagent_turn_multi(
       } catch (...) {}
     }
     qcode::GenerateOptions sub_opts(wire_model, sub_sys.str(), "");
-    // Subagent turns must use the same bounded output budget as the parent.
-    // Leaving this unset lets OpenRouter apply a model-specific default (for
-    // some models, 131072), which can turn an otherwise valid delegation into
-    // HTTP 402 when the account cannot afford that completion budget.
-    if (target_model_info && target_model_info->output_limit > 0) {
-      sub_opts.max_tokens =
-          ProviderTransform::max_output_tokens(target_model_info->output_limit);
-    } else {
-      sub_opts.max_tokens = 8192;
+    // Subagent turns use the same bounded output budget as the parent:
+    // opencode.json max_tokens (model_defaults) capped by limit.output. Leaving
+    // it unset lets OpenRouter apply a model-specific default (for some
+    // models, 131072), which can turn an otherwise valid delegation into HTTP
+    // 402 when the account cannot afford that completion budget. A model
+    // missing from the catalog inherits the lead model's budget.
+    const ModelInfo* budget_model =
+        target_model_info != nullptr
+            ? target_model_info
+            : find_catalog_model(*providers, default_provider_id, default_model_id);
+    if (budget_model != nullptr) {
+      sub_opts.max_tokens = ProviderTransform::max_output_tokens(*budget_model);
     }
     // Subagents think at their model's configured default variant.
     apply_variant_options(sub_opts, target_model_info, "", target_model_id);
@@ -491,8 +547,36 @@ static JsonValue run_subagent_turn_multi(
     }
 
     qcode::GenerateResult res = MultiStepCoordinator::execute_multi_step(
-        sub_opts, [&subagent_client](const GenerateOptions& step_opts) {
-          return subagent_client.generate_text(step_opts);
+        sub_opts, [&subagent_client, &sub_session_id, target_provider,
+                   target_model_info](const GenerateOptions& step_opts) {
+          const qcode::perf::Stopwatch watch;
+          qcode::GenerateResult step_res = subagent_client.generate_text(step_opts);
+          if (!sub_session_id.empty()) {
+            // The child session keeps its own Stats, each call priced at its
+            // model's opencode.json rates (the lead session is not charged).
+            int think = step_res.usage.reasoning_completion_tokens;
+            if (think == 0 && !step_res.reasoning.empty()) {
+              think = std::max(1, static_cast<int>(step_res.reasoning.size() / 4));
+            }
+            qcode::session::ModelCallUsage call{
+                .model_ms = watch.ms(),
+                .ttft_ms = step_res.ttft_ms.value_or(-1.0),
+                .input_tokens = step_res.usage.prompt_tokens,
+                .cache_read_tokens = step_res.usage.cached_prompt_tokens,
+                .cache_write_tokens = step_res.usage.cache_write_tokens,
+                .output_tokens = step_res.usage.completion_tokens,
+                .reasoning_tokens = think,
+                .effort = step_opts.reasoning_effort.value_or("off"),
+                .variant = step_opts.reasoning_variant.value_or(""),
+                .provider = target_provider->id,
+                .model = usage_model_id(target_model_info, step_opts.model),
+                .cost = {}};
+            if (target_model_info != nullptr) {
+              call.cost = qcode::session::price_call(call, *target_model_info);
+            }
+            qcode::session::record_session_model_call(sub_session_id, call);
+          }
+          return step_res;
         });
 
     std::string error;
@@ -552,7 +636,8 @@ static void run_tools_generation_bus(
     bus::BusPort& bus,
     GenerationContext& ctx,
     const std::function<bool(qcode::Client&)>& refresh_client = nullptr,
-    const std::string& provider_id = "") {
+    const std::string& provider_id = "",
+    const ModelInfo* model_info = nullptr) {
   // One request serves every step. A StreamOptions is a GenerateOptions, so
   // streamed steps pass it to stream_text() without copying the history.
   qcode::StreamOptions request(std::move(gen_options));
@@ -789,34 +874,20 @@ static void run_tools_generation_bus(
         const double ttft = step_res.ttft_ms.value_or(-1.0);
         const std::string effort = options.reasoning_effort.value_or("off");
         const std::string variant = options.reasoning_variant.value_or("");
-        // Persist before publishing: the Stats tab mirror reloads from the DB
-        // on session switches and must not miss (or double count) this call.
-        qcode::session::record_session_model_call(
-            ctx.session_id,
-            {.model_ms = step_model_ms,
-             .ttft_ms = ttft,
-             .input_tokens = step_res.usage.prompt_tokens,
-             .cache_read_tokens = step_res.usage.cached_prompt_tokens,
-             .cache_write_tokens = step_res.usage.cache_write_tokens,
-             .output_tokens = step_res.usage.completion_tokens,
-             .reasoning_tokens = step_think,
-             .effort = effort,
-             .variant = variant});
-        bus.publish<qcode::contract::StepLatency>({
-            .session_id = ctx.session_id,
-            .step = step,
-            .streamed = streamed,
-            .model_ms = step_model_ms,
-            .ttft_ms = ttft,
-            .output_tokens = step_res.usage.completion_tokens,
-            .reasoning_tokens = step_think,
-            .effort = effort,
-            .ok = step_res.is_success(),
-            .input_tokens = step_res.usage.prompt_tokens,
-            .cache_read_tokens = step_res.usage.cached_prompt_tokens,
-            .cache_write_tokens = step_res.usage.cache_write_tokens,
-            .variant = variant,
-        });
+        record_model_call(bus, ctx.session_id, model_info,
+                          {.model_ms = step_model_ms,
+                           .ttft_ms = ttft,
+                           .input_tokens = step_res.usage.prompt_tokens,
+                           .cache_read_tokens = step_res.usage.cached_prompt_tokens,
+                           .cache_write_tokens = step_res.usage.cache_write_tokens,
+                           .output_tokens = step_res.usage.completion_tokens,
+                           .reasoning_tokens = step_think,
+                           .effort = effort,
+                           .variant = variant,
+                           .provider = provider_id,
+                           .model = usage_model_id(model_info, options.model),
+                           .cost = {}},  // priced by record_model_call
+                          step, streamed, step_res.is_success());
         const double tok_per_s =
             step_model_ms > 0 ? step_res.usage.completion_tokens / (step_model_ms / 1000.0) : 0.0;
         LOG_INFO("[latency] step={} mode={} model_ms={:.0f} ttft_ms={:.0f} "
@@ -1224,7 +1295,8 @@ static void run_stream_generation_bus(qcode::Client& client,
                                        qcode::GenerateOptions gen_options,
                                        bus::BusPort& bus,
                                        GenerationContext& ctx,
-                                       const std::string& provider_id = "") {
+                                       const std::string& provider_id = "",
+                                       const ModelInfo* model_info = nullptr) {
   qcode::StreamOptions stream_options(std::move(gen_options));
   auto gen_start_time = std::chrono::high_resolution_clock::now();
   auto stream = client.stream_text(stream_options);
@@ -1381,32 +1453,20 @@ static void run_stream_generation_bus(qcode::Client& client,
                               gen_start_time)
                               .count();
       stream_ok = false;
-      qcode::session::record_session_model_call(
-          ctx.session_id,
-          {.model_ms = latency_ms,
-           .ttft_ms = ttft_ms,
-           .input_tokens = stream_in_tokens,
-           .cache_read_tokens = stream_cache_read,
-           .cache_write_tokens = stream_cache_write,
-           .output_tokens = stream_out_tokens,
-           .reasoning_tokens = stream_think_tokens,
-           .effort = stream_options.reasoning_effort.value_or("off"),
-           .variant = stream_options.reasoning_variant.value_or("")});
-      bus.publish<qcode::contract::StepLatency>({
-          .session_id = ctx.session_id,
-          .step = 1,
-          .streamed = true,
-          .model_ms = latency_ms,
-          .ttft_ms = ttft_ms,
-          .output_tokens = stream_out_tokens,
-          .reasoning_tokens = stream_think_tokens,
-          .effort = stream_options.reasoning_effort.value_or("off"),
-          .ok = stream_ok,
-          .input_tokens = stream_in_tokens,
-          .cache_read_tokens = stream_cache_read,
-          .cache_write_tokens = stream_cache_write,
-          .variant = stream_options.reasoning_variant.value_or(""),
-      });
+      record_model_call(bus, ctx.session_id, model_info,
+                        {.model_ms = latency_ms,
+                         .ttft_ms = ttft_ms,
+                         .input_tokens = stream_in_tokens,
+                         .cache_read_tokens = stream_cache_read,
+                         .cache_write_tokens = stream_cache_write,
+                         .output_tokens = stream_out_tokens,
+                         .reasoning_tokens = stream_think_tokens,
+                         .effort = stream_options.reasoning_effort.value_or("off"),
+                         .variant = stream_options.reasoning_variant.value_or(""),
+                         .provider = provider_id,
+                         .model = usage_model_id(model_info, stream_options.model),
+                         .cost = {}},  // priced by record_model_call
+                        1, true, stream_ok);
       LOG_INFO("[latency] turn steps=1 mode=stream model_ms_total={:.0f} ttft_ms={:.0f} "
                "out_tokens={} think_tokens_total={} effort={} model={} ok=false",
                latency_ms, ttft_ms, stream_out_tokens, stream_think_tokens,
@@ -1467,32 +1527,20 @@ static void run_stream_generation_bus(qcode::Client& client,
                                   gen_start_time)
                                   .count();
     const std::string effort = stream_options.reasoning_effort.value_or("off");
-    qcode::session::record_session_model_call(
-        ctx.session_id,
-        {.model_ms = latency_ms,
-         .ttft_ms = ttft_ms,
-         .input_tokens = stream_in_tokens,
-         .cache_read_tokens = stream_cache_read,
-         .cache_write_tokens = stream_cache_write,
-         .output_tokens = stream_out_tokens,
-         .reasoning_tokens = stream_think_tokens,
-         .effort = effort,
-         .variant = stream_options.reasoning_variant.value_or("")});
-    bus.publish<qcode::contract::StepLatency>({
-        .session_id = ctx.session_id,
-        .step = 0,
-        .streamed = true,
-        .model_ms = latency_ms,
-        .ttft_ms = ttft_ms,
-        .output_tokens = stream_out_tokens,
-        .reasoning_tokens = stream_think_tokens,
-        .effort = effort,
-        .ok = !aborted,
-        .input_tokens = stream_in_tokens,
-        .cache_read_tokens = stream_cache_read,
-        .cache_write_tokens = stream_cache_write,
-        .variant = stream_options.reasoning_variant.value_or(""),
-    });
+    record_model_call(bus, ctx.session_id, model_info,
+                      {.model_ms = latency_ms,
+                       .ttft_ms = ttft_ms,
+                       .input_tokens = stream_in_tokens,
+                       .cache_read_tokens = stream_cache_read,
+                       .cache_write_tokens = stream_cache_write,
+                       .output_tokens = stream_out_tokens,
+                       .reasoning_tokens = stream_think_tokens,
+                       .effort = effort,
+                       .variant = stream_options.reasoning_variant.value_or(""),
+                       .provider = provider_id,
+                       .model = usage_model_id(model_info, stream_options.model),
+                       .cost = {}},  // priced by record_model_call
+                      0, true, !aborted);
     LOG_INFO("[latency] turn steps=1 mode=stream model_ms_total={:.0f} ttft_ms={:.0f} "
              "out_tokens={} think_tokens_total={} effort={} model={} ok={}",
              latency_ms, ttft_ms, stream_out_tokens, stream_think_tokens,
@@ -1675,8 +1723,9 @@ void run_generation_with_bus(
     if (!base_opts.top_p.has_value()) {
       base_opts.top_p = ProviderTransform::top_p(transform_model);
     }
-    if (resolved_model && resolved_model->output_limit > 0 && !base_opts.max_tokens.has_value()) {
-      base_opts.max_tokens = ProviderTransform::max_output_tokens(resolved_model->output_limit);
+    if (resolved_model && !base_opts.max_tokens.has_value()) {
+      // opencode.json max_tokens (model_defaults) capped by limit.output.
+      base_opts.max_tokens = ProviderTransform::max_output_tokens(*resolved_model);
     }
     base_opts.workspace = ctx.workspace;
     base_opts.session_id = ctx.session_id;
@@ -1765,7 +1814,7 @@ void run_generation_with_bus(
         return true;
       };
       run_tools_generation_bus(client, std::move(base_opts), bus, ctx,
-                               refresh_client, provider_id);
+                               refresh_client, provider_id, resolved_model);
     } else {
       if (is_server_duplex_agent) {
         LOG_INFO("ChatBus: ServerSideDuplex native agent stream (session_id={})",
@@ -1775,7 +1824,8 @@ void run_generation_with_bus(
             .status = "agent",
         });
       }
-      run_stream_generation_bus(client, std::move(base_opts), bus, ctx, provider_id);
+      run_stream_generation_bus(client, std::move(base_opts), bus, ctx, provider_id,
+                                resolved_model);
     }
 
     // Nested helpers usually publish idle themselves; a second idle from the

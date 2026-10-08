@@ -66,31 +66,38 @@ TUI and server load providers from a single `opencode.json`:
 
 Set provider API keys via environment variables (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or in that file’s provider options.
 
-Model behaviour lives in the same file, not in code. Per model (or once per
-provider under `model_defaults`, merged into every model with JSON merge-patch
-rules: model keys win, `null` removes an inherited key):
+Model behaviour lives in the same file, not in code. Per model, or once under
+`model_defaults` at the top level (every provider) or per provider. Defaults
+merge into each model with JSON merge-patch rules: top level, then provider,
+then the model; model keys win and `null` removes an inherited key:
 
 ```jsonc
-"anthropic": {
-  "model_defaults": {
-    // Claude wire form: "adaptive" = thinking{adaptive,display} + output_config.effort,
-    // "enabled" (or unset) = thinking{enabled,budget_tokens}. allow_off=false hides Off.
-    "thinking": { "type": "adaptive", "display": "summarized", "allow_off": false },
-    // /variant picker, in order. Each key is the id; effort defaults to the id.
-    "variants": {
-      "low": {}, "medium": {}, "high": { "max_tokens": 32000 },
-      "xhigh": { "max_tokens": 64000 }, "max": { "max_tokens": 64000 },
-      "ultra": { "label": "Ultra", "effort": "max", "max_tokens": 128000,
-                 "prompt": "Extra system instruction while ultra is active",
-                 "description": "Max effort + 128k output" }
-    }
-  },
-  "models": {
-    "claude-opus-5-5": {
-      "reasoning_default": "high",
-      "limit": { "context": 1000000, "output": 128000 },
-      // USD per 1M tokens; the Stats tab and header cost use these only.
-      "cost": { "input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5 }
+{
+  // Every provider's models: default request size (capped by limit.output).
+  "model_defaults": { "max_tokens": 32000 },
+  "provider": {
+    "anthropic": {
+      "model_defaults": {
+        // Claude wire form: "adaptive" = thinking{adaptive,display} + output_config.effort,
+        // "enabled" (or unset) = thinking{enabled,budget_tokens}. allow_off=false hides Off.
+        "thinking": { "type": "adaptive", "display": "summarized", "allow_off": false },
+        // /variant picker, in order. Each key is the id; effort defaults to the id.
+        "variants": {
+          "low": {}, "medium": {}, "high": { "max_tokens": 32000 },
+          "xhigh": { "max_tokens": 64000 }, "max": { "max_tokens": 64000 },
+          "ultra": { "label": "Ultra", "effort": "max", "max_tokens": 128000,
+                     "prompt": "Extra system instruction while ultra is active",
+                     "description": "Max effort + 128k output" }
+        }
+      },
+      "models": {
+        "claude-opus-5-5": {
+          "reasoning_default": "high",
+          "limit": { "context": 1000000, "output": 128000 },
+          // USD per 1M tokens; the Stats tab and header cost use these only.
+          "cost": { "input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5 }
+        }
+      }
     }
   }
 }
@@ -100,6 +107,31 @@ Variant fields: `effort` (wire value), `max_tokens` (raises the request,
 capped by `limit.output`), `budget_tokens` (budget-form models), `prompt`,
 `label`, `description`, `disabled`. A plain `"reasoning_efforts": [...]` list
 still works for models without a `variants` object.
+
+Limits and request size:
+
+- `limit.context` is the only source of a model's context window. Models
+  without one show no context percentage and skip automatic compaction; the
+  window is never guessed from the model name.
+- `max_tokens` is the default request size, capped by `limit.output`. Without
+  it the request asks for `limit.output`, and with neither the provider's own
+  default applies. There is no built-in cap. Subagents use the same budget;
+  a model missing from the catalog uses the lead model's budget.
+
+Gemini (Antigravity / `protocol: google`): the variant's wire `effort` is sent
+as `thinkingConfig.thinkingLevel` unchanged, `budget_tokens` as
+`thinkingBudget`, and `thinking.display: "omitted"` turns thought text off
+(`includeThoughts: false`). `thinking.type: "disabled"` sends no thinking
+config. For example `"max": {"effort": "high", "budget_tokens": 24576}`.
+Antigravity requests carry no output limit, so the endpoint's default applies
+there regardless of `max_tokens`.
+
+Cost: each model call is priced when it runs, at the serving model's `cost`
+(cache reads/writes without a price use `cost.input`). The session total in the
+TUI header, the Stats tab and the server's `GET /session/<id>/stats` (`usage`)
+is the sum of those calls, with a per-model split, so switching models or
+editing prices later never reprices earlier calls. Calls on models without a
+price are counted but not costed.
 
 ### Start the TUI
 

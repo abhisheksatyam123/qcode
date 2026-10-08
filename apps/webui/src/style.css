@@ -2343,6 +2343,22 @@ kbd {
   border-left: 3px solid var(--success);
 }
 
+.stat-card.kpi-card.cost {
+  border-left: 3px solid #f472b6;
+}
+
+.stat-card.kpi-card.calls {
+  border-left: 3px solid #a78bfa;
+}
+
+.stat-card.kpi-card.cache {
+  border-left: 3px solid #3ecf8e;
+}
+
+.stat-card.kpi-card.context {
+  border-left: 3px solid #fbbf24;
+}
+
 .stat-card-header {
   display: flex;
   align-items: center;
@@ -2484,6 +2500,64 @@ kbd {
 .legend-dot.completion { background: #2dd4bf; }
 .legend-dot.user-segment { background: #818cf8; }
 .legend-dot.asst-segment { background: #38bdf8; }
+.legend-dot.uncached { background: #38bdf8; }
+.legend-dot.cache-read { background: #3ecf8e; }
+.legend-dot.cache-write { background: #fbbf24; }
+
+.stat-progress-segment.uncached {
+  background: linear-gradient(90deg, #38bdf8, #0ea5e9);
+}
+
+.stat-progress-segment.cache-read {
+  background: linear-gradient(90deg, #3ecf8e, #22a06b);
+}
+
+.stat-progress-segment.cache-write {
+  background: linear-gradient(90deg, #fbbf24, #d97706);
+}
+
+/* Per-call usage: notes and the per-model cost table */
+.stats-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--faint);
+}
+
+.stats-model-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.stats-model-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.stats-model-table td {
+  padding: 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.stats-model-table th.num,
+.stats-model-table td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.stats-model-table td.model {
+  font-family: inherit;
+  color: var(--accent);
+  word-break: break-all;
+}
 
 .legend-label {
   color: var(--muted);

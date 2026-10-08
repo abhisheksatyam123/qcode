@@ -252,7 +252,7 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
 });
 
 // ── Get aggregate session statistics ──
-svr.Get("/session/([^/]+)/stats", [](const httplib::Request& req, httplib::Response& res) {
+svr.Get("/session/([^/]+)/stats", [providers_list](const httplib::Request& req, httplib::Response& res) {
     std::string sid = url_decode(req.matches[1]);
     if (!qcode::session::is_valid_session_id(sid)) {
         res.status = 400;
@@ -272,6 +272,50 @@ svr.Get("/session/([^/]+)/stats", [](const httplib::Request& req, httplib::Respo
         {"completion_tokens", st.completion_tokens}, {"total_tokens", st.total_tokens},
         {"total_tool_time_ms", st.total_tool_time_ms}
     };
+    // The session's model as configured in opencode.json (prices, limits,
+    // thinking); null when it is no longer in the catalog.
+    const qcode::ModelInfo* model = nullptr;
+    if (providers_list) {
+        for (const auto& p : *providers_list) {
+            if (p.id != st.provider && p.name != st.provider) continue;
+            for (const auto& m : p.models) {
+                if (m.id == st.model || m.name == st.model) {
+                    model = &m;
+                    break;
+                }
+            }
+            break;
+        }
+    }
+    const auto usage = qcode::session::get_session_usage_stats(sid);
+    // Per-call usage: billed input with cache split, latency, and the cost of
+    // every call at its own model's prices (session_cost).
+    j["usage"] = qcode::session::usage_summary_json(usage, model, st.prompt_tokens,
+                                                    st.completion_tokens);
+    if (model != nullptr) {
+        j["model_info"] = {
+            {"id", model->id},
+            {"name", model->name},
+            {"context_window", model->context_window},
+            {"output_limit", model->output_limit},
+            {"max_tokens", model->max_tokens},
+            {"cost", {{"input", model->input_cost},
+                      {"output", model->output_cost},
+                      {"cache_read", model->cache_read_cost},
+                      {"cache_write", model->cache_write_cost}}},
+            {"thinking", {{"type", model->thinking_type},
+                          {"display", model->thinking_display},
+                          {"allow_off", model->thinking_allow_off}}},
+            {"reasoning_default", model->reasoning_default},
+            {"variants", model->reasoning_efforts},
+        };
+    } else {
+        j["model_info"] = nullptr;
+    }
+    // Context in use = the prompt of the latest call; the window comes only
+    // from opencode.json limit.context (0 = unknown).
+    j["context"] = {{"used", usage.last_input_tokens},
+                    {"window", model != nullptr ? model->context_window : 0}};
     res.set_content(j.dump(2), "application/json");
 });
 

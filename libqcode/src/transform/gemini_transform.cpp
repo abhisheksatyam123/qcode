@@ -85,7 +85,8 @@ nlohmann::json sanitize_gemini_schema(nlohmann::json node) {
   return node;
 }
 
-nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
+nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req,
+                                             const GeminiThinking& thinking) {
   nlohmann::json gemini_req = nlohmann::json::object();
   nlohmann::json contents = nlohmann::json::array();
   std::string system_instruction;
@@ -242,16 +243,19 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req) {
              openai_req["reasoning"].is_object()) {
     effort = openai_req["reasoning"].value("effort", "");
   }
-  if (effort == "low" || effort == "medium" || effort == "high") {
+  // opencode.json owns the mapping: the variant's wire effort is the
+  // thinkingLevel, its budget_tokens the thinkingBudget, and thinking.display
+  // "omitted" turns thought text off. No effort (or "off") sends no
+  // thinkingConfig, so the model thinks at its own default.
+  if (!effort.empty() && effort != "off" && thinking.type != "disabled") {
     // includeThoughts is required to get thought text parts back. Without
     // it Gemini still bills thoughtsTokenCount but returns only signatures.
-    gen_config["thinkingConfig"] = {
-        {"thinkingLevel", effort}, {"includeThoughts", true}};
-  } else if (effort == "max") {
-    // Gemini thinkingLevel is low|medium|high; max maps to a large budget.
-    gen_config["thinkingConfig"] = {{"thinkingLevel", "high"},
-                                    {"thinkingBudget", 24576},
-                                    {"includeThoughts", true}};
+    nlohmann::json thinking_config = {{"thinkingLevel", effort},
+                                      {"includeThoughts", thinking.display != "omitted"}};
+    if (thinking.budget_tokens > 0) {
+      thinking_config["thinkingBudget"] = thinking.budget_tokens;
+    }
+    gen_config["thinkingConfig"] = std::move(thinking_config);
   }
   gemini_req["generationConfig"] = std::move(gen_config);
 
@@ -479,8 +483,9 @@ nlohmann::json normalize_gemini_response_impl(const nlohmann::json& response) {
 std::string new_uuid() { return utils::new_uuid(); }
 std::string random_hex(size_t len) { return utils::random_hex(len); }
 
-nlohmann::json convert_openai_to_gemini(const nlohmann::json& openai_req) {
-  return convert_openai_to_gemini_impl(openai_req);
+nlohmann::json convert_openai_to_gemini(const nlohmann::json& openai_req,
+                                        const GeminiThinking& thinking) {
+  return convert_openai_to_gemini_impl(openai_req, thinking);
 }
 
 nlohmann::json wrap_antigravity_envelope(nlohmann::json gemini_req,

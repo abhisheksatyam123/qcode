@@ -7,13 +7,23 @@
 namespace qcode {
 namespace antigravity {
 
+namespace {
+// opencode.json thinking settings the OpenAI-shaped inner request drops.
+qcode::gemini::GeminiThinking gemini_thinking(const GenerateOptions& options) {
+  return {.type = options.thinking_type.value_or(""),
+          .display = options.thinking_display.value_or(""),
+          .budget_tokens = options.budget_tokens.value_or(0)};
+}
+}  // namespace
+
 nlohmann::json AntigravityRequestBuilder::build_request_json(
     const GenerateOptions& options) {
   // Reuse the OpenAI message/tool/parameter assembly, then translate to the
   // Gemini generateContent shape and wrap in the Antigravity envelope.
   openai::OpenAIRequestBuilder inner;
   return qcode::gemini::wrap_antigravity_envelope(
-      qcode::gemini::convert_openai_to_gemini(inner.build_request_json(options)),
+      qcode::gemini::convert_openai_to_gemini(inner.build_request_json(options),
+                                              gemini_thinking(options)),
       options.model, project_id_);
 }
 

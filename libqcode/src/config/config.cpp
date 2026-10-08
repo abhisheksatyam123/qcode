@@ -1,5 +1,4 @@
 #include <qcode/config/config.h>
-#include <qcode/session/session_store.h>
 #include <qcode/tools/subagent_router.h>
 #include <qcode/core/ssl_config.h>
 #include <qcode/transform/provider_transform.h>
@@ -25,24 +24,6 @@
 #include <qcode/core/logger.h>
 
 namespace qcode {
-
-static int resolve_model_context_window(const std::string& model_id) {
-    auto summary = session::get_model_performance_summary(model_id);
-    if (summary.context_window > 0) return summary.context_window;
-    std::string lower = model_id;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    if (lower.find("2m") != std::string::npos || lower.find("gemini-3.1") != std::string::npos) {
-        return 2000000;
-    }
-    if (lower.find("gemini") != std::string::npos || lower.find("deepseek") != std::string::npos ||
-        lower.find("nemotron") != std::string::npos || lower.find("1m") != std::string::npos) {
-        return 1000000;
-    }
-    if (lower.find("claude") != std::string::npos) {
-        return 200000;
-    }
-    return 200000;
-}
 
 using ordered_json = nlohmann::ordered_json;
 // OpenCode uses these bundled Antigravity OAuth client credentials to refresh
@@ -552,6 +533,11 @@ std::vector<ProviderInfo> load_providers_from_config() {
             enabled_providers = std::move(set);
         }
 
+        // Top-level "model_defaults" apply to every provider's models.
+        const ordered_json global_model_defaults =
+            config.contains("model_defaults") && config["model_defaults"].is_object()
+                ? config["model_defaults"]
+                : ordered_json::object();
         if (config.contains("provider")) {
             for (auto& [prov_id, prov_data] : config["provider"].items()) {
                 if (enabled_providers.has_value() && !enabled_providers->contains(prov_id)) {
@@ -595,14 +581,15 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 prov.project_id = resolve_config_value(
                     options.value("project", ordered_json{}));
                 if (prov_data.contains("models")) {
-                    // Provider-wide "model_defaults" (thinking, variants, limit,
-                    // cost, ...) are merged under every model (RFC 7386 merge
-                    // patch: model keys win, a null value removes a default).
-                    const ordered_json model_defaults =
-                        prov_data.contains("model_defaults") &&
-                                prov_data["model_defaults"].is_object()
-                            ? prov_data["model_defaults"]
-                            : ordered_json::object();
+                    // "model_defaults" (thinking, variants, limit, max_tokens,
+                    // cost, ...) are merged under every model, top-level first,
+                    // then the provider's (RFC 7386 merge patch: model keys win,
+                    // a null value removes an inherited default).
+                    ordered_json model_defaults = global_model_defaults;
+                    if (prov_data.contains("model_defaults") &&
+                        prov_data["model_defaults"].is_object()) {
+                        model_defaults.merge_patch(prov_data["model_defaults"]);
+                    }
                     for (auto& [model_id, raw_model_data] : prov_data["models"].items()) {
                         ordered_json model_data = model_defaults;
                         if (raw_model_data.is_object()) {
@@ -614,9 +601,10 @@ std::vector<ProviderInfo> load_providers_from_config() {
                         if (model_data.contains("limit") &&
                             model_data["limit"].is_object()) {
                             const auto& limit = model_data["limit"];
-                            model.context_window = limit.value("context", 0);
-                            model.output_limit = limit.value("output", 0);
+                            model.context_window = json_int(limit, "context");
+                            model.output_limit = json_int(limit, "output");
                         }
+                        model.max_tokens = json_int(model_data, "max_tokens");
                         if (model_data.contains("cost") &&
                             model_data["cost"].is_object()) {
                             const auto& cost = model_data["cost"];
@@ -742,10 +730,6 @@ std::vector<ProviderInfo> load_providers_from_config() {
                             model_data["reasoning_field"].is_string()) {
                             model.reasoning_field =
                                 model_data["reasoning_field"].get<std::string>();
-                        }
-                        if (model.context_window <= 0) {
-                            model.context_window =
-                                resolve_model_context_window(model_id);
                         }
                         ProviderTransform::apply_reasoning_defaults(model);
                         prov.models.push_back(std::move(model));

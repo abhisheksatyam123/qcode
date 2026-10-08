@@ -399,7 +399,10 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
   }
 
   if (wire_protocol_ == "google") {
-    return qcode::gemini::convert_openai_to_gemini(request);
+    return qcode::gemini::convert_openai_to_gemini(
+        request, {.type = options.thinking_type.value_or(""),
+                  .display = options.thinking_display.value_or(""),
+                  .budget_tokens = options.budget_tokens.value_or(0)});
   }
 
   if (!use_responses_) return request;
