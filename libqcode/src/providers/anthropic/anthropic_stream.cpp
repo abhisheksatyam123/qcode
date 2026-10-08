@@ -1,4 +1,5 @@
 #include "anthropic_stream.h"
+#include "anthropic_response_parser.h"
 
 #include "core/http_request_handler.h"
 #include <qcode/core/logger.h>
@@ -241,9 +242,11 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
       // message_start.message.usage carries input_tokens (+ cache hits).
       if (json_event.contains("message") && json_event["message"].contains("usage")) {
         const auto& usage = json_event["message"]["usage"];
-        stream_usage_.prompt_tokens = usage.value("input_tokens", stream_usage_.prompt_tokens);
-        const int cached = usage.value("cache_read_input_tokens", 0);
-        if (cached > 0) stream_usage_.cached_prompt_tokens = cached;
+        // input_tokens EXCLUDES cache reads/writes; normalize to the full
+        // prompt size with cached as a subset (OpenAI semantics).
+        const auto in = normalize_input_usage(usage);
+        stream_usage_.prompt_tokens = in.prompt_tokens;
+        stream_usage_.cached_prompt_tokens = in.cached_prompt_tokens;
         stream_usage_.total_tokens =
             stream_usage_.prompt_tokens + stream_usage_.completion_tokens;
         stream_usage_seen_ = true;
@@ -275,6 +278,13 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
         const auto& usage = json_event["usage"];
         const int out = usage.value("output_tokens", 0);
         if (out > 0) stream_usage_.completion_tokens = out;
+        // message_delta usage is cumulative; when it repeats the input-side
+        // counts, prefer them (same normalization as message_start).
+        const auto in = normalize_input_usage(usage);
+        if (in.present && in.prompt_tokens > 0) {
+          stream_usage_.prompt_tokens = in.prompt_tokens;
+          stream_usage_.cached_prompt_tokens = in.cached_prompt_tokens;
+        }
         if (usage.contains("output_tokens_details") && usage["output_tokens_details"].is_object()) {
           const auto& det = usage["output_tokens_details"];
           const int think = det.value("reasoning_tokens", det.value("thinking_tokens", 0));

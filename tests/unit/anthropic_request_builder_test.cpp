@@ -111,6 +111,38 @@ TEST(AnthropicRequestBuilderTest, MarksLastTwoUserTurnsSkipsAssistantTail) {
   EXPECT_TRUE(request["messages"][1].dump().find("cache_control") == std::string::npos);
 }
 
+// Anthropic input_tokens excludes cache reads/writes; qcode reports the full
+// prompt with cached as a subset (regression: session showed prompt=10 for a
+// 160-message Claude Code Max session served almost entirely from cache).
+TEST(AnthropicUsageTest, NormalizesCachedInputIntoPromptTokens) {
+  const nlohmann::json usage = {{"input_tokens", 3},
+                                {"cache_read_input_tokens", 40000},
+                                {"cache_creation_input_tokens", 1200},
+                                {"output_tokens", 250}};
+  const auto in = normalize_input_usage(usage);
+  EXPECT_TRUE(in.present);
+  EXPECT_EQ(in.prompt_tokens, 41203);
+  EXPECT_EQ(in.cached_prompt_tokens, 40000);
+
+  const nlohmann::json response = {
+      {"content", {{{"type", "text"}, {"text", "ok"}}}},
+      {"stop_reason", "end_turn"},
+      {"usage", usage}};
+  AnthropicResponseParser parser;
+  const auto res = parser.parse_success_completion_response(response);
+  EXPECT_EQ(res.usage.prompt_tokens, 41203);
+  EXPECT_EQ(res.usage.cached_prompt_tokens, 40000);
+  EXPECT_EQ(res.usage.completion_tokens, 250);
+  EXPECT_EQ(res.usage.total_tokens, 41453);
+}
+
+TEST(AnthropicUsageTest, OutputOnlyDeltaIsNotInputUsage) {
+  const auto in = normalize_input_usage(nlohmann::json{{"output_tokens", 9}});
+  EXPECT_FALSE(in.present);
+  EXPECT_EQ(in.prompt_tokens, 0);
+  EXPECT_EQ(in.cached_prompt_tokens, 0);
+}
+
 }  // namespace
 }  // namespace anthropic
 }  // namespace qcode

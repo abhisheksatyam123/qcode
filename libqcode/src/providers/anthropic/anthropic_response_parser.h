@@ -25,5 +25,15 @@ class AnthropicResponseParser : public providers::ResponseParser {
   static FinishReason parse_stop_reason(const std::string& reason);
 };
 
+// Normalized input-side token counts from an Anthropic `usage` object.
+// Anthropic's input_tokens EXCLUDES cache reads/writes; qcode uses OpenAI
+// semantics: prompt = full prompt size, cached = subset served from cache.
+struct AnthropicInputUsage {
+  int prompt_tokens = 0;
+  int cached_prompt_tokens = 0;
+  bool present = false;  // any input-side field was in the object
+};
+AnthropicInputUsage normalize_input_usage(const nlohmann::json& usage);
+
 }  // namespace anthropic
 }  // namespace qcode

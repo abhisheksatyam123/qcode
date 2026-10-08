@@ -94,16 +94,12 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
   // Extract usage (incl. prompt-cache + thinking token details)
   if (response.contains("usage")) {
     auto& usage = response["usage"];
-    result.usage.prompt_tokens = usage.value("input_tokens", 0);
+    const auto in = normalize_input_usage(usage);
+    result.usage.prompt_tokens = in.prompt_tokens;
     result.usage.completion_tokens = usage.value("output_tokens", 0);
     result.usage.total_tokens =
         result.usage.prompt_tokens + result.usage.completion_tokens;
-    result.usage.cached_prompt_tokens =
-        usage.value("cache_read_input_tokens", 0);
-    if (result.usage.cached_prompt_tokens == 0 &&
-        usage.contains("cache_creation_input_tokens")) {
-      // Creation tokens are cache writes, not hits; record hits only.
-    }
+    result.usage.cached_prompt_tokens = in.cached_prompt_tokens;
     // Thinking output lives inside output_tokens; providers may split it out.
     if (usage.contains("output_tokens_details") && usage["output_tokens_details"].is_object()) {
       result.usage.reasoning_completion_tokens =
@@ -187,6 +183,23 @@ FinishReason AnthropicResponseParser::parse_stop_reason(
     return kFinishReasonToolCalls;
   }
   return kFinishReasonStop;
+}
+
+AnthropicInputUsage normalize_input_usage(const nlohmann::json& usage) {
+  AnthropicInputUsage out;
+  if (!usage.is_object()) return out;
+  auto num = [&](const char* key) {
+    const auto it = usage.find(key);
+    return (it != usage.end() && it->is_number_integer()) ? it->get<int>() : 0;
+  };
+  out.present = usage.contains("input_tokens") ||
+                usage.contains("cache_read_input_tokens") ||
+                usage.contains("cache_creation_input_tokens");
+  const int cache_read = num("cache_read_input_tokens");
+  const int cache_write = num("cache_creation_input_tokens");
+  out.prompt_tokens = num("input_tokens") + cache_read + cache_write;
+  out.cached_prompt_tokens = cache_read;
+  return out;
 }
 
 }  // namespace anthropic
