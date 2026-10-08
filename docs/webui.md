@@ -48,6 +48,15 @@ Tests: `npm test --prefix apps/webui` (32 tests: 16 integration + 16 unit).
 - Inline stream errors surface gracefully via `.stream-error` banners.
 - Server maintains 2.5s `backend.heartbeat` keepalives, per-turn abort flags, and graceful shutdown handling.
 
+## Stats Tab
+- Session-scoped usage from `GET /session/:id/stats`: cost (each call priced at its model's
+  opencode.json `cost` when it ran; unpriced, legacy and estimated calls are noted), cache
+  reads/writes and hit rate, latency (avg call, TTFT, output tok/s), context used vs
+  `limit.context`, and a per-model table.
+- Follows a running turn: every `backend.step.latency` stream event (one per model call,
+  persisted before it is sent) schedules a quiet, debounced reload; the turn end reloads
+  once more.
+
 ## Thinking & Reasoning Visibility
 - Reasoning effort configurable via `/variant` or dropdown (`off`, `low`, `medium`, `high`).
 - Thinking trace toggle (`#thinking-toggle-btn` / `F2`) allows instantly expanding or collapsing model reasoning blocks.

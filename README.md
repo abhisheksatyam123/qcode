@@ -108,6 +108,10 @@ capped by `limit.output`), `budget_tokens` (budget-form models), `prompt`,
 `label`, `description`, `disabled`. A plain `"reasoning_efforts": [...]` list
 still works for models without a `variants` object.
 
+Sampling: a model's `"temperature"` (a number, or `false` to send none) and
+`"top_p"` (also accepted under its `"options"`) override the built-in model
+family defaults, which apply only when the config is silent.
+
 Limits and request size:
 
 - `limit.context` is the only source of a model's context window. Models
@@ -126,12 +130,18 @@ config. For example `"max": {"effort": "high", "budget_tokens": 24576}`.
 The output budget (`max_tokens` / `limit.output`) is sent as
 `maxOutputTokens`, and usage counts thought tokens as output, as Google bills.
 
+Config changes: the TUI re-reads opencode.json with `/reload` (models, prices,
+variants, limits; a running turn keeps the config it started with). The server
+reads it at startup, so restart `qcode-server` to apply edits. Values of the
+wrong type are ignored with a warning naming their path (TUI toast + log).
+
 Cost: each model call is priced when it runs, at the serving model's `cost`
 (cache reads/writes without a price use `cost.input`). The session total in the
 TUI header, the Stats tab and the server's `GET /session/<id>/stats` (`usage`)
 is the sum of those calls, with a per-model split, so switching models or
 editing prices later never reprices earlier calls. Calls on models without a
-price are counted but not costed.
+`cost` are counted but not costed; an explicit all-zero `cost` marks a free
+model, whose calls count as $0.
 
 ### Start the TUI
 
@@ -156,6 +166,9 @@ Then open `http://localhost:9080` for the Web UI, or use the CLI client:
 ```bash
 ./build/host-debug/apps/cli/qcode-cli --prompt "Hello"
 ```
+
+Without `--session <id>` the CLI creates a session (workspace: `--workspace <dir>`, default
+the current directory) and prints its id on stderr for follow-up prompts.
 
 Server logs go to `/tmp/qcode-server.log`.
 

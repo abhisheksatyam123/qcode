@@ -31,13 +31,46 @@ Unversioned JSON API served by `qcode-server` (default port 9080). WebUI static 
 | DELETE | `/session/:id` | Permanently delete session and cascade delete all messages |
 | POST | `/session/:id/clear` | Truncate message history for a session |
 | GET | `/session/:id/messages` | List historical messages for session |
-| POST | `/session/:id/compact` | Summarize/compact session context with LLM (the session's provider/model, resolved as for generate); optional `{"keep": N}` |
-| GET | `/session/:id/stats` | Aggregate session token and tool runtime statistics, read from persisted rows (a running turn's tool calls are saved as they happen) |
+| POST | `/session/:id/compact` | Summarize/compact session context with LLM (the session's provider/model, resolved as for generate); optional `{"keep": N}`. See [Compaction](#compaction) |
+| GET | `/session/:id/stats` | Session statistics read from persisted rows (a running turn's tool calls are saved as they happen). See [Session stats](#session-stats) |
 | GET | `/session/:id/logs` | Retrieve isolated session logs; optional `?raw=1` or `?lines=N` |
 | GET | `/logs` | Retrieve server unscoped log; optional `?raw=1` or `?lines=N` |
 | POST | `/session/:id/generate` | NDJSON stream of generation bus events (tokens, tool calls, results); see [Generation turns](#generation-turns) |
 | DELETE | `/session/:id/queue` | Withdraw prompts the running turn has not taken yet: `{"text": "..."}` drops that prompt, empty body drops all |
 | POST | `/generate` | Legacy single-turn generate: `{"session_id": "...", "text": "..."}` |
+
+### Session stats
+
+`GET /session/:id/stats` returns the session row counts (`message_count`,
+`user_messages`, `assistant_messages`, `tool_calls`, `prompt_tokens`,
+`completion_tokens`, `total_tokens`, `total_tool_time_ms`) plus:
+
+- `usage`: every model call of the session (turn steps, compaction, step-cap
+  summaries; subagent calls count in their child session). Totals
+  `model_calls`, `input_tokens` (whole prompts incl. cache), `cache_read_tokens`,
+  `cache_write_tokens`, `uncached_input_tokens`, `output_tokens`,
+  `reasoning_tokens`, `cache_hit_pct`; latency `avg_call_ms`, `avg_ttft_ms`,
+  `output_tok_per_s`, `model_ms_max`/`_last`; `last_input_tokens`,
+  `last_effort`, `last_variant`; `cost` (`input`, `cache_read`, `cache_write`,
+  `output`, USD), `priced_calls`, `unpriced_calls`, `legacy_calls`; `by_model`
+  keyed `"provider/model"` with the same token and cost fields; and
+  `session_cost` {`total`, `available`, `estimated`, `unpriced_calls`,
+  `legacy_calls`, parts}. Each call is priced when it runs at its model's
+  `cost` from opencode.json; an all-zero `cost` is a free model.
+- `model_info`: the session model's config (`context_window`, `output_limit`,
+  `max_tokens`, `cost`, `thinking`, `reasoning_default`, `variants`), or `null`.
+- `context`: `{"used": <last prompt tokens>, "window": <limit.context, 0 = unknown>}`.
+
+### Compaction
+
+`POST /session/:id/compact` replays the conversation as the next turn would send it
+(history after the latest summary, the turn's system prompt, tool schemas, output budget
+and the session variant's thinking settings) with the compaction directive as the final
+user message, so the summarizer reuses the provider's prompt cache of the last turn. The
+variant is the session's `reasoning_mode`, stored by every generate call (override with
+`{"reasoning_mode": ...}`). The summary replaces the history with a handoff note plus the
+last `keep` messages and is written to `<workspace>/scratchpad/handoff-<id>.md`; the call
+is billed in the session's `usage`.
 
 ### Generation turns
 
@@ -51,7 +84,8 @@ of a turn it stopped).
   `{"type":"session.started","turn":N}` and ends with `generation.complete`
   (`error` set when the turn failed).
 - `provider` / `model` (id or name) default to the session's stored ones, then to the first
-  configured provider. A provider that is given or stored but not configured is rejected with
+  configured provider. `agent_mode` and `reasoning_mode` (default `"off"`) are stored on
+  the session (`GET /session/:id`) and reused by `/compact`. A provider that is given or stored but not configured is rejected with
   **400** `{"error":"provider '<p>' is not configured","providers":["<id>",...]}` (also for
   `/compact`); an unknown model falls back to the provider's first model (logged).
 - The same call while a turn runs returns **202** `{"queued":true,"turn":N}`: the running

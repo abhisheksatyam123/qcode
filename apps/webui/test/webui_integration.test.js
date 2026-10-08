@@ -302,37 +302,40 @@ test('WebUI tool calls use a single background color', () => {
   assert.equal(errM[1].trim(), expected, '.tool-output.error background should be ' + expected);
 });
 
-test('WebUI background message sync heals stale lists without clobbering streams', () => {
+test('WebUI session refresh heals stale lists without clobbering streams', () => {
   const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
 
-  // Sync function exists and targets the active session's /messages endpoint
-  assert.match(appJs, /function syncActiveSessionMessages/, 'missing syncActiveSessionMessages');
-  assert.match(appJs, /\/session\/' \+ session\.id \+ '\/messages'/, 'sync should refetch /session/:id/messages');
+  // A cheap GET /session/:id decides; /messages is refetched only on change.
+  assert.match(appJs, /async function refreshSession\(session, opts\)/, 'missing refreshSession');
+  assert.match(appJs, /async function syncSessionMessages\(session\)/, 'missing syncSessionMessages');
+  assert.match(appJs, /fetch\('\/session\/' \+ session\.id, \{ cache: 'no-store' \}\)/, 'refresh should GET /session/:id');
+  assert.match(appJs, /fetch\('\/session\/' \+ session\.id \+ '\/messages'/, 'sync should refetch /session/:id/messages');
+  assert.match(appJs, /function sessionRev\(info\)/, 'refresh should compare the session revision');
+  assert.match(appJs, /if \(!force && rev === session\.serverRev\) return;/, 'unchanged sessions must not refetch history');
 
-  // Must never interrupt streaming: skip on generating / reader / cancelRequested
-  assert.match(appJs, /session\.generating \|\| session\.reader \|\| session\.cancelRequested/, 'sync must skip while streaming');
-  assert.match(appJs, /if \(!state\.sessionId\) return/, 'sync must skip with no active session');
+  // Never interrupt a live turn: the stream is authoritative; running turns reattach.
+  assert.match(appJs, /if \(session\.stream\) return;/, 'refresh must skip while a stream is attached');
+  assert.match(appJs, /if \(!Array\.isArray\(msgs\) \|\| session\.stream\) return false;/, 'sync must not replace a streaming session');
+  assert.match(appJs, /attachToRunningTurn\(session\)/, 'refresh should reattach to a running turn');
 
-  // Change detection: only render when count/signature differs
-  assert.match(appJs, /messageSignature/, 'sync should compare message signatures before rendering');
-  assert.match(appJs, /syncActiveSessionMessages\(\{ ?silent/, 'sync calls should pass {silent:true}');
+  // Change detection: only render when the message signature differs.
+  assert.match(appJs, /messageSignature\(tmp\.messages\) === messageSignature\(session\.messages\)/, 'sync should compare message signatures before rendering');
 
-  // Scroll preservation: never force-scroll a user who scrolled up
-  assert.match(appJs, /nearBottom\(\)/, 'sync should check nearBottom before scrolling');
+  // Scroll preservation: never force-scroll a user who scrolled up.
+  assert.match(appJs, /const stickToBottom = nearBottom\(\);/, 'sync should check nearBottom before scrolling');
 
-  // Event wiring: visibility + focus + online
-  assert.match(appJs, /document\.addEventListener\('visibilitychange'/, 'missing visibilitychange listener');
-  assert.match(appJs, /window\.addEventListener\('focus'/, 'missing focus listener');
-  assert.match(appJs, /window\.addEventListener\('online'/, 'missing online listener');
+  // Overlap guard: a refresh requested mid-refresh runs once afterwards.
+  assert.match(appJs, /session\.refreshAgain/, 'missing overlapping-refresh guard');
 
-  // 15s interval guarded by document.hidden / generating
-  assert.match(appJs, /setInterval\(\(\) => \{\s*\n?\s*if \(document\.hidden/, 'missing guarded interval sync');
-  assert.match(appJs, /active\.generating/, 'interval sync must skip while generating');
-  assert.match(appJs, /, 15000\)/, 'interval sync should run every 15s');
+  // Triggers: visibility + focus + online + a light 5s poll that skips hidden tabs.
+  assert.match(appJs, /document\.addEventListener\('visibilitychange', refreshActiveSession\)/, 'missing visibilitychange trigger');
+  assert.match(appJs, /window\.addEventListener\('focus', refreshActiveSession\)/, 'missing focus trigger');
+  assert.match(appJs, /window\.addEventListener\('online', refreshActiveSession\)/, 'missing online trigger');
+  assert.match(appJs, /setInterval\(refreshActiveSession, 5000\)/, 'missing light poll');
+  assert.match(appJs, /function refreshActiveSession\(\) \{\s*if \(document\.hidden\) return;/, 'poll must skip hidden tabs');
 
-  // Overlap guard + post-stream reconciliation
-  assert.match(appJs, /syncingMessages/, 'missing overlapping-sync guard flag');
-  assert.match(appJs, /schedulePostStreamSync/, 'missing post-stream reconcile trigger');
+  // Post-stream reconciliation: a finished turn forces one refresh.
+  assert.match(appJs, /setTimeout\(\(\) => refreshSession\(session, \{ force: true \}\), 300\)/, 'missing post-stream reconcile');
 });
 
 test('WebUI thinking visibility: low default, open-param thought block, header toggle pill', () => {
@@ -403,4 +406,11 @@ test('WebUI new session creation reflects title and workspace', () => {
   // createNewSession sends title and handles title resolution
   assert.match(appJs, /title,\s*custom_id:\s*title/, 'createNewSession should send title to /sessions');
   assert.match(appJs, /data\.title !== data\.id/, 'createNewSession should avoid clobbering title with id');
+});
+
+test('WebUI Stats tab follows live model calls', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  assert.match(appJs, /case 'backend\.step\.latency':[\s\S]{0,240}scheduleStatsRefresh\(\)/, 'step latency events should refresh an open Stats tab');
+  assert.match(appJs, /function scheduleStatsRefresh\(\) \{\s*if \(statsRefreshTimer\) return;/, 'Stats refresh should be debounced');
+  assert.match(appJs, /loadStatsTab\(\{ quiet: true \}\)/, 'live refresh should be quiet (no skeleton)');
 });

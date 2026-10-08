@@ -240,3 +240,14 @@ test('renderUsageSections: cost, cache, latency and per-model rows', async () =>
   assert.match(empty, /start with this session's next model call/);
   assert.match(empty, /window unknown: set limit.context/);
 });
+
+test('renderUsageSections: subagent cost line', async () => {
+  const { renderUsageSections } = await import('../src/utils.js');
+  const html = renderUsageSections({
+    usage: { model_calls: 2, session_cost: { available: true, total: 0.5 } },
+    subagents: { sessions: 2, model_calls: 5, session_cost: { available: true, total: 0.25 } },
+  });
+  assert.match(html, /\+ \$0\.2500 in 2 subagent sessions/);
+  const none = renderUsageSections({ usage: { model_calls: 1 }, subagents: { sessions: 0 } });
+  assert.doesNotMatch(none, /subagent session/);
+});

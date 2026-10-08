@@ -147,6 +147,13 @@ export function renderUsageSections(data) {
   const used = Number(ctx.used) || 0;
 
   const costValue = cost.available ? formatUsd(cost.total) : '—';
+  // Delegated work is billed in child sessions; /stats rolls it up.
+  const sub = data.subagents || null;
+  const subSessions = sub ? Number(sub.sessions) || 0 : 0;
+  const subCost = subSessions > 0 ? usageCostSummary(sub) : null;
+  const subLine = subSessions > 0
+    ? `<div class="stat-subtext">+ ${esc(subCost.available ? formatUsd(subCost.total) : 'unpriced')} in ${esc(String(subSessions))} subagent session${subSessions === 1 ? '' : 's'}</div>`
+    : '';
   const costSub = cost.available
     ? (cost.estimated ? 'estimate · current model price' : 'each call at its model price')
     : (calls > 0 ? 'no price configured' : 'no model calls yet');
@@ -159,6 +166,7 @@ export function renderUsageSections(data) {
           </div>
           <div class="stat-value accent">${esc(costValue)}</div>
           <div class="stat-subtext">${esc(costSub)}</div>
+          ${subLine}
         </div>
         <div class="stat-card kpi-card calls">
           <div class="stat-card-header">

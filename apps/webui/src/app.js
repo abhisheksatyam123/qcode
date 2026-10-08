@@ -3321,6 +3321,11 @@ function handleEvent(evt, msg, session) {
         scheduleStreamingRender(session, msg);
       }
       break;
+    case 'backend.step.latency':
+      // Each model call is priced and persisted before this event: an open
+      // Stats tab follows the turn call by call.
+      if (session.id === state.sessionId && state.activeTab === 'stats') scheduleStatsRefresh();
+      break;
     case 'backend.token.usage.updated': {
       const parts = [];
       if (evt.prompt_tokens != null && evt.prompt_tokens > 0) parts.push('prompt ' + evt.prompt_tokens);
@@ -4270,6 +4275,16 @@ function copyStatsSummary() {
   }
   const mdText = md.join('\n');
   copyText(mdText, 'Stats summary copied to clipboard');
+}
+
+// Coalesces a turn's per-call events into one quiet Stats reload.
+let statsRefreshTimer = null;
+function scheduleStatsRefresh() {
+  if (statsRefreshTimer) return;
+  statsRefreshTimer = setTimeout(() => {
+    statsRefreshTimer = null;
+    if (state.activeTab === 'stats') loadStatsTab({ quiet: true });
+  }, 500);
 }
 
 async function loadStatsTab(opts) {
