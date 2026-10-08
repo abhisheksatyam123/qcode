@@ -1,5 +1,6 @@
 #include "anthropic_request_builder.h"
 #include "anthropic_oauth.h"
+#include "anthropic_thinking.h"
 
 #include <qcode/core/logger.h>
 #include <qcode/transform/provider_transform.h>
@@ -25,27 +26,44 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   const bool claude_route =
       options.model.find("claude") != std::string::npos ||
       options.model.find("anthropic") != std::string::npos;
-  int max_tokens = options.max_tokens.value_or(4096);
-  std::optional<int> thinking_budget = options.budget_tokens;
-  if (!thinking_budget && options.reasoning_effort &&
-      *options.reasoning_effort != "off" &&
-      !options.reasoning_effort->empty()) {
-    const auto& effort = *options.reasoning_effort;
-    thinking_budget = effort == "low"      ? 2000
-                      : effort == "medium" ? 8000
-                      : effort == "max"    ? 24000
-                                           : 16000;
-  } else if (!thinking_budget && options.model.find("thinking") != std::string::npos) {
-    thinking_budget = 8000;
-  }
-  if (thinking_budget.has_value()) {
-    // Anthropic requires budget_tokens >= 1024 and max_tokens > budget_tokens.
-    *thinking_budget = std::max(*thinking_budget, 1024);
-    max_tokens = std::max(max_tokens, *thinking_budget + 1024);
-    request["thinking"] = {{"type", "enabled"},
-                           {"budget_tokens", *thinking_budget}};
+  // Thinking form is model-dependent (see anthropic_thinking.h): Claude >=4.6
+  // takes thinking{type:adaptive, display:summarized} + output_config{effort}
+  // and ignores budget_tokens; older models keep the legacy budget form.
+  const AnthropicThinkingPlan thinking =
+      anthropic_plan_thinking(options.model, options.reasoning_effort,
+                             options.budget_tokens, options.max_tokens);
+  int max_tokens = thinking.max_tokens;
+  if (thinking.thinking_on) {
+    if (thinking.adaptive) {
+      // display:summarized is what makes the reasoning text visible; without
+      // it the API omits the thinking block. type:disabled is rejected (400)
+      // by these models, so an effort-less turn simply sends no output_config.
+      request["thinking"] = {{"type", "adaptive"},
+                             {"display", "summarized"}};
+      if (thinking.effort) {
+        request["output_config"] = {{"effort", *thinking.effort}};
+      }
+    } else if (thinking.budget_tokens) {
+      request["thinking"] = {{"type", "enabled"},
+                             {"budget_tokens", *thinking.budget_tokens}};
+    }
   }
   request["max_tokens"] = max_tokens;
+  if (thinking.thinking_on) {
+    if (thinking.adaptive) {
+      LOG_INFO(
+          "[anthropic] thinking mode=adaptive effort={} display=summarized "
+          "max_tokens={} model={}",
+          thinking.effort ? *thinking.effort : std::string("default"),
+          max_tokens, wire_model);
+    } else {
+      LOG_INFO("[anthropic] thinking mode=budget budget={} max_tokens={} model={}",
+               thinking.budget_tokens.value_or(0), max_tokens, wire_model);
+    }
+  } else {
+    LOG_INFO("[anthropic] thinking mode=none max_tokens={} model={}",
+             max_tokens, wire_model);
+  }
   request["messages"] = nlohmann::json::array();
 
   // Automatic prompt caching: breakpoints live on system/messages/tools
@@ -153,19 +171,19 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
 
           // Echo thinking blocks (required when extended thinking is enabled).
           // Must appear before the text block and carry the original signature.
-          if (thinking_budget.has_value() && msg.has_reasoning()) {
+          if (thinking.thinking_on && msg.has_reasoning()) {
             for (const auto& part : msg.content) {
-              if (const auto* rp =
-                      std::get_if<qcode::ReasoningContentPart>(&part)) {
-                if (!rp->text.empty()) {
-                  nlohmann::json thinking;
-                  thinking["type"] = "thinking";
-                  thinking["thinking"] = rp->text;
-                  thinking["signature"] =
-                      rp->signature.empty() ? "" : rp->signature;
-                  message["content"].push_back(std::move(thinking));
-                }
-              }
+              const auto* rp = std::get_if<qcode::ReasoningContentPart>(&part);
+              if (!rp) continue;
+              // Anthropic 400s on an unsigned thinking block, but an
+              // empty thinking text is legal (and must ride along) as long as
+              // the signature is present.
+              if (rp->signature.empty()) continue;
+              nlohmann::json thinking_block;
+              thinking_block["type"] = "thinking";
+              thinking_block["thinking"] = rp->text;
+              thinking_block["signature"] = rp->signature;
+              message["content"].push_back(std::move(thinking_block));
             }
           }
 
@@ -281,7 +299,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   }
 
   // Add optional parameters
-  if (options.temperature && !thinking_budget.has_value()) {
+  if (options.temperature && !thinking.thinking_on) {
     request["temperature"] = *options.temperature;
   }
 

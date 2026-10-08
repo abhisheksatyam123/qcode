@@ -65,6 +65,22 @@ nlohmann::json error_occurred_to_json(const ErrorOccurred::Payload& p) {
     };
 }
 
+
+nlohmann::json step_latency_to_json(const StepLatency::Payload& p) {
+    return {
+        {"type", StepLatency::type},
+        {"session_id", p.session_id},
+        {"step", p.step},
+        {"streamed", p.streamed},
+        {"model_ms", p.model_ms},
+        {"ttft_ms", p.ttft_ms},
+        {"output_tokens", p.output_tokens},
+        {"reasoning_tokens", p.reasoning_tokens},
+        {"effort", p.effort},
+        {"ok", p.ok}
+    };
+}
+
 nlohmann::json token_usage_to_json(const TokenUsageUpdated::Payload& p) {
     return {
         {"type", TokenUsageUpdated::type},
@@ -109,6 +125,10 @@ std::optional<nlohmann::json> serialize_event(
     }
     if (event_type == ErrorOccurred::type) {
         return error_occurred_to_json(std::any_cast<const ErrorOccurred::Payload&>(payload));
+    }
+
+    if (event_type == StepLatency::type) {
+        return step_latency_to_json(std::any_cast<const StepLatency::Payload&>(payload));
     }
     if (event_type == TokenUsageUpdated::type) {
         return token_usage_to_json(std::any_cast<const TokenUsageUpdated::Payload&>(payload));

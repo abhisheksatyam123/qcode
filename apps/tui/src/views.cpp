@@ -1083,6 +1083,12 @@ ftxui::Element render_view(
     }
     // ── Tab 2: Stats ──
     else if (state.tab_selected == 2) {
+        const auto fmt_ms = [](double ms) {
+            std::ostringstream o;
+            if (ms >= 10000.0) o << std::fixed << std::setprecision(1) << ms / 1000.0 << " s";
+            else o << static_cast<long long>(ms) << " ms";
+            return o.str();
+        };
         std::string prov_name = "Unknown";
         std::string mod_name = "Unknown";
         std::string prov_id = "";
@@ -1165,9 +1171,19 @@ ftxui::Element render_view(
                     hbox({ text("Prompt Tokens: ") | dim, text(std::to_string(*state.total_prompt_tokens)) }),
                     hbox({ text("Completion Tokens: ") | dim, text(std::to_string(*state.total_completion_tokens)) }),
                     hbox({ text("Total Tokens: ") | dim, text(std::to_string(*state.total_tokens)) }),
+                    hbox({ text("Thinking Tokens: ") | dim, text(std::to_string(*state.total_reasoning_tokens)) }),
+                    hbox({ text("Effort (last step): ") | dim, text(state.last_effort->empty() ? "off" : *state.last_effort) }),
                     hbox({ text("Tool Calls: ") | dim, text(std::to_string(*state.tool_call_count)) }),
-                    hbox({ text("Tool Time: ") | dim, text(std::to_string(static_cast<int>(*state.total_tool_time_ms)) + " ms") }),
                     hbox({ text("Estimated Cost: ") | dim, text("$" + cost_str) | color(Color::Green) | bold }),
+                    separatorLight() | color(accent(theme)),
+                    text("⎔ LATENCY") | bold | color(accent2(theme)),
+                    hbox({ text("Model Calls: ") | dim, text(std::to_string(*state.model_calls)) }),
+                    hbox({ text("Avg Model Latency: ") | dim, text(*state.model_calls > 0 ? fmt_ms(*state.total_model_ms / *state.model_calls) : std::string("-")) }),
+                    hbox({ text("Last Step: ") | dim, text(*state.model_calls > 0 ? fmt_ms(*state.last_model_ms) + (*state.last_ttft_ms >= 0.0 ? "  (first token " + fmt_ms(*state.last_ttft_ms) + ")" : std::string()) : std::string("-")) }),
+                    hbox({ text("Slowest Step: ") | dim, text(*state.model_calls > 0 ? fmt_ms(*state.max_model_ms) : std::string("-")) | color(*state.max_model_ms >= 60000.0 ? Color(Color::Red) : (*state.max_model_ms >= 20000.0 ? Color(Color::Yellow) : Color(Color::Default))) }),
+                    hbox({ text("Total Model Time: ") | dim, text(fmt_ms(*state.total_model_ms)) }),
+                    hbox({ text("Tool Time: ") | dim, text(fmt_ms(*state.total_tool_time_ms)) }),
+
                 }) | flex,
                 text("  ")
             }),

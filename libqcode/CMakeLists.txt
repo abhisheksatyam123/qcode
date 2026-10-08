@@ -58,6 +58,7 @@ target_sources(qcode-engine PRIVATE
     src/providers/anthropic/anthropic_oauth.cpp
     src/providers/anthropic/anthropic_client.cpp
     src/providers/anthropic/anthropic_request_builder.cpp
+    src/providers/anthropic/anthropic_thinking.cpp
     src/providers/anthropic/anthropic_response_parser.cpp
     src/providers/anthropic/anthropic_stream.cpp
     src/providers/anthropic/anthropic_factory.cpp

@@ -125,6 +125,15 @@ struct ChatState {
 
     // Tool observability stats
     std::shared_ptr<int> tool_call_count = std::make_shared<int>(0);
+    
+    std::shared_ptr<int> model_calls = std::make_shared<int>(0);
+    std::shared_ptr<double> total_model_ms = std::make_shared<double>(0.0);
+    std::shared_ptr<double> max_model_ms = std::make_shared<double>(0.0);
+    std::shared_ptr<double> last_model_ms = std::make_shared<double>(0.0);
+    std::shared_ptr<double> last_ttft_ms = std::make_shared<double>(-1.0);
+    std::shared_ptr<int> total_reasoning_tokens = std::make_shared<int>(0);
+    std::shared_ptr<std::string> last_effort = std::make_shared<std::string>("");
+
     std::shared_ptr<double> total_tool_time_ms = std::make_shared<double>(0.0);
 
     // Prompt queue + status mirrors (consumed by the view).

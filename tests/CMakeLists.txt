@@ -67,6 +67,8 @@ add_executable(qcode_tests
     ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_study.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_vision.cpp
     unit/server_routes_test.cpp
+    unit/app_store_latency_test.cpp
+    unit/anthropic_sse_test.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp

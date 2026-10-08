@@ -128,6 +128,22 @@ struct ReasoningDelta {
     };
 };
 
+
+struct StepLatency {
+    static constexpr const char* type = "backend.step.latency";
+    struct Payload {
+        std::string session_id;
+        int step = 0;
+        bool streamed = false;
+        double model_ms = 0.0;
+        double ttft_ms = -1.0;
+        int output_tokens = 0;
+        int reasoning_tokens = 0;
+        std::string effort;
+        bool ok = false;
+    };
+};
+
 struct TokenUsageUpdated {
     static constexpr const char* type = "backend.token.usage.updated";
     struct Payload {
@@ -190,6 +206,7 @@ inline void register_all_events(bus::BusPort& bus) {
     bus.register_event<UserMessageInjected>();
     bus.register_event<SessionStatusChanged>();
     bus.register_event<ErrorOccurred>();
+    bus.register_event<StepLatency>();
     bus.register_event<TokenUsageUpdated>();
     bus.register_event<ContextSizeUpdated>();
     bus.register_event<ReasoningDelta>();

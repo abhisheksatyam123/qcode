@@ -114,6 +114,7 @@ struct GenerateResult {
   std::string reasoning;
   FinishReason finish_reason = kFinishReasonError;
   Usage usage;
+  std::optional<double> ttft_ms;
 
   /// Additional metadata (like TypeScript SDK)
   std::optional<std::string> id;

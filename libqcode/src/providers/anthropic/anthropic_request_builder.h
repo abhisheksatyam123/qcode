@@ -14,6 +14,9 @@ class AnthropicRequestBuilder : public providers::RequestBuilder {
   AnthropicRequestBuilder() = default;
   explicit AnthropicRequestBuilder(bool is_oauth) : is_oauth_(is_oauth) {}
 
+  // Anthropic thinking form is model-dependent (adaptive + output_config.effort
+  // for Claude >=4.6, legacy budget_tokens before that) and is planned by
+  // anthropic_plan_thinking() in anthropic_thinking.h.
   nlohmann::json build_request_json(const GenerateOptions& options) override;
   nlohmann::json build_request_json(const EmbeddingOptions& options) override;
   httplib::Headers build_headers(

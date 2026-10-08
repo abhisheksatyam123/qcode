@@ -5,7 +5,14 @@
 #include "anthropic_request_builder.h"
 #include "anthropic_oauth.h"
 #include "anthropic_response_parser.h"
+
 #include "anthropic_stream.h"
+
+#include <qcode/core/generate_options.h>
+#include "generation/stream_step.h"
+#include <cstdlib>
+#include <string_view>
+
 
 #include <httplib.h>
 
@@ -108,6 +115,9 @@ StreamResult AnthropicClient::stream_text(const StreamOptions& options) {
   headers.emplace("Accept", "text/event-stream");
 
   auto impl = std::make_unique<AnthropicStreamImpl>();
+  if (config_.retry_config) {
+    impl->set_max_retries(std::min(config_.retry_config->max_retries, 4));
+  }
   impl->start_stream(config_.base_url + config_.completions_endpoint_path,
                      headers, request_json);
 
@@ -133,6 +143,41 @@ std::string AnthropicClient::config_info() const {
 
 std::string AnthropicClient::default_model() const {
   return models::kDefaultModel;
+}
+
+
+// Every Anthropic call streams: a non-streaming POST sends no bytes while the
+// model thinks, and upstream cuts such idle connections after ~100s (the retry
+// then regenerates from scratch). QCODE_ANTHROPIC_SYNC=1 restores the POST.
+GenerateResult AnthropicClient::generate_text(const GenerateOptions& options) {
+  if (const char* v = std::getenv("QCODE_ANTHROPIC_SYNC");
+      v && std::string_view(v) == "1") {
+    return BaseProviderClient::generate_text(options);
+  }
+  StreamOptions stream_opts(options);
+  StreamResult stream;
+  try {
+    stream = stream_text(stream_opts);
+  } catch (const std::exception& e) {
+    return GenerateResult("Exception: " + std::string(e.what()));
+  }
+  StreamAccumulator accumulator;
+  while (!stream.is_complete()) {
+    if (options.abort_flag && options.abort_flag->load()) {
+      stream.stop();
+      return GenerateResult("Aborted by user");
+    }
+    if (auto event = stream.poll(std::chrono::milliseconds(250))) {
+      accumulator.add(*event);
+    }
+  }
+  // Drain anything queued after completion was flagged.
+  while (auto event = stream.poll(std::chrono::milliseconds(0))) {
+    accumulator.add(*event);
+  }
+  GenerateResult result = accumulator.take();
+  result.model = options.model;
+  return result;
 }
 
 }  // namespace anthropic

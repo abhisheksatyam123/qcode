@@ -741,6 +741,22 @@ void AppStore::wire() {
 
     // Per-turn context snapshot (current context sent to the model). This is
     // distinct from total_tokens, which is the session lifetime total.
+    
+    subs_.push_back(bus_.subscribe<StepLatency>([this](const StepLatency::Payload& p) {
+        if (!p.session_id.empty() && p.session_id != session_id()) return;
+        *state_.model_calls += 1;
+        *state_.total_model_ms += p.model_ms;
+        *state_.last_model_ms = p.model_ms;
+        if (p.model_ms > *state_.max_model_ms) {
+            *state_.max_model_ms = p.model_ms;
+        }
+        *state_.last_ttft_ms = p.ttft_ms;
+        *state_.last_effort = p.effort;
+        // Total reasoning tokens is session sum
+        *state_.total_reasoning_tokens += p.reasoning_tokens;
+        notify();
+    }));
+
     subs_.push_back(bus_.subscribe<ContextSizeUpdated>([this](const ContextSizeUpdated::Payload& p) {
         *state_.current_context_tokens = p.context_tokens;
         notify();

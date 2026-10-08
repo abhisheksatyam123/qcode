@@ -94,7 +94,10 @@ GenerateResult StreamAccumulator::take() {
 GenerateResult stream_step(Client& client, const StreamOptions& options,
                            bus::BusPort& bus, const GenerationContext& ctx) {
   // Like generate_text(), a failure to build the request is a step error.
-  StreamResult stream;
+  
+  auto start_time = std::chrono::steady_clock::now();
+  double ttft_ms = -1.0;
+StreamResult stream;
   try {
     stream = client.stream_text(options);
   } catch (const std::exception& e) {
@@ -159,8 +162,13 @@ GenerateResult stream_step(Client& client, const StreamOptions& options,
       continue;
     }
 
+
     last_event = now;
+    if (ttft_ms < 0.0 && (event->is_text_delta() || event->is_reasoning_delta() || event->is_tool_call())) {
+      ttft_ms = std::chrono::duration<double, std::milli>(now - start_time).count();
+    }
     next_heartbeat = now + kHeartbeatInterval;
+
     step.add(*event);
     if (event->is_text_delta()) {
       text_buffer += event->text_delta;
@@ -178,8 +186,12 @@ GenerateResult stream_step(Client& client, const StreamOptions& options,
     if (now - last_flush >= kFlushInterval) flush();
   }
 
+
   flush();
-  return step.take();
+  auto res = step.take();
+  if (ttft_ms >= 0.0) res.ttft_ms = ttft_ms;
+  return res;
+
 }
 
 }  // namespace qcode

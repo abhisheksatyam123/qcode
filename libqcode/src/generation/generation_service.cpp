@@ -699,6 +699,11 @@ static void run_tools_generation_bus(
   int no_progress_repeat = 0;
   std::optional<size_t> last_progress_fp;
 
+  double turn_tools_ms = 0.0;
+  double turn_model_ms = 0.0;
+  auto turn_start = std::chrono::steady_clock::now();
+  int turn_steps = 0;
+
   LOG_DEBUG("run_tools_generation_bus: starting loop max_steps={}", max_steps);
   while (!finished && (max_steps <= 0 || step < max_steps)) {
     if (ctx.abort_flag && ctx.abort_flag->load()) {
@@ -716,6 +721,37 @@ static void run_tools_generation_bus(
       const qcode::perf::Stopwatch model_watch;
       qcode::GenerateResult step_res =
           streamed ? stream_step(client, request, bus, ctx) : generate_step();
+      // Latency is measured here, before tools run, so it is pure model time.
+      const double step_model_ms = model_watch.ms();
+      turn_model_ms += step_model_ms;
+      turn_steps++;
+      {
+        int step_think = step_res.usage.reasoning_completion_tokens;
+        if (step_think == 0 && !step_res.reasoning.empty()) {
+          step_think = std::max(1, static_cast<int>(step_res.reasoning.size() / 4));
+        }
+        const double ttft = step_res.ttft_ms.value_or(-1.0);
+        const std::string effort = options.reasoning_effort.value_or("off");
+        bus.publish<qcode::contract::StepLatency>({
+            .session_id = ctx.session_id,
+            .step = step,
+            .streamed = streamed,
+            .model_ms = step_model_ms,
+            .ttft_ms = ttft,
+            .output_tokens = step_res.usage.completion_tokens,
+            .reasoning_tokens = step_think,
+            .effort = effort,
+            .ok = step_res.is_success(),
+        });
+        const double tok_per_s =
+            step_model_ms > 0 ? step_res.usage.completion_tokens / (step_model_ms / 1000.0) : 0.0;
+        LOG_INFO("[latency] step={} mode={} model_ms={:.0f} ttft_ms={:.0f} "
+                 "out_tokens={} think_tokens={} tok_per_s={:.1f} effort={} "
+                 "model={} ok={}",
+                 step, streamed ? "stream" : "sync", step_model_ms, ttft,
+                 step_res.usage.completion_tokens, step_think, tok_per_s,
+                 effort, options.model, step_res.is_success());
+      }
       PERF_LOG("step={} model_ms={:.1f} history_msgs={} prompt_tokens={} "
                "completion_tokens={} cached_tokens={}",
                step, model_watch.ms(), options.messages.size(),
@@ -802,14 +838,11 @@ static void run_tools_generation_bus(
       gen_result.usage.cached_prompt_tokens =
           std::max(gen_result.usage.cached_prompt_tokens,
                    step_res.usage.cached_prompt_tokens);
-      // Thinking-token accounting: same per-turn-absolute semantics.
-      gen_result.usage.reasoning_completion_tokens =
-          std::max(gen_result.usage.reasoning_completion_tokens,
-                   step_res.usage.reasoning_completion_tokens);
-      if (gen_result.usage.reasoning_completion_tokens == 0 &&
-          reasoning_chars > 0) {
-        gen_result.usage.reasoning_completion_tokens = std::max(
-            1, static_cast<int>(reasoning_chars / 4));
+      // Thinking-token accounting: sum across steps since each step outputs a new thinking block.
+      if (step_res.usage.reasoning_completion_tokens > 0) {
+        gen_result.usage.reasoning_completion_tokens += step_res.usage.reasoning_completion_tokens;
+      } else if (reasoning_chars > 0) {
+        gen_result.usage.reasoning_completion_tokens += std::max(1, static_cast<int>(reasoning_chars / 4));
       }
       // Live header: TokenUsageUpdated at loop end is too late for a
       // 30-step tool run. Zeros keep session totals from double-counting.
@@ -831,7 +864,9 @@ static void run_tools_generation_bus(
         const qcode::perf::Stopwatch tools_watch;
         std::vector<qcode::ToolResult> executed_results =
             qcode::ToolExecutor::execute_tools_with_options(step_res.tool_calls, options, /*parallel=*/true);
-        PERF_LOG("step={} tools_ms={:.1f} tool_calls={}", step, tools_watch.ms(),
+        double step_tools_ms = tools_watch.ms();
+        turn_tools_ms += step_tools_ms;
+        PERF_LOG("step={} tools_ms={:.1f} tool_calls={}", step, step_tools_ms,
                  step_res.tool_calls.size());
 
         // Detect true no-progress wedges only: identical calls *and* identical
@@ -942,6 +977,7 @@ static void run_tools_generation_bus(
           finished = true;
         }
       }
+
 
     }
     step++;
@@ -1069,6 +1105,24 @@ static void run_tools_generation_bus(
     });
   }
 
+  {
+    const double wall_ms = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - turn_start)
+                               .count();
+    LOG_INFO("[latency] turn steps={} model_ms_total={:.0f} tool_ms_total={:.0f} "
+             "wall_ms={:.0f} out_tokens={} think_tokens_total={} effort={} "
+             "model={} ok={}",
+             turn_steps, turn_model_ms, turn_tools_ms, wall_ms,
+             gen_result.usage.completion_tokens,
+             gen_result.usage.reasoning_completion_tokens,
+             options.reasoning_effort.value_or("off"), options.model,
+             !fatal_error && !aborted);
+    if (!aborted) {
+      qcode::session::record_generation_turn(options.model, provider_id,
+                                             !fatal_error, stuck,
+                                             turn_steps > 0 ? turn_model_ms / turn_steps : 0.0);
+    }
+  }
   bus.publish<TokenUsageUpdated>({
       .prompt_tokens = gen_result.usage.prompt_tokens,
       .completion_tokens = gen_result.usage.completion_tokens,
@@ -1107,7 +1161,14 @@ static void run_stream_generation_bus(qcode::Client& client,
   auto last_text_flush = std::chrono::steady_clock::now();
   constexpr auto kFlushInterval = std::chrono::milliseconds(33);
 
+
+  double ttft_ms = -1.0;
+  int stream_out_tokens = 0;
+  int stream_think_tokens = 0;
+  bool stream_ok = true;
+
   auto flush_text = [&]() {
+
     if (text_buffer.empty()) return;
     LOG_DEBUG("ChatBus: flush_text buffer_size={}", text_buffer.size());
     bus.publish<MessageDelta>({
@@ -1150,7 +1211,12 @@ static void run_stream_generation_bus(qcode::Client& client,
       stream.stop();
       break;
     }
+
     if (event.is_text_delta()) {
+      if (ttft_ms < 0.0) {
+        ttft_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - gen_start_time).count();
+      }
+
       text_buffer += event.text_delta;
       text_size += event.text_delta.size();
       auto now = std::chrono::steady_clock::now();
@@ -1158,7 +1224,12 @@ static void run_stream_generation_bus(qcode::Client& client,
         flush_text();
         last_text_flush = now;
       }
+
     } else if (event.is_reasoning_delta()) {
+      if (ttft_ms < 0.0) {
+        ttft_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - gen_start_time).count();
+      }
+
       // OpenRouter encrypts reasoning as [REDACTED]; drop those chunks.
       const std::string& chunk = event.text_delta;
       if (chunk.find("[REDACTED]") != std::string::npos) {
@@ -1223,13 +1294,32 @@ static void run_stream_generation_bus(qcode::Client& client,
           .message = format_user_facing_error(raw),
           .severity = "error"
       });
+
       double latency_ms = std::chrono::duration<double, std::milli>(
                               std::chrono::high_resolution_clock::now() -
                               gen_start_time)
                               .count();
+      stream_ok = false;
+      bus.publish<qcode::contract::StepLatency>({
+          .session_id = ctx.session_id,
+          .step = 1,
+          .streamed = true,
+          .model_ms = latency_ms,
+          .ttft_ms = ttft_ms,
+          .output_tokens = stream_out_tokens,
+          .reasoning_tokens = stream_think_tokens,
+          .effort = stream_options.reasoning_effort.value_or("off"),
+          .ok = stream_ok
+      });
+      LOG_INFO("[latency] turn steps=1 mode=stream model_ms_total={:.0f} ttft_ms={:.0f} "
+               "out_tokens={} think_tokens_total={} effort={} model={} ok=false",
+               latency_ms, ttft_ms, stream_out_tokens, stream_think_tokens,
+               stream_options.reasoning_effort.value_or("off"), stream_options.model);
+
       qcode::session::record_generation_turn(stream_options.model, provider_id,
                                              false, false, latency_ms);
       return;
+
     } else if (event.is_finish() && event.usage.has_value()) {
       LOG_DEBUG("run_stream_generation_bus: stream finished text_len={}", text_buffer.size());
       flush_text();
@@ -1237,6 +1327,8 @@ static void run_stream_generation_bus(qcode::Client& client,
       if (think_tokens == 0 && reasoning_chars > 0) {
         think_tokens = std::max(1, static_cast<int>(reasoning_chars / 4));
       }
+      stream_out_tokens = event.usage->completion_tokens;
+      stream_think_tokens = think_tokens;
       bus.publish<TokenUsageUpdated>({
           .prompt_tokens = event.usage->prompt_tokens,
           .completion_tokens = event.usage->completion_tokens,
@@ -1270,6 +1362,32 @@ static void run_stream_generation_bus(qcode::Client& client,
       "run_stream_generation_bus: complete text_len={} reasoning_chars={} "
       "aborted={}",
       text_size, reasoning_chars, aborted);
+  {
+    const double latency_ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::high_resolution_clock::now() -
+                                  gen_start_time)
+                                  .count();
+    const std::string effort = stream_options.reasoning_effort.value_or("off");
+    bus.publish<qcode::contract::StepLatency>({
+        .session_id = ctx.session_id,
+        .step = 0,
+        .streamed = true,
+        .model_ms = latency_ms,
+        .ttft_ms = ttft_ms,
+        .output_tokens = stream_out_tokens,
+        .reasoning_tokens = stream_think_tokens,
+        .effort = effort,
+        .ok = !aborted,
+    });
+    LOG_INFO("[latency] turn steps=1 mode=stream model_ms_total={:.0f} ttft_ms={:.0f} "
+             "out_tokens={} think_tokens_total={} effort={} model={} ok={}",
+             latency_ms, ttft_ms, stream_out_tokens, stream_think_tokens,
+             effort, stream_options.model, !aborted);
+    if (!aborted) {
+      qcode::session::record_generation_turn(stream_options.model, provider_id,
+                                             true, false, latency_ms);
+    }
+  }
   bus.publish<MessageDelta>({
       .session_id = ctx.session_id,
       .text = "",

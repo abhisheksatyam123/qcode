@@ -35,6 +35,7 @@ nlohmann::json user_message_injected_to_json(const qcode::contract::UserMessageI
 nlohmann::json session_status_to_json(const qcode::contract::SessionStatusChanged::Payload& p);
 nlohmann::json error_occurred_to_json(const qcode::contract::ErrorOccurred::Payload& p);
 nlohmann::json reasoning_delta_to_json(const qcode::contract::ReasoningDelta::Payload& p);
+nlohmann::json step_latency_to_json(const qcode::contract::StepLatency::Payload& p);
 nlohmann::json token_usage_to_json(const qcode::contract::TokenUsageUpdated::Payload& p);
 
 } // namespace server

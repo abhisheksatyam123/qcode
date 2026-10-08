@@ -22,6 +22,9 @@ class AnthropicClient : public providers::BaseProviderClient {
 
   // Override only what's specific to Anthropic
   StreamResult stream_text(const StreamOptions& options) override;
+  GenerateResult generate_text(const GenerateOptions& options) override;
+  bool supports_tool_streaming() const override { return true; }
+  
   std::string provider_name() const override;
   std::vector<std::string> supported_models() const override;
   bool supports_model(const std::string& model_name) const override;
