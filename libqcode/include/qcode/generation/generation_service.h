@@ -23,8 +23,7 @@ namespace qcode {
 struct GenerationContext {
     std::string session_id;
     std::string reasoning_mode = "off";
-    // Agent mode mirroring opencode: "build" (default, full access) or
-    // "plan" (read-only research; no mutating tool calls).
+    // Agent mode: "orchestrator" (default) or "subagent" (delegated worker).
     std::string agent_mode = "orchestrator";
     std::string workspace;
     std::shared_ptr<std::atomic<bool>> abort_flag = std::make_shared<std::atomic<bool>>(false);

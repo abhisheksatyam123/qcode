@@ -213,7 +213,7 @@ inline bool looks_like_task_stall(std::string_view text) {
   });
 }
 
-// In build mode, decide whether to auto-nudge the model after a text-only turn.
+// Decide whether to auto-nudge the model after a text-only turn.
 // Aligns with Opencode v2 semantics:
 // - If the model returned empty text or stalled with explicit follow-up promises /
 //   confirmation requests without executing tools, auto-nudge to keep progress going.
@@ -221,11 +221,9 @@ inline bool looks_like_task_stall(std::string_view text) {
 //   mentions (e.g. "I updated X. Next, I will test Y.").
 // - If explicit completion is signaled, stop.
 // - Otherwise, normal text-only outputs naturally complete the turn.
-inline bool should_auto_continue_build(bool plan_mode,
-                                       int continue_count,
+inline bool should_auto_continue_build(int continue_count,
                                        std::string_view assistant_text) {
   (void)continue_count;
-  if (plan_mode) return false;
   if (assistant_text.empty() ||
       std::ranges::all_of(assistant_text, [](char c) {
         return std::isspace(static_cast<unsigned char>(c));

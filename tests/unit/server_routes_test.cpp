@@ -424,14 +424,15 @@ TEST_F(ServerRoutesTest, TasksAndSubagentSessionLookup) {
     std::string sid = nlohmann::json::parse(res_create->body).value("id", "");
     ASSERT_FALSE(sid.empty());
 
+    // Plan mode was removed: the mode-switch route no longer exists.
     auto res_mode = client_->Post(
         "/session/" + sid + "/mode",
         nlohmann::json({{"agent_mode", "plan"}}).dump(),
         "application/json");
     ASSERT_TRUE(res_mode);
-    EXPECT_EQ(res_mode->status, 200);
+    EXPECT_EQ(res_mode->status, 404);
     auto after = nlohmann::json::parse(client_->Get("/session/" + sid)->body);
-    EXPECT_EQ(after.value("agent_mode", ""), "plan");
+    EXPECT_NE(after.value("agent_mode", ""), "plan");
     EXPECT_TRUE(after.contains("reasoning_mode"));
 }
 

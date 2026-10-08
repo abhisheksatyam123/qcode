@@ -447,8 +447,6 @@ ftxui::Element render_view(
         }
         // Explicit "off" stays empty (thinking disabled).
     }
-    const bool plan_mode =
-        state.agent_mode && *state.agent_mode == "plan";
     const bool is_home =
         state.tab_selected == 0 && state.messages_history &&
         state.messages_history->empty();
@@ -476,10 +474,9 @@ ftxui::Element render_view(
                    : emptyElement()),
         (agent_busy ? text(" " + footer_spin) | color(accent(theme)) | bold
                     : emptyElement()),
-        (plan_mode ? text(" Plan") | bold | color(queue_amber())
-                   : ((state.agent_mode && *state.agent_mode == "subagent")
-                          ? text(" Subagent") | bold | color(Color::CyanLight)
-                          : text(" Orchestrator") | bold | color(accent2(theme)))),
+        ((state.agent_mode && *state.agent_mode == "subagent")
+             ? text(" Subagent") | bold | color(Color::CyanLight)
+             : text(" Orchestrator") | bold | color(accent2(theme))),
         text(" " + hdr_model) | color(accent(theme)),
     };
     if (!variant_label.empty())

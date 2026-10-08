@@ -907,30 +907,6 @@ svr.Get("/api/personas", [default_workspace](const httplib::Request& req, httpli
     res.set_content(list_available_personas(ws).dump(2), "application/json");
 });
 
-svr.Post("/session/([^/]+)/mode", [](const httplib::Request& req, httplib::Response& res) {
-    std::string sid = url_decode(req.matches[1]);
-    if (sid.empty() || !qcode::session::is_valid_session_id(sid)) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid session_id"})", "application/json");
-        return;
-    }
-    nlohmann::json body;
-    try { body = nlohmann::json::parse(req.body); } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
-    std::string agent_mode = body.value("agent_mode", "");
-    if (agent_mode != "plan" && agent_mode != "orchestrator") {
-        res.status = 400;
-        res.set_content(R"({"error":"agent_mode must be plan or orchestrator"})", "application/json");
-        return;
-    }
-    auto modes = qcode::session::get_session_modes(sid);
-    qcode::session::set_session_modes(sid, agent_mode, modes.second);
-    res.set_content(nlohmann::json({{"ok", true}, {"agent_mode", agent_mode}}).dump(), "application/json");
-});
-
 // ── Delete session ──
 svr.Delete("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& res) {
     std::string sid = url_decode(req.matches[1]);

@@ -20,12 +20,10 @@ namespace qcode {
 
 // Build the wire system prompt for a turn: `system_prompt` plus the mode
 // reminder and provider catalog, exactly as ChatBus assembles it.
-//   plan_mode    -> plan reminder + catalog
 //   is_subagent  -> raw prompt only (focused worker, no catalog)
 //   otherwise    -> orchestrator reminder + catalog
 std::string build_turn_system_prompt(
     const std::string& system_prompt,
-    bool plan_mode,
     bool is_subagent,
     const std::vector<ProviderInfo>& providers,
     std::string_view current_provider_id = "",

@@ -2,6 +2,10 @@
 
 #include <qcode/generation/turn_prefix.h>
 #include <qcode/transform/provider_transform.h>
+#include <qcode/session/session_store.h>
+
+#include <filesystem>
+#include <fstream>
 
 namespace qcode {
 namespace compaction {
@@ -40,11 +44,31 @@ const char* kDirective =
 
 std::string directive() { return kDirective; }
 
+std::string handoff_path(const std::string& session_id) {
+  namespace fs = std::filesystem;
+  std::string ws = session::get_session_workspace(session_id);
+  std::error_code ec;
+  fs::path root = ws.empty() ? fs::current_path(ec) : fs::path(ws);
+  return (root / "scratchpad" / ("handoff-" + session_id + ".md")).string();
+}
+
+std::string write_handoff(const std::string& session_id,
+                          const std::string& summary) {
+  namespace fs = std::filesystem;
+  const fs::path path = handoff_path(session_id);
+  std::error_code ec;
+  fs::create_directories(path.parent_path(), ec);
+  if (ec) return {};
+  std::ofstream out(path);
+  if (!out) return {};
+  out << "# qcode compacted handoff\n\n" << summary << "\n";
+  return out ? path.string() : std::string{};
+}
+
 GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
                                            const std::string& wire_model,
                                            const std::string& provider_id,
                                            Messages history) {
-  const bool plan_mode = (input.agent_mode == "plan");
   const bool is_subagent =
       input.is_subagent || (input.agent_mode == "subagent");
 
@@ -53,8 +77,7 @@ GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
   GenerateOptions opts;
   opts.model = wire_model;
   // Byte-identical to ChatBus's system prompt for the same inputs.
-  opts.system = build_turn_system_prompt(input.system_prompt, plan_mode,
-                                         is_subagent,
+  opts.system = build_turn_system_prompt(input.system_prompt, is_subagent,
                                          input.providers ? *input.providers
                                                          : kNoProviders);
   // Replay the history through the same normalization pass the live turn
@@ -66,7 +89,7 @@ GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
   // Same tool schemas as the last routed request — tool definitions are
   // part of the cacheable prefix (and Zen requires bash/read declared).
   if (input.enable_tools) {
-    opts.tools = build_turn_tools(!plan_mode && !is_subagent,
+    opts.tools = build_turn_tools(!is_subagent,
                                   input.vision_supported);
   }
   opts.session_id = input.session_id;

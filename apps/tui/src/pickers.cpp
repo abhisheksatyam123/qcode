@@ -399,7 +399,6 @@ ftxui::Element build_help_popup(const std::string& theme) {
     lines.push_back(text(" Model") | bold | color(accent2(theme)));
     lines.push_back(key("/model", "Switch model"));
     lines.push_back(key("/variant", "Reasoning effort"));
-    lines.push_back(key("/agent", "Orchestrator / Plan agent"));
     lines.push_back(text(""));
     lines.push_back(text(" View") | bold | color(accent2(theme)));
     lines.push_back(key("esc", "Stop generation"));

@@ -1401,9 +1401,6 @@ function setupEventListeners() {
   if (parentBackBtn) {
     parentBackBtn.addEventListener('click', () => returnToParentSession());
   }
-  if (agentModeBtn) {
-    agentModeBtn.addEventListener('click', () => toggleAgentMode());
-  }
   if (thinkingToggleBtn) {
     thinkingToggleBtn.addEventListener('click', () => toggleThinking());
   }
@@ -1659,11 +1656,8 @@ function updateStatusBar() {
   if (agentModeBtn) {
     agentModeBtn.classList.toggle('hidden', isSub);
     if (!isSub) {
-      const label = state.agentMode === 'plan' ? 'Plan' : 'Orchestrator';
-      agentModeBtn.textContent = label;
-      agentModeBtn.classList.toggle('plan', state.agentMode === 'plan');
+      agentModeBtn.textContent = 'Orchestrator';
       agentModeBtn.classList.remove('subagent');
-      agentModeBtn.disabled = !state.sessionId;
     }
   }
   syncThinkingToggleBtn();
@@ -2192,7 +2186,6 @@ function handleSlashCommand(text) {
     case 'session': case 'load': handleSessionCommand(args); break;
     case 'compact': handleCompactCommand(); break;
     case 'theme': case 'themes': handleThemeCommand(args); break;
-    case 'agent': handleAgentCommand(args); break;
     case 'queue': handleQueueCommand(args); break;
     case 'clear-queue': case 'cq': handleClearQueueCommand(); break;
     case 'retry': handleRetryCommand(); break;
@@ -2283,48 +2276,6 @@ function handleThemeCommand(args) {
     applyTheme(chosen.id);
     showToast('Theme: ' + chosen.label);
   }, 'Type a theme name…', q);
-}
-
-function handleAgentCommand(args) {
-  let name = (args || '').trim().toLowerCase();
-  if (!name) {
-    showToast('Agent: ' + state.agentMode + ' (/agent orchestrator|plan)');
-    return;
-  }
-  if (name === 'build') name = 'orchestrator';
-  if (name !== 'orchestrator' && name !== 'plan') {
-    showToast("Unknown agent '" + name + "'. Use orchestrator|plan.");
-    return;
-  }
-  if (state.agentMode === name) {
-    showToast('Agent: ' + name);
-    return;
-  }
-  if (state.agentMode === 'subagent') {
-    showToast('Subagent sessions cannot change mode');
-    return;
-  }
-  toggleAgentModeTo(name);
-}
-
-async function toggleAgentModeTo(next) {
-  if (!state.sessionId || state.agentMode === 'subagent') return;
-  if (!next) next = state.agentMode === 'plan' ? 'orchestrator' : 'plan';
-  try {
-    const res = await fetch('/session/' + state.sessionId + '/mode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_mode: next })
-    });
-    if (!res.ok) throw new Error(await res.text());
-    state.agentMode = next;
-    const session = state.openSessions.find(s => s.id === state.sessionId);
-    if (session) session.agentMode = next;
-    updateStatusBar();
-    showToast(next === 'plan' ? 'Plan mode: read-only research, no edits' : 'Orchestrator: lead coordinator with parallel subagents');
-  } catch (e) {
-    showToast('Failed to set mode: ' + e.message);
-  }
 }
 
 function handleQueueCommand(args) {
@@ -2425,7 +2376,6 @@ function executePaletteCommand(id) {
     case 'session_retry': handleRetryCommand(); break;
     case 'model_select': handleModelCommand(''); break;
     case 'model_variant': handleVariantCommand(''); break;
-    case 'agent_mode_toggle': toggleAgentMode(); break;
     case 'thinking_toggle': toggleThinking(); break;
     case 'chat_open': switchTab('chat'); break;
     case 'files_open': switchTab('files'); switchFilesSubtab('git'); break;
@@ -4143,12 +4093,6 @@ async function returnToParentSession() {
   await loadSessionById(pid);
   switchTab('chat');
   showToast('Returned to parent session');
-}
-
-async function toggleAgentMode() {
-  if (!state.sessionId || state.agentMode === 'subagent') return;
-  const next = state.agentMode === 'plan' ? 'orchestrator' : 'plan';
-  await toggleAgentModeTo(next);
 }
 
 async function loadDelegatedSessionsTab() {

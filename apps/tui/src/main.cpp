@@ -509,7 +509,8 @@ int main(int argc, char* argv[]) {
         sync_tool_config_and_system_prompt();
         auto modes = qcode::session::get_session_modes(id);
         if (state.agent_mode) {
-            *state.agent_mode = modes.first.empty() ? "orchestrator" : modes.first;
+            *state.agent_mode =
+                modes.first == "subagent" ? "subagent" : "orchestrator";
         }
 
         refresh_subagents();

@@ -16,26 +16,19 @@ TEST(GenerationContinueTest, DetectsMuseSparkStalls) {
       "Moved model and context into the session header."));
 }
 
-TEST(GenerationContinueTest, AutoContinuesBuildStallsButNotPlanOrDone) {
-  EXPECT_TRUE(should_auto_continue_build(
-      false, 0, "Now I need the CSS values + the marked parser rules."));
-  EXPECT_FALSE(should_auto_continue_build(
-      true, 0, "Now I need the CSS values + the marked parser rules."));
-  EXPECT_FALSE(should_auto_continue_build(false, 0, "Done. Header is updated."));
-  EXPECT_FALSE(should_auto_continue_build(
-      false, 0, "Theme propagation done — 7 static tests green, new chrome now follows /theme."));
-  EXPECT_FALSE(should_auto_continue_build(
-      false, 0, "Done this run:\n- updated styles\n- all tests green"));
-  EXPECT_TRUE(should_auto_continue_build(false, 0, ""));
-  EXPECT_TRUE(should_auto_continue_build(false, 3, ""));
-  EXPECT_TRUE(should_auto_continue_build(false, 6, "one more round"));
-  EXPECT_TRUE(should_auto_continue_build(false, 20, "one more round"));
-  EXPECT_TRUE(should_auto_continue_build(false, 100000, "one more round"));
-  EXPECT_FALSE(should_auto_continue_build(
-      false, 0, "Moved model and context into the session header."));
+TEST(GenerationContinueTest, AutoContinuesStallsButNotDone) {
+  EXPECT_TRUE(should_auto_continue_build(0, "Now I need the CSS values + the marked parser rules."));
+  EXPECT_FALSE(should_auto_continue_build(0, "Done. Header is updated."));
+  EXPECT_FALSE(should_auto_continue_build(0, "Theme propagation done — 7 static tests green, new chrome now follows /theme."));
+  EXPECT_FALSE(should_auto_continue_build(0, "Done this run:\n- updated styles\n- all tests green"));
+  EXPECT_TRUE(should_auto_continue_build(0, ""));
+  EXPECT_TRUE(should_auto_continue_build(3, ""));
+  EXPECT_TRUE(should_auto_continue_build(6, "one more round"));
+  EXPECT_TRUE(should_auto_continue_build(20, "one more round"));
+  EXPECT_TRUE(should_auto_continue_build(100000, "one more round"));
+  EXPECT_FALSE(should_auto_continue_build(0, "Moved model and context into the session header."));
   // Stall takes precedence over partial completion words
-  EXPECT_TRUE(should_auto_continue_build(
-      false, 0, "I have updated the header. Next, I will run unit tests."));
+  EXPECT_TRUE(should_auto_continue_build(0, "I have updated the header. Next, I will run unit tests."));
 }
 
 TEST(GenerationContinueTest, DoesNotFalselyStallOnNormalExplanations) {

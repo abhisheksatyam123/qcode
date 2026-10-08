@@ -104,7 +104,7 @@ void rename_session(const std::string& session_id, const std::string& new_title)
 void set_session_provider_model(const std::string& session_id, const std::string& provider, const std::string& model);
 std::pair<std::string, std::string> get_session_provider_model(const std::string& session_id);
 
-// Persisted per-session agent ("build"/"plan") and reasoning
+// Persisted per-session agent ("orchestrator"/"subagent") and reasoning
 // ("off"/"low"/...) modes. get returns {agent, reasoning}; either string is
 // empty when the row predates migration v7 or the mode was never changed.
 std::pair<std::string, std::string> get_session_modes(const std::string& session_id);

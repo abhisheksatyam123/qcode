@@ -109,7 +109,7 @@ test('WebUI includes TUI command palette, slash commands, and session chrome', (
   const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
 
   const utilsJs = fs.readFileSync(path.join(srcDir, 'utils.js'), 'utf8');
-  for (const cmd of ['/theme', '/agent', '/queue', '/clear-queue', '/retry', '/help', '/model', '/variant', '/session', '/compact']) {
+  for (const cmd of ['/theme', '/queue', '/clear-queue', '/retry', '/help', '/model', '/variant', '/session', '/compact']) {
     assert.ok(utilsJs.includes("name: '" + cmd + "'") || appJs.includes('case \'' + cmd.slice(1) + '\''), 'missing slash ' + cmd);
   }
   assert.match(utilsJs, /PALETTE_COMMANDS = \[/, 'missing PALETTE_COMMANDS in utils.js (T4.1b)');
@@ -171,7 +171,7 @@ test('WebUI theme propagation: warning/success vars and themed chrome', () => {
   assert.match(appJs, /set\('--warning', t\.warning\)/, 'applyTheme must set --warning');
   assert.match(appJs, /set\('--success', t\.success\)/, 'applyTheme must set --success');
 
-  for (const sel of ['.delegated-row:hover', '.delegated-row .child-status.running', '.delegated-row .child-status.done', '.retry-btn', '.queued-block', '.side-tab-header', '.agent-mode-btn.plan', '.subagent-badge']) {
+  for (const sel of ['.delegated-row:hover', '.delegated-row .child-status.running', '.delegated-row .child-status.done', '.retry-btn', '.queued-block', '.side-tab-header', '.subagent-badge']) {
     const i = styleCss.indexOf(sel);
     assert.ok(i >= 0, 'missing themed rule ' + sel);
     const block = styleCss.slice(i, styleCss.indexOf('}', i) + 1);

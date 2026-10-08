@@ -42,7 +42,6 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"session",     "Select session", "Manage and load saved sessions",            "Session"},
         {"compact",     "Compact",        "Summarize conversation to save context",    "Session"},
         {"variant",     "Model variant",  "Select thinking / reasoning effort",        "Model"},
-        {"agent",       "Agent mode",     "Switch between build and plan",             "Agent"},
         {"queue",       "Prompt queue",   "/queue [rm <n>] — list or drop queued prompts", "Session"},
         {"clear-queue", "Clear queue",    "Clear all queued prompts",                  "Session"},
         {"stop",        "Stop generation", "Abort active turn or clear queued prompts", "Session"},

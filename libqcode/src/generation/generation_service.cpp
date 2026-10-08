@@ -676,7 +676,6 @@ static void run_tools_generation_bus(
   bool stuck = false;
   bool auth_retried = false;
   int auto_continues = 0;
-  const bool plan_mode = (ctx.agent_mode == "plan");
   // Consecutive steps with the same tool calls AND the same results.
   // Same-args retries with changing output (re-read, poll) are allowed.
   int no_progress_repeat = 0;
@@ -906,7 +905,7 @@ static void run_tools_generation_bus(
         last_progress_fp.reset();
         const size_t text_len = step_res.text.size();
         const bool wants_continue =
-            should_auto_continue_build(plan_mode, auto_continues, step_res.text);
+            should_auto_continue_build(auto_continues, step_res.text);
         append_message(qcode::Message::assistant(step_res.text));
         publish_step_text(std::move(step_res.text), streamed);
         if (inject_queued_prompts()) {
@@ -1406,19 +1405,13 @@ void run_generation_with_bus(
     qcode::GenerateOptions base_opts;
     base_opts.model = resolved_model_id;
 
-    // ── Agent mode (mirrors opencode build/plan) ──
-    // Plan mode appends the read-only research contract from upstream's
-    // plan.txt and drops the task subagent tool.
+    // ── Agent mode: orchestrator (default) or subagent (child session) ──
     const bool is_subagent = (ctx.agent_mode == "subagent") ||
                              (!ctx.session_id.empty() && qcode::session::is_child_session(ctx.session_id));
-    const bool plan_mode = (ctx.agent_mode == "plan");
     // Prompt-cache prefix: single source of truth shared with compaction
     // (build_cache_replay_request) so both requests stay byte-identical.
-    base_opts.system = build_turn_system_prompt(system_prompt, plan_mode,
-                                                 is_subagent, providers);
-    if (plan_mode) {
-        LOG_INFO("ChatBus: agent_mode=plan (read-only)");
-    } else if (is_subagent) {
+    base_opts.system = build_turn_system_prompt(system_prompt, is_subagent, providers);
+    if (is_subagent) {
         LOG_INFO("ChatBus: agent_mode=subagent (focused worker, nested delegation disabled)");
     } else {
         LOG_INFO("ChatBus: agent_mode=orchestrator (lead coordinator with parallel subagents)");
@@ -1487,7 +1480,7 @@ void run_generation_with_bus(
     const bool is_server_duplex_agent =
         (client.tool_execution_model() == ToolExecutionModel::ServerSideDuplex);
     if (enable_tools) {
-      const bool enable_task_tool = (!plan_mode && !is_subagent);
+      const bool enable_task_tool = !is_subagent;
       const bool supports_vision = (resolved_model != nullptr && resolved_model->vision);
       // Prompt-cache prefix: same builder compaction uses to replay tools.
       base_opts.tools = build_turn_tools(enable_task_tool, supports_vision);

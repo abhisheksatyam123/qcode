@@ -48,9 +48,9 @@ protected:
 
 TEST_F(SessionModesStoreTest, RoundTripBothModes) {
     const std::string sid = create_new_session("prov", "model", "ws");
-    set_session_modes(sid, "plan", "high");
+    set_session_modes(sid, "subagent", "high");
     const auto [agent, reasoning] = get_session_modes(sid);
-    EXPECT_EQ(agent, "plan");
+    EXPECT_EQ(agent, "subagent");
     EXPECT_EQ(reasoning, "high");
 }
 
@@ -62,8 +62,8 @@ TEST_F(SessionModesStoreTest, UnsetModesReturnEmpty) {
 }
 
 TEST_F(SessionModesStoreTest, InvalidSessionIdIsNoop) {
-    set_session_modes("", "plan", "high");
-    set_session_modes("does-not-exist", "plan", "high");
+    set_session_modes("", "subagent", "high");
+    set_session_modes("does-not-exist", "subagent", "high");
     SUCCEED();
 }
 

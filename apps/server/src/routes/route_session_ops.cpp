@@ -187,20 +187,9 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         return;
     }
 
-    std::string notes_root = qcode::get_notes_root();
-    std::error_code ec;
-    std::filesystem::create_directories(
-        notes_root + "/scratchpad/task/qcode-tui/active", ec);
-    std::string todo_path = notes_root +
-                            "/scratchpad/task/qcode-tui/active/todo-" + sid + ".md";
-    bool wrote = false;
-    if (!ec) {
-        std::ofstream out(todo_path);
-        if (out) {
-            out << "# qcode compacted handoff\n\n" << summary << "\n";
-            wrote = true;
-        }
-    }
+    // Project data stays in the workspace root, not the notes vault.
+    std::string todo_path = qcode::compaction::write_handoff(sid, summary);
+    const bool wrote = !todo_path.empty();
 
     std::string summary_body =
         "This conversation was compacted into a handoff packet" +

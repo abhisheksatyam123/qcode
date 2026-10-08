@@ -25,7 +25,7 @@ struct CacheReplayInput {
   // Raw turn system prompt, exactly as handed to generation (TUI
   // handle_slash_command / server generate route).
   std::string system_prompt;
-  // "orchestrator" | "plan" | "subagent" (GenerationContext::agent_mode).
+  // "orchestrator" | "subagent" (GenerationContext::agent_mode).
   std::string agent_mode = "orchestrator";
   // Child session (qcode::session::is_child_session), mirroring ChatBus.
   bool is_subagent = false;
@@ -42,6 +42,17 @@ struct CacheReplayInput {
 
 // The compaction directive, delivered as the final user message.
 std::string directive();
+
+// Project-scoped handoff location. All task data lives in the session's
+// workspace root (never the notes vault):
+//   <workspace>/scratchpad/handoff-<session_id>.md
+// Falls back to the process cwd when the session has no workspace.
+std::string handoff_path(const std::string& session_id);
+
+// Write the compaction summary to handoff_path(); returns the path on
+// success, empty string on failure.
+std::string write_handoff(const std::string& session_id,
+                          const std::string& summary);
 
 // Build the summarizer request. `wire_model` and `provider_id` must be the
 // values the last turn routed with (prepare_provider_call wire model).

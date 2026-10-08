@@ -442,44 +442,6 @@ bool handle_slash_command(
         return true;
     }
 
-    if (cmd == "agent") {
-        // /agent          — show current agent
-        // /agent <name>   — switch (orchestrator|plan)
-        std::string name = args;
-        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
-        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
-        if (name.empty()) {
-            const std::string cur = state.agent_mode ? *state.agent_mode : "orchestrator";
-            bus.publish<qcode::contract::ToastRequested>({
-                .message = "Agent: " + cur + " (/agent orchestrator|plan)",
-                .variant = "info"
-            });
-            return true;
-        }
-        if (name == "build") name = "orchestrator";
-        if (name != "orchestrator" && name != "plan") {
-            bus.publish<qcode::contract::ToastRequested>({
-                .message = "Unknown agent '" + name + "'. Use orchestrator|plan.",
-                .variant = "warning"
-            });
-            return true;
-        }
-        *state.agent_mode = name;
-        if (state.session_id && !state.session_id->empty()) {
-            qcode::session::set_session_modes(
-                *state.session_id, name,
-                state.reasoning_mode ? *state.reasoning_mode : "off");
-        }
-        bus.publish<qcode::contract::ToastRequested>({
-            .message = name == "plan"
-                           ? "Plan mode: read-only research, no edits"
-                           : "Orchestrator mode: lead coordinator with parallel subagents",
-            .variant = "success"
-        });
-        LOG_INFO("Commands: agent mode set to '{}'", name);
-        return true;
-    }
-
     if (cmd == "variant") {
         std::string lvl = args;
         // Trim whitespace
@@ -600,7 +562,6 @@ bool handle_slash_command(
         std::ostringstream h;
         h << "Available commands:\n"
           << "  /model [list]     - select provider/model\n"
-          << "  /agent [build|plan] - switch agent mode (plan = read-only research)\n"
           << "  /variant [off|<effort>] - thinking effort from the selected model's config\n"
           << "  /theme [name]     - set UI theme (classic + pastel: mint/sky/rose/...)\n"
           << "  /new [name] [workspace] - new session (optional title + workspace path)\n"
@@ -769,21 +730,10 @@ void run_compaction(
             return;
         }
 
-        std::string notes_root = qcode::get_notes_root();
-
-        std::error_code ec;
-        std::filesystem::create_directories(
-            notes_root + "/scratchpad/task/qcode-tui/active", ec);
-        std::string todo_path = notes_root +
-                                "/scratchpad/task/qcode-tui/active/todo-" + sid + ".md";
-        bool wrote = false;
-        if (!ec) {
-            std::ofstream out(todo_path);
-            if (out) {
-                out << "# qcode compacted handoff\n\n" << summary << "\n";
-                wrote = true;
-            }
-        }
+        // Project data stays in the workspace root, not the notes vault.
+        std::string todo_path = qcode::compaction::write_handoff(sid, summary);
+        const bool wrote = !todo_path.empty();
+        if (!wrote) todo_path = qcode::compaction::handoff_path(sid);
 
         result.summary = std::move(summary);
         result.todo_path = std::move(todo_path);

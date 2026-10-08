@@ -3799,7 +3799,6 @@ kbd {
   border-radius: 6px;
   cursor: pointer;
 }
-.agent-mode-btn.plan { color: var(--warning); border-color: var(--warning); }
 .thinking-toggle-btn {
   border: 1px solid var(--border-strong);
   background: var(--surface-raised);

@@ -94,12 +94,11 @@ compaction::CacheReplayInput make_input(
 // System prompt must be byte-identical to the live turn prefix in every mode.
 TEST(CompactionCacheTest, SystemPromptMatchesLiveTurnPrefixInEveryMode) {
   const auto providers = make_providers();
-  const std::vector<std::pair<std::string, std::pair<bool, bool>>> modes = {
-      {"orchestrator", {false, false}},
-      {"plan", {true, false}},
-      {"subagent", {false, true}},
+  const std::vector<std::pair<std::string, bool>> modes = {
+      {"orchestrator", false},
+      {"subagent", true},
   };
-  for (const auto& [mode, flags] : modes) {
+  for (const auto& [mode, is_subagent] : modes) {
     SCOPED_TRACE(mode);
     auto in = make_input(providers);
     in.agent_mode = mode;
@@ -107,11 +106,11 @@ TEST(CompactionCacheTest, SystemPromptMatchesLiveTurnPrefixInEveryMode) {
         in, "anthropic/claude-sonnet-4", "openrouter", make_history());
 
     EXPECT_EQ(opts.system, build_turn_system_prompt(
-                               "BASE SYSTEM PROMPT", flags.first,
-                               flags.second, providers));
+                               "BASE SYSTEM PROMPT", is_subagent,
+                               providers));
     EXPECT_NE(opts.system.find("BASE SYSTEM PROMPT"), std::string::npos);
-    // Orchestrator/plan carry their reminder; subagent stays raw.
-    const bool expect_orchestrator = !flags.first && !flags.second;
+    // Orchestrator carries its reminder; subagent stays raw.
+    const bool expect_orchestrator = !is_subagent;
     EXPECT_EQ(opts.system.find("Orchestrator Mode") != std::string::npos,
               expect_orchestrator);
     // The compaction directive must never replace the system prompt.

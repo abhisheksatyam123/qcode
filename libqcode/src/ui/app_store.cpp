@@ -207,8 +207,11 @@ void AppStore::set_session_id(const std::string& id) {
     {
         const auto [agent_mode, reasoning_mode] =
             qcode::session::get_session_modes(id);
+        // Only orchestrator/subagent exist; legacy values (e.g. "plan")
+        // fall back to orchestrator.
         if (!agent_mode.empty() && state_.agent_mode) {
-            *state_.agent_mode = agent_mode;
+            *state_.agent_mode =
+                agent_mode == "subagent" ? agent_mode : "orchestrator";
         }
         if (!reasoning_mode.empty() && state_.reasoning_mode) {
             *state_.reasoning_mode = reasoning_mode;
