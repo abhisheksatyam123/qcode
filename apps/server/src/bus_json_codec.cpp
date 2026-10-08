@@ -118,7 +118,7 @@ nlohmann::json reasoning_delta_to_json(const ReasoningDelta::Payload& p) {
 std::optional<nlohmann::json> serialize_event(
     const std::string& event_type,
     const std::any& payload,
-    std::type_index payload_type)
+    std::type_index /*payload_type*/)
 {
     if (event_type == MessageDelta::type) {
         return message_delta_to_json(std::any_cast<const MessageDelta::Payload&>(payload));

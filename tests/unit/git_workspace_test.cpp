@@ -22,9 +22,9 @@ protected:
         std::filesystem::current_path(test_dir_, ec);
 
         // Init git repo
-        system("git init -q");
-        system("git config user.email 'test@example.com'");
-        system("git config user.name 'Test User'");
+        ASSERT_EQ(system("git init -q"), 0);
+        ASSERT_EQ(system("git config user.email 'test@example.com'"), 0);
+        ASSERT_EQ(system("git config user.name 'Test User'"), 0);
     }
 
     void TearDown() override {
@@ -43,7 +43,7 @@ TEST_F(GitWorkspaceTest, DetectsUntrackedAndModifiedFiles) {
         std::ofstream f("initial.txt");
         f << "line 1\nline 2\n";
     }
-    system("git add initial.txt && git commit -q -m 'initial commit'");
+    ASSERT_EQ(system("git add initial.txt && git commit -q -m 'initial commit'"), 0);
 
     // 2. Modify initial.txt
     {

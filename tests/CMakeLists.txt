@@ -119,7 +119,7 @@ endif()
 if(MSVC)
     target_compile_options(qcode_tests PRIVATE /W3)
 else()
-    target_compile_options(qcode_tests PRIVATE -Wall -Wextra)
+    target_compile_options(qcode_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 endif()
 
 target_compile_definitions(qcode_tests PRIVATE
