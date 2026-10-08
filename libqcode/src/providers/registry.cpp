@@ -98,6 +98,10 @@ ClientResolution resolve_anthropic(const ProviderOptions& options) {
     }
   } else if (api_key.starts_with("sk-ant-oat")) {
     is_oauth = true;
+    const auto fresh = qcode::get_anthropic_token();
+    if (!fresh.empty()) {
+      api_key = fresh;
+    }
   }
 
   if (api_key.empty()) {

@@ -289,7 +289,7 @@ static JsonValue run_subagent_turn_multi(
       }
     } else if (target_provider->id == "anthropic" ||
                target_provider->name.find("Anthropic") != std::string::npos) {
-      if (prov_opts.api_key.empty()) {
+      if (prov_opts.api_key.empty() || prov_opts.api_key.starts_with("sk-ant-oat")) {
         const auto fresh = get_anthropic_token(/*force_refresh=*/false);
         if (!fresh.empty()) prov_opts.api_key = fresh;
       }
@@ -1340,7 +1340,7 @@ void run_generation_with_bus(
     if (provider_id == "cursor" && provider_options.api_key.empty()) {
       provider_options.api_key = get_cursor_access_token();
     } else if ((provider_id == "anthropic" || provider_name == "Anthropic") &&
-               provider_options.api_key.empty()) {
+               (provider_options.api_key.empty() || provider_options.api_key.starts_with("sk-ant-oat"))) {
       provider_options.api_key = get_anthropic_token(/*force_refresh=*/false);
     } else if ((provider_id == "openai" || provider_name == "OpenAI") &&
                provider_options.api_key.empty()) {

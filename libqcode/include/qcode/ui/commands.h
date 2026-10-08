@@ -17,6 +17,7 @@ namespace qcode {
 struct ModelEntry {
     int provider_idx;
     int model_idx;
+    std::string provider_id;
     std::string provider_name;
     std::string model_name;
     std::string model_id;

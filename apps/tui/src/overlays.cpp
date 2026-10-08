@@ -32,7 +32,9 @@ std::vector<qcode::ModelEntry> filter_models(
     for (const auto& e : entries) {
         if (matches_query(e.model_name, query) ||
             matches_query(e.model_id, query) ||
-            matches_query(e.category, query)) {
+            matches_query(e.category, query) ||
+            matches_query(e.provider_id, query) ||
+            matches_query(e.provider_name, query)) {
             out.push_back(e);
         }
     }

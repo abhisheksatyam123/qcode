@@ -108,15 +108,18 @@ TEST(AnthropicOAuthTest, RequestBuilderInjectsBillingHeaderAndRewritesTags) {
   ASSERT_TRUE(req["system"].is_array());
   ASSERT_FALSE(req["system"].empty());
 
-  std::string system_text = req["system"][0]["text"].get<std::string>();
-  // Billing attribution travels as an HTTP header now, never as system text
-  // (any prefix byte change breaks the prompt-cache prefix match).
-  EXPECT_THAT(system_text, testing::Not(testing::HasSubstr("x-anthropic-billing-header")));
+  ASSERT_GE(req["system"].size(), 2u);
+
+  std::string billing_text = req["system"][0]["text"].get<std::string>();
+  EXPECT_THAT(billing_text, testing::HasSubstr("x-anthropic-billing-header: cc_version=2.1.300."));
+
+  std::string system_text = req["system"][1]["text"].get<std::string>();
   EXPECT_THAT(system_text, testing::StartsWith("System info in [directories]"));
   EXPECT_THAT(system_text, testing::HasSubstr("[directories]/home/user[/directories]"));
   EXPECT_THAT(system_text, testing::HasSubstr("[env]VAR=1[/env]"));
   EXPECT_FALSE(system_text.find("<directories>") != std::string::npos);
   EXPECT_FALSE(system_text.find("<env>") != std::string::npos);
+  EXPECT_EQ(req["system"][1]["cache_control"]["type"], "ephemeral");
 }
 
 TEST(AnthropicOAuthTest, ClientSetsClaudeCodeHeadersWhenUsingOAuth) {

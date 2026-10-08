@@ -61,7 +61,21 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
     system_text = rewrite_claude_prompt_tags(system_text);
   }
 
-  if (!system_text.empty()) {
+  if (is_oauth_) {
+    nlohmann::json sys_arr = nlohmann::json::array();
+    sys_arr.push_back({
+        {"type", "text"},
+        {"text", format_billing_header()}
+    });
+    if (!system_text.empty()) {
+      sys_arr.push_back({
+          {"type", "text"},
+          {"text", system_text},
+          {"cache_control", {{"type", "ephemeral"}}}
+      });
+    }
+    request["system"] = std::move(sys_arr);
+  } else if (!system_text.empty()) {
     request["system"] = nlohmann::json::array(
         {{{"type", "text"},
           {"text", system_text},

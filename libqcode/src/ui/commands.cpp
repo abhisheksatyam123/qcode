@@ -45,6 +45,7 @@ std::vector<ModelEntry> build_model_entries(
             entries.emplace_back(ModelEntry{
                 .provider_idx = static_cast<int>(pi),
                 .model_idx = static_cast<int>(mi),
+                .provider_id = provider.id,
                 .provider_name = provider.name,
                 .model_name = model.name,
                 .model_id = model.id,
@@ -138,7 +139,40 @@ bool handle_slash_command(
             }
         } catch (...) {}
 
-        // 2. Try exact or case-insensitive match on model_id, model_name, or category:model_id
+        // 2. Check if user specified provider:model or provider/model or provider model
+        if (target_prov < 0) {
+            std::string q = args;
+            std::transform(q.begin(), q.end(), q.begin(), [](unsigned char c) { return std::tolower(c); });
+            std::string prov_part, model_part;
+            auto sep = q.find(':');
+            if (sep == std::string::npos) sep = q.find('/');
+            if (sep == std::string::npos) sep = q.find(' ');
+            if (sep != std::string::npos) {
+                prov_part = q.substr(0, sep);
+                model_part = q.substr(sep + 1);
+            }
+            if (!prov_part.empty() && !model_part.empty()) {
+                for (const auto& e : entries) {
+                    std::string pid = e.provider_id;
+                    std::string pname = e.provider_name;
+                    std::transform(pid.begin(), pid.end(), pid.begin(), [](unsigned char c) { return std::tolower(c); });
+                    std::transform(pname.begin(), pname.end(), pname.begin(), [](unsigned char c) { return std::tolower(c); });
+                    if (pid == prov_part || pname == prov_part || pid.find(prov_part) != std::string::npos || pname.find(prov_part) != std::string::npos) {
+                        std::string mid = e.model_id;
+                        std::string mname = e.model_name;
+                        std::transform(mid.begin(), mid.end(), mid.begin(), [](unsigned char c) { return std::tolower(c); });
+                        std::transform(mname.begin(), mname.end(), mname.begin(), [](unsigned char c) { return std::tolower(c); });
+                        if (mid == model_part || mname == model_part || mid.find(model_part) != std::string::npos || mname.find(model_part) != std::string::npos) {
+                            target_prov = e.provider_idx;
+                            target_mod = e.model_idx;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Try exact or case-insensitive match on model_id, model_name, provider_id:model_id, or category:model_id
         if (target_prov < 0) {
             std::string q = args;
             std::transform(q.begin(), q.end(), q.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -146,11 +180,12 @@ bool handle_slash_command(
                 std::string mid = e.model_id;
                 std::string mname = e.model_name;
                 std::string cat = e.category;
+                std::string pid = e.provider_id;
                 std::transform(mid.begin(), mid.end(), mid.begin(), [](unsigned char c) { return std::tolower(c); });
                 std::transform(mname.begin(), mname.end(), mname.begin(), [](unsigned char c) { return std::tolower(c); });
                 std::transform(cat.begin(), cat.end(), cat.begin(), [](unsigned char c) { return std::tolower(c); });
-                std::string combo = cat + ":" + mid;
-                if (mid == q || mname == q || combo == q) {
+                std::transform(pid.begin(), pid.end(), pid.begin(), [](unsigned char c) { return std::tolower(c); });
+                if (mid == q || mname == q || (cat + ":" + mid) == q || (pid + ":" + mid) == q || (pid + "/" + mid) == q) {
                     target_prov = e.provider_idx;
                     target_mod = e.model_idx;
                     break;
@@ -158,7 +193,24 @@ bool handle_slash_command(
             }
         }
 
-        // 3. Try substring match on model_id or model_name
+        // 4. If query is a provider name/id alone (e.g. "anthropic", "cursor", "openrouter"), select that provider's default model
+        if (target_prov < 0) {
+            std::string q = args;
+            std::transform(q.begin(), q.end(), q.begin(), [](unsigned char c) { return std::tolower(c); });
+            for (const auto& e : entries) {
+                std::string pid = e.provider_id;
+                std::string pname = e.provider_name;
+                std::transform(pid.begin(), pid.end(), pid.begin(), [](unsigned char c) { return std::tolower(c); });
+                std::transform(pname.begin(), pname.end(), pname.begin(), [](unsigned char c) { return std::tolower(c); });
+                if (pid == q || pname == q || pid.find(q) != std::string::npos || pname.find(q) != std::string::npos) {
+                    target_prov = e.provider_idx;
+                    target_mod = e.model_idx;
+                    break;
+                }
+            }
+        }
+
+        // 5. Try substring match on model_id or model_name
         if (target_prov < 0) {
             std::string q = args;
             std::transform(q.begin(), q.end(), q.begin(), [](unsigned char c) { return std::tolower(c); });
