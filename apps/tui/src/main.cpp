@@ -1,3 +1,4 @@
+#include <csignal>
 #include <fstream>
 #include <sstream>
 #include <ftxui/component/component.hpp>
@@ -75,6 +76,10 @@ static std::string tui_log_dir() {
 }
 
 int main(int argc, char* argv[]) {
+    // A write to a socket/pipe whose peer already closed (Esc aborting an
+    // in-flight HTTP stream or a subagent's tool child) raises SIGPIPE, whose
+    // default action kills the whole TUI. Ignore it; the write returns EPIPE.
+    std::signal(SIGPIPE, SIG_IGN);
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {

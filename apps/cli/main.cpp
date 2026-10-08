@@ -6,6 +6,7 @@
  *
  * Streams assistant response to stdout. Tool info to stderr (with --verbose).
  */
+#include <csignal>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <cstdlib>
@@ -56,6 +57,7 @@ static Config parse_args(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
+    std::signal(SIGPIPE, SIG_IGN);  // closed peer -> EPIPE, not process death
     Config cfg = parse_args(argc, argv);
 
     httplib::Client cli(cfg.server);
