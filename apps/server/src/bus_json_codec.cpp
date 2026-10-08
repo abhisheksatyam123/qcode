@@ -77,7 +77,11 @@ nlohmann::json step_latency_to_json(const StepLatency::Payload& p) {
         {"output_tokens", p.output_tokens},
         {"reasoning_tokens", p.reasoning_tokens},
         {"effort", p.effort},
-        {"ok", p.ok}
+        {"ok", p.ok},
+        {"input_tokens", p.input_tokens},
+        {"cache_read_tokens", p.cache_read_tokens},
+        {"cache_write_tokens", p.cache_write_tokens},
+        {"variant", p.variant}
     };
 }
 

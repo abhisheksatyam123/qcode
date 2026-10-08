@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <qcode/config/provider_info.h>
+#include <qcode/session/usage_stats.h>
 #include <qcode/ui/chat_state.h>
 
 namespace qcode {
@@ -149,6 +150,12 @@ void persist_session_token_stats(const std::string& session_id,
                                  int prompt_tokens_delta,
                                  int completion_tokens_delta,
                                  int total_tokens_delta);
+
+// Per-session model-call aggregate (sessions.usage_stats). get_ returns an
+// empty aggregate for unknown sessions; record_ adds one call atomically.
+SessionUsageStats get_session_usage_stats(const std::string& session_id);
+void record_session_model_call(const std::string& session_id,
+                               const ModelCallUsage& call);
 
 // Delete a session and its associated messages
 std::vector<std::string> get_child_session_ids(const std::string& parent_session_id);

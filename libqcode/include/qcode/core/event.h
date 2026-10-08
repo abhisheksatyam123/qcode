@@ -141,6 +141,12 @@ struct StepLatency {
         int reasoning_tokens = 0;
         std::string effort;
         bool ok = false;
+        // Billed input of this call (whole prompt incl. cache reads/writes)
+        // and its cache split, for the Stats tab cost/cache-hit figures.
+        int input_tokens = 0;
+        int cache_read_tokens = 0;
+        int cache_write_tokens = 0;
+        std::string variant;  // picker variant ("ultra"); effort is the wire value
     };
 };
 

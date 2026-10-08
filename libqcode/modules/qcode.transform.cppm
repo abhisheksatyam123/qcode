@@ -11,6 +11,7 @@ using ::qcode::Messages;
 using ::qcode::Model;
 using ::qcode::ModelInfo;
 using ::qcode::ProviderInfo;
+using ::qcode::VariantInfo;
 }  // namespace qcode
 
 export namespace qcode::ProviderTransform {
@@ -27,6 +28,7 @@ using ::qcode::ProviderTransform::clamp_variant;
 using ::qcode::ProviderTransform::cursor_family_id;
 using ::qcode::ProviderTransform::cursor_picker_id;
 using ::qcode::ProviderTransform::cursor_wire_model_id;
+using ::qcode::ProviderTransform::find_variant;
 using ::qcode::ProviderTransform::default_variant;
 using ::qcode::ProviderTransform::interleaved_replay_field;
 using ::qcode::ProviderTransform::is_allowed_variant;
@@ -43,6 +45,7 @@ using ::qcode::ProviderTransform::sdk_key;
 using ::qcode::ProviderTransform::temperature;
 using ::qcode::ProviderTransform::top_k;
 using ::qcode::ProviderTransform::top_p;
+using ::qcode::ProviderTransform::variant_wire_effort;
 using ::qcode::ProviderTransform::wrap_provider_options;
 using ::qcode::ProviderTransform::zen_api_protocol;
 using ::qcode::ProviderTransform::zen_completions_path;

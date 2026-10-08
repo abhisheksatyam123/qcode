@@ -190,6 +190,24 @@ void AppStore::set_session_id(const std::string& id) {
     if (state_.session_title) {
         *state_.session_title = qcode::session::get_session_title(id);
     }
+    // Stats belong to the session: reload the persisted totals instead of
+    // carrying the previous session's numbers (header cost, Stats tab).
+    {
+        const auto stats = qcode::session::get_session_stats(id);
+        *state_.total_prompt_tokens = stats.prompt_tokens;
+        *state_.total_completion_tokens = stats.completion_tokens;
+        *state_.total_tokens = stats.total_tokens;
+        *state_.tool_call_count = stats.tool_calls;
+        *state_.total_tool_time_ms = stats.total_tool_time_ms;
+        *state_.last_cached_prompt_tokens = 0;
+        *state_.last_reasoning_tokens = 0;
+        // Context size is re-measured by the next turn (history reloads
+        // reset it the same way); never show the previous session's.
+        *state_.current_context_tokens = 0;
+        *state_.last_actual_prompt_tokens = 0;
+        *state_.last_estimated_tokens = 0;
+        *state_.usage = qcode::session::get_session_usage_stats(id);
+    }
     // Swap the in-memory queue to the newly active session. Rows for the
     // previous session stay persisted; the new session's rows (if any)
     // resume where they left off.
@@ -720,20 +738,25 @@ void AppStore::wire() {
         // session-lifetime cumulative total. The database holds the authoritative
         // historical total, so persist the per-turn delta and accumulate in
         // memory as well.
-        *state_.total_prompt_tokens += p.prompt_tokens;
-        *state_.total_completion_tokens += p.completion_tokens;
-        *state_.total_tokens += p.total_tokens;
-        // Cache-hit + thinking-token mirrors for the header (latest turn).
-        *state_.last_cached_prompt_tokens = p.cached_prompt_tokens;
-        *state_.last_reasoning_tokens = p.reasoning_tokens;
         std::string sid = p.session_id.empty() ? session_id() : p.session_id;
+        // Another session's turn (e.g. still finishing after a switch) is
+        // persisted to its own row below but must not touch this mirror.
+        const bool live = sid == session_id();
+        if (live) {
+            *state_.total_prompt_tokens += p.prompt_tokens;
+            *state_.total_completion_tokens += p.completion_tokens;
+            *state_.total_tokens += p.total_tokens;
+            // Cache-hit + thinking-token mirrors for the header (latest turn).
+            *state_.last_cached_prompt_tokens = p.cached_prompt_tokens;
+            *state_.last_reasoning_tokens = p.reasoning_tokens;
+        }
         if (p.prompt_tokens != 0 || p.completion_tokens != 0 || p.total_tokens != 0) {
             qcode::session::persist_session_token_stats(
                 sid, p.prompt_tokens, p.completion_tokens, p.total_tokens);
         }
         // Calibration anchor: remember the actual prompt token count so the
         // next heuristic estimate can be corrected against ground truth.
-        if (p.prompt_tokens > 0) {
+        if (live && p.prompt_tokens > 0) {
             *state_.last_actual_prompt_tokens = p.prompt_tokens;
         }
         notify();
@@ -744,16 +767,16 @@ void AppStore::wire() {
     
     subs_.push_back(bus_.subscribe<StepLatency>([this](const StepLatency::Payload& p) {
         if (!p.session_id.empty() && p.session_id != session_id()) return;
-        *state_.model_calls += 1;
-        *state_.total_model_ms += p.model_ms;
-        *state_.last_model_ms = p.model_ms;
-        if (p.model_ms > *state_.max_model_ms) {
-            *state_.max_model_ms = p.model_ms;
-        }
-        *state_.last_ttft_ms = p.ttft_ms;
-        *state_.last_effort = p.effort;
-        // Total reasoning tokens is session sum
-        *state_.total_reasoning_tokens += p.reasoning_tokens;
+        // In-memory mirror of the row generation_service already persisted.
+        state_.usage->add({.model_ms = p.model_ms,
+                           .ttft_ms = p.ttft_ms,
+                           .input_tokens = p.input_tokens,
+                           .cache_read_tokens = p.cache_read_tokens,
+                           .cache_write_tokens = p.cache_write_tokens,
+                           .output_tokens = p.output_tokens,
+                           .reasoning_tokens = p.reasoning_tokens,
+                           .effort = p.effort,
+                           .variant = p.variant});
         notify();
     }));
 

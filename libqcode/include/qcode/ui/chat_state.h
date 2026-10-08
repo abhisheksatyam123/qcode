@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <qcode/core/message.h>
+#include <qcode/session/usage_stats.h>
 
 namespace qcode {
 
@@ -126,13 +127,11 @@ struct ChatState {
     // Tool observability stats
     std::shared_ptr<int> tool_call_count = std::make_shared<int>(0);
     
-    std::shared_ptr<int> model_calls = std::make_shared<int>(0);
-    std::shared_ptr<double> total_model_ms = std::make_shared<double>(0.0);
-    std::shared_ptr<double> max_model_ms = std::make_shared<double>(0.0);
-    std::shared_ptr<double> last_model_ms = std::make_shared<double>(0.0);
-    std::shared_ptr<double> last_ttft_ms = std::make_shared<double>(-1.0);
-    std::shared_ptr<int> total_reasoning_tokens = std::make_shared<int>(0);
-    std::shared_ptr<std::string> last_effort = std::make_shared<std::string>("");
+    // Per-session model-call aggregate: calls, latency, billed input/output,
+    // cache reads/writes, thinking, last effort. Mirrors sessions.usage_stats
+    // (written by generation_service) and is reloaded on session switch.
+    std::shared_ptr<qcode::session::SessionUsageStats> usage =
+        std::make_shared<qcode::session::SessionUsageStats>();
 
     std::shared_ptr<double> total_tool_time_ms = std::make_shared<double>(0.0);
 

@@ -369,6 +369,14 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
+    // ── Migration v10 → v11: per-session model-call aggregate (usage_stats.h) ──
+    if (user_version < 11) {
+        sqlite3_exec(db,
+            "ALTER TABLE sessions ADD COLUMN usage_stats TEXT DEFAULT '';",
+            nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "PRAGMA user_version = 11;", nullptr, nullptr, nullptr);
+    }
+
     // Ensure performance indexes exist on messages and sessions
     sqlite3_exec(db,
         "CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at);",
@@ -1430,6 +1438,61 @@ void persist_session_token_stats(const std::string& session_id,
         sqlite3_bind_int(stmt, 2, completion_tokens_delta);
         sqlite3_bind_int(stmt, 3, total_tokens_delta);
         sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+}
+
+SessionUsageStats get_session_usage_stats(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return {};
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return {};
+    SessionUsageStats stats;
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, "SELECT COALESCE(usage_stats, '') FROM sessions WHERE id = ?;",
+                     &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char* raw = sqlite3_column_text(stmt, 0);
+            const std::string text = raw ? reinterpret_cast<const char*>(raw) : "";
+            if (!text.empty()) {
+                stats = SessionUsageStats::from_json(
+                    nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false));
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+    return stats;
+}
+
+void record_session_model_call(const std::string& session_id,
+                               const ModelCallUsage& call) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return;
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+    // Read-modify-write under the shared handle lock (one writer per process).
+    SessionUsageStats stats;
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, "SELECT COALESCE(usage_stats, '') FROM sessions WHERE id = ?;",
+                     &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char* raw = sqlite3_column_text(stmt, 0);
+            const std::string text = raw ? reinterpret_cast<const char*>(raw) : "";
+            if (!text.empty()) {
+                stats = SessionUsageStats::from_json(
+                    nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false));
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+    stats.add(call);
+    const std::string blob = stats.to_json().dump();
+    if (prepare_stmt(db, "UPDATE sessions SET usage_stats = ? WHERE id = ?;", &stmt)) {
+        sqlite3_bind_text(stmt, 1, blob.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, session_id.c_str(), -1, SQLITE_STATIC);
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }

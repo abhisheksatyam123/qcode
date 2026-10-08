@@ -508,6 +508,23 @@ static bool is_supported_provider(std::string_view /*id*/) {
     return true;
 }
 
+namespace {
+// Type-tolerant readers: a mistyped field must not abort the whole config.
+std::string json_string(const nlohmann::ordered_json& obj, const char* key) {
+    const auto it = obj.find(key);
+    return (it != obj.end() && it->is_string()) ? it->get<std::string>() : std::string{};
+}
+int json_int(const nlohmann::ordered_json& obj, const char* key) {
+    const auto it = obj.find(key);
+    if (it == obj.end() || !it->is_number()) return 0;
+    return static_cast<int>(it->get<double>());
+}
+double json_number(const nlohmann::ordered_json& obj, const char* key) {
+    const auto it = obj.find(key);
+    return (it != obj.end() && it->is_number()) ? it->get<double>() : 0.0;
+}
+}  // namespace
+
 std::vector<ProviderInfo> load_providers_from_config() {
     std::vector<ProviderInfo> loaded;
     std::string path = config_path();
@@ -578,7 +595,19 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 prov.project_id = resolve_config_value(
                     options.value("project", ordered_json{}));
                 if (prov_data.contains("models")) {
-                    for (auto& [model_id, model_data] : prov_data["models"].items()) {
+                    // Provider-wide "model_defaults" (thinking, variants, limit,
+                    // cost, ...) are merged under every model (RFC 7386 merge
+                    // patch: model keys win, a null value removes a default).
+                    const ordered_json model_defaults =
+                        prov_data.contains("model_defaults") &&
+                                prov_data["model_defaults"].is_object()
+                            ? prov_data["model_defaults"]
+                            : ordered_json::object();
+                    for (auto& [model_id, raw_model_data] : prov_data["models"].items()) {
+                        ordered_json model_data = model_defaults;
+                        if (raw_model_data.is_object()) {
+                            model_data.merge_patch(raw_model_data);
+                        }
                         ModelInfo model;
                         model.name = model_data.value("name", model_id);
                         model.id = model_id;
@@ -591,8 +620,21 @@ std::vector<ProviderInfo> load_providers_from_config() {
                         if (model_data.contains("cost") &&
                             model_data["cost"].is_object()) {
                             const auto& cost = model_data["cost"];
-                            model.input_cost = cost.value("input", 0.0);
-                            model.output_cost = cost.value("output", 0.0);
+                            model.input_cost = json_number(cost, "input");
+                            model.output_cost = json_number(cost, "output");
+                            model.cache_read_cost = json_number(cost, "cache_read");
+                            model.cache_write_cost = json_number(cost, "cache_write");
+                        }
+                        if (model_data.contains("thinking") &&
+                            model_data["thinking"].is_object()) {
+                            const auto& thinking = model_data["thinking"];
+                            model.thinking_type = json_string(thinking, "type");
+                            model.thinking_display = json_string(thinking, "display");
+                            if (thinking.contains("allow_off") &&
+                                thinking["allow_off"].is_boolean()) {
+                                model.thinking_allow_off =
+                                    thinking["allow_off"].get<bool>();
+                            }
                         }
                         model.tool_call = model_data.value("tool_call", false);
                         model.vision = model_data.value("vision", false);
@@ -630,11 +672,62 @@ std::vector<ProviderInfo> load_providers_from_config() {
                                 }
                             }
                         };
-                        if (model_data.contains("reasoning_efforts")) {
-                            append_efforts(model_data["reasoning_efforts"]);
+                        // An explicit "reasoning": false opts out of inherited
+                        // variants (model_defaults) instead of contradicting it.
+                        const bool reasoning_off =
+                            model_data.contains("reasoning") &&
+                            model_data["reasoning"].is_boolean() &&
+                            !model_data["reasoning"].get<bool>();
+                        const bool variant_objects =
+                            !reasoning_off && model_data.contains("variants") &&
+                            model_data["variants"].is_object();
+                        if (variant_objects) {
+                            // The variants object is authoritative: its keys (in
+                            // file order) are the picker list. Older effort
+                            // lists are ignored so merged defaults cannot
+                            // reorder or resurrect removed variants.
+                            model.reasoning_efforts.clear();
+                            for (const auto& [variant_id, spec] :
+                                 model_data["variants"].items()) {
+                                if (variant_id.empty() || variant_id == "off") continue;
+                                if (spec.is_object() &&
+                                    spec.contains("disabled") &&
+                                    spec["disabled"].is_boolean() &&
+                                    spec["disabled"].get<bool>()) {
+                                    continue;
+                                }
+                                VariantInfo variant;
+                                variant.id = variant_id;
+                                if (spec.is_object()) {
+                                    variant.label = json_string(spec, "label");
+                                    variant.description = json_string(spec, "description");
+                                    variant.effort = json_string(spec, "effort");
+                                    variant.max_tokens = json_int(spec, "max_tokens");
+                                    variant.budget_tokens = json_int(spec, "budget_tokens");
+                                    variant.prompt = json_string(spec, "prompt");
+                                }
+                                model.reasoning_efforts.push_back(variant_id);
+                                model.variants.push_back(std::move(variant));
+                            }
+                            model.reasoning = model.reasoning || !model.variants.empty();
+                        } else {
+                            if (model_data.contains("reasoning_efforts")) {
+                                append_efforts(model_data["reasoning_efforts"]);
+                            }
+                            if (model_data.contains("variants")) {
+                                append_efforts(model_data["variants"]);
+                            }
                         }
-                        if (model_data.contains("variants")) {
-                            append_efforts(model_data["variants"]);
+                        {
+                            // Drop duplicate ids (several sources may list one).
+                            std::vector<std::string> unique;
+                            for (auto& effort : model.reasoning_efforts) {
+                                if (std::find(unique.begin(), unique.end(), effort) ==
+                                    unique.end()) {
+                                    unique.push_back(std::move(effort));
+                                }
+                            }
+                            model.reasoning_efforts = std::move(unique);
                         }
                         if (model.reasoning_default.empty()) {
                             model.reasoning_default =

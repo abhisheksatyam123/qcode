@@ -146,8 +146,75 @@ TEST(ProviderTransformTest, ClampVariantSnapsUnsupportedEffort) {
   ModelInfo ox = ox_alpha_zen();  // low/high/max
   EXPECT_EQ(ProviderTransform::clamp_variant(ox, "off"), "off");
   EXPECT_EQ(ProviderTransform::clamp_variant(ox, "high"), "high");
-  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "medium"), "high");
+  // Nearest lower level first: never exceed what was asked for.
+  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "medium"), "low");
+  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "xhigh"), "high");
+  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "ultra"), "max");
   EXPECT_EQ(ProviderTransform::clamp_variant(ox, "max"), "max");
+  // Nothing lower: nearest higher.
+  EXPECT_EQ(ProviderTransform::clamp_variant(ox, "minimal"), "low");
+}
+
+namespace {
+// Mirrors an opencode.json Claude entry: variants object + adaptive thinking
+// that cannot be disabled.
+ModelInfo configured_claude() {
+  ModelInfo model;
+  model.id = "claude-opus-5-5";
+  model.reasoning = true;
+  model.reasoning_default = "high";
+  model.output_limit = 128000;
+  model.thinking_type = "adaptive";
+  model.thinking_allow_off = false;
+  for (const char* id : {"low", "medium", "high", "xhigh", "max"}) {
+    model.variants.push_back(VariantInfo{.id = id});
+    model.reasoning_efforts.emplace_back(id);
+  }
+  model.variants.push_back(VariantInfo{.id = "ultra",
+                                       .label = "Ultra",
+                                       .description = "Deepest reasoning + 128k output",
+                                       .effort = "max",
+                                       .max_tokens = 128000,
+                                       .prompt = "Reason as thoroughly as needed."});
+  model.reasoning_efforts.emplace_back("ultra");
+  return model;
+}
+}  // namespace
+
+TEST(ProviderTransformTest, VariantSpecMapsWireEffort) {
+  const ModelInfo model = configured_claude();
+  ASSERT_NE(ProviderTransform::find_variant(model, "ultra"), nullptr);
+  EXPECT_EQ(ProviderTransform::find_variant(model, "ultra")->max_tokens, 128000);
+  EXPECT_EQ(ProviderTransform::find_variant(model, "nope"), nullptr);
+  EXPECT_EQ(ProviderTransform::variant_wire_effort(model, "ultra"), "max");
+  EXPECT_EQ(ProviderTransform::variant_wire_effort(model, "xhigh"), "xhigh");
+  EXPECT_EQ(ProviderTransform::variant_wire_effort(model, "off"), "");
+}
+
+TEST(ProviderTransformTest, ThinkingThatCannotBeDisabledHasNoOff) {
+  const ModelInfo model = configured_claude();
+  EXPECT_FALSE(ProviderTransform::is_allowed_variant(model, "off"));
+  EXPECT_TRUE(ProviderTransform::is_allowed_variant(model, "xhigh"));
+  EXPECT_TRUE(ProviderTransform::is_allowed_variant(model, "ultra"));
+  // A persisted/requested "off" lands on the configured default.
+  EXPECT_EQ(ProviderTransform::clamp_variant(model, "off"), "high");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "off"), "high");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, ""), "high");
+  // The cycle skips off and wraps from the last variant to the first.
+  EXPECT_EQ(ProviderTransform::next_variant(model, "ultra"), "low");
+  EXPECT_EQ(ProviderTransform::next_variant(model, "max"), "ultra");
+
+  const auto entries = build_variant_entries(model);
+  std::vector<std::string> ids;
+  for (const auto& e : entries) ids.push_back(e.id);
+  EXPECT_THAT(ids, testing::ElementsAre("low", "medium", "high", "xhigh", "max",
+                                        "ultra"));
+  EXPECT_EQ(entries.back().title, "Ultra");
+  // The description names the wire effort when the id differs (unless the
+  // configured text already mentions it).
+  EXPECT_EQ(entries.back().description, "Deepest reasoning + 128k output (effort max)");
+  EXPECT_EQ(entries[3].title, "Xhigh");
+  EXPECT_EQ(entries[3].description, "Deeper than high, just below max");
 }
 
 TEST(ProviderTransformTest, CursorFamilyAndWireIds) {
@@ -233,7 +300,7 @@ TEST(ProviderTransformTest, ResolveSessionVariantKeepsOffAndClamps) {
   EXPECT_EQ(ProviderTransform::resolve_session_variant(model, ""), "high");
   EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "off"), "off");
   EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "max"), "max");
-  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "medium"), "high");
+  EXPECT_EQ(ProviderTransform::resolve_session_variant(model, "medium"), "low");
 }
 
 // ── Effort placement per transport ──

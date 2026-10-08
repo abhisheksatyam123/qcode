@@ -1,4 +1,5 @@
 #include "pickers.h"
+#include <ftxui/screen/string.hpp>
 #include <algorithm>
 #include <chrono>
 #include <ctime>
@@ -326,6 +327,23 @@ ftxui::Element build_session_popup(
            size(WIDTH, EQUAL, 60) | hcenter;
 }
 
+constexpr int kVariantPopupWidth = 72;
+
+// Clips `s` to `max_width` terminal cells, ending in "…" when cut.
+static std::string fit_cells(const std::string& s, int max_width) {
+    if (max_width <= 0) return {};
+    if (ftxui::string_width(s) <= max_width) return s;
+    std::string out;
+    int width = 0;
+    for (const auto& glyph : ftxui::Utf8ToGlyphs(s)) {
+        const int w = ftxui::string_width(glyph);
+        if (width + w > max_width - 1) break;
+        out += glyph;
+        width += w;
+    }
+    return out + "…";
+}
+
 ftxui::Element build_variant_popup(
     const std::vector<VariantEntry>& entries,
     int select_idx,
@@ -344,11 +362,14 @@ ftxui::Element build_variant_popup(
     } else {
         const int total = static_cast<int>(entries.size());
         select_idx = std::clamp(select_idx, 0, total - 1);
+        // Titles never shrink; descriptions are clipped to the popup.
+        constexpr int kInnerWidth = kVariantPopupWidth - 2;
         for (int i = 0; i < total; ++i) {
             const auto& e = entries[i];
             const bool active = (e.id == active_variant);
             const std::string marker =
                 (i == select_idx) ? " ▶ " : (active ? " ● " : "   ");
+            const int room = kInnerWidth - 3 - ftxui::string_width(e.title) - 2;
             auto row = hbox({
                 text(marker) | color(i == select_idx ? accent2(theme)
                                 : (active ? accent(theme) : Color::Default)),
@@ -356,7 +377,7 @@ ftxui::Element build_variant_popup(
                     (i == select_idx ? bold : nothing) |
                     color(i == select_idx ? Color::White
                           : (active ? accent2(theme) : Color::GrayLight)),
-                text("  " + e.description) | dim,
+                text("  " + fit_cells(e.description, room)) | dim,
             });
             if (i == select_idx)
                 row = row | bgcolor(bg_popup()) | bold;
@@ -369,7 +390,7 @@ ftxui::Element build_variant_popup(
     lines.push_back(separatorLight());
     lines.push_back(text(" ↑↓ navigate  Enter select  Esc cancel") | dim);
     return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) |
-           color(accent(theme)) | size(WIDTH, EQUAL, 56) | hcenter;
+           color(accent(theme)) | size(WIDTH, EQUAL, kVariantPopupWidth) | hcenter;
 }
 
 ftxui::Element build_help_popup(const std::string& theme) {

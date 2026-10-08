@@ -173,6 +173,33 @@ static std::string format_grouped(long long n) {
   std::reverse(out.begin(), out.end());
   return neg ? "-" + out : out;
 }
+// Session cost for the header and the Stats tab. Per-call usage (billed
+// input incl. cache reads/writes) is exact; sessions recorded before it
+// existed fall back to the turn totals. Prices come only from opencode.json
+// (cost.input/output/cache_read/cache_write); unpriced models show no cost.
+struct SessionCostView {
+    bool available = false;
+    bool from_calls = false;
+    session::UsageCost parts;
+    double total = 0.0;
+};
+static SessionCostView session_cost_view(const ChatState& state, const ModelInfo& model) {
+    SessionCostView view;
+    const auto& usage = *state.usage;
+    view.parts = session::estimate_usage_cost(usage, model);
+    if (!view.parts.priced) return view;
+    if (!usage.empty()) {
+        view.available = true;
+        view.from_calls = true;
+        view.total = view.parts.total();
+    } else if (*state.total_prompt_tokens + *state.total_completion_tokens > 0) {
+        view.available = true;
+        view.total = (*state.total_prompt_tokens * model.input_cost +
+                      *state.total_completion_tokens * model.output_cost) / 1000000.0;
+    }
+    return view;
+}
+
 static std::string format_usage_upstream(long long total, int window_size,
                                          double cost, bool have_cost) {
   if (total <= 0) {
@@ -192,6 +219,236 @@ static std::string format_usage_upstream(long long total, int window_size,
     text += " · " + os.str();
   }
   return text;
+}
+
+// ── Stats tab ─────────────────────────────────────────────────────────────
+namespace {
+std::string fmt_ms(double ms) {
+    char buf[32];
+    if (ms >= 10000.0) {
+        std::snprintf(buf, sizeof(buf), "%.1f s", ms / 1000.0);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%lld ms", static_cast<long long>(ms));
+    }
+    return buf;
+}
+std::string fmt_usd(double usd) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), usd >= 100.0 ? "$%.2f" : "$%.4f", usd);
+    return buf;
+}
+std::string fmt_rate(double per_mtok) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), per_mtok < 1.0 ? "$%.3f" : "$%.2f", per_mtok);
+    return buf;
+}
+std::string fmt_pct(double part, double whole) {
+    if (whole <= 0.0) return "-";
+    return std::to_string(static_cast<int>(part * 100.0 / whole + 0.5)) + "%";
+}
+}  // namespace
+
+static Element build_stats_tab(const ChatState& state,
+                               const std::vector<ProviderInfo>& providers_list,
+                               int selected_provider, int selected_model,
+                               const std::string& theme) {
+    const auto row = [](const std::string& label, Element value) {
+        return hbox({text(label) | dim | size(WIDTH, EQUAL, 20), std::move(value)});
+    };
+    const auto row_text = [&](const std::string& label, const std::string& value) {
+        return row(label, text(value));
+    };
+    const auto section = [&](const std::string& title) {
+        return text(title) | bold | color(accent2(theme));
+    };
+
+    const ProviderInfo* prov = nullptr;
+    const ModelInfo* model = nullptr;
+    if (selected_provider >= 0 && selected_provider < static_cast<int>(providers_list.size())) {
+        prov = &providers_list[selected_provider];
+        if (selected_model >= 0 && selected_model < static_cast<int>(prov->models.size())) {
+            model = &prov->models[selected_model];
+        }
+    }
+    const ModelInfo empty_model;
+    const ModelInfo& m = model ? *model : empty_model;
+    const auto& usage = *state.usage;
+    Elements rows;
+
+    // ── Model & variant (what the next request sends) ──
+    rows.push_back(section("⎔ MODEL"));
+    rows.push_back(row("Provider / Model",
+                       text((prov ? prov->name : std::string("Unknown")) + " / " +
+                            (model ? m.name : std::string("Unknown"))) | bold));
+    {
+        const std::string rm = state.reasoning_mode ? *state.reasoning_mode : std::string{};
+        const std::string variant = model ? ProviderTransform::resolve_session_variant(m, rm)
+                                          : (rm.empty() ? std::string("off") : rm);
+        std::string line = variant;
+        if (model && variant != "off") {
+            const std::string wire = ProviderTransform::variant_wire_effort(m, variant);
+            if (!wire.empty() && wire != variant) line += "  → effort " + wire;
+            if (const auto* spec = ProviderTransform::find_variant(m, variant)) {
+                if (spec->max_tokens > 0) {
+                    const int cap = m.output_limit > 0 ? std::min(spec->max_tokens, m.output_limit)
+                                                       : spec->max_tokens;
+                    line += " · max_tokens " + std::to_string(cap);
+                }
+                if (spec->budget_tokens > 0) {
+                    line += " · budget " + std::to_string(spec->budget_tokens);
+                }
+                if (!spec->prompt.empty()) line += " · +prompt";
+            }
+        }
+        rows.push_back(row("Variant", text(line) | color(accent(theme))));
+        if (!m.thinking_type.empty()) {
+            std::string thinking = m.thinking_type;
+            if (!m.thinking_display.empty()) thinking += " (" + m.thinking_display + ")";
+            if (!m.thinking_allow_off) thinking += " · always on";
+            rows.push_back(row_text("Thinking", thinking));
+        }
+        if (model && (m.input_cost > 0.0 || m.output_cost > 0.0)) {
+            std::string prices =
+                fmt_rate(m.input_cost) + " in · " + fmt_rate(m.output_cost) + " out";
+            if (m.cache_read_cost > 0.0) prices += " · " + fmt_rate(m.cache_read_cost) + " cache read";
+            if (m.cache_write_cost > 0.0) prices += " · " + fmt_rate(m.cache_write_cost) + " cache write";
+            rows.push_back(row_text("Price / 1M tok", prices));
+        } else {
+            rows.push_back(row("Price / 1M tok", text("not set (opencode.json cost)") | dim));
+        }
+    }
+
+    // ── Context window ──
+    rows.push_back(separatorLight() | color(accent(theme)));
+    rows.push_back(section("⎔ CONTEXT WINDOW"));
+    {
+        int window = m.context_window;
+        if (window <= 0 && model) {
+            window = cached_model_performance_summary(m.id, kAnyProvider).context_window;
+        }
+        const int used = *state.current_context_tokens > 0
+                             ? *state.current_context_tokens
+                             : std::max(0, *state.last_actual_prompt_tokens);
+        if (window > 0) {
+            const double pct =
+                std::clamp(static_cast<double>(used) * 100.0 / window, 0.0, 100.0);
+            rows.push_back(row_text("Usage", format_grouped(used) + " / " +
+                                                 format_grouped(window) + " tokens (" +
+                                                 std::to_string(static_cast<int>(pct)) + "%)"));
+            constexpr int kBarWidth = 40;
+            const int filled = static_cast<int>(pct / 100.0 * kBarWidth);
+            std::string filled_bar;
+            std::string empty_bar;
+            for (int i = 0; i < filled; ++i) filled_bar += "█";
+            for (int i = filled; i < kBarWidth; ++i) empty_bar += "░";
+            rows.push_back(hbox({text("[") | dim,
+                                 text(filled_bar) | color(pct >= 90   ? Color::Red
+                                                          : pct >= 70 ? Color::Yellow
+                                                                      : accent2(theme)),
+                                 text(empty_bar) | dim, text("]") | dim}));
+        } else {
+            rows.push_back(row_text("Usage", format_grouped(used) +
+                                                 " tokens (window unknown: set limit.context)"));
+        }
+    }
+
+    // ── Tokens ──
+    rows.push_back(separatorLight() | color(accent(theme)));
+    rows.push_back(section("⎔ TOKENS (this session)"));
+    if (!usage.empty()) {
+        rows.push_back(row_text("Input (billed)", format_grouped(usage.input_tokens)));
+        rows.push_back(row_text(
+            "  cache read",
+            format_grouped(usage.cache_read_tokens) + "  (" +
+                fmt_pct(static_cast<double>(usage.cache_read_tokens),
+                        static_cast<double>(usage.input_tokens)) +
+                " hit)"));
+        rows.push_back(row_text("  cache write", format_grouped(usage.cache_write_tokens)));
+        rows.push_back(row_text("Output", format_grouped(usage.output_tokens)));
+        rows.push_back(row_text("  thinking", format_grouped(usage.reasoning_tokens)));
+    } else {
+        rows.push_back(row_text("Prompt", format_grouped(*state.total_prompt_tokens)));
+        rows.push_back(row_text("Completion", format_grouped(*state.total_completion_tokens)));
+        rows.push_back(text("  per-call input/cache figures start with the next turn") | dim);
+    }
+    rows.push_back(row_text("Tool Calls", std::to_string(*state.tool_call_count) + "  (" +
+                                              fmt_ms(*state.total_tool_time_ms) + ")"));
+
+    // ── Cost ──
+    rows.push_back(separatorLight() | color(accent(theme)));
+    rows.push_back(section("⎔ COST (estimate at list price)"));
+    {
+        const SessionCostView cost = session_cost_view(state, m);
+        if (!cost.parts.priced) {
+            rows.push_back(text("  No price for this model: add cost.input/output/"
+                                "cache_read/cache_write to opencode.json") | dim);
+        } else if (!cost.available) {
+            rows.push_back(row("Total", text(fmt_usd(0.0)) | color(Color::Green)));
+        } else {
+            rows.push_back(row("Total", text(fmt_usd(cost.total)) | color(Color::Green) | bold));
+            if (cost.from_calls) {
+                rows.push_back(row_text("  input", fmt_usd(cost.parts.input)));
+                rows.push_back(row_text("  cache read", fmt_usd(cost.parts.cache_read)));
+                rows.push_back(row_text("  cache write", fmt_usd(cost.parts.cache_write)));
+                rows.push_back(row_text("  output", fmt_usd(cost.parts.output)));
+            }
+        }
+    }
+
+    // ── Latency ──
+    rows.push_back(separatorLight() | color(accent(theme)));
+    rows.push_back(section("⎔ LATENCY"));
+    if (usage.empty()) {
+        rows.push_back(row_text("Model Calls", "0"));
+    } else {
+        rows.push_back(row_text("Model Calls", std::to_string(usage.model_calls)));
+        rows.push_back(row_text("Avg Call", fmt_ms(usage.model_ms_total / usage.model_calls)));
+        rows.push_back(row_text("Avg First Token",
+                                usage.ttft_count > 0
+                                    ? fmt_ms(usage.ttft_ms_total / usage.ttft_count)
+                                    : std::string("-")));
+        rows.push_back(row_text(
+            "Last Call",
+            fmt_ms(usage.model_ms_last) +
+                (usage.ttft_ms_last >= 0.0
+                     ? "  (first token " + fmt_ms(usage.ttft_ms_last) + ")"
+                     : std::string())));
+        rows.push_back(row("Slowest Call",
+                           text(fmt_ms(usage.model_ms_max)) |
+                               color(usage.model_ms_max >= 60000.0   ? Color(Color::Red)
+                                     : usage.model_ms_max >= 20000.0 ? Color(Color::Yellow)
+                                                                     : Color(Color::Default))));
+        {
+            const double secs = usage.model_ms_total / 1000.0;
+            char speed[48];
+            std::snprintf(speed, sizeof(speed), "%.1f tok/s",
+                          secs > 0.0 ? static_cast<double>(usage.output_tokens) / secs : 0.0);
+            rows.push_back(row_text("Output Speed", speed));
+        }
+        rows.push_back(row_text("Total Model Time", fmt_ms(usage.model_ms_total)));
+        std::string last = usage.last_effort.empty() ? std::string("off") : usage.last_effort;
+        if (!usage.last_variant.empty() && usage.last_variant != usage.last_effort) {
+            last = usage.last_variant + " → effort " + last;
+        }
+        rows.push_back(row_text("Last Effort Sent", last));
+    }
+
+    // Scrollable: the mouse wheel moves scroll_line; clamp to the content.
+    auto content = vbox(std::move(rows));
+    content->ComputeRequirement();
+    const int content_height = std::max(0, content->requirement().min_y);
+    const int viewport_height = std::max(1, stable_terminal_size().dimy - 7);
+    const int max_scroll = qcode::tui::compute_max_scroll(content_height, viewport_height);
+    *state.scroll_line = std::clamp(*state.scroll_line, 0, max_scroll);
+    const int focus_y = qcode::tui::compute_focus_y(*state.scroll_line, viewport_height);
+    return vbox({
+               text(""),
+               hbox({text("  "),
+                     content | focusPosition(0, focus_y) | vscroll_indicator | yframe | flex,
+                     text("  ")}) |
+                   flex,
+           }) |
+           borderRounded | color(accent(theme)) | size(WIDTH, LESS_THAN, 90) | hcenter | flex;
 }
 
 // Soft amber used for pending / queued chrome (readable on dark terminals).
@@ -306,39 +563,18 @@ ftxui::Element render_view(
                                   : 0);
     int window_size = hdr_model_info.context_window;
     if (window_size <= 0) {
-        const auto& summary = cached_model_performance_summary(hdr_model_info.id, kAnyProvider);
-        if (summary.context_window > 0) {
-            window_size = summary.context_window;
-        } else {
-            std::string lower = hdr_model_info.id;
-            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-            if (lower.find("2m") != std::string::npos || lower.find("gemini-3.1") != std::string::npos) {
-                window_size = 2000000;
-            } else if (lower.find("gemini") != std::string::npos || lower.find("deepseek") != std::string::npos || lower.find("nemotron") != std::string::npos) {
-                window_size = 1000000;
-            } else {
-                window_size = 200000;
-            }
-        }
+        // opencode.json limit.context is the source of truth; a learned
+        // window from earlier API errors is the only fallback (0 = unknown).
+        window_size = cached_model_performance_summary(hdr_model_info.id, kAnyProvider)
+                          .context_window;
     }
     const int last_reasoning = state.last_reasoning_tokens ? *state.last_reasoning_tokens : 0;
     const long long usage_total =
         (long long)ctx_snapshot + (long long)std::max(0, last_reasoning);
-    // Session cost estimate for the usage suffix (same rates as Stats tab).
-    double use_in_rate = 3.00, use_out_rate = 15.00;
-    {
-        const std::string& pid =
-            (selected_provider >= 0 && selected_provider < (int)providers_list.size())
-                ? providers_list[selected_provider].id
-                : std::string{};
-        use_in_rate = hdr_model_info.input_cost > 0 ? hdr_model_info.input_cost
-                      : (pid == "openrouter" ? 2.50 : 3.00);
-        use_out_rate = hdr_model_info.output_cost > 0 ? hdr_model_info.output_cost
-                       : (pid == "openrouter" ? 10.00 : 15.00);
-    }
-    const double use_cost =
-        (*state.total_prompt_tokens * use_in_rate + *state.total_completion_tokens * use_out_rate) / 1000000.0;
-    const bool use_have_cost = (*state.total_prompt_tokens + *state.total_completion_tokens) > 0;
+    // Session cost at the model's opencode.json prices (same as Stats tab).
+    const SessionCostView hdr_cost = session_cost_view(state, hdr_model_info);
+    const double use_cost = hdr_cost.total;
+    const bool use_have_cost = hdr_cost.available;
     std::string hdr_tokens = format_usage_upstream(usage_total, window_size, use_cost, use_have_cost);
     int ctx_pct = 0;
     Color ctx_color = Color::Default;
@@ -1083,112 +1319,7 @@ ftxui::Element render_view(
     }
     // ── Tab 2: Stats ──
     else if (state.tab_selected == 2) {
-        const auto fmt_ms = [](double ms) {
-            std::ostringstream o;
-            if (ms >= 10000.0) o << std::fixed << std::setprecision(1) << ms / 1000.0 << " s";
-            else o << static_cast<long long>(ms) << " ms";
-            return o.str();
-        };
-        std::string prov_name = "Unknown";
-        std::string mod_name = "Unknown";
-        std::string prov_id = "";
-        int hard_limit = 200000;
-        double in_rate = 3.00;
-        double out_rate = 15.00;
-
-        if (selected_provider >= 0 && selected_provider < static_cast<int>(providers_list.size())) {
-            const auto& prov = providers_list[selected_provider];
-            prov_name = prov.name;
-            prov_id = prov.id;
-            if (selected_model >= 0 && selected_model < static_cast<int>(prov.models.size())) {
-                const auto& m = prov.models[selected_model];
-                mod_name = m.name;
-                if (m.context_window > 0) {
-                    hard_limit = m.context_window;
-                } else {
-                    const auto& summary = cached_model_performance_summary(m.id, kAnyProvider);
-                    if (summary.context_window > 0) {
-                        hard_limit = summary.context_window;
-                    } else {
-                        std::string lower = m.id;
-                        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-                        if (lower.find("2m") != std::string::npos || lower.find("gemini-3.1") != std::string::npos) {
-                            hard_limit = 2000000;
-                        } else if (lower.find("gemini") != std::string::npos || lower.find("deepseek") != std::string::npos || lower.find("nemotron") != std::string::npos) {
-                            hard_limit = 1000000;
-                        }
-                    }
-                }
-                in_rate = m.input_cost > 0 ? m.input_cost : (prov_id == "openrouter" ? 2.50 : 3.00);
-                out_rate = m.output_cost > 0 ? m.output_cost : (prov_id == "openrouter" ? 10.00 : 15.00);
-            }
-        }
-        if (hard_limit <= 0) hard_limit = 200000;
-
-        int used = *state.current_context_tokens > 0
-                       ? *state.current_context_tokens
-                       : (*state.last_actual_prompt_tokens > 0
-                              ? *state.last_actual_prompt_tokens
-                              : 0);
-        double used_pct = (double)used / hard_limit * 100.0;
-        if (used_pct > 100.0) used_pct = 100.0;
-        if (used_pct < 0.0) used_pct = 0.0;
-
-        int bar_width = 40;
-        int filled = (int)(used_pct / 100.0 * bar_width);
-        std::string filled_bar = "";
-        for (int i = 0; i < filled; ++i) filled_bar += "█";
-        std::string empty_bar = "";
-        for (int i = 0; i < bar_width - filled; ++i) empty_bar += "░";
-
-        double cost = (*state.total_prompt_tokens * in_rate + *state.total_completion_tokens * out_rate) / 1000000.0;
-        std::ostringstream cost_stream;
-        cost_stream << std::fixed << std::setprecision(4) << cost;
-        std::string cost_str = cost_stream.str();
-
-        body = vbox({
-            text(""),
-            hbox({
-                text("  "),
-                vbox({
-                    text("⎔ CONTEXT WINDOW") | bold | color(accent2(theme)),
-                    hbox({
-                        text("Model/Provider: ") | dim,
-                        text(prov_name + " / " + mod_name) | bold
-                    }),
-                    hbox({
-                        text("Usage: ") | dim,
-                        text(std::to_string(used) + " / " + std::to_string(hard_limit) + " tokens (" + std::to_string((int)used_pct) + "%)")
-                    }),
-                    hbox({
-                        text("[") | dim,
-                        text(filled_bar) | color(used_pct >= 90 ? Color::Red : (used_pct >= 70 ? Color::Yellow : accent2(theme))),
-                        text(empty_bar) | dim,
-                        text("]") | dim
-                    }),
-                    separatorLight() | color(accent(theme)),
-                    text("⎔ SESSION STATS") | bold | color(accent2(theme)),
-                    hbox({ text("Prompt Tokens: ") | dim, text(std::to_string(*state.total_prompt_tokens)) }),
-                    hbox({ text("Completion Tokens: ") | dim, text(std::to_string(*state.total_completion_tokens)) }),
-                    hbox({ text("Total Tokens: ") | dim, text(std::to_string(*state.total_tokens)) }),
-                    hbox({ text("Thinking Tokens: ") | dim, text(std::to_string(*state.total_reasoning_tokens)) }),
-                    hbox({ text("Effort (last step): ") | dim, text(state.last_effort->empty() ? "off" : *state.last_effort) }),
-                    hbox({ text("Tool Calls: ") | dim, text(std::to_string(*state.tool_call_count)) }),
-                    hbox({ text("Estimated Cost: ") | dim, text("$" + cost_str) | color(Color::Green) | bold }),
-                    separatorLight() | color(accent(theme)),
-                    text("⎔ LATENCY") | bold | color(accent2(theme)),
-                    hbox({ text("Model Calls: ") | dim, text(std::to_string(*state.model_calls)) }),
-                    hbox({ text("Avg Model Latency: ") | dim, text(*state.model_calls > 0 ? fmt_ms(*state.total_model_ms / *state.model_calls) : std::string("-")) }),
-                    hbox({ text("Last Step: ") | dim, text(*state.model_calls > 0 ? fmt_ms(*state.last_model_ms) + (*state.last_ttft_ms >= 0.0 ? "  (first token " + fmt_ms(*state.last_ttft_ms) + ")" : std::string()) : std::string("-")) }),
-                    hbox({ text("Slowest Step: ") | dim, text(*state.model_calls > 0 ? fmt_ms(*state.max_model_ms) : std::string("-")) | color(*state.max_model_ms >= 60000.0 ? Color(Color::Red) : (*state.max_model_ms >= 20000.0 ? Color(Color::Yellow) : Color(Color::Default))) }),
-                    hbox({ text("Total Model Time: ") | dim, text(fmt_ms(*state.total_model_ms)) }),
-                    hbox({ text("Tool Time: ") | dim, text(fmt_ms(*state.total_tool_time_ms)) }),
-
-                }) | flex,
-                text("  ")
-            }),
-            text("")
-        }) | borderRounded | color(accent(theme)) | size(WIDTH, LESS_THAN, 80) | hcenter | flex;
+        body = build_stats_tab(state, providers_list, selected_provider, selected_model, theme);
     }
     // ── Tab 3: Subagents for current session only ──
     else {

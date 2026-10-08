@@ -66,6 +66,41 @@ TUI and server load providers from a single `opencode.json`:
 
 Set provider API keys via environment variables (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or in that file’s provider options.
 
+Model behaviour lives in the same file, not in code. Per model (or once per
+provider under `model_defaults`, merged into every model with JSON merge-patch
+rules: model keys win, `null` removes an inherited key):
+
+```jsonc
+"anthropic": {
+  "model_defaults": {
+    // Claude wire form: "adaptive" = thinking{adaptive,display} + output_config.effort,
+    // "enabled" (or unset) = thinking{enabled,budget_tokens}. allow_off=false hides Off.
+    "thinking": { "type": "adaptive", "display": "summarized", "allow_off": false },
+    // /variant picker, in order. Each key is the id; effort defaults to the id.
+    "variants": {
+      "low": {}, "medium": {}, "high": { "max_tokens": 32000 },
+      "xhigh": { "max_tokens": 64000 }, "max": { "max_tokens": 64000 },
+      "ultra": { "label": "Ultra", "effort": "max", "max_tokens": 128000,
+                 "prompt": "Extra system instruction while ultra is active",
+                 "description": "Max effort + 128k output" }
+    }
+  },
+  "models": {
+    "claude-opus-5-5": {
+      "reasoning_default": "high",
+      "limit": { "context": 1000000, "output": 128000 },
+      // USD per 1M tokens; the Stats tab and header cost use these only.
+      "cost": { "input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5 }
+    }
+  }
+}
+```
+
+Variant fields: `effort` (wire value), `max_tokens` (raises the request,
+capped by `limit.output`), `budget_tokens` (budget-form models), `prompt`,
+`label`, `description`, `disabled`. A plain `"reasoning_efforts": [...]` list
+still works for models without a `variants` object.
+
 ### Start the TUI
 
 ```bash

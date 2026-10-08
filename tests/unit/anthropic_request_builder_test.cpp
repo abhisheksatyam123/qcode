@@ -15,6 +15,7 @@ TEST(AnthropicRequestBuilderTest, EnablesPromptCachingOnSystemBlocksOnly) {
   options.system = "You are a careful coding agent.";
   options.messages = {Message::user("Hello")};
   options.budget_tokens = 8000;
+  options.thinking_type = "adaptive";  // opencode.json "thinking"
 
   const auto request = builder.build_request_json(options);
 
@@ -28,7 +29,7 @@ TEST(AnthropicRequestBuilderTest, EnablesPromptCachingOnSystemBlocksOnly) {
   EXPECT_EQ(request["system"][0]["text"], "You are a careful coding agent.");
   EXPECT_EQ(request["system"][0]["cache_control"]["type"], "ephemeral");
 
-  // Claude >=4.6 ignores budget_tokens: adaptive + display is the wire form.
+  // Adaptive models ignore budget_tokens: adaptive + display is the wire form.
   EXPECT_EQ(request["thinking"]["type"], "adaptive");
   EXPECT_EQ(request["thinking"]["display"], "summarized");
 }
@@ -66,9 +67,11 @@ TEST(AnthropicRequestBuilderTest, ToolResultsSurviveStepWithThinkingAndText) {
   EXPECT_TRUE(step.response_messages.front().has_tool_calls());
 
   GenerateOptions options;
-  // Thinking-suffixed model so the builder enables the thinking budget, as in
-  // production thinking turns (wire id is stripped to claude-opus-5-5).
+  // Thinking on, as in production thinking turns (wire id is stripped to
+  // claude-opus-5-5).
   options.model = "claude-opus-5-5-thinking";
+  options.thinking_type = "adaptive";
+  options.reasoning_effort = "high";
   options.messages = {Message::user("Read a.txt"),
                       step.response_messages.front(),
                       Message(kMessageRoleUser,
@@ -146,32 +149,44 @@ TEST(AnthropicUsageTest, OutputOnlyDeltaIsNotInputUsage) {
 }
 
 
-// ── Adaptive thinking (Claude >=4.6) ───────────────────────────────────────
+// ── Thinking wire form (from opencode.json "thinking") ────────────────────
 // Probed live against api.anthropic.com (claude-opus-5-5):
 //   thinking{type:disabled}   -> HTTP 400 "use adaptive and output_config.effort"
 //   thinking{type:enabled}    -> 200 but EMPTY thinking text, ~60 thinking tokens
 //   adaptive (display unset)  -> 200 but EMPTY thinking text
 //   adaptive+summarized+effort-> thinking text present, tokens scale with effort
-TEST(AnthropicThinkingTest, DetectsAdaptiveModels) {
-  EXPECT_TRUE(anthropic_uses_adaptive_thinking("claude-opus-5-5"));
-  EXPECT_TRUE(anthropic_uses_adaptive_thinking("claude-sonnet-5-5"));
-  EXPECT_TRUE(anthropic_uses_adaptive_thinking("claude-haiku-5-5"));
-  EXPECT_TRUE(anthropic_uses_adaptive_thinking("claude-opus-4-7"));
-  EXPECT_TRUE(anthropic_uses_adaptive_thinking("claude-opus-4-6"));
-  EXPECT_TRUE(anthropic_uses_adaptive_thinking("claude-sonnet-4-6"));
-  // "-thinking" variants resolve to the same base model.
-  EXPECT_TRUE(anthropic_uses_adaptive_thinking("claude-opus-5-5-thinking"));
+//   output_config.effort      -> only low|medium|high|xhigh|max ("ultra" -> 400)
+// So the form is configuration (model "thinking": {"type": "adaptive"}), and
+// the effort is whatever the configured variant maps to.
+TEST(AnthropicThinkingTest, PlanFollowsConfiguredThinkingType) {
+  const auto adaptive = anthropic_plan_thinking(
+      std::string("adaptive"), std::nullopt, std::string("XHigh"), 9000, 64000);
+  EXPECT_TRUE(adaptive.adaptive);
+  EXPECT_TRUE(adaptive.thinking_on);
+  ASSERT_TRUE(adaptive.effort.has_value());
+  EXPECT_EQ(*adaptive.effort, "xhigh");  // verbatim (lower-cased), no clamping
+  EXPECT_FALSE(adaptive.budget_tokens.has_value());
+  EXPECT_EQ(adaptive.display, "summarized");
+  EXPECT_EQ(adaptive.max_tokens, 64000);
 
-  EXPECT_FALSE(anthropic_uses_adaptive_thinking("claude-opus-4-5"));
-  EXPECT_FALSE(
-      anthropic_uses_adaptive_thinking("claude-sonnet-4-20250514"));
-  EXPECT_FALSE(
-      anthropic_uses_adaptive_thinking("claude-3-7-sonnet-20250219"));
-  EXPECT_FALSE(
-      anthropic_uses_adaptive_thinking("claude-opus-4-5-20251101"));
-  EXPECT_FALSE(anthropic_uses_adaptive_thinking("glm-4.6"));
-  // Catalog-prefixed ids (third-party Anthropic-compatible endpoints).
-  EXPECT_TRUE(anthropic_uses_adaptive_thinking("zen/claude-opus-5-5"));
+  const auto omitted = anthropic_plan_thinking(
+      std::string("adaptive"), std::string("omitted"), std::nullopt, std::nullopt,
+      std::nullopt);
+  EXPECT_TRUE(omitted.thinking_on);
+  EXPECT_FALSE(omitted.effort.has_value());
+  EXPECT_EQ(omitted.display, "omitted");
+  EXPECT_EQ(omitted.max_tokens, 4096);
+
+  // Unset type = budget form, only when an effort or budget asks for it.
+  const auto none = anthropic_plan_thinking(std::nullopt, std::nullopt,
+                                            std::string("off"), std::nullopt, 8000);
+  EXPECT_FALSE(none.thinking_on);
+  EXPECT_EQ(none.max_tokens, 8000);
+
+  const auto disabled = anthropic_plan_thinking(
+      std::string("disabled"), std::nullopt, std::string("high"), 4000, 8000);
+  EXPECT_FALSE(disabled.thinking_on);
+  EXPECT_FALSE(disabled.budget_tokens.has_value());
 }
 
 TEST(AnthropicRequestBuilderTest, AdaptiveModelSendsEffortWithoutBudgetTokens) {
@@ -179,7 +194,9 @@ TEST(AnthropicRequestBuilderTest, AdaptiveModelSendsEffortWithoutBudgetTokens) {
   GenerateOptions options;
   options.model = "claude-opus-5-5";
   options.messages = {Message::user("Hello")};
+  options.thinking_type = "adaptive";
   options.reasoning_effort = "high";
+  options.max_tokens = 32000;  // variant max_tokens from opencode.json
 
   const auto request = builder.build_request_json(options);
 
@@ -189,8 +206,7 @@ TEST(AnthropicRequestBuilderTest, AdaptiveModelSendsEffortWithoutBudgetTokens) {
   EXPECT_FALSE(request["thinking"].contains("budget_tokens"));
   ASSERT_TRUE(request.contains("output_config"));
   EXPECT_EQ(request["output_config"]["effort"], "high");
-  // High-effort thinking needs room for tens of thousands of think tokens.
-  EXPECT_GE(request["max_tokens"].get<int>(), 32000);
+  EXPECT_EQ(request["max_tokens"].get<int>(), 32000);
 }
 
 TEST(AnthropicRequestBuilderTest, AdaptiveModelIgnoresBudgetTokens) {
@@ -198,9 +214,10 @@ TEST(AnthropicRequestBuilderTest, AdaptiveModelIgnoresBudgetTokens) {
   GenerateOptions options;
   options.model = "claude-sonnet-5-5";
   options.messages = {Message::user("Hello")};
-  // generation_service still fills budget_tokens for Anthropic providers; the
-  // adaptive form must win so effort actually drives thinking.
+  // A budget configured on a variant must not leak into an adaptive request.
   options.budget_tokens = 16000;
+  options.thinking_type = "adaptive";
+  options.thinking_display = "summarized";
   options.reasoning_effort = "medium";
 
   const auto request = builder.build_request_json(options);
@@ -215,37 +232,41 @@ TEST(AnthropicRequestBuilderTest, AdaptiveModelWithoutEffortSendsNoOutputConfig)
   GenerateOptions options;
   options.model = "claude-opus-5-5";
   options.messages = {Message::user("Hello")};
+  options.thinking_type = "adaptive";
   options.reasoning_effort = "off";
 
   const auto request = builder.build_request_json(options);
-  // Never type:disabled (HTTP 400 on >=4.6); display is what makes the text
-  // visible, so it rides even without an effort.
+  // Never type:disabled (HTTP 400 on these models); display is what makes the
+  // text visible, so it rides even without an effort.
   EXPECT_EQ(request["thinking"]["type"], "adaptive");
   EXPECT_EQ(request["thinking"]["display"], "summarized");
   EXPECT_FALSE(request.contains("output_config"));
   EXPECT_EQ(request["max_tokens"].get<int>(), 4096);
 }
 
-TEST(AnthropicRequestBuilderTest, EffortXhighClampsToMaxOnClaude46) {
+TEST(AnthropicRequestBuilderTest, ConfiguredEffortRidesVerbatim) {
   AnthropicRequestBuilder builder;
   GenerateOptions options;
-  options.model = "claude-opus-4-6";
+  options.model = "claude-opus-5-5";
   options.messages = {Message::user("Hello")};
-  options.reasoning_effort = "xhigh";
+  options.thinking_type = "adaptive";
+  options.thinking_display = "omitted";
+  // The "ultra" variant maps to effort max + 128k output in opencode.json;
+  // generation_service hands the builder the mapped values.
+  options.reasoning_effort = "max";
+  options.max_tokens = 128000;
 
   const auto request = builder.build_request_json(options);
-  EXPECT_EQ(request["thinking"]["type"], "adaptive");
-  // 4.6 predates xhigh; max is its top effort.
+  EXPECT_EQ(request["thinking"]["display"], "omitted");
   EXPECT_EQ(request["output_config"]["effort"], "max");
-  EXPECT_GE(request["max_tokens"].get<int>(), 32000);
+  EXPECT_EQ(request["max_tokens"].get<int>(), 128000);
 
-  // 4.7+ does take xhigh verbatim.
-  options.model = "claude-opus-4-7";
+  options.reasoning_effort = "xhigh";
   const auto request2 = builder.build_request_json(options);
   EXPECT_EQ(request2["output_config"]["effort"], "xhigh");
 }
 
-TEST(AnthropicRequestBuilderTest, LegacyModelKeepsBudgetTokens) {
+TEST(AnthropicRequestBuilderTest, BudgetFormWhenThinkingTypeUnset) {
   AnthropicRequestBuilder builder;
   GenerateOptions options;
   options.model = "claude-opus-4-5";
@@ -258,8 +279,9 @@ TEST(AnthropicRequestBuilderTest, LegacyModelKeepsBudgetTokens) {
   EXPECT_FALSE(request.contains("output_config"));
   EXPECT_EQ(request["max_tokens"].get<int>(), 17024);
 
-  // Explicit budget wins over the effort-derived one on legacy models.
+  // A configured budget wins over the effort-derived one.
   options.model = "claude-3-7-sonnet-20250219";
+  options.thinking_type = "enabled";
   options.budget_tokens = 4096;
   const auto request2 = builder.build_request_json(options);
   EXPECT_EQ(request2["thinking"]["type"], "enabled");
@@ -270,6 +292,7 @@ TEST(AnthropicRequestBuilderTest, HistoryEchoesSignedThinkingForAdaptiveModel) {
   AnthropicRequestBuilder builder;
   GenerateOptions options;
   options.model = "claude-opus-5-5";
+  options.thinking_type = "adaptive";
   options.messages = {
       Message::user("Hi"),
       Message(kMessageRoleAssistant,

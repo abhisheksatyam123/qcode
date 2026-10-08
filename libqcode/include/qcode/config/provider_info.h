@@ -6,6 +6,18 @@
 
 namespace qcode {
 
+// One reasoning variant from opencode.json: `"variants": {"<id>": {...}}`.
+// Every field is optional; the id doubles as the wire effort by default.
+struct VariantInfo {
+    std::string id;           // picker / session value ("high", "ultra")
+    std::string label;        // picker title (defaults to the id)
+    std::string description;  // picker description
+    std::string effort;       // wire effort (defaults to the id)
+    int max_tokens = 0;       // request max_tokens for this variant (0 = model default)
+    int budget_tokens = 0;    // thinking budget for budget-form models (0 = derived)
+    std::string prompt;       // extra system instruction while the variant is active
+};
+
 // Catalog entry from opencode.json (providers.models).
 struct ModelInfo {
     std::string name;
@@ -24,6 +36,19 @@ struct ModelInfo {
     std::string reasoning_default;
     // From opencode.json: reasoning_field (e.g. "reasoning").
     std::string reasoning_field;
+    // From opencode.json "variants" object (ordered). Its ids are mirrored
+    // into reasoning_efforts so every effort-list consumer sees them.
+    std::vector<VariantInfo> variants;
+    // From opencode.json "thinking": wire form for Claude (messages) routes.
+    // type: "adaptive" (effort-driven) | "enabled" (budget_tokens) | "" (enabled).
+    std::string thinking_type;
+    // display: "summarized" | "omitted" | "" (adaptive defaults to summarized).
+    std::string thinking_display;
+    // allow_off=false: the API rejects disabled thinking, so /variant hides Off.
+    bool thinking_allow_off = true;
+    // From opencode.json cost.cache_read / cost.cache_write (USD per 1M tokens).
+    double cache_read_cost = 0.0;
+    double cache_write_cost = 0.0;
 };
 
 struct ProviderInfo {

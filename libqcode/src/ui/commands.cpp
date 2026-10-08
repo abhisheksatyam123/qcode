@@ -58,20 +58,41 @@ std::vector<ModelEntry> build_model_entries(
 
 std::vector<VariantEntry> build_variant_entries(const ModelInfo& model) {
     std::vector<VariantEntry> entries;
-    entries.push_back({"off", "Off", "No extra thinking tokens"});
+    // Models whose API rejects disabled thinking (opencode.json
+    // thinking.allow_off=false) get no Off row.
+    if (model.thinking_allow_off) {
+        entries.push_back({"off", "Off", "No extra thinking tokens"});
+    }
     const auto efforts = ProviderTransform::reasoning_variants(model);
+    // Generic copy for the standard effort ids; opencode.json "variants"
+    // label/description override it per model.
     const auto describe = [](const std::string& id) -> std::string {
+        if (id == "minimal") return "Least reasoning";
         if (id == "low") return "Fast, light reasoning";
         if (id == "medium") return "Balanced thinking";
         if (id == "high") return "Deep reasoning";
-        if (id == "max") return "Maximum thinking budget";
+        if (id == "xhigh") return "Deeper than high, just below max";
+        if (id == "max") return "Maximum effort";
         return "Model-specific effort";
     };
     for (const auto& id : efforts) {
         if (id.empty() || id == "off") continue;
-        std::string title = id;
-        if (!title.empty()) title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(title[0])));
-        entries.push_back({id, title, describe(id)});
+        const VariantInfo* spec = ProviderTransform::find_variant(model, id);
+        std::string title = spec != nullptr && !spec->label.empty() ? spec->label : id;
+        if (spec == nullptr || spec->label.empty()) {
+            title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(title[0])));
+        }
+        std::string description =
+            spec != nullptr && !spec->description.empty() ? spec->description : describe(id);
+        const std::string wire = ProviderTransform::variant_wire_effort(model, id);
+        std::string lowered = description;
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (!wire.empty() && wire != id && lowered.find(wire) == std::string::npos) {
+            description += " (effort " + wire + ")";
+        }
+        entries.push_back({id, std::move(title), std::move(description)});
     }
     return entries;
 }
@@ -466,11 +487,11 @@ bool handle_slash_command(
             lvl = ProviderTransform::next_variant(catalog, cur);
         }
         if (!ProviderTransform::is_allowed_variant(catalog, lvl)) {
-            std::string allowed = "off";
+            std::string allowed = catalog.thinking_allow_off ? "off" : "";
             for (const auto& effort :
                  ProviderTransform::reasoning_variants(catalog)) {
                 if (effort.empty() || effort == "off") continue;
-                allowed += "|";
+                if (!allowed.empty()) allowed += "|";
                 allowed += effort;
             }
             bus.publish<qcode::contract::ToastRequested>({

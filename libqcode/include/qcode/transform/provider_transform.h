@@ -139,16 +139,30 @@ void apply_reasoning_defaults(ModelInfo& model);
 /// reasoning=true with no list falls back to low/medium/high.
 [[nodiscard]] std::vector<std::string> reasoning_variants(const ModelInfo& model);
 
+/// Configured variant spec (opencode.json "variants" object) for `id`, or
+/// nullptr when the model only lists plain effort ids.
+[[nodiscard]] const VariantInfo* find_variant(const ModelInfo& model,
+                                              std::string_view id);
+
+/// Effort sent on the wire for variant `id`: the configured "effort" when
+/// set (e.g. ultra -> max), else the id itself. "off" -> empty.
+[[nodiscard]] std::string variant_wire_effort(const ModelInfo& model,
+                                              std::string_view id);
+
 /// Configured default effort (`reasoning_default` if advertised, else first
-/// effort). "off" when the model cannot reason.
+/// effort). "off" when the model cannot reason (or its default is off and
+/// thinking can be disabled).
 [[nodiscard]] std::string default_variant(const ModelInfo& model);
 
 /// Map a user-selected effort onto one the model actually advertises.
-/// "off" stays "off". Unknown levels snap to the nearest supported effort.
+/// "off" stays "off" unless the model cannot disable thinking. Unknown
+/// levels snap along low<medium<high<xhigh<max<ultra: the nearest lower
+/// advertised level first (never exceed what was asked), then the nearest
+/// higher one; ids off that ladder fall back to the model default.
 [[nodiscard]] std::string clamp_variant(const ModelInfo& model,
                                         std::string_view requested);
 
-/// True if `requested` is "off" or one of the model's configured efforts.
+/// True if `requested` is "off" (when allowed) or a configured effort.
 [[nodiscard]] bool is_allowed_variant(const ModelInfo& model,
                                       std::string_view requested);
 
@@ -156,8 +170,8 @@ void apply_reasoning_defaults(ModelInfo& model);
 [[nodiscard]] std::string next_variant(const ModelInfo& model,
                                        std::string_view current);
 
-/// Empty current → model's configured default. "off" stays off. Anything
-/// else is clamped onto the model's advertised efforts.
+/// Empty current → model's configured default. "off" stays off when the
+/// model allows it. Anything else is clamped onto the advertised efforts.
 [[nodiscard]] std::string resolve_session_variant(const ModelInfo& model,
                                                   std::string_view current);
 

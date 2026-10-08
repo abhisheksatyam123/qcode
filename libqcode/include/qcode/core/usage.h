@@ -7,6 +7,9 @@ struct Usage {
   int completion_tokens = 0;
   int total_tokens = 0;
   int cached_prompt_tokens = 0;
+  // Prompt tokens written to the provider cache this call (Anthropic
+  // cache_creation_input_tokens; subset of prompt_tokens). 0 when unknown.
+  int cache_write_tokens = 0;
   // Tokens the provider reports as reasoning/thinking output (subset of
   // completion_tokens; e.g. completion_tokens_details.reasoning_tokens).
   int reasoning_completion_tokens = 0;

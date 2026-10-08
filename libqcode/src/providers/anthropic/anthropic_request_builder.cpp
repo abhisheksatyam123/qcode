@@ -26,12 +26,11 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   const bool claude_route =
       options.model.find("claude") != std::string::npos ||
       options.model.find("anthropic") != std::string::npos;
-  // Thinking form is model-dependent (see anthropic_thinking.h): Claude >=4.6
-  // takes thinking{type:adaptive, display:summarized} + output_config{effort}
-  // and ignores budget_tokens; older models keep the legacy budget form.
-  const AnthropicThinkingPlan thinking =
-      anthropic_plan_thinking(options.model, options.reasoning_effort,
-                             options.budget_tokens, options.max_tokens);
+  // Thinking wire form comes from opencode.json ("thinking": {"type",
+  // "display"}) via GenerateOptions; see anthropic_thinking.h.
+  const AnthropicThinkingPlan thinking = anthropic_plan_thinking(
+      options.thinking_type, options.thinking_display, options.reasoning_effort,
+      options.budget_tokens, options.max_tokens);
   int max_tokens = thinking.max_tokens;
   if (thinking.thinking_on) {
     if (thinking.adaptive) {
@@ -39,7 +38,7 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
       // it the API omits the thinking block. type:disabled is rejected (400)
       // by these models, so an effort-less turn simply sends no output_config.
       request["thinking"] = {{"type", "adaptive"},
-                             {"display", "summarized"}};
+                             {"display", thinking.display}};
       if (thinking.effort) {
         request["output_config"] = {{"effort", *thinking.effort}};
       }
@@ -52,10 +51,10 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   if (thinking.thinking_on) {
     if (thinking.adaptive) {
       LOG_INFO(
-          "[anthropic] thinking mode=adaptive effort={} display=summarized "
+          "[anthropic] thinking mode=adaptive effort={} display={} "
           "max_tokens={} model={}",
           thinking.effort ? *thinking.effort : std::string("default"),
-          max_tokens, wire_model);
+          thinking.display, max_tokens, wire_model);
     } else {
       LOG_INFO("[anthropic] thinking mode=budget budget={} max_tokens={} model={}",
                thinking.budget_tokens.value_or(0), max_tokens, wire_model);

@@ -73,11 +73,27 @@ std::vector<std::string> reasoning_variants(const ModelInfo& model) {
   return {};
 }
 
+const VariantInfo* find_variant(const ModelInfo& model, std::string_view id) {
+  for (const auto& variant : model.variants) {
+    if (variant.id == id) return &variant;
+  }
+  return nullptr;
+}
+
+std::string variant_wire_effort(const ModelInfo& model, std::string_view id) {
+  if (id.empty() || id == "off") return {};
+  if (const auto* variant = find_variant(model, id);
+      variant != nullptr && !variant->effort.empty()) {
+    return variant->effort;
+  }
+  return std::string{id};
+}
+
 std::string default_variant(const ModelInfo& model) {
   if (!model.reasoning) return "off";
   const auto efforts = reasoning_variants(model);
   if (!model.reasoning_default.empty()) {
-    if (model.reasoning_default == "off") return "off";
+    if (model.reasoning_default == "off" && model.thinking_allow_off) return "off";
     if (std::ranges::find(efforts, model.reasoning_default) != efforts.end()) {
       return model.reasoning_default;
     }
@@ -86,39 +102,61 @@ std::string default_variant(const ModelInfo& model) {
   return efforts.front();
 }
 
+namespace {
+// Effort ordering used to snap an unsupported request onto the model's list.
+constexpr std::array<std::string_view, 7> kEffortLadder{
+    "minimal", "low", "medium", "high", "xhigh", "max", "ultra"};
+
+int ladder_rank(std::string_view effort) {
+  for (size_t i = 0; i < kEffortLadder.size(); ++i) {
+    if (kEffortLadder[i] == effort) return static_cast<int>(i);
+  }
+  return -1;
+}
+}  // namespace
+
 std::string clamp_variant(const ModelInfo& model, std::string_view requested) {
-  if (requested.empty() || requested == "off") return "off";
+  if (requested.empty() || requested == "off") {
+    return model.thinking_allow_off ? "off" : default_variant(model);
+  }
   const auto allowed = reasoning_variants(model);
   if (allowed.empty()) return std::string{requested};
   if (std::ranges::find(allowed, requested) != allowed.end()) {
     return std::string{requested};
   }
-  const std::vector<std::string> fallbacks =
-      requested == "max" || requested == "xhigh"
-          ? std::vector<std::string>{"xhigh", "max", "high", "medium", "low"}
-      : requested == "medium" ? std::vector<std::string>{"high", "low", "max", "xhigh"}
-      : requested == "low" || requested == "minimal"
-          ? std::vector<std::string>{"minimal", "medium", "high", "max"}
-          : std::vector<std::string>{"high", "medium", "max", "xhigh", "low"};
-  for (const auto& candidate : fallbacks) {
-    if (std::ranges::find(allowed, candidate) != allowed.end()) {
-      return candidate;
+  const int rank = ladder_rank(requested);
+  if (rank >= 0) {
+    // Nearest lower advertised level first, then the nearest higher one.
+    for (int r = rank - 1; r >= 0; --r) {
+      const auto it = std::ranges::find(allowed, kEffortLadder[r]);
+      if (it != allowed.end()) return *it;
     }
+    for (int r = rank + 1; r < static_cast<int>(kEffortLadder.size()); ++r) {
+      const auto it = std::ranges::find(allowed, kEffortLadder[r]);
+      if (it != allowed.end()) return *it;
+    }
+  }
+  const std::string fallback = default_variant(model);
+  if (fallback != "off" &&
+      std::ranges::find(allowed, fallback) != allowed.end()) {
+    return fallback;
   }
   return allowed.front();
 }
 
 static std::vector<std::string> variant_cycle(const ModelInfo& model) {
-  std::vector<std::string> ids{"off"};
+  std::vector<std::string> ids;
+  if (model.thinking_allow_off) ids.emplace_back("off");
   std::ranges::copy_if(reasoning_variants(model), std::back_inserter(ids),
                        [](const std::string& effort) {
                          return !effort.empty() && effort != "off";
                        });
+  if (ids.empty()) ids.emplace_back("off");
   return ids;
 }
 
 bool is_allowed_variant(const ModelInfo& model, std::string_view requested) {
-  if (requested == "off") return true;
+  if (requested == "off") return model.thinking_allow_off;
   const auto allowed = reasoning_variants(model);
   return std::ranges::find(allowed, requested) != allowed.end();
 }
@@ -136,7 +174,6 @@ std::string next_variant(const ModelInfo& model, std::string_view current) {
 std::string resolve_session_variant(const ModelInfo& model,
                                     std::string_view current) {
   if (current.empty()) return default_variant(model);
-  if (current == "off") return "off";
   return clamp_variant(model, current);
 }
 

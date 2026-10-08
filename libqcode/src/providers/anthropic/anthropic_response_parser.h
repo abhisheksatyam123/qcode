@@ -31,6 +31,7 @@ class AnthropicResponseParser : public providers::ResponseParser {
 struct AnthropicInputUsage {
   int prompt_tokens = 0;
   int cached_prompt_tokens = 0;
+  int cache_write_tokens = 0;
   bool present = false;  // any input-side field was in the object
 };
 AnthropicInputUsage normalize_input_usage(const nlohmann::json& usage);

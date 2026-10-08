@@ -32,6 +32,13 @@ struct GenerateOptions {
   // Reasoning / extended-thinking support (opt-in; provider-specific)
   std::optional<std::string> reasoning_effort;  // openai o-series: "low"/"medium"/"high"
   std::optional<int> budget_tokens;            // anthropic: thinking budget
+  // Claude (messages) thinking wire form from opencode.json "thinking":
+  // "adaptive" -> thinking{adaptive,display} + output_config{effort};
+  // "enabled"/unset -> thinking{enabled,budget_tokens}; "disabled" -> none.
+  std::optional<std::string> thinking_type;
+  std::optional<std::string> thinking_display;  // "summarized" | "omitted"
+  // Picker variant behind reasoning_effort ("ultra" -> effort "max"); logs/stats.
+  std::optional<std::string> reasoning_variant;
 
   // Tool calling support
   ToolSet tools;

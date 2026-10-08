@@ -100,6 +100,7 @@ GenerateResult AnthropicResponseParser::parse_success_completion_response(
     result.usage.total_tokens =
         result.usage.prompt_tokens + result.usage.completion_tokens;
     result.usage.cached_prompt_tokens = in.cached_prompt_tokens;
+    result.usage.cache_write_tokens = in.cache_write_tokens;
     // Thinking output lives inside output_tokens; providers may split it out.
     if (usage.contains("output_tokens_details") && usage["output_tokens_details"].is_object()) {
       result.usage.reasoning_completion_tokens =
@@ -199,6 +200,7 @@ AnthropicInputUsage normalize_input_usage(const nlohmann::json& usage) {
   const int cache_write = num("cache_creation_input_tokens");
   out.prompt_tokens = num("input_tokens") + cache_read + cache_write;
   out.cached_prompt_tokens = cache_read;
+  out.cache_write_tokens = cache_write;
   return out;
 }
 

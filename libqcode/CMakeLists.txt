@@ -92,6 +92,7 @@ target_sources(qcode-engine PRIVATE
     src/compaction/compaction_request.cpp
     src/session/session_store.cpp
     src/session/session_telemetry.cpp
+    src/session/usage_stats.cpp
     src/session/subagent_stats.cpp
     src/session/study_store.cpp
     src/session/study_assistant.cpp

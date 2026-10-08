@@ -382,6 +382,7 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
         const auto in = normalize_input_usage(usage);
         stream_usage_.prompt_tokens = in.prompt_tokens;
         stream_usage_.cached_prompt_tokens = in.cached_prompt_tokens;
+        stream_usage_.cache_write_tokens = in.cache_write_tokens;
         stream_usage_.total_tokens = stream_usage_.prompt_tokens + stream_usage_.completion_tokens;
         stream_usage_seen_ = true;
       }
@@ -464,6 +465,7 @@ void AnthropicStreamImpl::process_sse_event(const std::string& data) {
         if (in.present && in.prompt_tokens > 0) {
           stream_usage_.prompt_tokens = in.prompt_tokens;
           stream_usage_.cached_prompt_tokens = in.cached_prompt_tokens;
+          stream_usage_.cache_write_tokens = in.cache_write_tokens;
         }
         if (usage.contains("output_tokens_details") && usage["output_tokens_details"].is_object()) {
           const auto& det = usage["output_tokens_details"];

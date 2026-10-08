@@ -136,6 +136,60 @@ bool subagent_wants_cursor(const nlohmann::json& args) {
 }
 }  // namespace
 
+// Applies a model's opencode.json reasoning config to `opts`: the thinking
+// wire form ("thinking": {type, display}) and the resolved variant
+// ("variants": {"<id>": {effort, max_tokens, budget_tokens, prompt}}).
+// `requested` is the session /variant ("" = model default; "off" disables
+// thinking where the model allows it). Without catalog info the requested
+// id passes through as the effort.
+static void apply_variant_options(qcode::GenerateOptions& opts,
+                                  const ModelInfo* model,
+                                  const std::string& requested,
+                                  const std::string& model_id) {
+  std::string variant_id;
+  if (model) {
+    if (!requested.empty() || model->reasoning) {
+      variant_id = ProviderTransform::resolve_session_variant(*model, requested);
+    }
+    if (!model->thinking_type.empty()) opts.thinking_type = model->thinking_type;
+    if (!model->thinking_display.empty()) opts.thinking_display = model->thinking_display;
+  } else if (requested != "off") {
+    variant_id = requested;
+  }
+  if (variant_id.empty() || variant_id == "off") return;
+
+  const VariantInfo* variant =
+      model ? ProviderTransform::find_variant(*model, variant_id) : nullptr;
+  opts.reasoning_effort =
+      model ? ProviderTransform::variant_wire_effort(*model, variant_id) : variant_id;
+  opts.reasoning_variant = variant_id;
+  if (variant != nullptr) {
+    if (variant->budget_tokens > 0) opts.budget_tokens = variant->budget_tokens;
+    if (variant->max_tokens > 0) {
+      // limit.output is the hard cap; the variant only raises the request.
+      const int cap = model->output_limit > 0 ? model->output_limit : variant->max_tokens;
+      opts.max_tokens =
+          std::max(opts.max_tokens.value_or(0), std::min(variant->max_tokens, cap));
+    }
+    if (!variant->prompt.empty()) {
+      opts.system += "\n\n";
+      opts.system += variant->prompt;
+    }
+  }
+  if (!requested.empty() && variant_id != requested) {
+    LOG_INFO("generation_service: clamped variant '{}' -> '{}' for {}", requested,
+             variant_id, model_id);
+  } else if (requested.empty()) {
+    LOG_INFO("generation_service: default thinking variant '{}' for {}", variant_id,
+             model_id);
+  }
+  LOG_INFO("generation_service: variant={} effort={} max_tokens={} budget_tokens={} "
+           "prompt={} thinking={} model={}",
+           variant_id, opts.reasoning_effort.value_or(""), opts.max_tokens.value_or(0),
+           opts.budget_tokens.value_or(0), variant != nullptr && !variant->prompt.empty(),
+           opts.thinking_type.value_or("default"), model_id);
+}
+
 static JsonValue run_subagent_turn_multi(
     std::shared_ptr<std::vector<ProviderInfo>> providers,
     const std::string& default_provider_id,
@@ -402,6 +456,8 @@ static JsonValue run_subagent_turn_multi(
     } else {
       sub_opts.max_tokens = 8192;
     }
+    // Subagents think at their model's configured default variant.
+    apply_variant_options(sub_opts, target_model_info, "", target_model_id);
     sub_opts.tools = ToolCatalog::build_definitions(subagent_tool_cfg);
     sub_opts.max_steps = max_steps;
     sub_opts.workspace = workspace;
@@ -732,6 +788,20 @@ static void run_tools_generation_bus(
         }
         const double ttft = step_res.ttft_ms.value_or(-1.0);
         const std::string effort = options.reasoning_effort.value_or("off");
+        const std::string variant = options.reasoning_variant.value_or("");
+        // Persist before publishing: the Stats tab mirror reloads from the DB
+        // on session switches and must not miss (or double count) this call.
+        qcode::session::record_session_model_call(
+            ctx.session_id,
+            {.model_ms = step_model_ms,
+             .ttft_ms = ttft,
+             .input_tokens = step_res.usage.prompt_tokens,
+             .cache_read_tokens = step_res.usage.cached_prompt_tokens,
+             .cache_write_tokens = step_res.usage.cache_write_tokens,
+             .output_tokens = step_res.usage.completion_tokens,
+             .reasoning_tokens = step_think,
+             .effort = effort,
+             .variant = variant});
         bus.publish<qcode::contract::StepLatency>({
             .session_id = ctx.session_id,
             .step = step,
@@ -742,15 +812,23 @@ static void run_tools_generation_bus(
             .reasoning_tokens = step_think,
             .effort = effort,
             .ok = step_res.is_success(),
+            .input_tokens = step_res.usage.prompt_tokens,
+            .cache_read_tokens = step_res.usage.cached_prompt_tokens,
+            .cache_write_tokens = step_res.usage.cache_write_tokens,
+            .variant = variant,
         });
         const double tok_per_s =
             step_model_ms > 0 ? step_res.usage.completion_tokens / (step_model_ms / 1000.0) : 0.0;
         LOG_INFO("[latency] step={} mode={} model_ms={:.0f} ttft_ms={:.0f} "
                  "out_tokens={} think_tokens={} tok_per_s={:.1f} effort={} "
+                 "variant={} in_tokens={} cache_read={} cache_write={} "
                  "model={} ok={}",
                  step, streamed ? "stream" : "sync", step_model_ms, ttft,
                  step_res.usage.completion_tokens, step_think, tok_per_s,
-                 effort, options.model, step_res.is_success());
+                 effort, variant, step_res.usage.prompt_tokens,
+                 step_res.usage.cached_prompt_tokens,
+                 step_res.usage.cache_write_tokens, options.model,
+                 step_res.is_success());
       }
       PERF_LOG("step={} model_ms={:.1f} history_msgs={} prompt_tokens={} "
                "completion_tokens={} cached_tokens={}",
@@ -1165,6 +1243,9 @@ static void run_stream_generation_bus(qcode::Client& client,
   double ttft_ms = -1.0;
   int stream_out_tokens = 0;
   int stream_think_tokens = 0;
+  int stream_in_tokens = 0;
+  int stream_cache_read = 0;
+  int stream_cache_write = 0;
   bool stream_ok = true;
 
   auto flush_text = [&]() {
@@ -1300,6 +1381,17 @@ static void run_stream_generation_bus(qcode::Client& client,
                               gen_start_time)
                               .count();
       stream_ok = false;
+      qcode::session::record_session_model_call(
+          ctx.session_id,
+          {.model_ms = latency_ms,
+           .ttft_ms = ttft_ms,
+           .input_tokens = stream_in_tokens,
+           .cache_read_tokens = stream_cache_read,
+           .cache_write_tokens = stream_cache_write,
+           .output_tokens = stream_out_tokens,
+           .reasoning_tokens = stream_think_tokens,
+           .effort = stream_options.reasoning_effort.value_or("off"),
+           .variant = stream_options.reasoning_variant.value_or("")});
       bus.publish<qcode::contract::StepLatency>({
           .session_id = ctx.session_id,
           .step = 1,
@@ -1309,7 +1401,11 @@ static void run_stream_generation_bus(qcode::Client& client,
           .output_tokens = stream_out_tokens,
           .reasoning_tokens = stream_think_tokens,
           .effort = stream_options.reasoning_effort.value_or("off"),
-          .ok = stream_ok
+          .ok = stream_ok,
+          .input_tokens = stream_in_tokens,
+          .cache_read_tokens = stream_cache_read,
+          .cache_write_tokens = stream_cache_write,
+          .variant = stream_options.reasoning_variant.value_or(""),
       });
       LOG_INFO("[latency] turn steps=1 mode=stream model_ms_total={:.0f} ttft_ms={:.0f} "
                "out_tokens={} think_tokens_total={} effort={} model={} ok=false",
@@ -1329,6 +1425,9 @@ static void run_stream_generation_bus(qcode::Client& client,
       }
       stream_out_tokens = event.usage->completion_tokens;
       stream_think_tokens = think_tokens;
+      stream_in_tokens = event.usage->prompt_tokens;
+      stream_cache_read = event.usage->cached_prompt_tokens;
+      stream_cache_write = event.usage->cache_write_tokens;
       bus.publish<TokenUsageUpdated>({
           .prompt_tokens = event.usage->prompt_tokens,
           .completion_tokens = event.usage->completion_tokens,
@@ -1368,6 +1467,17 @@ static void run_stream_generation_bus(qcode::Client& client,
                                   gen_start_time)
                                   .count();
     const std::string effort = stream_options.reasoning_effort.value_or("off");
+    qcode::session::record_session_model_call(
+        ctx.session_id,
+        {.model_ms = latency_ms,
+         .ttft_ms = ttft_ms,
+         .input_tokens = stream_in_tokens,
+         .cache_read_tokens = stream_cache_read,
+         .cache_write_tokens = stream_cache_write,
+         .output_tokens = stream_out_tokens,
+         .reasoning_tokens = stream_think_tokens,
+         .effort = effort,
+         .variant = stream_options.reasoning_variant.value_or("")});
     bus.publish<qcode::contract::StepLatency>({
         .session_id = ctx.session_id,
         .step = 0,
@@ -1378,6 +1488,10 @@ static void run_stream_generation_bus(qcode::Client& client,
         .reasoning_tokens = stream_think_tokens,
         .effort = effort,
         .ok = !aborted,
+        .input_tokens = stream_in_tokens,
+        .cache_read_tokens = stream_cache_read,
+        .cache_write_tokens = stream_cache_write,
+        .variant = stream_options.reasoning_variant.value_or(""),
     });
     LOG_INFO("[latency] turn steps=1 mode=stream model_ms_total={:.0f} ttft_ms={:.0f} "
              "out_tokens={} think_tokens_total={} effort={} model={} ok={}",
@@ -1570,42 +1684,10 @@ void run_generation_with_bus(
     base_opts.has_queued_work = ctx.has_queued_work;
 
     // ── Extended thinking / reasoning ──
-    // Empty /variant = auto default for every reasoning model. Explicit "off"
-    // disables thinking. Native Anthropic uses budget_tokens; every other
-    // provider (OpenAI, OpenRouter, Antigravity/Gemini, Cursor, Zen) uses
-    // reasoning_effort, including Claude ids that ride those transports.
-    const std::string& rm = ctx.reasoning_mode;
-    const auto effort_budget = [](const std::string& effort) {
-      return effort == "low"      ? 2000
-             : effort == "medium" ? 8000
-             : effort == "max"    ? 24000
-                                  : 16000;
-    };
-    if (rm != "off") {
-      std::string effort;
-      if (rm.empty()) {
-        if (resolved_model && resolved_model->reasoning) {
-          effort = ProviderTransform::default_variant(*resolved_model);
-        }
-      } else if (resolved_model) {
-        effort = ProviderTransform::clamp_variant(*resolved_model, rm);
-      } else {
-        effort = rm;
-      }
-      if (!effort.empty() && effort != "off") {
-        base_opts.reasoning_effort = effort;
-        if (provider_id.find("anthropic") != std::string::npos) {
-          base_opts.budget_tokens = effort_budget(effort);
-        }
-        if (!rm.empty() && effort != rm) {
-          LOG_INFO("generation_service: clamped variant '{}' -> '{}' for {}",
-                   rm, effort, resolved_model_id);
-        } else if (rm.empty()) {
-          LOG_INFO("generation_service: default thinking variant '{}' for {}",
-                   effort, resolved_model_id);
-        }
-      }
-    }
+    // Session /variant (or the model's configured default when unset),
+    // resolved through opencode.json; see apply_variant_options.
+    apply_variant_options(base_opts, resolved_model, ctx.reasoning_mode,
+                          resolved_model_id);
 
     // ── Dispatch ──
     // ServerSideDuplex providers (e.g. Cursor AgentService) own their autonomous tool loop.

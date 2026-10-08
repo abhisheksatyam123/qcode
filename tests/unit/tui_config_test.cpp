@@ -239,6 +239,102 @@ TEST(TuiConfigTest, NestedReasoningObjectSetsEffortsAndProtocol) {
   EXPECT_EQ(entries[2].id, "high");
 }
 
+TEST(TuiConfigTest, VariantObjectsThinkingAndModelDefaults) {
+  ScopedConfig config(R"({
+      "provider": {
+        "anthropic": {
+          "model_defaults": {
+            "reasoning": true,
+            "thinking": {"type": "adaptive", "display": "summarized", "allow_off": false},
+            "limit": {"context": 1000000, "output": 128000},
+            "variants": {
+              "low": {},
+              "high": {"max_tokens": 32000, "description": "Deep"},
+              "xhigh": {"max_tokens": 64000},
+              "max": {"max_tokens": 64000},
+              "ultra": {"label": "Ultra", "effort": "max", "max_tokens": 128000,
+                        "prompt": "Think harder.", "description": "Deepest"}
+            }
+          },
+          "models": {
+            "claude-opus-5-5": {
+              "name": "Claude Opus 5.5",
+              "reasoning_default": "xhigh",
+              "cost": {"input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5}
+            },
+            "claude-haiku-5-5": {
+              "name": "Claude Haiku 5.5",
+              "reasoning_efforts": ["low", "medium"],
+              "variants": {"ultra": null, "xhigh": {"disabled": true}},
+              "thinking": {"display": "omitted"}
+            }
+          }
+        }
+      }
+    })");
+
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  const auto* opus = FindModel(providers.front().models, "claude-opus-5-5");
+  ASSERT_NE(opus, nullptr);
+  EXPECT_TRUE(opus->reasoning);
+  EXPECT_EQ(opus->context_window, 1000000);
+  EXPECT_EQ(opus->output_limit, 128000);
+  EXPECT_EQ(opus->thinking_type, "adaptive");
+  EXPECT_EQ(opus->thinking_display, "summarized");
+  EXPECT_FALSE(opus->thinking_allow_off);
+  EXPECT_DOUBLE_EQ(opus->input_cost, 4.0);
+  EXPECT_DOUBLE_EQ(opus->cache_read_cost, 0.2);
+  EXPECT_DOUBLE_EQ(opus->cache_write_cost, 5.0);
+  EXPECT_THAT(opus->reasoning_efforts,
+              testing::ElementsAre("low", "high", "xhigh", "max", "ultra"));
+  EXPECT_EQ(ProviderTransform::default_variant(*opus), "xhigh");
+  const auto* ultra = ProviderTransform::find_variant(*opus, "ultra");
+  ASSERT_NE(ultra, nullptr);
+  EXPECT_EQ(ultra->label, "Ultra");
+  EXPECT_EQ(ultra->effort, "max");
+  EXPECT_EQ(ultra->max_tokens, 128000);
+  EXPECT_EQ(ultra->prompt, "Think harder.");
+  EXPECT_EQ(build_variant_entries(*opus).front().id, "low");  // no Off row
+
+  // Merge patch: null removes an inherited variant, disabled hides one, and
+  // the variants object wins over a legacy effort list.
+  const auto* haiku = FindModel(providers.front().models, "claude-haiku-5-5");
+  ASSERT_NE(haiku, nullptr);
+  EXPECT_THAT(haiku->reasoning_efforts, testing::ElementsAre("low", "high", "max"));
+  EXPECT_EQ(haiku->thinking_type, "adaptive");
+  EXPECT_EQ(haiku->thinking_display, "omitted");
+  EXPECT_EQ(ProviderTransform::find_variant(*haiku, "ultra"), nullptr);
+}
+
+TEST(TuiConfigTest, MistypedVariantFieldsDoNotAbortConfig) {
+  ScopedConfig config(R"({
+      "provider": {
+        "anthropic": {
+          "models": {
+            "claude-sonnet-5-5": {
+              "reasoning": true,
+              "variants": {"high": {"max_tokens": "lots", "effort": 7}},
+              "thinking": {"type": 1, "allow_off": "no"},
+              "cost": {"input": "cheap", "cache_read": 0.2}
+            }
+          }
+        }
+      }
+    })");
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  const auto* model = FindModel(providers.front().models, "claude-sonnet-5-5");
+  ASSERT_NE(model, nullptr);
+  ASSERT_EQ(model->variants.size(), 1u);
+  EXPECT_EQ(model->variants[0].max_tokens, 0);
+  EXPECT_EQ(model->variants[0].effort, "");
+  EXPECT_EQ(model->thinking_type, "");
+  EXPECT_TRUE(model->thinking_allow_off);
+  EXPECT_DOUBLE_EQ(model->input_cost, 0.0);
+  EXPECT_DOUBLE_EQ(model->cache_read_cost, 0.2);
+}
+
 TEST(TuiConfigTest, PickerVariantsComeFromJsonNotHardcodedCatalog) {
   ScopedConfig config(R"({
       "provider": {

@@ -978,11 +978,10 @@ int main(int argc, char* argv[]) {
                         } else if (cmd_name == "variant") {
                             open_variant_picker();
                         } else {
-                            std::string raw = "/" + cmd_name;
-                            qcode::handle_slash_command(raw, prompt_input, providers_list,
-                                                          selected_provider, selected_model,
-                                                          enable_tools, system_prompt, state,
-                                                          compaction_thread, *bus);
+                            // Same path as a typed command, so /new also
+                            // rebinds the store (queue, title, stats).
+                            prompt_input = "/" + cmd_name;
+                            submit();
                         }
                         return true;
                     }
@@ -1326,6 +1325,7 @@ int main(int argc, char* argv[]) {
         }
         // Stats reload from the DB whenever the tab is opened (one aggregate
         // query); live turns keep them current while it stays open.
+        if (state.tab_selected == 2 && previous_tab != 2) *state.scroll_line = 0;
         if (state.tab_selected == 2 && previous_tab != 2 && state.session_id &&
             !state.session_id->empty()) {
             const auto stats = qcode::session::get_session_stats(*state.session_id);
