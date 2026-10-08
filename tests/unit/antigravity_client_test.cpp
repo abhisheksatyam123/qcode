@@ -84,11 +84,15 @@ TEST(AntigravityClientTest, VariantThinkingSettingsReachGeminiConfig) {
   opts.thinking_display = "omitted";
   opts.messages = {Message::user("hi")};
 
+  opts.max_tokens = 32000;
+
   const auto req = builder.build_request_json(opts);
   const auto& thinking = req["request"]["generationConfig"]["thinkingConfig"];
   EXPECT_EQ(thinking["thinkingLevel"], "high");
   EXPECT_EQ(thinking["thinkingBudget"], 24576);
   EXPECT_FALSE(thinking["includeThoughts"].get<bool>());
+  // The opencode.json output budget reaches the endpoint.
+  EXPECT_EQ(req["request"]["generationConfig"]["maxOutputTokens"], 32000);
 }
 
 TEST(AntigravityClientTest, Gemini38FlashDefaultsToMediumSku) {

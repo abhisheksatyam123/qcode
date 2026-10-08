@@ -167,7 +167,9 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
               auto& usage_meta = json["usageMetadata"];
               Usage usage;
               usage.prompt_tokens = usage_meta.value("promptTokenCount", 0);
-              usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
+              // Thoughts are billed as output: completion includes them.
+              usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0) +
+                                        usage_meta.value("thoughtsTokenCount", 0);
               usage.total_tokens = usage_meta.value("totalTokenCount", 0);
               usage.cached_prompt_tokens = usage_meta.value("cachedContentTokenCount", 0);
               usage.reasoning_completion_tokens =
@@ -184,7 +186,9 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         auto& usage_meta = json["usageMetadata"];
         Usage usage;
         usage.prompt_tokens = usage_meta.value("promptTokenCount", 0);
-        usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0);
+        // Thoughts are billed as output: completion includes them.
+        usage.completion_tokens = usage_meta.value("candidatesTokenCount", 0) +
+                                  usage_meta.value("thoughtsTokenCount", 0);
         usage.total_tokens = usage_meta.value("totalTokenCount", 0);
         usage.cached_prompt_tokens = usage_meta.value("cachedContentTokenCount", 0);
         usage.reasoning_completion_tokens =

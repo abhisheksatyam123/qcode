@@ -86,7 +86,7 @@ nlohmann::json sanitize_gemini_schema(nlohmann::json node) {
 }
 
 nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req,
-                                             const GeminiThinking& thinking) {
+                                             const GeminiOptions& options) {
   nlohmann::json gemini_req = nlohmann::json::object();
   nlohmann::json contents = nlohmann::json::array();
   std::string system_instruction;
@@ -230,7 +230,13 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req,
   if (openai_req.contains("temperature")) {
     gen_config["temperature"] = openai_req["temperature"];
   }
-  if (openai_req.contains("max_completion_tokens")) {
+  // The opencode.json output budget (max_tokens / limit.output / variant)
+  // comes from the builder; the request's own keys may hold transport
+  // fallbacks (e.g. the 8192 reasoning default), so they are only used when
+  // no budget was passed.
+  if (options.max_output_tokens > 0) {
+    gen_config["maxOutputTokens"] = options.max_output_tokens;
+  } else if (openai_req.contains("max_completion_tokens")) {
     gen_config["maxOutputTokens"] = openai_req["max_completion_tokens"];
   }
   if (openai_req.contains("top_p")) gen_config["topP"] = openai_req["top_p"];
@@ -247,13 +253,13 @@ nlohmann::json convert_openai_to_gemini_impl(const nlohmann::json& openai_req,
   // thinkingLevel, its budget_tokens the thinkingBudget, and thinking.display
   // "omitted" turns thought text off. No effort (or "off") sends no
   // thinkingConfig, so the model thinks at its own default.
-  if (!effort.empty() && effort != "off" && thinking.type != "disabled") {
+  if (!effort.empty() && effort != "off" && options.type != "disabled") {
     // includeThoughts is required to get thought text parts back. Without
     // it Gemini still bills thoughtsTokenCount but returns only signatures.
     nlohmann::json thinking_config = {{"thinkingLevel", effort},
-                                      {"includeThoughts", thinking.display != "omitted"}};
-    if (thinking.budget_tokens > 0) {
-      thinking_config["thinkingBudget"] = thinking.budget_tokens;
+                                      {"includeThoughts", options.display != "omitted"}};
+    if (options.budget_tokens > 0) {
+      thinking_config["thinkingBudget"] = options.budget_tokens;
     }
     gen_config["thinkingConfig"] = std::move(thinking_config);
   }
@@ -460,7 +466,11 @@ nlohmann::json normalize_gemini_response_impl(const nlohmann::json& response) {
       auto& usage_meta = gemini_data["usageMetadata"];
       nlohmann::json usage = nlohmann::json::object();
       usage["prompt_tokens"] = usage_meta.value("promptTokenCount", 0);
-      usage["completion_tokens"] = usage_meta.value("candidatesTokenCount", 0);
+      // Gemini reports thoughts apart from candidates but bills both as
+      // output; completion_tokens includes them (reasoning stays a subset),
+      // matching the OpenAI/Anthropic convention the stats and cost use.
+      usage["completion_tokens"] = usage_meta.value("candidatesTokenCount", 0) +
+                                   usage_meta.value("thoughtsTokenCount", 0);
       usage["total_tokens"] = usage_meta.value("totalTokenCount", 0);
       if (usage_meta.contains("cachedContentTokenCount")) {
         usage["prompt_tokens_details"] = {
@@ -484,8 +494,8 @@ std::string new_uuid() { return utils::new_uuid(); }
 std::string random_hex(size_t len) { return utils::random_hex(len); }
 
 nlohmann::json convert_openai_to_gemini(const nlohmann::json& openai_req,
-                                        const GeminiThinking& thinking) {
-  return convert_openai_to_gemini_impl(openai_req, thinking);
+                                        const GeminiOptions& options) {
+  return convert_openai_to_gemini_impl(openai_req, options);
 }
 
 nlohmann::json wrap_antigravity_envelope(nlohmann::json gemini_req,

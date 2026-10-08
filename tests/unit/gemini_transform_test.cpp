@@ -158,7 +158,7 @@ TEST(GeminiTransformTest, VariantBudgetBecomesThinkingBudget) {
   json request = parsed(R"({"messages":[{"role":"user","content":"hi"}],
     "reasoning_effort":"high"})");
   const auto gemini =
-      convert_openai_to_gemini(request, {.type = {}, .display = {}, .budget_tokens = 24576});
+      convert_openai_to_gemini(request, {.type = {}, .display = {}, .budget_tokens = 24576, .max_output_tokens = 0});
   const auto& thinking = gemini["generationConfig"]["thinkingConfig"];
   EXPECT_EQ(thinking["thinkingLevel"], "high");
   EXPECT_EQ(thinking["thinkingBudget"], 24576);
@@ -178,14 +178,14 @@ TEST(GeminiTransformTest, WireEffortPassesThroughVerbatim) {
 TEST(GeminiTransformTest, OmittedDisplayDropsThoughtText) {
   json request = parsed(R"({"messages":[{"role":"user","content":"hi"}],
     "reasoning_effort":"low"})");
-  const auto gemini = convert_openai_to_gemini(request, {.type = {}, .display = "omitted", .budget_tokens = 0});
+  const auto gemini = convert_openai_to_gemini(request, {.type = {}, .display = "omitted", .budget_tokens = 0, .max_output_tokens = 0});
   EXPECT_FALSE(gemini["generationConfig"]["thinkingConfig"]["includeThoughts"]
                    .get<bool>());
 }
 
 TEST(GeminiTransformTest, NoEffortOrDisabledThinkingSendsNoThinkingConfig) {
   json no_effort = parsed(R"({"messages":[{"role":"user","content":"hi"}]})");
-  EXPECT_FALSE(convert_openai_to_gemini(no_effort, {.type = {}, .display = {}, .budget_tokens = 4096})
+  EXPECT_FALSE(convert_openai_to_gemini(no_effort, {.type = {}, .display = {}, .budget_tokens = 4096, .max_output_tokens = 0})
                    ["generationConfig"]
                    .contains("thinkingConfig"));
   json off = parsed(R"({"messages":[{"role":"user","content":"hi"}],
@@ -194,7 +194,7 @@ TEST(GeminiTransformTest, NoEffortOrDisabledThinkingSendsNoThinkingConfig) {
       "thinkingConfig"));
   json high = parsed(R"({"messages":[{"role":"user","content":"hi"}],
     "reasoning_effort":"high"})");
-  EXPECT_FALSE(convert_openai_to_gemini(high, {.type = "disabled", .display = {}, .budget_tokens = 0})
+  EXPECT_FALSE(convert_openai_to_gemini(high, {.type = "disabled", .display = {}, .budget_tokens = 0, .max_output_tokens = 0})
                    ["generationConfig"]
                    .contains("thinkingConfig"));
 }
@@ -412,6 +412,25 @@ TEST(GeminiTransformTest, NormalizeExtractsThoughtsTokenCount) {
   EXPECT_EQ(normalized["usage"]["completion_tokens_details"]["reasoning_tokens"],
             28);
   EXPECT_EQ(normalized["usage"]["reasoning_tokens"], 28);
+  // Thoughts are billed as output, so completion includes them.
+  EXPECT_EQ(normalized["usage"]["completion_tokens"], 30);
+}
+
+TEST(GeminiTransformTest, OutputBudgetBecomesMaxOutputTokens) {
+  // The opencode.json budget is passed explicitly; the request's max_tokens
+  // (which may be a transport fallback such as 8192) is not trusted.
+  json compat = parsed(R"({"messages":[{"role":"user","content":"hi"}],
+    "max_tokens":8192})");
+  const GeminiOptions budget{.type = {}, .display = {}, .budget_tokens = 0,
+                              .max_output_tokens = 32000};
+  EXPECT_EQ(convert_openai_to_gemini(compat, budget)["generationConfig"]["maxOutputTokens"],
+            32000);
+  EXPECT_FALSE(convert_openai_to_gemini(compat)["generationConfig"].contains(
+      "maxOutputTokens"));
+  json native = parsed(R"({"messages":[{"role":"user","content":"hi"}],
+    "max_completion_tokens":4096})");
+  EXPECT_EQ(convert_openai_to_gemini(native)["generationConfig"]["maxOutputTokens"],
+            4096);
 }
 
 TEST(GeminiTransformTest, ConvertDropsUnsignedReasoningThoughts) {

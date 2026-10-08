@@ -12,20 +12,22 @@ namespace gemini {
 std::string new_uuid();
 std::string random_hex(size_t len);
 
-/// Thinking settings from opencode.json that the OpenAI-shaped request cannot
-/// carry. The request's reasoning_effort (the variant's wire effort) becomes
-/// thinkingConfig.thinkingLevel verbatim; nothing here is model-specific.
-struct GeminiThinking {
-  std::string type;       // thinking.type: "disabled" sends no thinkingConfig
-  std::string display;    // thinking.display: "omitted" -> includeThoughts=false
-  int budget_tokens = 0;  // variant budget_tokens -> thinkingBudget (0 = none)
+/// opencode.json settings the OpenAI-shaped request does not carry (or
+/// carries in a transport-specific key). The request's reasoning_effort (the
+/// variant's wire effort) becomes thinkingConfig.thinkingLevel verbatim;
+/// nothing here is model-specific.
+struct GeminiOptions {
+  std::string type;           // thinking.type: "disabled" sends no thinkingConfig
+  std::string display;        // thinking.display: "omitted" -> includeThoughts=false
+  int budget_tokens = 0;      // variant budget_tokens -> thinkingBudget (0 = none)
+  int max_output_tokens = 0;  // output budget -> maxOutputTokens (0 = request max_completion_tokens)
 };
 
 /// Convert an OpenAI-style chat-completion request JSON into the Gemini
 /// generateContent request JSON (contents / systemInstruction /
 /// generationConfig). Mirrors the wire format Antigravity/Vertex expects.
 nlohmann::json convert_openai_to_gemini(const nlohmann::json& openai_req,
-                                        const GeminiThinking& thinking = {});
+                                        const GeminiOptions& options = {});
 
 /// Wrap a Gemini request in the Antigravity/Vertex envelope
 /// (project / requestId / request / model / userAgent / requestType).

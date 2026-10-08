@@ -402,7 +402,8 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     return qcode::gemini::convert_openai_to_gemini(
         request, {.type = options.thinking_type.value_or(""),
                   .display = options.thinking_display.value_or(""),
-                  .budget_tokens = options.budget_tokens.value_or(0)});
+                  .budget_tokens = options.budget_tokens.value_or(0),
+                  .max_output_tokens = options.max_tokens.value_or(0)});
   }
 
   if (!use_responses_) return request;

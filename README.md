@@ -123,8 +123,8 @@ as `thinkingConfig.thinkingLevel` unchanged, `budget_tokens` as
 `thinkingBudget`, and `thinking.display: "omitted"` turns thought text off
 (`includeThoughts: false`). `thinking.type: "disabled"` sends no thinking
 config. For example `"max": {"effort": "high", "budget_tokens": 24576}`.
-Antigravity requests carry no output limit, so the endpoint's default applies
-there regardless of `max_tokens`.
+The output budget (`max_tokens` / `limit.output`) is sent as
+`maxOutputTokens`, and usage counts thought tokens as output, as Google bills.
 
 Cost: each model call is priced when it runs, at the serving model's `cost`
 (cache reads/writes without a price use `cost.input`). The session total in the
