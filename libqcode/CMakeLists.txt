@@ -84,6 +84,7 @@ target_sources(qcode-engine PRIVATE
     # generation
     src/generation/generation_controller.cpp
     src/generation/generation_service.cpp
+    src/generation/stream_step.cpp
     src/generation/turn_prefix.cpp
 
     # session

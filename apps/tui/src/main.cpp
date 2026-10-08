@@ -13,6 +13,8 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <optional>
+#include <mutex>
 #include <unistd.h>
 #include <vector>
 #include <climits>
@@ -126,26 +128,55 @@ int main(int argc, char* argv[]) {
     // ── Legacy state access ──
     auto& state = store.state();
 
-    auto refresh_subagents = [&state]() {
-        const std::string curr_sid = state.session_id ? *state.session_id : "";
-        auto subagent_data = qcode::TaskTool::list_tasks(curr_sid);
-        std::vector<qcode::SubagentEntry> entries;
-        if (subagent_data.contains("metadata") &&
-            subagent_data["metadata"].contains("tasks")) {
-            for (const auto& t : subagent_data["metadata"]["tasks"]) {
-                qcode::SubagentEntry entry;
-                entry.status = t.value("status", "");
-                entry.mode = t.value("mode", "");
-                entry.model = t.value("model", "");
-                entry.description = t.value("description", "");
-                entry.task_id = t.value("task_id", t.value("sessionId", ""));
-                entries.push_back(std::move(entry));
+    // Subagents tab list. list_tasks reads SQLite (child sessions and their
+    // last rows), so it runs on a worker; the next frame applies the result
+    // if it is still for the current session. One refresh at a time.
+    struct SubagentRefresh {
+        std::mutex mu;
+        std::string session_id;  // whose entries `ready` holds
+        std::optional<std::vector<qcode::SubagentEntry>> ready;
+        std::atomic<bool> running{false};
+    };
+    auto subagent_refresh = std::make_shared<SubagentRefresh>();
+    auto refresh_subagents = [&state, &screen, subagent_refresh, app_running]() {
+        if (subagent_refresh->running.exchange(true)) return;
+        const std::string sid = state.session_id ? *state.session_id : "";
+        std::thread([sid, subagent_refresh, app_running, &screen] {
+            auto subagent_data = qcode::TaskTool::list_tasks(sid);
+            std::vector<qcode::SubagentEntry> entries;
+            if (subagent_data.contains("metadata") &&
+                subagent_data["metadata"].contains("tasks")) {
+                for (const auto& t : subagent_data["metadata"]["tasks"]) {
+                    qcode::SubagentEntry entry;
+                    entry.status = t.value("status", "");
+                    entry.mode = t.value("mode", "");
+                    entry.model = t.value("model", "");
+                    entry.description = t.value("description", "");
+                    entry.task_id = t.value("task_id", t.value("sessionId", ""));
+                    entries.push_back(std::move(entry));
+                }
             }
+            {
+                std::lock_guard<std::mutex> lock(subagent_refresh->mu);
+                subagent_refresh->session_id = sid;
+                subagent_refresh->ready = std::move(entries);
+            }
+            subagent_refresh->running = false;
+            if (app_running->load()) screen.Post(Event::Custom);
+        }).detach();
+    };
+    auto apply_subagent_refresh = [&state, subagent_refresh]() {
+        std::lock_guard<std::mutex> lock(subagent_refresh->mu);
+        if (!subagent_refresh->ready) return;
+        const std::string sid = state.session_id ? *state.session_id : "";
+        if (subagent_refresh->session_id == sid) {
+            if (!state.subagent_entries) {
+                state.subagent_entries =
+                    std::make_shared<std::vector<qcode::SubagentEntry>>();
+            }
+            *state.subagent_entries = std::move(*subagent_refresh->ready);
         }
-        if (!state.subagent_entries) {
-            state.subagent_entries = std::make_shared<std::vector<qcode::SubagentEntry>>();
-        }
-        *state.subagent_entries = std::move(entries);
+        subagent_refresh->ready.reset();
     };
 
     qcode::GenerationController generation(store, bus, app_running);
@@ -244,7 +275,6 @@ int main(int argc, char* argv[]) {
     overlays.session_entries = qcode::session::list_sessions_full();
     bool sessions_dirty = false;
     overlays.theme_entries = qcode::builtin_theme_entries();
-    overlays.palette_commands = qcode::builtin_palette_commands();
     overlays.slash_commands = qcode::builtin_slash_commands();
 
     // ── TUI Components ──
@@ -444,39 +474,6 @@ int main(int argc, char* argv[]) {
         overlays.close_all(state);
     };
 
-    auto toggle_agent_mode = [&]() {
-        *state.agent_mode = (*state.agent_mode == "plan") ? "orchestrator" : "plan";
-        if (state.session_id && !state.session_id->empty()) {
-            qcode::session::set_session_modes(
-                *state.session_id, *state.agent_mode,
-                state.reasoning_mode ? *state.reasoning_mode : "off");
-        }
-        store.add_toast(*state.agent_mode == "plan"
-                            ? "Plan mode: read-only research, no edits"
-                            : "Orchestrator: lead coordinator with parallel subagents",
-                        *state.agent_mode == "plan" ? "warning" : "success",
-                        2500);
-    };
-
-    auto start_new_session = [&]() {
-        generation.prepare_session_switch();
-        store.clear_prompt_queue();
-        std::string prov = providers_list[selected_provider].name;
-        std::string mod = providers_list[selected_provider].models[selected_model].name;
-        std::string new_id = qcode::session::create_new_session(prov, mod);
-        store.set_session_id(new_id);
-        state.messages_history->clear();
-        if (state.subagent_entries) state.subagent_entries->clear();
-        std::string title = "Session - " + mod;
-        sync_session_title(state, title);
-        if (state.retry_available) *state.retry_available = false;
-        if (state.last_user_prompt) state.last_user_prompt->clear();
-        prompt_input.clear();
-        sessions_dirty = true;
-        persist_session_variant();
-        store.add_toast("Started new session", "success", 2000);
-    };
-
     auto open_chat_session = [&](const std::string& id, const std::string& title,
                                  bool remember_return) {
         if (id.empty()) return;
@@ -568,88 +565,6 @@ int main(int argc, char* argv[]) {
                 overlays.theme_select_idx = i;
                 break;
             }
-        }
-    };
-
-    auto execute_palette_command = [&](const qcode::PaletteCommand& cmd) {
-        overlays.show_palette = false;
-        overlays.palette_query = "";
-        if (cmd.id == "session_new") {
-            start_new_session();
-        } else if (cmd.id == "session_list") {
-            open_session_picker();
-        } else if (cmd.id == "session_rename") {
-            prompt_input = "/rename ";
-            input->TakeFocus();
-            store.add_toast("Enter a new session name", "info", 2000);
-        } else if (cmd.id == "session_compact") {
-            std::string unused;
-            qcode::handle_slash_command(
-                "/compact", unused, providers_list, selected_provider,
-                selected_model, enable_tools, system_prompt, state,
-                compaction_thread, *bus);
-        } else if (cmd.id == "session_clear_queue") {
-            if (store.has_queued_prompt()) {
-                const auto n = store.queue_size();
-                store.clear_prompt_queue();
-                store.add_toast(
-                    n == 1 ? "Cleared 1 queued prompt"
-                           : ("Cleared " + std::to_string(n) + " queued prompts"),
-                    "info", 1500);
-            } else {
-                store.add_toast("No queued prompts to clear", "info", 1500);
-            }
-        } else if (cmd.id == "session_stop") {
-            if (generation.is_active()) {
-                if (state.abort_flag && state.abort_flag->load()) {
-                    generation.force_stop_ui();
-                } else {
-                    generation.request_abort();
-                    store.add_toast(
-                        "Stopping… (Esc or /stop again to force)", "warning", 3000);
-                }
-            } else if (store.has_queued_prompt()) {
-                const auto n = store.queue_size();
-                store.clear_prompt_queue();
-                store.add_toast(
-                    n == 1 ? "Cleared 1 queued prompt"
-                           : ("Cleared " + std::to_string(n) + " queued prompts"),
-                    "info", 1500);
-            } else {
-                store.add_toast("No generation active", "info", 1500);
-            }
-        } else if (cmd.id == "session_retry") {
-            trigger_retry();
-        } else if (cmd.id == "model_select") {
-            open_model_picker();
-        } else if (cmd.id == "model_variant") {
-            open_variant_picker();
-        } else if (cmd.id == "agent_mode_toggle") {
-            toggle_agent_mode();
-        } else if (cmd.id == "thinking_toggle") {
-            *state.show_thinking = !*state.show_thinking;
-            store.add_toast(*state.show_thinking ? "Thinking: shown"
-                                                 : "Thinking: hidden",
-                            "info", 2000);
-        } else if (cmd.id == "files_open") {
-            state.tab_selected = 1;
-        } else if (cmd.id == "stats_open") {
-            state.tab_selected = 2;
-        } else if (cmd.id == "sessions_open") {
-            state.tab_selected = 3;
-        } else if (cmd.id == "theme_select") {
-            open_theme_picker();
-        } else if (cmd.id == "copy_mode_toggle") {
-            *state.copy_mode = !*state.copy_mode;
-            screen.TrackMouse(!*state.copy_mode);
-            store.add_toast(*state.copy_mode
-                                ? "Copy mode ON - select text with mouse, press F3 to return"
-                                : "Copy mode OFF",
-                            "info", *state.copy_mode ? 4000 : 1500);
-        } else if (cmd.id == "help") {
-            overlays.show_help = true;
-        } else if (cmd.id == "exit") {
-            screen.Exit();
         }
     };
 
@@ -754,6 +669,15 @@ int main(int argc, char* argv[]) {
             if (cmd == "retry") {
                 prompt_input = "";
                 trigger_retry();
+                return;
+            }
+
+            if (cmd == "thinking") {
+                prompt_input = "";
+                *state.show_thinking = !*state.show_thinking;
+                store.add_toast(*state.show_thinking ? "Thinking: shown"
+                                                     : "Thinking: hidden",
+                                "info", 2000);
                 return;
             }
 
@@ -862,11 +786,26 @@ int main(int argc, char* argv[]) {
                 return;
             }
 
+            // /new switches sessions: detach the running turn and the old
+            // session's queue first; handle_slash_command only creates the
+            // row and sets the id, so rebind the store (queue, title) after.
+            const bool new_session = cmd == "new" || cmd.rfind("new ", 0) == 0;
+            if (new_session) {
+                generation.prepare_session_switch();
+                store.clear_prompt_queue();
+                if (state.subagent_entries) state.subagent_entries->clear();
+            }
             prompt_input = "";
             qcode::handle_slash_command(raw, prompt_input, providers_list,
                                           selected_provider, selected_model,
                                           enable_tools, system_prompt, state,
                                           compaction_thread, *bus);
+            if (new_session && state.session_id) {
+                const std::string title = state.session_title ? *state.session_title : "";
+                store.set_session_id(*state.session_id);
+                if (!title.empty()) sync_session_title(state, title);
+                persist_session_variant();
+            }
             sync_tool_config_and_system_prompt();
             clamp_variant_to_current_model();
             sessions_dirty = true;
@@ -884,20 +823,6 @@ int main(int argc, char* argv[]) {
     //  4. Event handlers (keyboard, mouse, etc.)
     // ═══════════════════════════════════════════════════════════
     input |= CatchEvent([&](Event e) {
-        // ── Command palette (Ctrl-P) ──
-        if (e == Event::Special(std::string(1, ''))) {
-            if (overlays.show_palette) {
-                overlays.show_palette = false;
-                overlays.palette_query = "";
-            } else {
-                close_overlays();
-                overlays.show_palette = true;
-                overlays.palette_query = "";
-                overlays.palette_select_idx = 0;
-                input->TakeFocus();
-            }
-            return true;
-        }
 
         if (overlays.show_help) {
             if (e == Event::Escape || e == Event::Return) {
@@ -906,10 +831,6 @@ int main(int argc, char* argv[]) {
             }
             return true;
         }
-
-        if (qcode::tui::handle_palette_keys(e, overlays, [&](const qcode::PaletteCommand& cmd) {
-            execute_palette_command(cmd);
-        })) return true;
 
         if (qcode::tui::handle_model_select_keys(e, overlays, [&](const qcode::ModelEntry& entry) {
             selected_provider = entry.provider_idx;
@@ -1106,17 +1027,6 @@ int main(int argc, char* argv[]) {
             return true;
         }
 
-        // One-key retry (r/R): triggers when retry is available and prompt input is empty.
-        // Intercepted BEFORE the Input component processes characters so 'r'/'R' is not typed into input.
-        if (state.tab_selected == 0 && prompt_input.empty() && !any_overlay() &&
-            !generation.is_active() &&
-            (state.retry_available && *state.retry_available) &&
-            (e == Event::Character('r') || e == Event::Character('R'))) {
-            if (trigger_retry()) {
-                return true;
-            }
-        }
-
         // Normal submit
         if (e == Event::Return && !prompt_input.empty()) {
             submit();
@@ -1136,28 +1046,6 @@ int main(int argc, char* argv[]) {
 
     main_container |= CatchEvent([&](Event e) {
         if (qcode::tui::handle_variant_select_keys(e, overlays, [&](const std::string& vid) { apply_variant(vid); })) return true;
-        // Toggle visibility of reasoning/thinking blocks (Ctrl-T or F2)
-        if (e == Event::Special(std::string(1, '\x14')) || e == Event::F2) {
-            *state.show_thinking = !*state.show_thinking;
-            store.add_toast(*state.show_thinking ? "Thinking: shown"
-                                                 : "Thinking: hidden",
-                            "info", 2000);
-            return true;
-        }
-        // Command palette (Ctrl-P)
-        if (e == Event::Special(std::string(1, '\x10'))) {
-            if (overlays.show_palette) {
-                overlays.show_palette = false;
-                overlays.palette_query = "";
-            } else {
-                close_overlays();
-                overlays.show_palette = true;
-                overlays.palette_query = "";
-                overlays.palette_select_idx = 0;
-                input->TakeFocus();
-            }
-            return true;
-        }
         // Toggle COPY MODE (F3): disables mouse tracking so the terminal
         // emulator can do native text selection (clean copy/paste).
         if (e == Event::F3) {
@@ -1169,11 +1057,6 @@ int main(int argc, char* argv[]) {
             } else {
                 store.add_toast("Copy mode OFF", "info", 1500);
             }
-            return true;
-        }
-        // ── New Session shortcut (Ctrl-N) ──
-        if (e == Event::Special(std::string(1, '\x0e'))) {
-            start_new_session();
             return true;
         }
         // ── Global Escape: close popups, clear queue, abort, clear input ──
@@ -1229,241 +1112,7 @@ int main(int argc, char* argv[]) {
         }
 
 
-        // ── Tool block keyboard navigation (only when prompt is empty) ──
-        // j/k focus tools, h/← collapse (3 lines), l/→ expand (full), Enter toggles.
-        const bool tool_keys_active =
-            state.tab_selected == 0 && prompt_input.empty() && !any_overlay();
-        auto ensure_tool_focused = [&]() -> bool {
-            if (!state.tool_block_order || state.tool_block_order->empty()) {
-                return false;
-            }
-            if (*state.focused_tool_index < 0 ||
-                *state.focused_tool_index >=
-                    static_cast<int>(state.tool_block_order->size())) {
-                *state.focused_tool_index =
-                    static_cast<int>(state.tool_block_order->size()) - 1;
-            }
-            return true;
-        };
-        auto navigate_tool = [&](int delta) -> bool {
-            if (!state.tool_block_order || state.tool_block_order->empty()) {
-                return false;
-            }
-            int n = static_cast<int>(state.tool_block_order->size());
-            int cur = *state.focused_tool_index;
-            if (cur < 0) {
-                cur = delta > 0 ? 0 : n - 1;
-            } else {
-                cur = std::max(0, std::min(n - 1, cur + delta));
-            }
-            *state.focused_tool_index = cur;
-            return true;
-        };
-        auto set_focused_tool_collapsed = [&](bool collapsed) -> bool {
-            if (!ensure_tool_focused()) return false;
-            const std::string& id =
-                (*state.tool_block_order)[*state.focused_tool_index];
-            if (!state.tool_collapse_state) {
-                state.tool_collapse_state =
-                    std::make_shared<std::unordered_map<std::string, bool>>();
-            }
-            (*state.tool_collapse_state)[id] = collapsed;
-            return true;
-        };
-        if (tool_keys_active) {
-            if (e == Event::ArrowUp) {
-                *state.auto_scroll = false;
-                *state.scroll_line = std::max(0, *state.scroll_line - 2);
-                return true;
-            }
-            if (e == Event::ArrowDown) {
-                *state.scroll_line = *state.scroll_line + 2;
-                return true;
-            }
-            if (e == Event::Character('k') || e == Event::Character('K')) {
-                if (navigate_tool(-1)) return true;
-            }
-            if (e == Event::Character('j') || e == Event::Character('J')) {
-                if (navigate_tool(1)) return true;
-            }
-            if (e == Event::ArrowLeft || e == Event::Character('h') || e == Event::Character('H')) {
-                if (set_focused_tool_collapsed(true)) return true;
-            }
-            if (e == Event::ArrowRight || e == Event::Character('l') || e == Event::Character('L')) {
-                if (set_focused_tool_collapsed(false)) return true;
-            }
-        }
-        if (e == Event::Tab) {
-            if (any_overlay()) return true;
-            toggle_agent_mode();
-            return true;
-        }
-
-        // ── Files tab: list navigation / open diff / refresh ──
-        if (state.tab_selected == 1 && !any_overlay()) {
-            const auto file_count =
-                state.file_changes ? state.file_changes->size() : 0;
-            if (state.files_detail_open) {
-                if (e == Event::ArrowUp || e == Event::Character('k')) {
-                    *state.scroll_line = std::max(0, *state.scroll_line - 2);
-                    return true;
-                }
-                if (e == Event::ArrowDown || e == Event::Character('j')) {
-                    *state.scroll_line = *state.scroll_line + 2;
-                    return true;
-                }
-            } else if (file_count > 0) {
-                if (e == Event::ArrowUp || e == Event::Character('k')) {
-                    state.selected_file =
-                        std::max(0, state.selected_file - 1);
-                    return true;
-                }
-                if (e == Event::ArrowDown || e == Event::Character('j')) {
-                    state.selected_file = std::min(
-                        state.selected_file + 1,
-                        static_cast<int>(file_count) - 1);
-                    return true;
-                }
-                if (e == Event::Return) {
-                    state.files_detail_open = true;
-                    *state.scroll_line = 0;
-                    *state.auto_scroll = true;
-                    return true;
-                }
-            }
-            if (e == Event::Character('r') || e == Event::Character('R')) {
-                git_monitor.request_refresh(screen);
-                state.files_detail_open = false;
-                store.add_toast("Refreshed git changes", "info", 1000);
-                return true;
-            }
-        }
-
-        // ── Stats tab: refresh session stats on r ──
-        if (state.tab_selected == 2 && !any_overlay()) {
-            if (e == Event::Character('r') || e == Event::Character('R')) {
-                if (state.session_id && !state.session_id->empty()) {
-                    qcode::session::SessionStats stats =
-                        qcode::session::get_session_stats(*state.session_id);
-                    if (state.total_prompt_tokens)
-                        *state.total_prompt_tokens = stats.prompt_tokens;
-                    if (state.total_completion_tokens)
-                        *state.total_completion_tokens = stats.completion_tokens;
-                    if (state.total_tokens)
-                        *state.total_tokens = stats.total_tokens;
-                    if (state.tool_call_count)
-                        *state.tool_call_count = stats.tool_calls;
-                    if (state.total_tool_time_ms)
-                        *state.total_tool_time_ms = stats.total_tool_time_ms;
-                }
-                store.add_toast("Refreshed session stats", "info", 1000);
-                return true;
-            }
-        }
-
-        // ── Subagents tab: delegated children for current session only ──
-        if (state.tab_selected == 3 && !any_overlay()) {
-            const auto& tasks = state.subagent_entries ? *state.subagent_entries
-                                                       : std::vector<qcode::SubagentEntry>{};
-            int child_count = static_cast<int>(tasks.size());
-
-            if (e == Event::Character('r') || e == Event::Character('R')) {
-                refresh_subagents();
-                store.add_toast("Refreshed subagents", "info", 1000);
-                return true;
-            }
-            if (e == Event::Character('b') || e == Event::Character('B')) {
-                if (return_to_parent_session()) return true;
-            }
-
-            if (child_count > 0) {
-                if (e == Event::ArrowUp || e == Event::Character('k') ||
-                    e == Event::Character('K')) {
-                    state.selected_session_item =
-                        std::max(0, state.selected_session_item - 1);
-                    return true;
-                }
-                if (e == Event::ArrowDown || e == Event::Character('j') ||
-                    e == Event::Character('J')) {
-                    state.selected_session_item = std::min(
-                        state.selected_session_item + 1, child_count - 1);
-                    return true;
-                }
-                if (e == Event::Return) {
-                    int idx = std::clamp(state.selected_session_item, 0,
-                                         child_count - 1);
-                    const std::string sid = tasks[idx].task_id;
-                    const std::string desc = tasks[idx].description.empty() ? sid : tasks[idx].description;
-                    if (!sid.empty()) {
-                        open_chat_session(sid, desc, true);
-                        store.add_toast("Opened child session: " + desc, "info",
-                                        1500);
-                    }
-                    return true;
-                }
-            }
-        }
-        // ── Keyboard line-by-line chat scrolling with modifiers ──
-        if (state.tab_selected == 0 && !any_overlay()) {
-            if (e == Event::Special("[1;2A") || e == Event::Special("[1;5A") || e == Event::Special("[1;3A")) {
-                *state.auto_scroll = false;
-                *state.scroll_line = std::max(0, *state.scroll_line - 3);
-                return true;
-            }
-            if (e == Event::Special("[1;2B") || e == Event::Special("[1;5B") || e == Event::Special("[1;3B")) {
-                *state.scroll_line = *state.scroll_line + 3;
-                return true;
-            }
-        }
-
         constexpr int kLinesPerWheel = 3;
-        const int page = qcode::tui::compute_page_step(state.terminal_height);
-        if (e == Event::PageUp) {
-            *state.auto_scroll = false;
-            if (state.tab_selected == 3) {
-                state.selected_session_item =
-                    std::max(0, state.selected_session_item - page);
-            } else {
-                *state.scroll_line = std::max(0, *state.scroll_line - page);
-            }
-            return true;
-        }
-        if (e == Event::PageDown) {
-            if (state.tab_selected == 3) {
-                const auto& tasks = state.subagent_entries
-                                        ? *state.subagent_entries
-                                        : std::vector<qcode::SubagentEntry>{};
-                const int child_count = static_cast<int>(tasks.size());
-                state.selected_session_item =
-                    std::min(std::max(0, child_count - 1),
-                             state.selected_session_item + page);
-            } else {
-                *state.scroll_line = *state.scroll_line + page;
-            }
-            return true;
-        }
-        if (e == Event::Home) {
-            *state.auto_scroll = false;
-            if (state.tab_selected == 3) {
-                state.selected_session_item = 0;
-            } else {
-                *state.scroll_line = 0;
-            }
-            return true;
-        }
-        if (e == Event::End) {
-            if (state.tab_selected == 3) {
-                const auto& tasks = state.subagent_entries
-                                        ? *state.subagent_entries
-                                        : std::vector<qcode::SubagentEntry>{};
-                state.selected_session_item =
-                    std::max(0, static_cast<int>(tasks.size()) - 1);
-            } else {
-                *state.auto_scroll = true;
-                *state.scroll_line = INT_MAX;
-            }
-            return true;
-        }
         if (e.is_mouse()) {
             // ── Click-to-position in the wrapped chat input ──
             // FTXUI's Input maps clicks with logical lines (and its private
@@ -1622,15 +1271,6 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        if ((e == Event::Character('b') || e == Event::Character('B')) &&
-            prompt_input.empty() &&
-            state.return_session_id && !state.return_session_id->empty()) {
-            if (return_to_parent_session()) return true;
-        }
-        if (e == Event::Special("\x1b\x31")) { state.tab_selected = 0; return true; }
-        if (e == Event::Special("\x1b\x32")) { state.tab_selected = 1; return true; }
-        if (e == Event::Special("\x1b\x33")) { state.tab_selected = 2; return true; }
-        if (e == Event::Special("\x1b\x34")) { state.tab_selected = 3; return true; }
         return false;
     });
 
@@ -1660,6 +1300,7 @@ int main(int argc, char* argv[]) {
         // (all bus event handlers run synchronously during drain)
         bus->drain();
         git_monitor.apply_pending(state);
+        apply_subagent_refresh();
         if (was_generating && !store.is_generating()) {
             git_monitor.request_refresh(screen);
             refresh_subagents();
@@ -1676,6 +1317,19 @@ int main(int argc, char* argv[]) {
             git_monitor.request_refresh(screen);
             state.files_detail_open = false;
             *state.scroll_line = 0;
+        }
+        // Stats reload from the DB whenever the tab is opened (one aggregate
+        // query); live turns keep them current while it stays open.
+        if (state.tab_selected == 2 && previous_tab != 2 && state.session_id &&
+            !state.session_id->empty()) {
+            const auto stats = qcode::session::get_session_stats(*state.session_id);
+            if (state.total_prompt_tokens) *state.total_prompt_tokens = stats.prompt_tokens;
+            if (state.total_completion_tokens)
+                *state.total_completion_tokens = stats.completion_tokens;
+            if (state.total_tokens) *state.total_tokens = stats.total_tokens;
+            if (state.tool_call_count) *state.tool_call_count = stats.tool_calls;
+            if (state.total_tool_time_ms)
+                *state.total_tool_time_ms = stats.total_tool_time_ms;
         }
         if (state.tab_selected == 3 && previous_tab != 3) {
             refresh_subagents();
@@ -1698,7 +1352,7 @@ int main(int argc, char* argv[]) {
 
         // Status rendered inline in header strip
 
-        // Model/theme/variant/palette lists are only read by their popups, so
+        // Model/theme/variant lists are only read by their popups, so
         // filter them only while open (avoids copying the lists every frame).
         // The session list is also read by the inline /session autocomplete.
         auto filtered_model_entries = overlays.show_model_select
@@ -1722,9 +1376,6 @@ int main(int argc, char* argv[]) {
         auto filtered_variant_entries = overlays.show_variant_select
             ? qcode::tui::filter_variants(overlays.variant_entries, overlays.variant_query)
             : std::vector<qcode::VariantEntry>{};
-        auto filtered_palette_entries = overlays.show_palette
-            ? qcode::tui::filter_palette(overlays.palette_commands, overlays.palette_query)
-            : std::vector<qcode::PaletteCommand>{};
 
         auto main_view = qcode::tui::render_view(
             state, providers_list, selected_provider, selected_model,
@@ -1735,7 +1386,6 @@ int main(int argc, char* argv[]) {
             overlays.show_theme_select, overlays.theme_select_idx, filtered_theme_entries, overlays.theme_query,
             overlays.show_variant_select, overlays.variant_select_idx, filtered_variant_entries,
             overlays.variant_query,
-            overlays.show_palette, overlays.palette_select_idx, filtered_palette_entries, overlays.palette_query,
             overlays.show_help,
             tab_toggle, state.scroll_line, input);
 

@@ -151,9 +151,12 @@ GenerateResult OpenAIClient::generate_text(const GenerateOptions& options) {
       } else if (event.is_tool_call()) {
         try {
           nlohmann::json args = nlohmann::json::parse(event.tool_payload);
-          tool_calls.emplace_back(event.tool_call_id, event.tool_name, std::move(args));
+          tool_calls.emplace_back(event.tool_call_id, event.tool_name,
+                                  std::move(args), event.metadata.value_or(""));
         } catch (...) {
-          tool_calls.emplace_back(event.tool_call_id, event.tool_name, nlohmann::json::object());
+          tool_calls.emplace_back(event.tool_call_id, event.tool_name,
+                                  nlohmann::json::object(),
+                                  event.metadata.value_or(""));
         }
       } else if (event.is_finish()) {
         if (event.usage) usage = *event.usage;
@@ -221,6 +224,14 @@ std::string OpenAIClient::config_info() const {
 
 std::string OpenAIClient::default_model() const {
   return models::kDefaultModel;
+}
+
+bool OpenAIClient::supports_tool_streaming() const {
+  // Chat completions everywhere; Responses only on Zen, whose generate_text()
+  // already reads this same stream. Not the Gemini envelope.
+  return wire_protocol_ == "chat_completions" ||
+         (wire_protocol_ == "responses" &&
+          providers::is_opencode_zen_url(config_.base_url));
 }
 
 }  // namespace openai

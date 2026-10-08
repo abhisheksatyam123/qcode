@@ -257,7 +257,7 @@ Element BashToolRender(const std::string& command, const std::string& output,
         is_running ? Color::Yellow
                    : (exit_code == 0 ? success_fg(theme) : theme_error(theme));
     return ToolBlock("$", "Bash", "", vbox(std::move(content)), is_running,
-                      status, status_color, 0.0, false, true, false, command);
+                      status, status_color, 0.0, false, true, command);
 }
 
 } // namespace qcode

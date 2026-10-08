@@ -12,6 +12,7 @@ add_executable(qcode_tests
     unit/types_test.cpp
     unit/openai_stream_test.cpp
     unit/stream_result_test.cpp
+    unit/stream_step_test.cpp
     unit/anthropic_stream_test.cpp
     unit/openai_embeddings_test.cpp
     unit/registry_test.cpp

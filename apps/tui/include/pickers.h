@@ -43,13 +43,12 @@ ftxui::Element build_variant_popup(
     const std::string& query,
     const std::string& theme);
 
-ftxui::Element build_palette_popup(
-    const std::vector<PaletteCommand>& entries,
-    int select_idx,
-    const std::string& query,
-    const std::string& theme);
-
 ftxui::Element build_help_popup(const std::string& theme);
+
+// Time-throttled session::get_model_performance_summary for render paths: the
+// result is cached per (provider, model) and refreshed at most every 2 s.
+const session::ModelPerformanceSummary& cached_model_performance_summary(
+    const std::string& model_id, const std::string& provider);
 
 }  // namespace tui
 }  // namespace qcode

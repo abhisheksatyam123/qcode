@@ -23,7 +23,6 @@ ftxui::Element ToolBlock(const std::string& icon,
                           double duration_ms = 0.0,
                           bool collapsed = false,
                           bool collapsible = true,
-                          bool focused = false,
                           const std::string& shell_command = "",
                           const std::string& theme = "opencode",
                           ChatState* state = nullptr,
@@ -43,8 +42,6 @@ ftxui::Element BlockTool(const std::string& title, ftxui::Element content,
 // terminal_width is the width the caller caches renders under (<= 0: query
 // the terminal); in_flight marks a message still streaming, whose markdown
 // is not inserted into the markdown cache.
-// A tool block is focused when its id is tool_block_order[focused_tool_index];
-// the view owns building tool_block_order.
 // paired_tool_results are later history rows holding results for this
 // message's tool calls (paired by id; a parallel batch is not adjacent).
 ftxui::Element render_message(const qcode::Message& msg,

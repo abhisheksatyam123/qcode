@@ -502,7 +502,7 @@ bool handle_slash_command(
         if (state.last_user_prompt) *state.last_user_prompt = prompt;
         if (state.retry_available) *state.retry_available = true;
         bus.publish<qcode::contract::ToastRequested>({
-            "Prompt ready for retry (press r to resend)",
+            "Prompt ready for retry (/retry to resend)",
             "info",
             2000
         });
@@ -558,8 +558,9 @@ bool handle_slash_command(
           << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
           << "  /queue [rm <n>]   - list queued prompts / remove one (/cq clears all)\n"
           << "  /help             - show this help\n"
-          << "Keys: Esc stop · Tab agent · Ctrl-P commands · Ctrl-N new session\n"
-          << "      r retry last failed turn · F3 copy mode · Click Thought to expand\n"
+          << "  /retry            - resend the last failed prompt\n"
+          << "  /thinking         - show or hide reasoning blocks\n"
+          << "Keys: Esc stop · F3 copy mode (select text) · click ▸ or Thought to expand\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
         append_system_message(state, h.str());
         return true;

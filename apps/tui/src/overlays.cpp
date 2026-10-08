@@ -8,7 +8,7 @@ namespace tui {
 
 bool TuiOverlayState::any(const ChatState& state) const {
     return show_model_select || show_session_select || show_theme_select ||
-           show_variant_select || show_palette || show_help ||
+           show_variant_select || show_help ||
            state.slash_suggestion_mode;
 }
 
@@ -21,8 +21,6 @@ void TuiOverlayState::close_all(ChatState& state) {
     theme_query.clear();
     show_variant_select = false;
     variant_query.clear();
-    show_palette = false;
-    palette_query.clear();
     show_help = false;
     state.slash_suggestion_mode = false;
     state.slash_suggestion_idx = 0;
@@ -73,21 +71,6 @@ std::vector<qcode::VariantEntry> filter_variants(
         if (matches_query(e.id, query) ||
             matches_query(e.title, query) ||
             matches_query(e.description, query)) {
-            out.push_back(e);
-        }
-    }
-    return out;
-}
-
-std::vector<qcode::PaletteCommand> filter_palette(
-    const std::vector<qcode::PaletteCommand>& entries, const std::string& query) {
-    std::vector<qcode::PaletteCommand> out;
-    for (const auto& e : entries) {
-        if (matches_query(e.title, query) ||
-            matches_query(e.id, query) ||
-            matches_query(e.description, query) ||
-            matches_query(e.category, query) ||
-            matches_query(e.shortcut, query)) {
             out.push_back(e);
         }
     }
@@ -296,8 +279,8 @@ bool handle_variant_select_keys(
         overlays.variant_select_idx = 0;
     }
 
-    const bool down = e == ftxui::Event::ArrowDown || e == ftxui::Event::Character('j');
-    const bool up = e == ftxui::Event::ArrowUp || e == ftxui::Event::Character('k');
+    const bool down = e == ftxui::Event::ArrowDown;
+    const bool up = e == ftxui::Event::ArrowUp;
     if (down && !filtered.empty()) {
         overlays.variant_select_idx = std::min(
             overlays.variant_select_idx + 1, static_cast<int>(filtered.size()) - 1);
@@ -328,71 +311,9 @@ bool handle_variant_select_keys(
         }
         return true;
     }
-    if (e.is_character() && e != ftxui::Event::Character('j') &&
-        e != ftxui::Event::Character('k')) {
+    if (e.is_character()) {
         overlays.variant_query += e.character();
         overlays.variant_select_idx = 0;
-        return true;
-    }
-    return true;
-}
-
-bool handle_palette_keys(
-    const ftxui::Event& e,
-    TuiOverlayState& overlays,
-    std::function<void(const qcode::PaletteCommand&)> on_select) {
-    if (!overlays.show_palette) return false;
-
-    if (e == ftxui::Event::Escape) {
-        overlays.show_palette = false;
-        overlays.palette_query.clear();
-        return true;
-    }
-
-    auto filtered = filter_palette(overlays.palette_commands, overlays.palette_query);
-    if (!filtered.empty()) {
-        overlays.palette_select_idx = std::clamp(
-            overlays.palette_select_idx, 0, static_cast<int>(filtered.size()) - 1);
-    } else {
-        overlays.palette_select_idx = 0;
-    }
-
-    if (e == ftxui::Event::ArrowDown) {
-        if (!filtered.empty()) {
-            overlays.palette_select_idx = std::min(
-                overlays.palette_select_idx + 1, static_cast<int>(filtered.size()) - 1);
-        }
-        return true;
-    }
-    if (e == ftxui::Event::ArrowUp) {
-        if (!filtered.empty()) {
-            overlays.palette_select_idx = std::max(overlays.palette_select_idx - 1, 0);
-        }
-        return true;
-    }
-    if (e == ftxui::Event::Return) {
-        if (!filtered.empty() && overlays.palette_select_idx >= 0 &&
-            overlays.palette_select_idx < static_cast<int>(filtered.size())) {
-            auto cmd = filtered[overlays.palette_select_idx];
-            overlays.show_palette = false;
-            overlays.palette_query.clear();
-            on_select(cmd);
-        } else {
-            overlays.show_palette = false;
-            overlays.palette_query.clear();
-        }
-        return true;
-    }
-    if (e == ftxui::Event::Backspace || e == ftxui::Event::Special("\x7f")) {
-        if (!overlays.palette_query.empty()) {
-            overlays.palette_query.pop_back();
-            overlays.palette_select_idx = 0;
-        }
-        return true;
-    }
-    if (e.is_character()) {
-        overlays.palette_query += e.character();
-        overlays.palette_select_idx = 0;
         return true;
     }
     return true;

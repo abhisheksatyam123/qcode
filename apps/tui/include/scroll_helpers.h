@@ -18,29 +18,5 @@ inline int compute_focus_y(int scroll_offset, int viewport_height) {
     return std::max(0, scroll_offset) + (vp - 1) / 2;
 }
 
-// Calculate the number of lines to scroll for PageUp/PageDown based on terminal height.
-inline int compute_page_step(int terminal_height) {
-    return std::max(5, terminal_height - 6);
-}
-
-// Clamp and update scroll offset for wheel events
-inline int apply_wheel_scroll(int current_scroll, bool is_wheel_up, int lines_per_wheel = 3) {
-    if (is_wheel_up) {
-        return std::max(0, current_scroll - lines_per_wheel);
-    } else {
-        return current_scroll + lines_per_wheel;
-    }
-}
-
-// Clamp and update scroll offset for page up/down
-inline int apply_page_scroll(int current_scroll, bool is_page_up, int terminal_height) {
-    const int page = compute_page_step(terminal_height);
-    if (is_page_up) {
-        return std::max(0, current_scroll - page);
-    } else {
-        return current_scroll + page;
-    }
-}
-
 } // namespace tui
 } // namespace qcode

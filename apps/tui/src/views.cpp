@@ -29,13 +29,12 @@
 namespace qcode {
 namespace tui {
 
-// Defined in pickers.cpp: time-throttled session::get_model_performance_summary.
-const session::ModelPerformanceSummary& cached_model_performance_summary(
-    const std::string& model_id, const std::string& provider);
-
 using namespace ftxui;
 
 namespace {
+
+// Provider key for model summaries looked up by model id alone.
+const std::string kAnyProvider;
 
 // Reflect layout box into ChatState hit-testing (file list rows, etc.).
 class ReflectSimple : public ftxui::Node {
@@ -107,15 +106,8 @@ struct ToolPairing {
     std::vector<char> pending;   // call row with a call still awaiting a result
 };
 
-// Pairs every tool result with its call row. Also fills the ids of the
-// collapsible (call + result) tool blocks in render order; j/k focus indexes
-// into `order`, and `rows` maps each id to the history row that renders it.
-void build_tool_pairing(const qcode::Messages& history,
-                        std::vector<std::string>& order,
-                        std::unordered_multimap<std::string, size_t>& rows,
-                        ToolPairing& pairing) {
-    order.clear();
-    rows.clear();
+// Pairs every tool result with its call row.
+void build_tool_pairing(const qcode::Messages& history, ToolPairing& pairing) {
     pairing.result_rows.clear();
     pairing.consumed.assign(history.size(), 0);
     pairing.pending.assign(history.size(), 0);
@@ -146,13 +138,7 @@ void build_tool_pairing(const qcode::Messages& history,
     for (size_t i = 0; i < history.size(); ++i) {
         for (const auto& part : history[i].content) {
             const auto* tp = std::get_if<qcode::ToolCallContentPart>(&part);
-            if (tp == nullptr) continue;
-            if (answered.count(tp->id) == 0) {
-                pairing.pending[i] = 1;
-                continue;
-            }
-            order.push_back(tp->id);
-            rows.emplace(tp->id, i);
+            if (tp != nullptr && answered.count(tp->id) == 0) pairing.pending[i] = 1;
         }
     }
 }
@@ -301,10 +287,6 @@ ftxui::Element render_view(
     int variant_select_idx,
     const std::vector<VariantEntry>& variant_entries,
     const std::string& variant_query,
-    bool show_palette,
-    int palette_select_idx,
-    const std::vector<PaletteCommand>& palette_entries,
-    const std::string& palette_query,
     bool show_help,
     const ftxui::Component& tab_toggle,
     const std::shared_ptr<int>& /*scroll_line*/,
@@ -324,7 +306,7 @@ ftxui::Element render_view(
                                   : 0);
     int window_size = hdr_model_info.context_window;
     if (window_size <= 0) {
-        const auto& summary = cached_model_performance_summary(hdr_model_info.id, "");
+        const auto& summary = cached_model_performance_summary(hdr_model_info.id, kAnyProvider);
         if (summary.context_window > 0) {
             window_size = summary.context_window;
         } else {
@@ -751,12 +733,8 @@ ftxui::Element render_view(
             static bool cached_thinking = false;
             static std::unordered_map<std::string, bool> cached_collapse;
             static std::unordered_map<unsigned long, bool> cached_expand;
-            static std::string cached_focused_tool;
             static std::unordered_map<size_t, Element> message_cache;
-            // History row that renders each focusable tool block (by call id).
-            static std::unordered_multimap<std::string, size_t> tool_block_rows;
             static ToolPairing tool_pairing;
-            static std::vector<std::string> unused_tool_order;
 
             // Cached trees hold HitBox& into these maps and fill
             // tool_task_sessions only when rendered, so the maps are dropped
@@ -808,33 +786,13 @@ ftxui::Element render_view(
             }
 
             if (history_changed) {
-                build_tool_pairing(*state.messages_history,
-                                   state.tool_block_order
-                                       ? *state.tool_block_order
-                                       : unused_tool_order,
-                                   tool_block_rows, tool_pairing);
-            }
-            // j/k focus restyles two tool blocks: re-render only their rows.
-            std::string focused_tool;
-            if (state.tool_block_order && state.focused_tool_index &&
-                *state.focused_tool_index >= 0 &&
-                *state.focused_tool_index <
-                    static_cast<int>(state.tool_block_order->size())) {
-                focused_tool =
-                    (*state.tool_block_order)[*state.focused_tool_index];
-            }
-            if (focused_tool != cached_focused_tool) {
-                for (const std::string* id : {&cached_focused_tool, &focused_tool}) {
-                    auto [row, end] = tool_block_rows.equal_range(*id);
-                    for (; row != end; ++row) message_cache.erase(row->second);
-                }
-                cached_focused_tool = focused_tool;
+                build_tool_pairing(*state.messages_history, tool_pairing);
             }
 
             if (first > 0) {
                 msgs.push_back(
                     text(" " + std::to_string(first) +
-                         " earlier messages · Home/PageUp to view ") |
+                         " earlier messages · scroll up to view ") |
                     dim | hcenter);
                 msgs.push_back(separatorLight() | color(dim_gray()));
             }
@@ -874,7 +832,7 @@ ftxui::Element render_view(
             if (last < history_size) {
                 msgs.push_back(
                     text(" " + std::to_string(history_size - last) +
-                         " later messages · PageDown/End to view ") |
+                         " later messages · scroll down to view ") |
                     dim | hcenter);
             }
 
@@ -952,7 +910,7 @@ ftxui::Element render_view(
                 text(" CHANGED FILES ") | bold | color(accent2(theme)),
                 text(" (" + std::to_string(changes->size()) + ") ") | dim,
                 filler(),
-                text("↑↓ select  Enter/click open  r refresh") | dim,
+                text("click a file to open its diff") | dim,
             }));
             rows.push_back(separatorLight() | color(accent(theme)));
 
@@ -1145,7 +1103,7 @@ ftxui::Element render_view(
                 if (m.context_window > 0) {
                     hard_limit = m.context_window;
                 } else {
-                    const auto& summary = cached_model_performance_summary(m.id, "");
+                    const auto& summary = cached_model_performance_summary(m.id, kAnyProvider);
                     if (summary.context_window > 0) {
                         hard_limit = summary.context_window;
                     } else {
@@ -1233,7 +1191,7 @@ ftxui::Element render_view(
         content_rows.push_back(hbox(
             text(" SUBAGENTS ") | bold | color(accent2(theme)),
             filler(),
-            text("↑↓ select   Enter/click open in chat   b parent   r refresh") | dim
+            text("click a task to open it in chat") | dim
         ));
         content_rows.push_back(separatorLight() | color(accent(theme)));
 
@@ -1336,14 +1294,6 @@ ftxui::Element render_view(
             main_layout,
             clear_under(build_variant_popup(variant_entries, variant_select_idx,
                                             active, variant_query, theme)) |
-                center
-        });
-    }
-    if (show_palette) {
-        return dbox({
-            main_layout,
-            clear_under(build_palette_popup(palette_entries, palette_select_idx,
-                                            palette_query, theme)) |
                 center
         });
     }

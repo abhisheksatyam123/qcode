@@ -134,7 +134,7 @@ void GenerationController::force_stop_ui() {
         if (queued_count > 0) {
             msg += " (" + std::to_string(queued_count) + " queued dropped)";
         }
-        msg += " · press r to retry";
+        msg += " · /retry to resend";
         store_.add_toast(msg, "warning", 2500);
     } else {
         std::string msg = "Generation force-stopped";

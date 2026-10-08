@@ -153,11 +153,6 @@ struct ChatState {
     // emulator can do native text selection (clean copy/paste).
     std::shared_ptr<bool> copy_mode = std::make_shared<bool>(false);
 
-    // Ids of the collapsible tool blocks in render order (built by the view
-    // when the history changes); focused_tool_index indexes into it.
-    std::shared_ptr<std::vector<std::string>> tool_block_order =
-        std::make_shared<std::vector<std::string>>();
-    std::shared_ptr<int> focused_tool_index = std::make_shared<int>(-1);
     // Hit boxes below are referenced by the view's cached message trees:
     // clearing or erasing entries is only safe together with that cache
     // (or alongside replacing messages_history, which invalidates it).

@@ -93,6 +93,16 @@ class Client {
     return ToolExecutionModel::ClientSide;
   }
 
+  // True when stream_text() yields everything generate_text() returns for a
+  // tool step (text, reasoning, complete tool calls, usage), so the tool loop
+  // can stream steps instead of waiting for each one.
+  virtual bool supports_tool_streaming() const {
+    if (pimpl_) {
+      return pimpl_->supports_tool_streaming();
+    }
+    return false;
+  }
+
  private:
   std::unique_ptr<Client> pimpl_;
 };

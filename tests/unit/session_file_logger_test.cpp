@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -270,6 +271,54 @@ TEST_F(SessionFileLoggerTest, IdleTailReachesDiskWithoutExplicitFlush) {
     found = read_file(path).find("idle tail line") != std::string::npos;
   }
   EXPECT_TRUE(found);
+}
+
+// Startup sweep: only this stem's session files older than the retention
+// window are removed; fresh files, the unscoped stem file and other stems stay.
+TEST_F(SessionFileLoggerTest, StartupSweepDeletesOnlyOldScopedLogs) {
+  ::unsetenv("QCODE_LOG_RETENTION_DAYS");
+  const auto old_time =
+      std::filesystem::file_time_type::clock::now() - std::chrono::days(20);
+  const std::string old_a = test_dir_ + "/test-server-old.log";
+  const std::string old_b = test_dir_ + "/test-server-old.log.old";
+  const std::string fresh = test_dir_ + "/test-server-new.log";
+  const std::string unscoped = test_dir_ + "/test-server.log";
+  const std::string other = test_dir_ + "/other-old.log";
+  for (const auto& path : {old_a, old_b, fresh, unscoped, other}) {
+    std::ofstream(path) << "line\n";
+  }
+  std::filesystem::last_write_time(old_a, old_time);
+  std::filesystem::last_write_time(old_b, old_time);
+  std::filesystem::last_write_time(unscoped, old_time);
+  std::filesystem::last_write_time(other, old_time);
+
+  auto logger = std::make_shared<SessionFileLogger>(
+      test_dir_, "test-server", logger::LogLevel::kLogLevelDebug);
+
+  EXPECT_FALSE(std::filesystem::exists(old_a));
+  EXPECT_FALSE(std::filesystem::exists(old_b));
+  EXPECT_TRUE(std::filesystem::exists(fresh));
+  EXPECT_TRUE(std::filesystem::exists(unscoped));
+  EXPECT_TRUE(std::filesystem::exists(other));
+}
+
+TEST_F(SessionFileLoggerTest, RetentionZeroKeepsOldLogs) {
+  ::setenv("QCODE_LOG_RETENTION_DAYS", "0", 1);
+  const auto old_time =
+      std::filesystem::file_time_type::clock::now() - std::chrono::days(20);
+  const std::string old_a = test_dir_ + "/test-server-old.log";
+  const std::string old_b = test_dir_ + "/test-server-old.log.old";
+  std::ofstream(old_a) << "line\n";
+  std::ofstream(old_b) << "line\n";
+  std::filesystem::last_write_time(old_a, old_time);
+  std::filesystem::last_write_time(old_b, old_time);
+
+  auto logger = std::make_shared<SessionFileLogger>(
+      test_dir_, "test-server", logger::LogLevel::kLogLevelDebug);
+  ::unsetenv("QCODE_LOG_RETENTION_DAYS");
+
+  EXPECT_TRUE(std::filesystem::exists(old_a));
+  EXPECT_TRUE(std::filesystem::exists(old_b));
 }
 
 }  // namespace

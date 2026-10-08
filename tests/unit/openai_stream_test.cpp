@@ -8,6 +8,10 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+
 namespace qcode {
 namespace test {
 
@@ -395,6 +399,136 @@ TEST_F(AntigravityStreamTest, SurfacesProviderErrorInsteadOfEmpty) {
     }
   }
   EXPECT_TRUE(saw_error);
+}
+
+// ── Chat-completions tool steps (tool-loop streaming) ────────────────
+static std::vector<qcode::StreamEvent> drain_events(
+    qcode::openai::OpenAIStreamImpl& impl) {
+  std::vector<qcode::StreamEvent> events;
+  while (auto event = impl.poll_event(std::chrono::milliseconds(0))) {
+    events.push_back(std::move(*event));
+  }
+  return events;
+}
+
+TEST(OpenAIChatStreamTest, ToolCallSplitAcrossChunksThenUsageOnlyChunk) {
+  qcode::openai::OpenAIStreamImpl impl;
+  const char* chunks[] = {
+      R"({"choices":[{"index":0,"delta":{"role":"assistant","reasoning":"Need ls.","reasoning_details":[{"type":"reasoning.text","text":"Need ls.","signature":null}]}}]})",
+      R"({"choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","text":"","signature":"sig-1"}]}}]})",
+      R"({"choices":[{"index":0,"delta":{"content":"Let me "}}]})",
+      R"({"choices":[{"index":0,"delta":{"content":"look."}}]})",
+      R"({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","thought_signature":"ts-1","function":{"name":"bash","arguments":""}}]}}]})",
+      R"({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":"}}]}}]})",
+      R"({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]}}]})",
+      R"({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null})",
+      R"({"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150,"prompt_tokens_details":{"cached_tokens":100},"completion_tokens_details":{"reasoning_tokens":7}}})",
+  };
+  for (const char* chunk : chunks) {
+    impl.test_parse_sse_line(std::string("data: ") + chunk);
+  }
+  impl.test_parse_sse_line("data: [DONE]");
+
+  std::string text;
+  std::string reasoning;
+  std::string signature;
+  std::vector<qcode::StreamEvent> calls;
+  std::vector<qcode::StreamEvent> finishes;
+  for (auto& event : drain_events(impl)) {
+    ASSERT_FALSE(event.is_error()) << event.error.value_or("");
+    if (event.is_text_delta()) text += event.text_delta;
+    if (event.is_reasoning_delta()) {
+      reasoning += event.text_delta;
+      if (event.metadata) signature = *event.metadata;
+    }
+    if (event.is_tool_call()) calls.push_back(event);
+    if (event.is_finish()) finishes.push_back(event);
+  }
+  EXPECT_FALSE(impl.has_more_events());
+
+  EXPECT_EQ(text, "Let me look.");
+  EXPECT_EQ(reasoning, "Need ls.");
+  EXPECT_EQ(signature, "sig-1");
+
+  ASSERT_EQ(calls.size(), 1u);
+  EXPECT_EQ(calls[0].tool_call_id, "call_1");
+  EXPECT_EQ(calls[0].tool_name, "bash");
+  EXPECT_EQ(nlohmann::json::parse(calls[0].tool_payload),
+            nlohmann::json({{"command", "ls"}}));
+  EXPECT_EQ(calls[0].metadata.value_or(""), "ts-1");
+
+  // The finish chunk (usage null), then the usage-only chunk.
+  ASSERT_EQ(finishes.size(), 2u);
+  EXPECT_EQ(finishes[0].finish_reason.value_or(qcode::kFinishReasonError),
+            qcode::kFinishReasonToolCalls);
+  EXPECT_FALSE(finishes[0].usage.has_value());
+  ASSERT_TRUE(finishes[1].usage.has_value());
+  EXPECT_EQ(finishes[1].usage->prompt_tokens, 120);
+  EXPECT_EQ(finishes[1].usage->completion_tokens, 30);
+  EXPECT_EQ(finishes[1].usage->total_tokens, 150);
+  EXPECT_EQ(finishes[1].usage->cached_prompt_tokens, 100);
+  EXPECT_EQ(finishes[1].usage->reasoning_completion_tokens, 7);
+}
+
+TEST(OpenAIChatStreamTest, UsageOnTheFinishChunkIsReportedOnce) {
+  qcode::openai::OpenAIStreamImpl impl;
+  impl.test_parse_sse_line(
+      R"(data: {"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}})");
+  impl.test_parse_sse_line(
+      R"(data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}})");
+  impl.test_parse_sse_line("data: [DONE]");
+
+  int with_usage = 0;
+  for (const auto& event : drain_events(impl)) {
+    if (event.is_finish() && event.usage) ++with_usage;
+  }
+  EXPECT_EQ(with_usage, 1);
+}
+
+// stop_stream() must cancel a request whose server has gone quiet instead of
+// waiting out the 300 s read timeout.
+TEST(OpenAIChatStreamTest, StopCancelsARequestThatIsWaitingForData) {
+  httplib::Server server;
+  std::atomic<bool> release{false};
+  server.Post("/v1/chat/completions",
+              [&release](const httplib::Request&, httplib::Response& res) {
+                res.set_chunked_content_provider(
+                    "text/event-stream",
+                    [&release](size_t, httplib::DataSink& sink) {
+                      // Silent until released (or 5 s, so a regression fails
+                      // the timing check instead of hanging).
+                      const auto deadline = std::chrono::steady_clock::now() +
+                                            std::chrono::seconds(5);
+                      while (!release &&
+                             std::chrono::steady_clock::now() < deadline) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                      }
+                      sink.done();
+                      return true;
+                    });
+              });
+  const int port = server.bind_to_any_port("127.0.0.1");
+  ASSERT_GT(port, 0);
+  std::thread server_thread([&server] { server.listen_after_bind(); });
+  server.wait_until_ready();
+
+  {
+    qcode::openai::OpenAIStreamImpl impl;
+    impl.start_stream(
+        "http://127.0.0.1:" + std::to_string(port) + "/v1/chat/completions",
+        {}, nlohmann::json::object());
+    EXPECT_FALSE(impl.poll_event(std::chrono::milliseconds(300)).has_value());
+    EXPECT_TRUE(impl.has_more_events());
+
+    const auto started = std::chrono::steady_clock::now();
+    impl.stop_stream();
+    EXPECT_LT(std::chrono::steady_clock::now() - started,
+              std::chrono::seconds(1));
+  }
+
+  release = true;
+  server.stop();
+  server_thread.join();
 }
 
 }  // namespace test

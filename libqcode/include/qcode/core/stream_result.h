@@ -2,10 +2,12 @@
 
 #include <qcode/core/stream_event.h>
 
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace qcode {
@@ -17,6 +19,14 @@ class StreamResultImpl {
   virtual StreamEvent get_next_event() = 0;
   virtual bool has_more_events() const = 0;
   virtual void stop_stream() = 0;
+  // Waits at most `timeout` for the next event; nullopt when none arrived.
+  // This default blocks in get_next_event() for impls that cannot time out.
+  virtual std::optional<StreamEvent> poll_event(
+      std::chrono::milliseconds timeout) {
+    (void)timeout;
+    if (!has_more_events()) return std::nullopt;
+    return get_next_event();
+  }
 };
 }  // namespace internal
 
@@ -75,6 +85,10 @@ class StreamResult {
   std::string error_message() const;
 
   bool is_complete() const;
+
+  // Abort-aware read: the next event, or nullopt when none arrived within
+  // `timeout` (is_complete() then tells an idle stream from an ended one).
+  std::optional<StreamEvent> poll(std::chrono::milliseconds timeout);
 
   // Cooperative cancel for in-flight HTTP streams (Esc / abort).
   void stop();

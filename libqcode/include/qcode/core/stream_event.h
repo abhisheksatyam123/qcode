@@ -38,12 +38,15 @@ struct StreamEvent {
 
   bool is_finish() const { return type == kStreamEventTypeFinish; }
 
-  static StreamEvent tool_call(std::string id, std::string name,
-                               std::string arguments_json) {
+  // Complete tool call; its thought signature (if any) goes in metadata.
+  static StreamEvent tool_call(
+      std::string id, std::string name, std::string arguments_json,
+      std::optional<std::string> thought_signature = std::nullopt) {
     StreamEvent e(kStreamEventTypeToolCall);
     e.tool_call_id = std::move(id);
     e.tool_name = std::move(name);
     e.tool_payload = std::move(arguments_json);
+    e.metadata = std::move(thought_signature);
     return e;
   }
 

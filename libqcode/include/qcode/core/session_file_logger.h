@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -34,6 +35,10 @@ namespace qcode {
 // Lines emitted by threads that never bound a session id (server startup,
 // request routing, background housekeepers) go to the unscoped stem file:
 //   "<dir>/<stem>.log"
+//
+// Retention: on construction, "<dir>/<stem>-*.log" and "<dir>/<stem>-*.log.old"
+// files not written for QCODE_LOG_RETENTION_DAYS days (default 14; 0 disables)
+// are deleted. The unscoped "<dir>/<stem>.log" and other stems are never touched.
 class SessionFileLogger final : public logger::Logger {
  public:
   static constexpr std::uintmax_t kDefaultMaxBytes = 16ull << 20;  // 16 MiB
@@ -50,6 +55,7 @@ class SessionFileLogger final : public logger::Logger {
         max_bytes_(max_bytes) {
     std::error_code ec;
     std::filesystem::create_directories(dir_, ec);
+    sweep_old_logs(dir_, stem_);
     flusher_ = std::thread([this] { flush_loop(); });
   }
 
@@ -267,6 +273,36 @@ class SessionFileLogger final : public logger::Logger {
     sink.stream.clear();
     sink.stream.open(path, std::ios::app);
     sink.bytes = 0;
+  }
+
+  // Deletes this stem's regular files directly under dir that are older than
+  // QCODE_LOG_RETENTION_DAYS. 0 or a negative value disables the sweep; an
+  // unparsable value falls back to the default. Never throws.
+  static void sweep_old_logs(const std::string& dir, const std::string& stem) {
+    long days = 14;
+    if (const char* env = std::getenv("QCODE_LOG_RETENTION_DAYS")) {
+      char* end = nullptr;
+      const long parsed = std::strtol(env, &end, 10);
+      if (end != env && *end == '\0') days = parsed;
+    }
+    if (days <= 0) return;
+
+    const auto cutoff = std::filesystem::file_time_type::clock::now() -
+                        std::chrono::hours(24 * days);
+    const std::string prefix = stem + "-";
+    std::error_code ec;
+    std::filesystem::directory_iterator it(dir, ec);
+    for (const std::filesystem::directory_iterator end;
+         !ec && it != end; it.increment(ec)) {
+      std::error_code entry_ec;
+      const std::filesystem::path path = it->path();
+      const std::string name = path.filename().string();
+      const bool scoped = name.starts_with(prefix) &&
+                          (name.ends_with(".log") || name.ends_with(".log.old"));
+      if (!scoped || !it->is_regular_file(entry_ec) || entry_ec) continue;
+      const auto mtime = std::filesystem::last_write_time(path, entry_ec);
+      if (!entry_ec && mtime < cutoff) std::filesystem::remove(path, entry_ec);
+    }
   }
 
   static std::string_view level_to_string(logger::LogLevel level) {

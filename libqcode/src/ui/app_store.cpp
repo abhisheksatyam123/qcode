@@ -461,7 +461,10 @@ void AppStore::wire() {
                     session_assistant_texts_.erase(it);
                 }
             }
-            if (final_text.empty() && is_live_session(p.session_id)) {
+            // Only untracked (session-less) text is recovered from the live
+            // history: tracked text that a tool call or injected prompt
+            // flushed is saved already and would be saved twice.
+            if (final_text.empty() && p.session_id.empty()) {
                 final_text = latest_assistant_text();
             }
             if (!final_text.empty()) {
@@ -573,6 +576,18 @@ void AppStore::wire() {
 
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
         std::string sid = p.session_id.empty() ? session_id() : p.session_id;
+        // Save the text streamed before this call first, so a reload shows
+        // it above the call, as it streamed.
+        std::string pending;
+        {
+            std::lock_guard<std::mutex> lock(session_texts_mutex_);
+            auto it = session_assistant_texts_.find(p.session_id);
+            if (it != session_assistant_texts_.end()) {
+                pending = std::move(it->second);
+                session_assistant_texts_.erase(it);
+            }
+        }
+        if (!pending.empty()) qcode::session::save_message(sid, "Assistant", pending);
         // Structured JSON so session reload can rebuild pretty tool blocks.
         nlohmann::json call_json = {
             {"id", p.tool_call_id},

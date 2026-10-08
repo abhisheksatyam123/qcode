@@ -141,13 +141,10 @@ std::vector<qcode::bus::Subscription> subscribe_session(
                 {"arguments", p.arguments},
             };
             std::lock_guard<std::mutex> lock(session->queue_mutex);
-            // Flush thinking accumulated since the previous tool call as its
-            // own row so DB order preserves the think -> tool interleaving
-            // the webui timeline renders.
-            if (!session->reasoning_text.empty()) {
-                qcode::session::save_message(p.session_id, "Reasoning", session->reasoning_text);
-                session->reasoning_text.clear();
-            }
+            // Flush thinking and text accumulated since the previous tool call
+            // as their own rows so DB order preserves the think -> text ->
+            // tool interleaving the webui timeline renders.
+            flush_turn_text(*session);
             qcode::session::save_message(p.session_id, "ToolCall", call_json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
             push_event(*session, qcode::server::tool_call_started_to_json(p));
         }

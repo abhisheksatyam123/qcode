@@ -30,34 +30,6 @@ TEST(TuiScrollTest, ComputeFocusYOffsetsCenteringBias) {
     EXPECT_EQ(compute_focus_y(-5, 21), 10);
 }
 
-TEST(TuiScrollTest, ComputePageStepAdaptsToTerminalHeight) {
-    EXPECT_EQ(compute_page_step(40), 34);
-    EXPECT_EQ(compute_page_step(24), 18);
-    // Ensure a reasonable minimum step
-    EXPECT_EQ(compute_page_step(8), 5);
-    EXPECT_EQ(compute_page_step(4), 5);
-}
-
-TEST(TuiScrollTest, ApplyWheelScroll) {
-    // Wheel up decrements by 3 lines and clamps at 0
-    EXPECT_EQ(apply_wheel_scroll(10, true, 3), 7);
-    EXPECT_EQ(apply_wheel_scroll(2, true, 3), 0);
-    EXPECT_EQ(apply_wheel_scroll(0, true, 3), 0);
-
-    // Wheel down increments by 3 lines
-    EXPECT_EQ(apply_wheel_scroll(0, false, 3), 3);
-    EXPECT_EQ(apply_wheel_scroll(10, false, 3), 13);
-}
-
-TEST(TuiScrollTest, ApplyPageScroll) {
-    // Terminal height 40 -> page step 34
-    EXPECT_EQ(apply_page_scroll(50, true, 40), 16);
-    EXPECT_EQ(apply_page_scroll(20, true, 40), 0);
-
-    EXPECT_EQ(apply_page_scroll(0, false, 40), 34);
-    EXPECT_EQ(apply_page_scroll(50, false, 40), 84);
-}
-
 } // namespace
 } // namespace tui
 } // namespace qcode

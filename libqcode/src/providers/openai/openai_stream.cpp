@@ -56,6 +56,7 @@ void OpenAIStreamImpl::start_stream(const std::string& url,
   is_complete_ = false;
   finish_event_pushed_ = false;
   event_timeout_ = default_event_timeout();
+  touch_activity();
 
   LOG_INFO("Launching stream thread for OpenAI API");
 
@@ -104,6 +105,31 @@ StreamEvent OpenAIStreamImpl::get_next_event() {
   return event;
 }
 
+std::optional<StreamEvent> OpenAIStreamImpl::poll_event(
+    std::chrono::milliseconds timeout) {
+  StreamEvent event("");
+  if (event_queue_.try_dequeue(event)) return event;
+  {
+    // Same handshake as get_next_event(): producers notify under wait_mutex_.
+    std::unique_lock<std::mutex> lock(wait_mutex_);
+    wait_cv_.wait_for(lock, timeout, [this] {
+      return is_complete_ || event_queue_.size_approx() > 0;
+    });
+  }
+  if (event_queue_.try_dequeue(event)) return event;
+
+  // get_next_event()'s watchdog, measured from the last bytes received so
+  // keep-alive comments and retry attempts count as progress.
+  const auto idle =
+      std::chrono::steady_clock::now().time_since_epoch() -
+      std::chrono::steady_clock::duration(last_activity_.load());
+  if (!is_complete_ && idle > event_timeout_) {
+    LOG_ERROR("No stream data for {} seconds", event_timeout_.count());
+    return StreamEvent(kStreamEventTypeError, "Timeout waiting for next event");
+  }
+  return std::nullopt;
+}
+
 bool OpenAIStreamImpl::has_more_events() const {
   // No locks needed - these are atomic operations
   return event_queue_.size_approx() > 0 || !is_complete_;
@@ -112,7 +138,15 @@ bool OpenAIStreamImpl::has_more_events() const {
 void OpenAIStreamImpl::stop_stream() {
   LOG_DEBUG("Stopping OpenAI stream");
 
-  should_stop_ = true;  // Atomic write
+  // A finished stream only needs joining (and may return its connection to
+  // the pool). An unfinished one is cancelled now: shutting the socket down
+  // unblocks a read that would otherwise wait out the read timeout.
+  if (!is_complete_) {
+    should_stop_ = true;  // Atomic write
+    std::lock_guard<std::mutex> lock(cancel_mutex_);
+    if (active_client_) active_client_->stop();
+    cancel_cv_.notify_all();
+  }
 
   std::lock_guard<std::mutex> lock(thread_mutex_);
   if (stream_thread_.joinable()) {
@@ -149,6 +183,13 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
   try {
     auto cli = qcode::http::acquire_stream_client(target, kConnectionTimeout,
                                                   kReadTimeout);
+    // stop_stream() cancels through active_client_; withdraw it on every
+    // exit path before `cli` is pooled or destroyed.
+    set_active_client(cli.get());
+    struct ActiveClientGuard {
+      OpenAIStreamImpl* self;
+      ~ActiveClientGuard() { self->set_active_client(nullptr); }
+    } active_client_guard{this};
 
     LOG_DEBUG(
         "Stream client ready with connection_timeout: {}s, read_timeout: {}s",
@@ -157,6 +198,7 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
     std::string accumulated_data;
     int status = 0;          // of the current attempt
     std::string error_body;  // non-200 payload of the current attempt
+    bool streamed = false;   // the current attempt delivered SSE data
     std::size_t chunks = 0;
     std::size_t bytes = 0;
 
@@ -184,11 +226,12 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
       return true;
     };
     req.content_receiver = [this, &accumulated_data, &status, &error_body,
-                            &chunks, &bytes](
+                            &streamed, &chunks, &bytes](
                                const char* data, size_t data_length,
                                uint64_t /*offset*/, uint64_t /*total_length*/) {
       ++chunks;
       bytes += data_length;
+      touch_activity();
       if (status != 200) {
         if (error_body.size() < kMaxErrorBodyBytes) {
           error_body.append(
@@ -198,6 +241,7 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
       }
 
       // Accumulate data and process complete lines
+      streamed = true;
       accumulated_data.append(data, data_length);
 
       // Scan complete lines by offset; drop the consumed prefix once per chunk.
@@ -256,7 +300,9 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
       accumulated_data.clear();
       status = 0;
       error_body.clear();
+      streamed = false;
       error = httplib::Error::Success;
+      touch_activity();
 
       send_success = cli->send(req, res, error);
 
@@ -273,7 +319,9 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
           (qcode::is_status_code_retryable(res.status) ||
            qcode::is_error_message_retryable(error_body));
 
-      if ((is_network_error || is_retryable_status) &&
+      // A drop after SSE data arrived is not retried: its events are already
+      // out, and a replay would repeat them.
+      if ((is_network_error || is_retryable_status) && !streamed &&
           attempt <= kMaxStreamRetries && !should_stop_) {
         // Upstream delay(): Retry-After hint wins verbatim; otherwise
         // exponential backoff with one-sided jitter capped at 30s.
@@ -295,9 +343,19 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
         LOG_WARN(
             "Stream initial connection failed ({}), retrying attempt {}/{} in {} ms...",
             err_desc, attempt + 1, kMaxStreamRetries + 1, delay_ms.count());
-        std::this_thread::sleep_for(delay_ms);
+        // The backoff counts as activity for poll_event()'s watchdog, and
+        // stop_stream() ends it early.
+        last_activity_ = (std::chrono::steady_clock::now() + delay_ms)
+                             .time_since_epoch()
+                             .count();
+        std::unique_lock<std::mutex> lock(cancel_mutex_);
+        cancel_cv_.wait_for(lock, delay_ms, [this] { return should_stop_.load(); });
         continue;
       }
+
+      // Nobody reads an error after a cancel, and a drop after the finish
+      // chunk loses at most the usage chunk.
+      if (should_stop_ || finish_event_pushed_) break;
 
       // Permanent failure or exhausted retries
       if (is_network_error) {
@@ -317,7 +375,8 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
               chunks, bytes);
 
     // Errors and aborts leave `cli` unpooled; its socket closes on destruction.
-    if (stream_ok) {
+    set_active_client(nullptr);
+    if (stream_ok && !should_stop_) {
       qcode::http::release_stream_client(target, std::move(cli));
     }
   } catch (const std::exception& e) {
@@ -344,15 +403,32 @@ void OpenAIStreamImpl::notify_consumer() {
 }
 
 
+void OpenAIStreamImpl::set_active_client(httplib::ClientImpl* cli) {
+  std::lock_guard<std::mutex> lock(cancel_mutex_);
+  active_client_ = cli;
+}
+
+void OpenAIStreamImpl::touch_activity() {
+  last_activity_ = std::chrono::steady_clock::now().time_since_epoch().count();
+}
+
+void OpenAIStreamImpl::push_pending_tool_calls() {
+  for (auto& tc : pending_tool_calls_) {
+    if (tc.name.empty()) continue;
+    std::optional<std::string> signature;
+    if (!tc.thought_signature.empty()) signature = std::move(tc.thought_signature);
+    push_event(StreamEvent::tool_call(
+        std::move(tc.id), std::move(tc.name),
+        tc.arguments.empty() ? "{}" : std::move(tc.arguments),
+        std::move(signature)));
+  }
+  pending_tool_calls_.clear();
+}
+
 void OpenAIStreamImpl::push_finish_event_if_needed() {
   bool expected = false;
   if (finish_event_pushed_.compare_exchange_strong(expected, true)) {
-    for (const auto& tc : pending_tool_calls_) {
-      if (!tc.name.empty()) {
-        event_queue_.enqueue(StreamEvent::tool_call(tc.id, tc.name, tc.arguments.empty() ? "{}" : tc.arguments));
-      }
-    }
-    pending_tool_calls_.clear();
+    push_pending_tool_calls();
     LOG_DEBUG("Pushing finish event to queue");
     event_queue_.enqueue(StreamEvent(kStreamEventTypeFinish));
     notify_consumer();

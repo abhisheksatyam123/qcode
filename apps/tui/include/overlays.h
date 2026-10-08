@@ -35,10 +35,6 @@ struct TuiOverlayState {
     std::string variant_query = "";
     std::vector<qcode::VariantEntry> variant_entries;
 
-    bool show_palette = false;
-    int palette_select_idx = 0;
-    std::string palette_query = "";
-    std::vector<qcode::PaletteCommand> palette_commands;
     bool show_help = false;
 
     bool show_slash = false;
@@ -61,9 +57,6 @@ std::vector<qcode::ThemeEntry> filter_themes(
 std::vector<qcode::VariantEntry> filter_variants(
     const std::vector<qcode::VariantEntry>& entries, const std::string& query);
 
-std::vector<qcode::PaletteCommand> filter_palette(
-    const std::vector<qcode::PaletteCommand>& entries, const std::string& query);
-
 bool handle_model_select_keys(
     const ftxui::Event& e,
     TuiOverlayState& overlays,
@@ -85,10 +78,6 @@ bool handle_variant_select_keys(
     TuiOverlayState& overlays,
     std::function<void(const std::string& variant_id)> on_select);
 
-bool handle_palette_keys(
-    const ftxui::Event& e,
-    TuiOverlayState& overlays,
-    std::function<void(const qcode::PaletteCommand&)> on_select);
 
 }  // namespace tui
 }  // namespace qcode

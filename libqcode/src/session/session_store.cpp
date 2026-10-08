@@ -913,7 +913,6 @@ void reload_session_history(const std::string& session_id, ChatState& state) {
     if (state.auto_scroll) *state.auto_scroll = true;
     if (state.scroll_line) *state.scroll_line = INT_MAX;
     if (state.tool_collapse_state) state.tool_collapse_state->clear();
-    if (state.tool_block_order) state.tool_block_order->clear();
     if (state.tool_arrow_boxes) state.tool_arrow_boxes->clear();
     if (state.thinking_expand_state) state.thinking_expand_state->clear();
     if (state.thinking_header_boxes) state.thinking_header_boxes->clear();

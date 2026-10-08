@@ -7,6 +7,26 @@
 namespace qcode {
 namespace openai {
 
+namespace {
+
+// First reasoning_details signature in a delta (OpenRouter); the
+// non-streaming parser keeps the same one.
+std::optional<std::string> reasoning_signature(const nlohmann::json& delta) {
+  const auto details = delta.find("reasoning_details");
+  if (details == delta.end() || !details->is_array()) return std::nullopt;
+  for (const auto& detail : *details) {
+    if (!detail.is_object()) continue;
+    const auto sig = detail.find("signature");
+    if (sig != detail.end() && sig->is_string() &&
+        !sig->get_ref<const std::string&>().empty()) {
+      return sig->get<std::string>();
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
   if (line.starts_with("data:")) {
     auto data = line.substr(5);
@@ -58,12 +78,7 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       }
       if (event_type == "response.completed" ||
           event_type == "response.incomplete") {
-        for (const auto& tc : pending_tool_calls_) {
-          if (!tc.name.empty()) {
-            push_event(StreamEvent::tool_call(tc.id, tc.name, tc.arguments.empty() ? "{}" : tc.arguments));
-          }
-        }
-        pending_tool_calls_.clear();
+        push_pending_tool_calls();
         Usage usage;
         const auto response = json.value("response", nlohmann::json::object());
         if (response.contains("usage") && response["usage"].is_object()) {
@@ -193,6 +208,11 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
             if (tc.contains("id") && tc["id"].is_string()) {
               pending_tool_calls_[idx].id = tc["id"].get<std::string>();
             }
+            if (tc.contains("thought_signature") &&
+                tc["thought_signature"].is_string()) {
+              pending_tool_calls_[idx].thought_signature =
+                  tc["thought_signature"].get<std::string>();
+            }
             if (tc.contains("function") && tc["function"].is_object()) {
               const auto& fn = tc["function"];
               if (fn.contains("name") && fn["name"].is_string()) {
@@ -245,8 +265,9 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         }
 
         const auto reasoning = extract_openai_reasoning_text(delta);
-        if (!reasoning.empty()) {
-          push_event(StreamEvent::reasoning(reasoning));
+        auto signature = reasoning_signature(delta);
+        if (!reasoning.empty() || signature) {
+          push_event(StreamEvent::reasoning(reasoning, std::move(signature)));
         }
       }
 
@@ -259,12 +280,7 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         LOG_DEBUG("Stream finished with reason: {}",
                               finish_reason_str);
 
-        for (const auto& tc : pending_tool_calls_) {
-          if (!tc.name.empty()) {
-            push_event(StreamEvent::tool_call(tc.id, tc.name, tc.arguments.empty() ? "{}" : tc.arguments));
-          }
-        }
-        pending_tool_calls_.clear();
+        push_pending_tool_calls();
 
         finish_event_pushed_ = true;
 
@@ -280,10 +296,21 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
               "Stream completed - tokens used: {} prompt, {} completion, {} "
               "total",
               usage.prompt_tokens, usage.completion_tokens, usage.total_tokens);
+          usage_reported_ = true;
           push_event(StreamEvent(kStreamEventTypeFinish, usage, finish_reason));
         } else {
-          push_event(StreamEvent(kStreamEventTypeFinish));
+          StreamEvent finish(kStreamEventTypeFinish);
+          finish.finish_reason = finish_reason;
+          push_event(std::move(finish));
         }
+      } else if (finish_event_pushed_ && !usage_reported_ &&
+                 json.contains("usage") && json["usage"].is_object()) {
+        // stream_options.include_usage: the counts come after the finish
+        // chunk, in a chunk of their own with no choices. Report them once.
+        usage_reported_ = true;
+        StreamEvent usage_event(kStreamEventTypeFinish);
+        usage_event.usage = parse_usage(json["usage"]);
+        push_event(std::move(usage_event));
       }
     } catch (const std::exception& e) {
       LOG_ERROR("Failed to parse SSE line: {} - Line content: {}",

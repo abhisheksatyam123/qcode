@@ -13,6 +13,7 @@
 #include <qcode/session/subagent_stats.h>
 #include <qcode/core/event.h>
 #include <qcode/core/errors.h>
+#include "generation/stream_step.h"
 
 #include <algorithm>
 #include <atomic>
@@ -27,6 +28,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -472,11 +474,21 @@ static JsonValue run_subagent_turn_multi(
 // ──────────────────────────────────────────────────────────────
 static void run_tools_generation_bus(
     qcode::Client& client,
-    qcode::GenerateOptions options,
+    qcode::GenerateOptions gen_options,
     bus::BusPort& bus,
     GenerationContext& ctx,
     const std::function<bool(qcode::Client&)>& refresh_client = nullptr,
     const std::string& provider_id = "") {
+  // One request serves every step. A StreamOptions is a GenerateOptions, so
+  // streamed steps pass it to stream_text() without copying the history.
+  qcode::StreamOptions request(std::move(gen_options));
+  qcode::GenerateOptions& options = request;
+  // Steps stream (text shows as the model writes it) when the client can;
+  // QCODE_TOOL_STREAMING=0 keeps one blocking generate_text() per step.
+  const char* tool_streaming_env = std::getenv("QCODE_TOOL_STREAMING");
+  const bool tool_streaming =
+      !(tool_streaming_env && std::string_view(tool_streaming_env) == "0");
+
   struct InFlightTool {
     std::chrono::steady_clock::time_point started;
     std::string tool_name;
@@ -552,12 +564,15 @@ static void run_tools_generation_bus(
     tool_starts->clear();
   };
 
-  // Assistant text of each finished step goes to the UI as one MessageDelta.
+  // Assistant text of each finished step goes to the UI as one MessageDelta
+  // (a streamed step published it already and is only counted).
   // Only its length is kept: the text itself lives in the request history.
   size_t text_chars = 0;
-  auto publish_step_text = [&bus, &ctx, &text_chars](std::string text) {
+  auto publish_step_text = [&bus, &ctx, &text_chars](std::string text,
+                                                     bool streamed = false) {
     if (text.empty()) return;
     text_chars += text.size();
+    if (streamed) return;
     bus.publish<MessageDelta>({
         .session_id = ctx.session_id,
         .text = std::move(text),
@@ -627,6 +642,34 @@ static void run_tools_generation_bus(
     return true;
   };
 
+  // generate_text is a blocking HTTP POST. Without a heartbeat the TUI
+  // sits on "generating" for the full read timeout and looks wedged.
+  // The request is read by reference: this thread leaves `options`
+  // untouched until fut.get() (and ~future joins on unwind).
+  auto generate_step = [&]() {
+    auto fut = std::async(std::launch::async, [&client, &options, sid = ctx.session_id]() {
+      qcode::logger::ScopedThreadSession bind(sid);
+      return client.generate_text(options);
+    });
+    int waited_sec = 0;
+    while (fut.wait_for(std::chrono::seconds(15)) !=
+           std::future_status::ready) {
+      waited_sec += 15;
+      const bool stopping =
+          ctx.abort_flag && ctx.abort_flag->load();
+      bus.publish<contract::ErrorOccurred>({
+          .session_id = ctx.session_id,
+          .message = stopping
+                         ? "Stopping… waiting for the network call (" +
+                               std::to_string(waited_sec) + "s)"
+                         : "Still waiting for the model (" +
+                               std::to_string(waited_sec) + "s)…",
+          .severity = "info",
+      });
+    }
+    return fut.get();
+  };
+
   int step = 0;
   bool finished = false;
   bool aborted = false;
@@ -649,33 +692,13 @@ static void run_tools_generation_bus(
     LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, options.messages.size());
 
     {
-      LOG_DEBUG("run_tools_generation_bus: step={} sync generate_text", step);
-      // generate_text is a blocking HTTP POST. Without a heartbeat the TUI
-      // sits on "generating" for the full read timeout and looks wedged.
-      // The request is read by reference: this thread leaves `options`
-      // untouched until fut.get() (and ~future joins on unwind).
+      // Streamed steps publish reasoning and text while the model writes.
+      const bool streamed = tool_streaming && client.supports_tool_streaming();
+      LOG_DEBUG("run_tools_generation_bus: step={} {}", step,
+                streamed ? "stream_text" : "sync generate_text");
       const qcode::perf::Stopwatch model_watch;
-      auto fut = std::async(std::launch::async, [&client, &options, sid = ctx.session_id]() {
-        qcode::logger::ScopedThreadSession bind(sid);
-        return client.generate_text(options);
-      });
-      int waited_sec = 0;
-      while (fut.wait_for(std::chrono::seconds(15)) !=
-             std::future_status::ready) {
-        waited_sec += 15;
-        const bool stopping =
-            ctx.abort_flag && ctx.abort_flag->load();
-        bus.publish<contract::ErrorOccurred>({
-            .session_id = ctx.session_id,
-            .message = stopping
-                           ? "Stopping… waiting for the network call (" +
-                                 std::to_string(waited_sec) + "s)"
-                           : "Still waiting for the model (" +
-                                 std::to_string(waited_sec) + "s)…",
-            .severity = "info",
-        });
-      }
-      qcode::GenerateResult step_res = fut.get();
+      qcode::GenerateResult step_res =
+          streamed ? stream_step(client, request, bus, ctx) : generate_step();
       PERF_LOG("step={} model_ms={:.1f} history_msgs={} prompt_tokens={} "
                "completion_tokens={} cached_tokens={}",
                step, model_watch.ms(), options.messages.size(),
@@ -692,8 +715,12 @@ static void run_tools_generation_bus(
           aborted = true;
           break;
         }
-        if (!auth_retried && looks_like_auth_error(err) && refresh_client &&
-            refresh_client(client)) {
+        // A streamed step that already showed output is not replayed: the
+        // retry would show it twice.
+        const bool shown = streamed && (!step_res.text.empty() ||
+                                        !step_res.reasoning.empty());
+        if (!auth_retried && !shown && looks_like_auth_error(err) &&
+            refresh_client && refresh_client(client)) {
           auth_retried = true;
           LOG_WARN("run_tools_generation_bus: refreshed credentials, retrying step={}",
                    step);
@@ -733,8 +760,9 @@ static void run_tools_generation_bus(
       // Thinking tokens from this step: publish as a reasoning event BEFORE
       // the text delta so the TUI renders the thinking block above the
       // assistant text (opencode-style), and replay it in later requests.
+      // A streamed step published them as they arrived.
       const size_t reasoning_chars = step_res.reasoning.size();
-      if (reasoning_chars > 0) {
+      if (reasoning_chars > 0 && !streamed) {
         bus.publish<ReasoningDelta>({
             .session_id = ctx.session_id,
             .text = std::move(step_res.reasoning),
@@ -870,7 +898,7 @@ static void run_tools_generation_bus(
             LOG_INFO("run_tools_generation_bus: step={} live context={} tokens", step, live);
         }
 
-        publish_step_text(std::move(step_res.text));
+        publish_step_text(std::move(step_res.text), streamed);
         if (stuck) break;
         inject_queued_prompts();
       } else {
@@ -880,7 +908,7 @@ static void run_tools_generation_bus(
         const bool wants_continue =
             should_auto_continue_build(plan_mode, auto_continues, step_res.text);
         append_message(qcode::Message::assistant(step_res.text));
-        publish_step_text(std::move(step_res.text));
+        publish_step_text(std::move(step_res.text), streamed);
         if (inject_queued_prompts()) {
           // The queued prompt is the next request's input; keep going.
         } else if (wants_continue) {

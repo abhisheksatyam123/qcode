@@ -92,7 +92,6 @@ Color error_fg(const std::string& theme) { return theme_error(theme); }
 Color muted_fg(const std::string& theme) { return theme_muted(theme); }
 Color success_fg(const std::string& theme) { return theme_success(theme); }
 Color panel_bg(const std::string& theme) { return theme_panel_bg(theme); }
-Color focus_bg(const std::string& theme) { return theme_focus_bg(theme); }
 
 std::string format_duration(double duration_ms) {
     if (duration_ms <= 0) return {};
@@ -182,7 +181,6 @@ static Element render_tool_pair(const qcode::ToolCallContentPart& call_part,
                                 const std::string& theme,
                                 bool collapsed,
                                 bool collapsible,
-                                bool focused,
                                 const ChatState& state);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -194,7 +192,7 @@ static Element render_tool_pair(const qcode::ToolCallContentPart& call_part,
 //    line 1 of output
 //    line 2
 //    line 3
-//    [+N more · l/→ expand]
+//    [+N more · click ▸ to expand]
 //
 Element ToolBlock(const std::string& icon,
                    const std::string& title,
@@ -206,7 +204,6 @@ Element ToolBlock(const std::string& icon,
                    double duration_ms,
                    bool collapsed,
                    bool collapsible,
-                   bool focused,
                    const std::string& shell_command,
                    const std::string& theme,
                    ChatState* state,
@@ -219,10 +216,7 @@ Element ToolBlock(const std::string& icon,
         if (state && !tool_call_id.empty() && state->tool_arrow_boxes) {
             arrow_el = std::move(arrow_el) | reflect_simple((*state->tool_arrow_boxes)[tool_call_id]);
         }
-        title_row.push_back(
-            std::move(arrow_el) |
-            color(accent_color) |
-            (focused ? bold : nothing));
+        title_row.push_back(std::move(arrow_el) | color(accent_color));
         title_row.push_back(text(" "));
     } else {
         title_row.push_back(text("  "));
@@ -318,11 +312,11 @@ Element ToolBlock(const std::string& icon,
     auto block = vbox(std::move(body));
     // Soft left rail + panel background (OpenCode BlockTool feel).
     block = hbox({
-        text("┃") | color(focused ? accent_color : Color::RGB(0x44, 0x44, 0x55)),
+        text("┃") | color(Color::RGB(0x44, 0x44, 0x55)),
         text(" "),
         std::move(block) | flex,
     });
-    block = std::move(block) | bgcolor(focused ? focus_bg(theme) : panel_bg(theme));
+    block = std::move(block) | bgcolor(panel_bg(theme));
     return vbox({std::move(block)});
 }
 
@@ -331,7 +325,7 @@ Element BlockTool(const std::string& title, Element content,
                    Color border_color) {
     return ToolBlock("⚙", title, "", std::move(content),
                       is_running, status, border_color, 0.0,
-                      false, true, false, title);
+                      false, true, title);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -522,7 +516,7 @@ static Element render_tool_call(const qcode::ToolCallContentPart& part,
     return ToolBlock(tool_icon(part.tool_name),
                       tool_display_name(part.tool_name), desc,
                       vbox(std::move(body)), true,
-                      "running", accent(theme), 0.0, false, false, false,
+                      "running", accent(theme), 0.0, false, false,
                       command, theme, const_cast<ChatState*>(&state), part.id);
 }
 
@@ -545,7 +539,7 @@ static Element render_tool_result(const qcode::ToolResultContentPart& part,
                           : render_truncated_output(output, 18, theme, part.is_error),
                       false, status,
                       part.is_error ? theme_error(theme) : theme_success(theme),
-                      part.duration_ms, false, true, false,
+                      part.duration_ms, false, true,
                       tool_name.empty() ? "tool" : tool_name, theme,
                       const_cast<ChatState*>(&state), part.tool_call_id, open_sid);
 }
@@ -716,13 +710,6 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
         thinking_expanded =
             it != state.thinking_expand_state->end() && it->second;
     }
-    const std::string* focused_tool_id = nullptr;
-    if (state.tool_block_order && state.focused_tool_index &&
-        *state.focused_tool_index >= 0 &&
-        *state.focused_tool_index <
-            static_cast<int>(state.tool_block_order->size())) {
-        focused_tool_id = &(*state.tool_block_order)[*state.focused_tool_index];
-    }
 
     for (const auto& part : msg.content) {
         if (const auto* reasoning_part =
@@ -751,12 +738,9 @@ Element render_message(const qcode::Message& msg, const ChatState& state,
                     collapsed = (*state.tool_collapse_state)[tool_part->id];
                 }
 
-                const bool focused =
-                    focused_tool_id && *focused_tool_id == tool_part->id;
-
                 parts.push_back(render_tool_pair(
                     *tool_part, *result_it->second, theme, collapsed, true,
-                    focused, state));
+                    state));
                 rendered_tool_results.insert(tool_part->id);
             } else {
                 parts.push_back(render_tool_call(*tool_part, theme, state));
@@ -804,7 +788,6 @@ static Element render_tool_pair(const qcode::ToolCallContentPart& call_part,
                                  const std::string& theme,
                                  bool collapsed,
                                  bool collapsible,
-                                 bool focused,
                                  const ChatState& state) {
     const auto command = extract_shell_command(call_part);
     auto desc = extract_tool_description(call_part);
@@ -831,7 +814,7 @@ static Element render_tool_pair(const qcode::ToolCallContentPart& call_part,
         tool_icon(call_part.tool_name), tool_display_name(call_part.tool_name),
         desc, render_shell_output(call_part, result_part, theme, collapsed),
         false, status, status_color, result_part.duration_ms, collapsed,
-        collapsible, focused, command, theme, const_cast<ChatState*>(&state),
+        collapsible, command, theme, const_cast<ChatState*>(&state),
         call_part.id, open_sid);
 }
 

@@ -101,6 +101,12 @@ bool StreamResult::is_complete() const {
   return !stream_result_impl_ || !stream_result_impl_->has_more_events();
 }
 
+std::optional<StreamEvent> StreamResult::poll(
+    std::chrono::milliseconds timeout) {
+  if (!stream_result_impl_) return std::nullopt;
+  return stream_result_impl_->poll_event(timeout);
+}
+
 void StreamResult::stop() {
   if (stream_result_impl_) {
     stream_result_impl_->stop_stream();

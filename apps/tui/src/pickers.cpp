@@ -372,87 +372,6 @@ ftxui::Element build_variant_popup(
            color(accent(theme)) | size(WIDTH, EQUAL, 56) | hcenter;
 }
 
-ftxui::Element build_palette_popup(
-    const std::vector<PaletteCommand>& entries,
-    int select_idx,
-    const std::string& query,
-    const std::string& theme
-) {
-    Elements lines;
-    lines.push_back(hbox({
-        text(" Command Palette") | bold | color(accent2(theme)),
-        filler(),
-        text("Ctrl+P") | dim | color(theme_muted(theme)),
-        text(" "),
-    }));
-    lines.push_back(separatorLight());
-
-    // Search bar
-    lines.push_back(hbox({
-        text(" > ") | bold | color(accent(theme)),
-        text(query.empty() ? "" : query) | color(Color::White),
-        query.empty() ? (text("Type a command or shortcut...") | dim | color(Color::GrayDark)) : emptyElement(),
-        filler(),
-    }));
-    lines.push_back(separatorLight());
-
-    if (entries.empty()) {
-        lines.push_back(text("  (no commands match)") | dim);
-    } else {
-        const int total = static_cast<int>(entries.size());
-        select_idx = std::clamp(select_idx, 0, total - 1);
-
-        constexpr int MAX_VISIBLE = 9;
-        int window_start = 0;
-        if (select_idx >= MAX_VISIBLE) {
-            window_start = select_idx - MAX_VISIBLE + 1;
-        }
-        int window_end = std::min(total, window_start + MAX_VISIBLE);
-
-        if (window_start > 0) {
-            lines.push_back(text("  ▲ " + std::to_string(window_start) + " more commands above") | dim | color(accent(theme)));
-        }
-
-        std::string last_cat;
-        for (int i = window_start; i < window_end; ++i) {
-            const auto& e = entries[i];
-            if (e.category != last_cat) {
-                if (!last_cat.empty() || i > window_start) {
-                    lines.push_back(text(""));
-                }
-                lines.push_back(text(" " + e.category) | bold |
-                                color(accent2(theme)));
-                last_cat = e.category;
-            }
-            const bool active = (i == select_idx);
-            const std::string marker = active ? " ▶ " : "   ";
-
-            auto row = hbox({
-                text(marker) | color(active ? accent2(theme) : Color::Default),
-                text(e.title) | (active ? bold : nothing) |
-                    color(active ? Color::White : Color::GrayLight),
-                text("  " + e.description) | dim,
-                filler(),
-                e.shortcut.empty() ? emptyElement() : (text(" " + e.shortcut + " ") | dim | color(accent2(theme))),
-            });
-
-            if (active) {
-                row = row | bgcolor(bg_popup()) | bold;
-            }
-            lines.push_back(row);
-        }
-
-        if (window_end < total) {
-            lines.push_back(text("  ▼ " + std::to_string(total - window_end) + " more commands below") | dim | color(accent(theme)));
-        }
-    }
-
-    lines.push_back(separatorLight());
-    lines.push_back(text(" ↑↓ navigate  Enter execute  Esc cancel") | dim);
-    return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) |
-           color(accent(theme)) | size(WIDTH, EQUAL, 64) | hcenter;
-}
-
 ftxui::Element build_help_popup(const std::string& theme) {
     auto key = [&](const std::string& k, const std::string& label) {
         return hbox({
@@ -469,25 +388,25 @@ ftxui::Element build_help_popup(const std::string& theme) {
         text(" "),
     }));
     lines.push_back(separatorLight());
-    lines.push_back(text(" Press ctrl+p to see every command.") |
+    lines.push_back(text(" Type / in the prompt to see every command.") |
                     dim | color(theme_text_muted(theme)));
     lines.push_back(text(""));
     lines.push_back(text(" Session") | bold | color(accent2(theme)));
-    lines.push_back(key("ctrl+n", "New session"));
+    lines.push_back(key("/new", "New session"));
     lines.push_back(key("/session", "Switch session"));
     lines.push_back(key("/compact", "Summarize context"));
     lines.push_back(text(""));
     lines.push_back(text(" Model") | bold | color(accent2(theme)));
     lines.push_back(key("/model", "Switch model"));
     lines.push_back(key("/variant", "Reasoning effort"));
-    lines.push_back(key("tab", "Orchestrator / Plan agent"));
+    lines.push_back(key("/agent", "Orchestrator / Plan agent"));
     lines.push_back(text(""));
     lines.push_back(text(" View") | bold | color(accent2(theme)));
     lines.push_back(key("esc", "Stop generation"));
-    lines.push_back(key("r", "Retry last prompt"));
-    lines.push_back(key("ctrl+t", "Toggle thinking"));
-    lines.push_back(key("f3", "Copy mode"));
-    lines.push_back(key("alt+2 / alt+3", "Files / Stats"));
+    lines.push_back(key("/retry", "Retry last prompt"));
+    lines.push_back(key("/thinking", "Show / hide thinking"));
+    lines.push_back(key("f3", "Copy mode (select text)"));
+    lines.push_back(key("click", "Tabs, files, tasks, ▸ tool blocks"));
     lines.push_back(separatorLight());
     lines.push_back(text(" enter close") | dim | color(theme_text_muted(theme)));
     return vbox(std::move(lines)) | borderRounded | bgcolor(bg_popup()) |

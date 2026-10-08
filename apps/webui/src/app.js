@@ -174,7 +174,6 @@ function toggleSidebar() {
   }
 }
 
-function openMobileSidebar() { openSidebar(); }
 function closeMobileSidebar() {
   closeSidebar();
 }
@@ -1780,21 +1779,6 @@ function showNewSessionModal() {
 //  TERMINAL
 // ═══════════════════════════════════════════════════════════════════
 
-function toggleTerminal() {
-  if (!state.terminalOpen) {
-    state.terminalOpen = true;
-    const ws = state.sessionWorkspace || '';
-    startTerminal(ws);
-    if (state.layoutMode === 'tab') {
-      switchTab('terminal');
-    } else {
-      updateLayoutUI();
-    }
-  } else {
-    closeTerminal();
-  }
-}
-
 function changeTerminalFontSize(delta) {
   if (!term) return;
   termFontSize = Math.min(24, Math.max(9, termFontSize + delta));
@@ -1990,58 +1974,6 @@ function closeModal() {
   modalOverlay.classList.remove('active');
   modalOverlay.innerHTML = '';
   if (pickerCleanup) { pickerCleanup(); pickerCleanup = null; }
-}
-
-function showPickerModal(title, items, activeId, onSelect) {
-  let cursorIdx = items.findIndex(i => i.isActive);
-  if (cursorIdx < 0) cursorIdx = 0;
-
-  function render() {
-    let html = `<div class="picker-modal">`;
-    html += `<div class="picker-header">${esc(title)}</div>`;
-    html += `<div class="picker-body">`;
-    let lastCat = '';
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      if (it.category && it.category !== lastCat) {
-        lastCat = it.category;
-        html += `<div class="picker-category">${esc(it.category)}</div>`;
-      }
-      const cls = i === cursorIdx ? 'picker-item selected' : 'picker-item';
-      let marker = i === cursorIdx ? '▶' : (it.isActive ? '●' : '');
-      html += `<div class="${cls}" data-idx="${i}">`;
-      html += `<span class="marker">${marker}</span>`;
-      html += `<span class="item-label">${esc(it.label)}</span>`;
-      if (it.sublabel) html += `<span class="item-id">${esc(it.sublabel)}</span>`;
-      if (it.workspace) html += `<span class="item-id" title="${esc(it.workspace)}">📁 ${esc(shortPath(it.workspace))}</span>`;
-      html += `</div>`;
-    }
-    html += `</div>`;
-    html += `<div class="picker-footer">↑↓ navigate &middot; Enter select &middot; Esc cancel</div>`;
-    html += `</div>`;
-    modalOverlay.innerHTML = html;
-    modalOverlay.classList.add('active');
-    const selected = modalOverlay.querySelector('.picker-item.selected');
-    if (selected) selected.scrollIntoView({ block: 'nearest' });
-    modalOverlay.querySelectorAll('.picker-item').forEach(el => {
-      el.addEventListener('click', () => { const idx = parseInt(el.dataset.idx); closeModal(); onSelect(items[idx]); });
-    });
-    modalOverlay.addEventListener('click', function bd(e) {
-      if (e.target === modalOverlay) { modalOverlay.removeEventListener('click', bd); closeModal(); }
-    });
-  }
-
-  render();
-
-  function onKey(e) {
-    if (!isModalOpen()) return;
-    if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); cursorIdx = Math.min(cursorIdx + 1, items.length - 1); render(); }
-    else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); cursorIdx = Math.max(cursorIdx - 1, 0); render(); }
-    else if (e.key === 'Enter') { e.preventDefault(); closeModal(); onSelect(items[cursorIdx]); }
-    else if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
-  }
-  document.addEventListener('keydown', onKey);
-  pickerCleanup = () => document.removeEventListener('keydown', onKey);
 }
 
 // ── Fuzzy finder ──
@@ -3731,11 +3663,6 @@ async function loadFsListing(relPath) {
   }
 }
 
-function fsMatchesFilter(name) {
-  const q = (state.fsFilterText || '').toLowerCase();
-  if (!q) return true;
-  return name.toLowerCase().includes(q);
-}
 function renderFsListingEntries() {
   if (!fsListing) return;
   const filter = (state.fsFilterText || '').toLowerCase().trim();
@@ -3907,14 +3834,6 @@ function syncFsHighlightScroll() {
   if (!fsEditor || !fsHighlight) return;
   fsHighlight.scrollTop = fsEditor.scrollTop;
   fsHighlight.scrollLeft = fsEditor.scrollLeft;
-}
-
-function scheduleFsHighlight() {
-  if (fsHighlightTimer) clearTimeout(fsHighlightTimer);
-  fsHighlightTimer = setTimeout(() => {
-    fsHighlightTimer = null;
-    updateFsHighlight();
-  }, 20);
 }
 
 function applyFsPlainOverlay(source) {
@@ -5031,8 +4950,6 @@ function renderToolBlock(tc) {
   return block;
 }
 
-function addMessage(role, content) { const div = renderMessage({ role, content }); messagesEl.appendChild(div); scrollToBottom(); }
-
 
 // ── Markdown helpers: frontmatter + link navigation (inspired by Markdown-Oxide) ──────────────
 
@@ -5175,26 +5092,6 @@ function normalizeRelPath(baseDir, rel) {
     else segs.push(part);
   }
   return segs.join('/');
-}
-
-function resolveMdLink(href) {
-  if (!href) return null;
-  const isAnchor = href.startsWith('#');
-  const isFullPath = href.startsWith('/');
-  if (/^(https?:|mailto:|tel:|data:|\/\/)/i.test(href)) return null;
-  const hashIdx = href.indexOf('#');
-  const pathPart = (hashIdx >= 0 ? href.slice(0, hashIdx) : href).split('?')[0];
-  const fragment = hashIdx >= 0 ? href.slice(hashIdx + 1) : '';
-  let baseDir = '';
-  if (state.fsOpenPath) {
-    const idx = state.fsOpenPath.lastIndexOf('/');
-    baseDir = idx >= 0 ? state.fsOpenPath.slice(0, idx) : '';
-  } else if (state.fsDir) {
-    baseDir = state.fsDir;
-  }
-  // A path-less `#heading` refers to the currently open document.
-  const rel = isAnchor && !pathPart ? (state.fsOpenPath || '') : normalizeRelPath(baseDir, pathPart);
-  return { rel, fragment, isAnchor, isFullPath };
 }
 
 function scrollToMarkdownHeading(fragment) {
@@ -5572,27 +5469,6 @@ async function getFsPath(rel) {
 }
 
 const MD_IMG_EXTS = /^(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i;
-function tagFsLinks(container, mdOnly) {
-  if (!container || !state.sessionId) return;
-  container.querySelectorAll('a[href]').forEach((a) => {
-    const href = a.getAttribute('href') || '';
-    if (/^(https?:|mailto:|tel:|data:|\/\/)/i.test(href) || href.startsWith('/')) return;
-    if (MD_IMG_EXTS.test(href.split('?')[0].split('#')[0].split('.').pop() || '')) return;
-    a.classList.add('md-internal-link');
-  });
-  container.querySelectorAll('img[src]').forEach((img) => {
-    const src = img.getAttribute('src') || '';
-    if (src && !/^(https?:|data:|\/\/|\/)/i.test(src)) {
-      let baseDir = '';
-      if (state.fsOpenPath) {
-        const idx = state.fsOpenPath.lastIndexOf('/');
-        baseDir = idx >= 0 ? state.fsOpenPath.slice(0, idx) : '';
-      }
-      const relPath = normalizeRelPath(baseDir, src) || src;
-      img.src = '/session/' + state.sessionId + '/fs/raw?path=' + encodeURIComponent(relPath);
-    }
-  });
-}
 
 function setGenerating(on) {
   sendBtn.disabled = false;
