@@ -246,6 +246,72 @@ TEST_F(SessionStoreTest, LoadLastSessionMessage) {
     EXPECT_EQ(last3->second, "Error: failed to connect");
 }
 
+// Anthropic replays signed thinking only: the signature survives a reload
+// (session rows and the overwrite used by /compact).
+TEST_F(SessionStoreTest, SignedReasoningRowsKeepTheirSignature) {
+    const std::string sid = create_new_session("anthropic", "claude", "/ws");
+    EXPECT_EQ(encode_reasoning_row("Plain.", ""), "Plain.");
+    save_message(sid, "User", "hi");
+    save_message(sid, "Reasoning", encode_reasoning_row("Think.", "sig-1"));
+    save_message(sid, "Assistant", "Hello.");
+
+    auto check = [](const std::vector<qcode::Message>& history) {
+        ASSERT_EQ(history.size(), 2u);
+        const auto& reply = history[1];
+        EXPECT_EQ(reply.get_text(), "Hello.");
+        const qcode::ReasoningContentPart* thought = nullptr;
+        for (const auto& part : reply.content) {
+            if (const auto* rp = std::get_if<qcode::ReasoningContentPart>(&part)) thought = rp;
+        }
+        ASSERT_NE(thought, nullptr);
+        EXPECT_EQ(thought->text, "Think.");
+        EXPECT_EQ(thought->signature, "sig-1");
+    };
+    const auto history = load_session_history_parsed(sid);
+    check(history);
+    overwrite_session_history(sid, history);
+    check(load_session_history_parsed(sid));
+}
+
+// Parallel results are saved as they finish; the loop sent them in call order.
+TEST_F(SessionStoreTest, ParallelToolResultsReloadInCallOrder) {
+    const std::string sid = create_new_session("anthropic", "claude", "/ws");
+    save_message(sid, "User", "run both");
+    save_message(sid, "ToolCall", R"({"id":"c1","name":"bash","arguments":{"command":"sleep 1"}})");
+    save_message(sid, "ToolCall", R"({"id":"c2","name":"bash","arguments":{"command":"true"}})");
+    save_message(sid, "ToolResult", R"({"tool_call_id":"c2","result":"two","is_error":false})");
+    save_message(sid, "ToolResult", R"({"tool_call_id":"c1","result":"one","is_error":false})");
+    const auto history = load_session_history_parsed(sid);
+    ASSERT_EQ(history.size(), 4u);
+    EXPECT_EQ(history[1].get_tool_calls().size(), 2u);
+    EXPECT_EQ(history[2].get_tool_results().at(0).tool_call_id, "c1");
+    EXPECT_EQ(history[3].get_tool_results().at(0).tool_call_id, "c2");
+}
+
+// Subagents bill their own (child) sessions; the parent rolls them up.
+TEST_F(SessionStoreTest, SubagentUsageRollsUpChildSessions) {
+    const std::string parent = create_new_session("prov", "model", "/ws", "Parent");
+    ensure_session_row("ses_sub_a", "A", "prov", "model", "/ws", parent);
+    ensure_session_row("ses_sub_b", "B", "prov", "model", "/ws", "ses_sub_a");
+    ModelCallUsage call;
+    call.input_tokens = 100;
+    call.output_tokens = 10;
+    call.provider = "p";
+    call.model = "m";
+    call.cost = {.priced = true, .input = 0.01, .output = 0.02};
+    record_session_model_call("ses_sub_a", call);
+    record_session_model_call("ses_sub_b", call);
+    record_session_model_call(parent, call);  // the lead's own call
+
+    const auto sub = get_subagent_usage(parent);
+    EXPECT_EQ(sub.sessions, 2);
+    EXPECT_EQ(sub.usage.model_calls, 2);
+    EXPECT_EQ(sub.usage.input_tokens, 200);
+    EXPECT_NEAR(sub.usage.cost.total(), 0.06, 1e-9);
+    EXPECT_EQ(sub.usage.by_model.at("p/m").calls, 2);
+    EXPECT_EQ(get_subagent_usage("ses_sub_b").sessions, 0);
+}
+
 }  // namespace
 }  // namespace session
 }  // namespace qcode

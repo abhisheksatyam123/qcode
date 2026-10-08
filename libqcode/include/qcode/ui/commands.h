@@ -47,6 +47,7 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"stop",        "Stop generation", "Abort active turn or clear queued prompts", "Session"},
         {"retry",       "Retry prompt",   "/retry - resend last prompt",               "Session"},
         {"thinking",    "Thinking",       "Show or hide reasoning blocks",             "View"},
+        {"reload",      "Reload config",  "Re-read opencode.json (models, prices, variants)", "General"},
         {"help",        "Help",           "Show commands and mouse actions",           "General"},
     };
 }

@@ -41,6 +41,10 @@ std::vector<ProviderInfo> sample_catalog() {
   gemini.id = "gemini-3.1-pro";
   antigravity.models.push_back(gemini);
 
+  // Delegation targets are tool-calling models (is_model_working).
+  for (auto* provider : {&cursor, &openrouter, &zen, &antigravity}) {
+    for (auto& model : provider->models) model.tool_call = true;
+  }
   return {cursor, openrouter, zen, antigravity};
 }
 

@@ -25,8 +25,9 @@ long long count_at(const nlohmann::json& j, const char* key) {
     return static_cast<long long>(number_at(j, key));
 }
 
+// A configured cost prices the call, even at zero (a free model).
 bool has_price(const ModelInfo& model) {
-    return model.input_cost > 0.0 || model.output_cost > 0.0;
+    return model.cost_configured || model.input_cost > 0.0 || model.output_cost > 0.0;
 }
 
 nlohmann::json model_totals_to_json(const ModelUsageTotals& m) {
@@ -151,6 +152,34 @@ void SessionUsageStats::add(const ModelCallUsage& call) {
         } else {
             ++m.unpriced_calls;
         }
+    }
+}
+
+void SessionUsageStats::merge(const SessionUsageStats& other) {
+    model_calls += other.model_calls;
+    model_ms_total += other.model_ms_total;
+    model_ms_max = std::max(model_ms_max, other.model_ms_max);
+    ttft_ms_total += other.ttft_ms_total;
+    ttft_count += other.ttft_count;
+    input_tokens += other.input_tokens;
+    cache_read_tokens += other.cache_read_tokens;
+    cache_write_tokens += other.cache_write_tokens;
+    output_tokens += other.output_tokens;
+    reasoning_tokens += other.reasoning_tokens;
+    cost.add(other.cost);
+    priced_calls += other.priced_calls;
+    unpriced_calls += other.unpriced_calls;
+    legacy_calls += other.legacy_calls;
+    for (const auto& [key, theirs] : other.by_model) {
+        auto& m = by_model[key];
+        m.calls += theirs.calls;
+        m.unpriced_calls += theirs.unpriced_calls;
+        m.input_tokens += theirs.input_tokens;
+        m.cache_read_tokens += theirs.cache_read_tokens;
+        m.cache_write_tokens += theirs.cache_write_tokens;
+        m.output_tokens += theirs.output_tokens;
+        m.reasoning_tokens += theirs.reasoning_tokens;
+        m.cost.add(theirs.cost);
     }
 }
 

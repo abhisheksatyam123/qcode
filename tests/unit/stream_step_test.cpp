@@ -3,6 +3,7 @@
 // and the TUI / server persist streamed text in timeline order.
 
 #include "generation/stream_step.h"
+#include "providers/anthropic/anthropic_request_builder.h"
 #include "providers/openai/openai_response_parser.h"
 #include "providers/openai/openai_stream.h"
 #include "routes/session_runtime.h"
@@ -10,8 +11,10 @@
 #include <qcode/core/event.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/generation/generation_service.h>
+#include <qcode/generation/turn_prefix.h>
 #include <qcode/providers/registry.h>
 #include <qcode/session/session_store.h>
+#include <qcode/transform/provider_transform.h>
 #include <qcode/ui/app_store.h>
 
 #include <gtest/gtest.h>
@@ -136,6 +139,39 @@ TEST(StreamAccumulatorTest, TextStepWithReasoningMatchesNonStreamingParser) {
   EXPECT_EQ(streamed.finish_reason, kFinishReasonLength);
 }
 
+// Antigravity tool steps stream: a Gemini-envelope step folds into the same
+// result as the blocking parser (signed thought, whole function call with
+// its thought signature, usage), so the tool loop can stream it.
+TEST(StreamAccumulatorTest, GeminiEnvelopeToolStepCarriesCallsAndSignatures) {
+  openai::OpenAIStreamImpl impl(openai::StreamProtocol::kGeminiEnvelope);
+  const std::vector<std::string> chunks = {
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"Need ls.","thought":true,"thoughtSignature":"th-sig"}]}}]},"traceId":"t"})",
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"Listing."}]}}]},"traceId":"t"})",
+      R"({"response":{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"bash","args":{"command":"ls"}},"thoughtSignature":"fc-sig"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":7,"thoughtsTokenCount":5,"totalTokenCount":52,"cachedContentTokenCount":32}},"traceId":"t"})",
+  };
+  for (const auto& chunk : chunks) impl.test_parse_sse_line("data: " + chunk);
+  impl.test_parse_sse_line("data: [DONE]");
+  StreamAccumulator step;
+  while (auto event = impl.poll_event(std::chrono::milliseconds(0))) step.add(*event);
+  const auto result = step.take();
+
+  ASSERT_TRUE(result.is_success());
+  EXPECT_EQ(result.text, "Listing.");
+  EXPECT_EQ(result.reasoning, "Need ls.");
+  EXPECT_EQ(result.finish_reason, kFinishReasonToolCalls);
+  ASSERT_EQ(result.tool_calls.size(), 1u);
+  EXPECT_EQ(result.tool_calls[0].tool_name, "bash");
+  EXPECT_EQ(result.tool_calls[0].arguments, nlohmann::json({{"command", "ls"}}));
+  EXPECT_EQ(result.tool_calls[0].thought_signature, "fc-sig");
+  EXPECT_FALSE(result.tool_calls[0].id.empty());
+  EXPECT_EQ(result.usage.prompt_tokens, 40);
+  EXPECT_EQ(result.usage.cached_prompt_tokens, 32);
+  EXPECT_EQ(result.usage.completion_tokens, 12);  // thoughts bill as output
+  ASSERT_EQ(result.response_messages.size(), 1u);
+  EXPECT_NE(describe(result.response_messages[0]).find("|reasoning:Need ls.,th-sig"),
+            std::string::npos);
+}
+
 TEST(StreamAccumulatorTest, UnparsableToolArgumentsDropTheCallLikeTheParser) {
   StreamAccumulator step;
   step.add(StreamEvent::tool_call("call_1", "bash", "{\"command\":"));
@@ -195,6 +231,8 @@ struct Script {
   std::vector<std::vector<StreamEvent>> steps;
   std::atomic<int> streams{0};
   std::atomic<int> generate_calls{0};
+  std::mutex requests_mutex;
+  std::vector<Messages> requests;  // messages of each streamed request
 };
 
 class FakeStreamingClient : public Client {
@@ -206,7 +244,11 @@ class FakeStreamingClient : public Client {
     ++script_->generate_calls;
     return GenerateResult("generate_text must not be called");
   }
-  StreamResult stream_text(const StreamOptions&) override {
+  StreamResult stream_text(const StreamOptions& options) override {
+    {
+      std::lock_guard<std::mutex> lock(script_->requests_mutex);
+      script_->requests.push_back(options.messages);
+    }
     const int step = script_->streams++;
     if (step < static_cast<int>(script_->steps.size())) {
       return StreamResult(std::make_unique<ScriptedStream>(script_->steps[step]));
@@ -412,6 +454,152 @@ TEST_F(StreamPersistenceTest, ServerSavesReasoningThenTextThenToolCall) {
 
   EXPECT_EQ(rows_of(sid), (std::vector<std::string>{
                               "Reasoning:Need ls.", "Assistant:Let me look.", "ToolCall"}));
+}
+
+// ── History mirrors replay the requests the loop sent ────────────────
+// The next turn and /compact rebuild the conversation from the TUI's live
+// history or the server's session rows. Both must reproduce the messages the
+// tool loop sent - signed thinking, one assistant message per step, parallel
+// results in call order - or the provider's prompt cache misses from there.
+
+nlohmann::json without_cache_markers(const nlohmann::json& j) {
+  if (j.is_object()) {
+    nlohmann::json out = nlohmann::json::object();
+    for (auto it = j.begin(); it != j.end(); ++it) {
+      if (it.key() != "cache_control") out[it.key()] = without_cache_markers(it.value());
+    }
+    return out;
+  }
+  if (j.is_array()) {
+    nlohmann::json out = nlohmann::json::array();
+    for (const auto& el : j) out.push_back(without_cache_markers(el));
+    // The rolling breakpoint wraps a marked string turn in one text block.
+    if (out.size() == 1 && out[0].is_object() && out[0].size() == 2 &&
+        out[0].value("type", "") == "text" && out[0].contains("text")) {
+      return out[0]["text"];
+    }
+    return out;
+  }
+  return j;
+}
+
+class HistoryMirrorTest : public StreamingToolLoopTest {
+ protected:
+  void SetUp() override {
+    StreamingToolLoopTest::SetUp();
+    StreamEvent finish_tools(kStreamEventTypeFinish);
+    finish_tools.finish_reason = kFinishReasonToolCalls;
+    // Anthropic signs a thinking block in a text-less delta at its end; the
+    // second (fast) parallel call finishes first.
+    script_->steps = {
+        {StreamEvent::reasoning("Need both files."), StreamEvent::reasoning("", "sig-1"),
+         StreamEvent("Listing."),
+         StreamEvent::tool_call("call_1", "bash", R"({"command":"sleep 0.3; echo one"})"),
+         StreamEvent::tool_call("call_2", "bash", R"({"command":"echo two"})"),
+         finish_tools},
+        {StreamEvent::reasoning("Both ran."), StreamEvent::reasoning("", "sig-2"),
+         StreamEvent("Done."), StreamEvent(kStreamEventTypeFinish)},
+    };
+    sid_ = session::create_new_session("fake-stream", "m", workspace_);
+  }
+
+  void run_turn() {
+    GenerationContext ctx = make_ctx();
+    ctx.session_id = sid_;
+    run(ctx);
+    bus_.drain();
+  }
+
+  // Anthropic wire messages (thinking on, so signed blocks ride along).
+  static nlohmann::json wire(Messages messages) {
+    GenerateOptions options;
+    options.model = "claude-test";
+    options.thinking_type = "adaptive";
+    options.messages = ProviderTransform::normalize_messages(
+        std::move(messages), Model("claude-test", "anthropic"));
+    anthropic::AnthropicRequestBuilder builder;
+    return without_cache_markers(builder.build_request_json(options)["messages"]);
+  }
+
+  void expect_replays_last_request(const Messages& history) {
+    Messages last;
+    {
+      std::lock_guard<std::mutex> lock(script_->requests_mutex);
+      ASSERT_EQ(script_->requests.size(), 2u);
+      last = script_->requests.back();
+    }
+    const auto sent = wire(last);
+    const auto replay = wire(history);
+    ASSERT_EQ(sent.size(), 3u);  // user, step 1 (thinking, text, 2 calls), results
+    ASSERT_EQ(replay.size(), sent.size() + 1);  // + the final reply
+    for (size_t i = 0; i < sent.size(); ++i) {
+      SCOPED_TRACE("replay diverges at message " + std::to_string(i));
+      EXPECT_EQ(replay[i], sent[i]);
+    }
+    const auto& step = replay[1]["content"];
+    EXPECT_EQ(step[0].value("type", ""), "thinking");
+    EXPECT_EQ(step[0].value("signature", ""), "sig-1");
+    EXPECT_EQ(replay[2]["content"][0].value("tool_use_id", ""), "call_1");
+    EXPECT_EQ(replay[3]["content"][0].value("signature", ""), "sig-2");
+  }
+
+  std::string sid_;
+};
+
+TEST_F(HistoryMirrorTest, TuiLiveHistoryReplaysTheLoopsRequests) {
+  AppStore store(bus_);
+  store.wire();
+  store.set_session_id(sid_);
+  store.state().messages_history->push_back(Message::user("list files"));
+  run_turn();
+  expect_replays_last_request(
+      prepare_turn_history(*store.state().messages_history, /*drop_system_notes=*/true));
+}
+
+TEST_F(HistoryMirrorTest, ServerSessionRowsReplayTheLoopsRequests) {
+  session::save_message(sid_, "User", "list files");
+  auto session = std::make_shared<server::GenSession>();
+  session->id = sid_;
+  auto subs = server::subscribe_session(bus_, session);
+  run_turn();
+  {
+    std::lock_guard<std::mutex> lock(session->queue_mutex);
+    server::flush_turn_text(*session);  // the generate route does this at turn end
+  }
+  expect_replays_last_request(prepare_turn_history(
+      session::load_session_history_parsed(sid_), /*drop_system_notes=*/false));
+}
+
+// A TUI restart reloads the session rows: they must replay the same request
+// (thinking with its signature included), not just what the screen showed.
+TEST_F(HistoryMirrorTest, TuiSessionRowsReplayTheLoopsRequestsAfterRestart) {
+  session::save_message(sid_, "User", "list files");  // generation_controller does this
+  {
+    AppStore store(bus_);
+    store.wire();
+    store.set_session_id(sid_);
+    store.state().messages_history->push_back(Message::user("list files"));
+    run_turn();
+  }
+  expect_replays_last_request(prepare_turn_history(
+      session::load_session_history_parsed(sid_), /*drop_system_notes=*/true));
+}
+
+TEST(ToolResultOrderTest, LiveInsertKeepsCallOrderWhateverFinishesFirst) {
+  Messages h{Message::user("q"),
+             Message::assistant_with_tools(
+                 "", {ToolCallContentPart{"c1", "bash", {}}, ToolCallContentPart{"c2", "bash", {}},
+                      ToolCallContentPart{"c3", "bash", {}}})};
+  for (const char* id : {"c3", "c1", "c2"}) {
+    h.insert(h.begin() + static_cast<std::ptrdiff_t>(tool_result_insert_position(h, id)),
+             Message::tool_results({{id, "out", false}}));
+  }
+  ASSERT_EQ(h.size(), 5u);
+  EXPECT_EQ(h[2].get_tool_results().at(0).tool_call_id, "c1");
+  EXPECT_EQ(h[3].get_tool_results().at(0).tool_call_id, "c2");
+  EXPECT_EQ(h[4].get_tool_results().at(0).tool_call_id, "c3");
+  // A result for a call outside the trailing step is appended.
+  EXPECT_EQ(tool_result_insert_position(h, "other"), h.size());
 }
 
 }  // namespace

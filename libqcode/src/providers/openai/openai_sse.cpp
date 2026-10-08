@@ -2,6 +2,7 @@
 
 #include "openai_response_parser.h"
 #include <qcode/core/logger.h>
+#include <qcode/transform/gemini_transform.h>
 #include "core/response_utils.h"
 
 namespace qcode {
@@ -152,6 +153,24 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
                   push_event(StreamEvent(content));
                 }
               }
+              // Gemini sends each function call whole in one chunk, with the
+              // thought signature Gemini 3 requires back on replay. Same
+              // shape as the blocking parser (normalize_gemini_response).
+              if (part.contains("functionCall") && part["functionCall"].is_object()) {
+                const auto& function = part["functionCall"];
+                std::optional<std::string> signature;
+                if (part.contains("thoughtSignature") &&
+                    part["thoughtSignature"].is_string()) {
+                  signature = part["thoughtSignature"].get<std::string>();
+                }
+                const auto id = function.contains("id") && function["id"].is_string()
+                                    ? function["id"].get<std::string>()
+                                    : gemini::new_uuid();
+                push_event(StreamEvent::tool_call(
+                    id, function.value("name", ""),
+                    function.value("args", nlohmann::json::object()).dump(),
+                    std::move(signature)));
+              }
             }
           }
           
@@ -160,6 +179,9 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
             FinishReason finish_reason = kFinishReasonStop;
             if (reason_str == "STOP") finish_reason = kFinishReasonStop;
             else if (reason_str == "MAX_TOKENS") finish_reason = kFinishReasonLength;
+            else if (reason_str == "SAFETY" || reason_str == "RECITATION" ||
+                     reason_str == "PROHIBITED_CONTENT" || reason_str == "BLOCKLIST" ||
+                     reason_str == "SPII") finish_reason = kFinishReasonContentFilter;
             
             finish_event_pushed_ = true;
             

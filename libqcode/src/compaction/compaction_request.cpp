@@ -1,8 +1,15 @@
 #include <qcode/compaction/compaction_request.h>
 
+#include "generation/stream_step.h"
+
+#include <qcode/core/stream_options.h>
 #include <qcode/generation/turn_prefix.h>
 #include <qcode/transform/provider_transform.h>
 #include <qcode/session/session_store.h>
+
+#include <chrono>
+#include <cstdlib>
+#include <string_view>
 
 #include <filesystem>
 #include <fstream>
@@ -82,10 +89,16 @@ GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
                                                          : kNoProviders);
   // Replay the history through the same normalization pass the live turn
   // uses, then append the directive as the trailing user message.
+  const Model transform_model(wire_model, provider_id);
   opts.messages =
-      ProviderTransform::normalize_messages(std::move(history),
-                                            Model(wire_model, provider_id));
+      ProviderTransform::normalize_messages(std::move(history), transform_model);
   opts.messages.push_back(Message::user(directive()));
+  // Same request parameters as the turn (generation_service run_generation):
+  // a summarizer without the turn's thinking settings would drop the signed
+  // thinking blocks from the replayed history and miss the message cache;
+  // the variant prompt rides on the system prompt.
+  apply_turn_sampling(opts, input.model, transform_model);
+  apply_variant_options(opts, input.model, input.reasoning_mode, wire_model);
   // Same tool schemas as the last routed request — tool definitions are
   // part of the cacheable prefix (and Zen requires bash/read declared).
   if (input.enable_tools) {
@@ -95,6 +108,31 @@ GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
   opts.session_id = input.session_id;
   opts.max_steps = 1;  // single wire call; tools are declared, never executed
   return opts;
+}
+
+GenerateResult run_summarizer(Client& client, const GenerateOptions& request) {
+  // Same switch as the tool loop (QCODE_TOOL_STREAMING=0 forces blocking).
+  const char* env = std::getenv("QCODE_TOOL_STREAMING");
+  const bool streaming = !(env && std::string_view(env) == "0");
+  if (!streaming || !client.supports_tool_streaming()) {
+    return client.generate_text(request);
+  }
+  StreamOptions options;
+  static_cast<GenerateOptions&>(options) = request;
+  StreamResult stream;
+  try {
+    stream = client.stream_text(options);
+  } catch (const std::exception& e) {
+    return GenerateResult("Exception: " + std::string(e.what()));
+  }
+  StreamAccumulator summary;
+  while (!stream.is_complete()) {
+    auto event = stream.poll(std::chrono::milliseconds(250));
+    if (!event) continue;
+    summary.add(*event);
+    if (event->is_error()) break;
+  }
+  return summary.take();
 }
 
 }  // namespace compaction

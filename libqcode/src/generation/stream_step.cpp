@@ -108,10 +108,14 @@ StreamResult stream;
   std::string text_buffer;
   std::string reasoning_buffer;
   std::string reasoning_signature;
+  std::string published_signature;
   auto last_flush = std::chrono::steady_clock::now();
   // Reasoning first, so the thinking block renders above the text it led to.
+  // Anthropic signs a thinking block at its end, usually after its text was
+  // flushed: a text-less delta then carries the signature, which the history
+  // mirrors (TUI, server rows) need to replay the block like the next step.
   auto flush = [&]() {
-    if (!reasoning_buffer.empty()) {
+    if (!reasoning_buffer.empty() || reasoning_signature != published_signature) {
       bus.publish<ReasoningDelta>({
           .session_id = ctx.session_id,
           .text = std::move(reasoning_buffer),
@@ -119,6 +123,7 @@ StreamResult stream;
           .done = false,
       });
       reasoning_buffer.clear();
+      published_signature = reasoning_signature;
     }
     if (!text_buffer.empty()) {
       bus.publish<MessageDelta>({

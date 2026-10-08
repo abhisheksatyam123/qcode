@@ -28,6 +28,9 @@ class AntigravityClient : public providers::BaseProviderClient {
                     const std::string& project_id);
 
   StreamResult stream_text(const StreamOptions& options) override;
+  // The Gemini-envelope stream yields text, thoughts (signed), whole
+  // function calls and usage: tool-loop steps stream like the others.
+  bool supports_tool_streaming() const override { return true; }
   EmbeddingResult embeddings(const EmbeddingOptions& options) override;
   std::string provider_name() const override;
   std::vector<std::string> supported_models() const override;

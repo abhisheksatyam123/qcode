@@ -7,6 +7,7 @@
 #include <qcode/config/provider_info.h>
 #include <qcode/generation/generation_service.h>
 #include <qcode/session/session_store.h>
+#include <qcode/generation/turn_prefix.h>
 #include <qcode/session/system_prompt.h>
 #include <qcode/tools/task_tool.h>
 
@@ -581,13 +582,19 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
         session->error.clear();
         session->assistant_text.clear();
         session->reasoning_text.clear();
+        session->reasoning_signature.clear();
         cursor = session->events_base + session->events.size();
         stream = attach_stream(session);
         qcode::session::save_message(session->id, "User", user_row);
     }
     qcode::session::set_session_provider_model(session->id, provider, model);
-    qcode::Messages messages = qcode::apply_compaction_cutoff(
-        qcode::session::load_session_history_parsed(session->id));
+    // /compact replays the turn's variant (thinking settings are part of the
+    // cached prefix), and the WebUI restores both modes per session.
+    qcode::session::set_session_modes(session->id, agent_mode, reasoning_mode);
+    // Same transform /compact replays (turn_prefix.h).
+    qcode::Messages messages = qcode::prepare_turn_history(
+        qcode::session::load_session_history_parsed(session->id),
+        /*drop_system_notes=*/false);
 
     // The turn runs on its own thread and persists itself; streams only read.
     std::thread([bus, session, provider, model, system_prompt, ws, reasoning_mode,
@@ -651,8 +658,9 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
             }
             bus->publish<UserMessageInjected>({.session_id = session->id, .text = next});
             deliver_bus_events(*bus);
-            messages = qcode::apply_compaction_cutoff(
-                qcode::session::load_session_history_parsed(session->id));
+            messages = qcode::prepare_turn_history(
+                qcode::session::load_session_history_parsed(session->id),
+                /*drop_system_notes=*/false);
         }
     }).detach();
 

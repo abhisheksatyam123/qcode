@@ -87,6 +87,7 @@ target_sources(qcode-engine PRIVATE
     src/generation/generation_service.cpp
     src/generation/stream_step.cpp
     src/generation/turn_prefix.cpp
+    src/generation/call_usage.cpp
 
     # session
     src/compaction/compaction_request.cpp
@@ -174,7 +175,7 @@ endif()
 if(MSVC)
     target_compile_options(qcode-engine PRIVATE /W3)
 else()
-    target_compile_options(qcode-engine PRIVATE -Wall -Wextra)
+    target_compile_options(qcode-engine PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 endif()
 
 
@@ -226,5 +227,5 @@ add_library(qcode::core ALIAS qcode-ui)
 if(MSVC)
     target_compile_options(qcode-ui PRIVATE /W3)
 else()
-    target_compile_options(qcode-ui PRIVATE -Wall -Wextra)
+    target_compile_options(qcode-ui PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 endif()

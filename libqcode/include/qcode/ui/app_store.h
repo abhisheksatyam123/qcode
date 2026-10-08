@@ -96,8 +96,20 @@ private:
     std::vector<Toast> toasts_;
     mutable std::mutex toast_mutex_;
 
+    // Text and thinking streamed since the session's last saved row. Saved
+    // as Reasoning (with its signature) then Assistant rows before the next
+    // tool call / injected prompt / turn end, so a reload (TUI restart)
+    // replays the turn as the model saw it - signed thinking included.
+    struct PendingTurnText {
+        std::string reasoning;
+        std::string signature;
+        std::string text;
+    };
     std::unordered_map<std::string, std::string> session_assistant_texts_;
+    std::unordered_map<std::string, PendingTurnText> session_reasoning_;
     mutable std::mutex session_texts_mutex_;
+    PendingTurnText take_pending_turn_text(const std::string& session_key);
+    static void save_pending_turn_text(const std::string& sid, const PendingTurnText& pending);
 
     std::deque<std::string> prompt_queue_; // Changed to deque for append access
     std::string queue_session_id_;          // session prompt_queue_ belongs to

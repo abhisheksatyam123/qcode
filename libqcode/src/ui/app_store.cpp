@@ -104,50 +104,74 @@ void AppStore::append_assistant_chunk(const std::string& chunk) {
 
 void AppStore::append_reasoning(const std::string& chunk,
                                 const std::string& signature) {
-    // Upstream opencode: strip [REDACTED] markers; drop whitespace-only
-    // chunks so scrollback never gets a blank Thought row.
+    // The next turn replays this history, so thinking stays exactly as
+    // streamed: whitespace chunks are kept (render_reasoning hides blank
+    // Thought rows) and a text-less delta carries the block's signature
+    // (Anthropic replays signed blocks only). Upstream opencode strips
+    // [REDACTED] markers.
     std::string clean = chunk;
     {
         const std::string tag = "[REDACTED]";
         size_t p = 0;
         while ((p = clean.find(tag, p)) != std::string::npos) clean.erase(p, tag.size());
     }
-    bool visible = false;
-    for (char c : clean) {
-        if (c != ' ' && c != '\t' && c != '\n' && c != '\r') { visible = true; break; }
-    }
-    if (!visible && signature.empty()) return;
-    const std::string& use = clean;
+    if (clean.empty() && signature.empty()) return;
+    auto& history = *state_.messages_history;
     // Start a fresh assistant message when the trailing one already carries
-    // visible text — keeps per-step thinking blocks ordered like opencode's
-    // part renderers instead of appending below earlier prose.
+    // text — keeps per-step thinking blocks ordered like opencode's part
+    // renderers instead of appending below earlier prose.
     const bool trailing_has_text =
-        !state_.messages_history->empty() &&
-        state_.messages_history->back().role == qcode::kMessageRoleAssistant &&
-        state_.messages_history->back().has_text();
-    if (state_.messages_history->empty() ||
-        trailing_has_text ||
-        state_.messages_history->back().role != qcode::kMessageRoleAssistant) {
-        if (chunk.empty()) return;
-        state_.messages_history->emplace_back(
-            qcode::Message::assistant_with_reasoning("", use, signature));
+        !history.empty() &&
+        history.back().role == qcode::kMessageRoleAssistant &&
+        history.back().has_text();
+    if (history.empty() || trailing_has_text ||
+        history.back().role != qcode::kMessageRoleAssistant) {
+        // A signature alone has no block of this step to sign.
+        if (clean.empty()) return;
+        history.emplace_back(
+            qcode::Message::assistant_with_reasoning("", clean, signature));
     } else {
-        auto& last = state_.messages_history->back();
+        auto& last = history.back();
         bool found = false;
         for (auto& part : last.content) {
             if (auto* rp = std::get_if<qcode::ReasoningContentPart>(&part)) {
-                rp->text += use;
+                rp->text += clean;
                 if (!signature.empty()) rp->signature = signature;
                 found = true;
                 break;
             }
         }
-        if (!found && !use.empty()) {
+        if (!found && !clean.empty()) {
             last.content.emplace_back(
-                qcode::ReasoningContentPart{use, signature});
+                qcode::ReasoningContentPart{clean, signature});
         }
     }
     notify();
+}
+
+AppStore::PendingTurnText AppStore::take_pending_turn_text(const std::string& session_key) {
+    PendingTurnText pending;
+    std::lock_guard<std::mutex> lock(session_texts_mutex_);
+    if (auto it = session_reasoning_.find(session_key); it != session_reasoning_.end()) {
+        pending.reasoning = std::move(it->second.reasoning);
+        pending.signature = std::move(it->second.signature);
+        session_reasoning_.erase(it);
+    }
+    if (auto it = session_assistant_texts_.find(session_key);
+        it != session_assistant_texts_.end()) {
+        pending.text = std::move(it->second);
+        session_assistant_texts_.erase(it);
+    }
+    return pending;
+}
+
+void AppStore::save_pending_turn_text(const std::string& sid, const PendingTurnText& pending) {
+    if (!pending.reasoning.empty()) {
+        qcode::session::save_message(
+            sid, "Reasoning",
+            qcode::session::encode_reasoning_row(pending.reasoning, pending.signature));
+    }
+    if (!pending.text.empty()) qcode::session::save_message(sid, "Assistant", pending.text);
 }
 
 bool AppStore::is_live_session(const std::string& id) const {
@@ -207,6 +231,7 @@ void AppStore::set_session_id(const std::string& id) {
         *state_.last_actual_prompt_tokens = 0;
         *state_.last_estimated_tokens = 0;
         *state_.usage = qcode::session::get_session_usage_stats(id);
+        *state_.subagent_usage = qcode::session::get_subagent_usage(id);
     }
     // Swap the in-memory queue to the newly active session. Rows for the
     // previous session stay persisted; the new session's rows (if any)
@@ -473,32 +498,30 @@ void AppStore::wire() {
             append_assistant_chunk(p.text);
         }
         if (p.done) {
-            std::string final_text;
-            if (!p.session_id.empty()) {
-                std::lock_guard<std::mutex> lock(session_texts_mutex_);
-                auto it = session_assistant_texts_.find(p.session_id);
-                if (it != session_assistant_texts_.end()) {
-                    final_text = std::move(it->second);
-                    session_assistant_texts_.erase(it);
-                }
-            }
+            PendingTurnText pending;
+            if (!p.session_id.empty()) pending = take_pending_turn_text(p.session_id);
             // Only untracked (session-less) text is recovered from the live
             // history: tracked text that a tool call or injected prompt
             // flushed is saved already and would be saved twice.
-            if (final_text.empty() && p.session_id.empty()) {
-                final_text = latest_assistant_text();
+            if (pending.text.empty() && p.session_id.empty()) {
+                pending.text = latest_assistant_text();
             }
-            if (!final_text.empty()) {
-                qcode::session::save_message(p.session_id.empty() ? session_id() : p.session_id,
-                                            "Assistant", final_text);
-            }
+            save_pending_turn_text(p.session_id.empty() ? session_id() : p.session_id, pending);
             if (is_live_session(p.session_id)) {
                 set_generating(false);
                 clear_retry();
+                // Subagents bill their own sessions during the turn.
+                *state_.subagent_usage = qcode::session::get_subagent_usage(session_id());
             }
         }
     }));
     subs_.push_back(bus_.subscribe<ReasoningDelta>([this](const ReasoningDelta::Payload& p) {
+        if (!p.session_id.empty() && (!p.text.empty() || !p.signature.empty())) {
+            std::lock_guard<std::mutex> lock(session_texts_mutex_);
+            auto& pending = session_reasoning_[p.session_id];
+            pending.reasoning += p.text;
+            if (!p.signature.empty()) pending.signature = p.signature;
+        }
         if (!is_live_session(p.session_id)) return;
         append_reasoning(p.text, p.signature);
     }));
@@ -597,18 +620,9 @@ void AppStore::wire() {
 
     subs_.push_back(bus_.subscribe<ToolCallStarted>([this](const ToolCallStarted::Payload& p) {
         std::string sid = p.session_id.empty() ? session_id() : p.session_id;
-        // Save the text streamed before this call first, so a reload shows
-        // it above the call, as it streamed.
-        std::string pending;
-        {
-            std::lock_guard<std::mutex> lock(session_texts_mutex_);
-            auto it = session_assistant_texts_.find(p.session_id);
-            if (it != session_assistant_texts_.end()) {
-                pending = std::move(it->second);
-                session_assistant_texts_.erase(it);
-            }
-        }
-        if (!pending.empty()) qcode::session::save_message(sid, "Assistant", pending);
+        // Save the thinking and text streamed before this call first, so a
+        // reload shows (and replays) them above the call, as they streamed.
+        save_pending_turn_text(sid, take_pending_turn_text(p.session_id));
         // Structured JSON so session reload can rebuild pretty tool blocks.
         nlohmann::json call_json = {
             {"id", p.tool_call_id},
@@ -622,8 +636,17 @@ void AppStore::wire() {
         // with the exact started entry. Matching by tool_name alone is fragile
         // when multiple calls of the same tool run concurrently.
         qcode::ToolCallContentPart tc_part{p.tool_call_id, p.tool_name, p.arguments};
-        state_.messages_history->emplace_back(
-            qcode::Message::assistant_with_tools("", {tc_part}));
+        // One assistant message per step, as the loop sends it: the call
+        // joins this step's thinking/text and its parallel siblings.
+        auto& history = *state_.messages_history;
+        if (!history.empty() &&
+            history.back().role == qcode::kMessageRoleAssistant &&
+            !history.back().has_tool_results()) {
+            history.back().content.emplace_back(std::move(tc_part));
+        } else {
+            history.emplace_back(
+                qcode::Message::assistant_with_tools("", {std::move(tc_part)}));
+        }
         notify();
     }));
 
@@ -640,11 +663,18 @@ void AppStore::wire() {
 
         if (!is_live_session(p.session_id)) return;
         // Message::tool_results() drops duration_ms, so build the part directly
-        // to keep the timing on live tool blocks.
-        state_.messages_history->emplace_back(qcode::Message(
-            qcode::kMessageRoleUser,
-            qcode::MessageContent{qcode::ToolResultContentPart{
-                p.tool_call_id, p.result, p.is_error, p.duration_ms}}));
+        // to keep the timing on live tool blocks. Results follow their step's
+        // calls in call order, as the loop sends them, whatever order
+        // parallel tools finish in.
+        auto& history = *state_.messages_history;
+        history.insert(
+            history.begin() +
+                static_cast<std::ptrdiff_t>(
+                    qcode::tool_result_insert_position(history, p.tool_call_id)),
+            qcode::Message(qcode::kMessageRoleUser,
+                           qcode::MessageContent{qcode::ToolResultContentPart{
+                               p.tool_call_id, p.result, p.is_error,
+                               p.duration_ms}}));
         ++*state_.tool_call_count;
         *state_.total_tool_time_ms += p.duration_ms;
         notify();
@@ -654,16 +684,7 @@ void AppStore::wire() {
         const std::string sid = p.session_id.empty() ? session_id() : p.session_id;
         // Save the reply streamed so far first so a reload shows the injected
         // prompt after the text it interrupted, not before it.
-        std::string pending;
-        {
-            std::lock_guard<std::mutex> lock(session_texts_mutex_);
-            auto it = session_assistant_texts_.find(p.session_id);
-            if (it != session_assistant_texts_.end()) {
-                pending = std::move(it->second);
-                session_assistant_texts_.erase(it);
-            }
-        }
-        if (!pending.empty()) qcode::session::save_message(sid, "Assistant", pending);
+        save_pending_turn_text(sid, take_pending_turn_text(p.session_id));
         qcode::session::save_message(sid, "User", p.text);
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);

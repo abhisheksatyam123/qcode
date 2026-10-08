@@ -47,6 +47,7 @@ struct GenSession {
     std::string error;
     std::string assistant_text;  // streamed since the last flush to the DB
     std::string reasoning_text;
+    std::string reasoning_signature;  // provider signature of reasoning_text
     std::shared_ptr<std::vector<qcode::bus::Subscription>> subs;
     std::atomic<int> live_prompt_tokens{0};
     std::atomic<int> live_completion_tokens{0};

@@ -1,4 +1,5 @@
 #include <qcode/generation/turn_prefix.h>
+#include <qcode/generation/call_usage.h>
 #include <qcode/generation/generation_service.h>
 #include <qcode/session/task_notes.h>
 #include <qcode/core/perf.h>
@@ -136,60 +137,6 @@ bool subagent_wants_cursor(const nlohmann::json& args) {
 }
 }  // namespace
 
-// Applies a model's opencode.json reasoning config to `opts`: the thinking
-// wire form ("thinking": {type, display}) and the resolved variant
-// ("variants": {"<id>": {effort, max_tokens, budget_tokens, prompt}}).
-// `requested` is the session /variant ("" = model default; "off" disables
-// thinking where the model allows it). Without catalog info the requested
-// id passes through as the effort.
-static void apply_variant_options(qcode::GenerateOptions& opts,
-                                  const ModelInfo* model,
-                                  const std::string& requested,
-                                  const std::string& model_id) {
-  std::string variant_id;
-  if (model) {
-    if (!requested.empty() || model->reasoning) {
-      variant_id = ProviderTransform::resolve_session_variant(*model, requested);
-    }
-    if (!model->thinking_type.empty()) opts.thinking_type = model->thinking_type;
-    if (!model->thinking_display.empty()) opts.thinking_display = model->thinking_display;
-  } else if (requested != "off") {
-    variant_id = requested;
-  }
-  if (variant_id.empty() || variant_id == "off") return;
-
-  const VariantInfo* variant =
-      model ? ProviderTransform::find_variant(*model, variant_id) : nullptr;
-  opts.reasoning_effort =
-      model ? ProviderTransform::variant_wire_effort(*model, variant_id) : variant_id;
-  opts.reasoning_variant = variant_id;
-  if (variant != nullptr) {
-    if (variant->budget_tokens > 0) opts.budget_tokens = variant->budget_tokens;
-    if (variant->max_tokens > 0) {
-      // limit.output is the hard cap; the variant only raises the request.
-      const int cap = model->output_limit > 0 ? model->output_limit : variant->max_tokens;
-      opts.max_tokens =
-          std::max(opts.max_tokens.value_or(0), std::min(variant->max_tokens, cap));
-    }
-    if (!variant->prompt.empty()) {
-      opts.system += "\n\n";
-      opts.system += variant->prompt;
-    }
-  }
-  if (!requested.empty() && variant_id != requested) {
-    LOG_INFO("generation_service: clamped variant '{}' -> '{}' for {}", requested,
-             variant_id, model_id);
-  } else if (requested.empty()) {
-    LOG_INFO("generation_service: default thinking variant '{}' for {}", variant_id,
-             model_id);
-  }
-  LOG_INFO("generation_service: variant={} effort={} max_tokens={} budget_tokens={} "
-           "prompt={} thinking={} model={}",
-           variant_id, opts.reasoning_effort.value_or(""), opts.max_tokens.value_or(0),
-           opts.budget_tokens.value_or(0), variant != nullptr && !variant->prompt.empty(),
-           opts.thinking_type.value_or("default"), model_id);
-}
-
 // opencode.json catalog entry for provider/model (id or display name).
 static const ModelInfo* find_catalog_model(const std::vector<ProviderInfo>& providers,
                                            const std::string& provider_id,
@@ -201,46 +148,6 @@ static const ModelInfo* find_catalog_model(const std::vector<ProviderInfo>& prov
     }
   }
   return nullptr;
-}
-
-// Usage key for a call: the opencode.json model id, else the wire id.
-static std::string usage_model_id(const ModelInfo* model_info, const std::string& wire_model) {
-  return model_info != nullptr ? model_info->id : wire_model;
-}
-
-// One finished model call: priced at the serving model's opencode.json rates
-// as it runs (a later model switch never reprices it), persisted to the
-// session's usage stats, then published for live mirrors (Stats tab). Persist
-// first: the mirror reloads from the DB on session switches and must not miss
-// (or double count) this call.
-static void record_model_call(bus::BusPort& bus, const std::string& session_id,
-                              const ModelInfo* model_info,
-                              qcode::session::ModelCallUsage call, int step, bool streamed,
-                              bool ok) {
-  if (model_info != nullptr) call.cost = qcode::session::price_call(call, *model_info);
-  qcode::session::record_session_model_call(session_id, call);
-  bus.publish<qcode::contract::StepLatency>({
-      .session_id = session_id,
-      .step = step,
-      .streamed = streamed,
-      .model_ms = call.model_ms,
-      .ttft_ms = call.ttft_ms,
-      .output_tokens = call.output_tokens,
-      .reasoning_tokens = call.reasoning_tokens,
-      .effort = call.effort,
-      .ok = ok,
-      .input_tokens = call.input_tokens,
-      .cache_read_tokens = call.cache_read_tokens,
-      .cache_write_tokens = call.cache_write_tokens,
-      .variant = call.variant,
-      .provider = call.provider,
-      .model = call.model,
-      .priced = call.cost.priced,
-      .cost_input = call.cost.input,
-      .cost_cache_read = call.cost.cache_read,
-      .cost_cache_write = call.cost.cache_write,
-      .cost_output = call.cost.output,
-  });
 }
 
 static JsonValue run_subagent_turn_multi(
@@ -554,27 +461,11 @@ static JsonValue run_subagent_turn_multi(
           if (!sub_session_id.empty()) {
             // The child session keeps its own Stats, each call priced at its
             // model's opencode.json rates (the lead session is not charged).
-            int think = step_res.usage.reasoning_completion_tokens;
-            if (think == 0 && !step_res.reasoning.empty()) {
-              think = std::max(1, static_cast<int>(step_res.reasoning.size() / 4));
-            }
-            qcode::session::ModelCallUsage call{
-                .model_ms = watch.ms(),
-                .ttft_ms = step_res.ttft_ms.value_or(-1.0),
-                .input_tokens = step_res.usage.prompt_tokens,
-                .cache_read_tokens = step_res.usage.cached_prompt_tokens,
-                .cache_write_tokens = step_res.usage.cache_write_tokens,
-                .output_tokens = step_res.usage.completion_tokens,
-                .reasoning_tokens = think,
-                .effort = step_opts.reasoning_effort.value_or("off"),
-                .variant = step_opts.reasoning_variant.value_or(""),
-                .provider = target_provider->id,
-                .model = usage_model_id(target_model_info, step_opts.model),
-                .cost = {}};
-            if (target_model_info != nullptr) {
-              call.cost = qcode::session::price_call(call, *target_model_info);
-            }
-            qcode::session::record_session_model_call(sub_session_id, call);
+            record_model_call(nullptr, sub_session_id, target_model_info,
+                              model_call_usage(step_opts, step_res,
+                                               target_provider->id,
+                                               target_model_info, watch.ms()),
+                              0, false, step_res.is_success());
           }
           return step_res;
         });
@@ -662,6 +553,8 @@ static void run_tools_generation_bus(
       [&bus, &ctx, tool_starts, step_counter, max_steps,
        callback_mutex](const qcode::ToolCall& call) {
         std::lock_guard<std::mutex> lock(*callback_mutex);
+        // Announced already (the step announces its calls before running).
+        if (tool_starts->contains(call.id)) return;
         LOG_DEBUG("generation_service: on_tool_call_start tool={} step={}/{}", call.tool_name, (int)*step_counter, max_steps);
         auto now = std::chrono::steady_clock::now();
         (*tool_starts)[call.id] = InFlightTool{now, call.tool_name};
@@ -874,7 +767,7 @@ static void run_tools_generation_bus(
         const double ttft = step_res.ttft_ms.value_or(-1.0);
         const std::string effort = options.reasoning_effort.value_or("off");
         const std::string variant = options.reasoning_variant.value_or("");
-        record_model_call(bus, ctx.session_id, model_info,
+        record_model_call(&bus, ctx.session_id, model_info,
                           {.model_ms = step_model_ms,
                            .ttft_ms = ttft,
                            .input_tokens = step_res.usage.prompt_tokens,
@@ -965,10 +858,20 @@ static void run_tools_generation_bus(
       // A streamed step published them as they arrived.
       const size_t reasoning_chars = step_res.reasoning.size();
       if (reasoning_chars > 0 && !streamed) {
+        // The parser's reasoning part carries the provider signature.
+        std::string signature;
+        for (const auto& message : step_res.response_messages) {
+          for (const auto& part : message.content) {
+            if (const auto* rp = std::get_if<qcode::ReasoningContentPart>(&part);
+                rp != nullptr && !rp->signature.empty()) {
+              signature = rp->signature;
+            }
+          }
+        }
         bus.publish<ReasoningDelta>({
             .session_id = ctx.session_id,
             .text = std::move(step_res.reasoning),
-            .signature = "",
+            .signature = std::move(signature),
             .done = true,
         });
       }
@@ -1012,7 +915,19 @@ static void run_tools_generation_bus(
         // Execute tool calls to produce tool results
         const qcode::perf::Stopwatch tools_watch;
         std::vector<qcode::ToolResult> executed_results =
-            qcode::ToolExecutor::execute_tools_with_options(step_res.tool_calls, options, /*parallel=*/true);
+            [&] {
+              // Announce every call in call order before any runs: a fast
+              // parallel tool would otherwise finish before the next call
+              // starts, and the history mirrors (TUI, session rows) would
+              // interleave calls and results unlike this step's message.
+              if (options.on_tool_call_start) {
+                for (const auto& call : step_res.tool_calls) {
+                  (*options.on_tool_call_start)(call);
+                }
+              }
+              return qcode::ToolExecutor::execute_tools_with_options(
+                  step_res.tool_calls, options, /*parallel=*/true);
+            }();
         double step_tools_ms = tools_watch.ms();
         turn_tools_ms += step_tools_ms;
         PERF_LOG("step={} tools_ms={:.1f} tool_calls={}", step, step_tools_ms,
@@ -1150,7 +1065,12 @@ static void run_tools_generation_bus(
         "[System Note: You have reached the maximum tool steps for this turn. Please summarize your progress, key findings, what changes were made, and your next recommended steps directly to the user now without requesting any further tools.]"
     ));
 
+    const qcode::perf::Stopwatch synth_watch;
     auto synth_res = client.generate_text(options);
+    record_model_call(&bus, ctx.session_id, model_info,
+                      model_call_usage(options, synth_res, provider_id, model_info,
+                                       synth_watch.ms()),
+                      step, false, synth_res.is_success());
     if (synth_res.is_success() && !synth_res.text.empty()) {
       finished = true;
       gen_result.usage.prompt_tokens = synth_res.usage.prompt_tokens;
@@ -1453,7 +1373,7 @@ static void run_stream_generation_bus(qcode::Client& client,
                               gen_start_time)
                               .count();
       stream_ok = false;
-      record_model_call(bus, ctx.session_id, model_info,
+      record_model_call(&bus, ctx.session_id, model_info,
                         {.model_ms = latency_ms,
                          .ttft_ms = ttft_ms,
                          .input_tokens = stream_in_tokens,
@@ -1527,7 +1447,7 @@ static void run_stream_generation_bus(qcode::Client& client,
                                   gen_start_time)
                                   .count();
     const std::string effort = stream_options.reasoning_effort.value_or("off");
-    record_model_call(bus, ctx.session_id, model_info,
+    record_model_call(&bus, ctx.session_id, model_info,
                       {.model_ms = latency_ms,
                        .ttft_ms = ttft_ms,
                        .input_tokens = stream_in_tokens,
@@ -1717,16 +1637,8 @@ void run_generation_with_bus(
 
     Model transform_model(resolved_model_id, provider_id);
     base_opts.messages = ProviderTransform::normalize_messages(std::move(messages), transform_model);
-    if (!base_opts.temperature.has_value()) {
-      base_opts.temperature = ProviderTransform::temperature(transform_model);
-    }
-    if (!base_opts.top_p.has_value()) {
-      base_opts.top_p = ProviderTransform::top_p(transform_model);
-    }
-    if (resolved_model && !base_opts.max_tokens.has_value()) {
-      // opencode.json max_tokens (model_defaults) capped by limit.output.
-      base_opts.max_tokens = ProviderTransform::max_output_tokens(*resolved_model);
-    }
+    // Sampling + output budget: shared with compaction (turn_prefix.h).
+    apply_turn_sampling(base_opts, resolved_model, transform_model);
     base_opts.workspace = ctx.workspace;
     base_opts.session_id = ctx.session_id;
     base_opts.abort_flag = ctx.abort_flag;

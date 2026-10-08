@@ -1,4 +1,7 @@
 #include <qcode/ui/commands.h>
+#include <qcode/generation/turn_prefix.h>
+#include <qcode/generation/call_usage.h>
+#include <qcode/core/perf.h>
 #include <qcode/compaction/compaction_request.h>
 #include <qcode/providers/provider_profile.h>
 #include <qcode/transform/provider_transform.h>
@@ -99,7 +102,7 @@ std::vector<VariantEntry> build_variant_entries(const ModelInfo& model) {
 
 bool handle_slash_command(
     const std::string& raw_cmd,
-    std::string& prompt_input,
+    std::string& /*prompt_input*/,
     std::vector<ProviderInfo>& providers_list,
     int& selected_provider,
     int& selected_model,
@@ -594,6 +597,7 @@ bool handle_slash_command(
           << "  /help             - show this help\n"
           << "  /retry            - resend the last failed prompt\n"
           << "  /thinking         - show or hide reasoning blocks\n"
+          << "  /reload           - re-read opencode.json without restarting\n"
           << "Keys: Esc stop · F3 copy mode (select text) · click ▸ or Thought to expand\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
         append_system_message(state, h.str());
@@ -644,6 +648,10 @@ void run_compaction(
     const bool tools_enabled = enable_tools;
     const std::string agent_mode =
         state.agent_mode ? *state.agent_mode : std::string("orchestrator");
+    // The session variant the turns ran with: its thinking settings and
+    // prompt are part of the cached prefix.
+    const std::string reasoning_mode =
+        state.reasoning_mode ? *state.reasoning_mode : std::string();
 
     bus.publish<qcode::contract::ToastRequested>({
         .message = "Compacting conversation...",
@@ -661,7 +669,7 @@ void run_compaction(
     }
     *compaction_thread = qcode::compat::jthread(
         [providers_copy, sp, sm, snapshot, keep, sid, system_prompt_copy,
-         tools_enabled, agent_mode,
+         tools_enabled, agent_mode, reasoning_mode,
          &bus](qcode::compat::stop_token stop_token) mutable {
         qcode::logger::ScopedThreadSession bind(sid);
         qcode::contract::CompactionResult::Payload result;
@@ -702,8 +710,9 @@ void run_compaction(
                                        ? sel.protocol
                                        : selected_model.protocol;
         provider_options.project_id = sel.project_id;
+        // Session id too: Zen keys its cache routing on x-opencode-session.
         const auto call =
-            prepare_provider_call(provider_options, sel.id, model_id);
+            prepare_provider_call(provider_options, sel.id, model_id, sid);
         const auto& wire_model = call.wire_model_id;
         auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
             sel.id, provider_options);
@@ -727,14 +736,26 @@ void run_compaction(
         replay.vision_supported = selected_model.vision;
         replay.providers = &providers_copy;
         replay.session_id = sid;
+        replay.model = &selected_model;
+        replay.reasoning_mode = reasoning_mode;
+        // The history exactly as the turn routes it (generation_controller).
         qcode::GenerateOptions opts = qcode::compaction::build_cache_replay_request(
-            replay, wire_model, sel.id, snapshot);
+            replay, wire_model, sel.id,
+            qcode::prepare_turn_history(snapshot, /*drop_system_notes=*/true));
 
-        qcode::GenerateResult res = client.generate_text(opts);
+        const qcode::perf::Stopwatch watch;
+        qcode::GenerateResult res = qcode::compaction::run_summarizer(client, opts);
+        // Billed like any turn call: the session's Stats include it.
+        qcode::record_model_call(
+            &bus, sid, &selected_model,
+            qcode::model_call_usage(opts, res, sel.id, &selected_model, watch.ms()),
+            0, false, res.is_success());
         // Observable evidence of the warm-prefix replay (see compaction_request.h).
-        LOG_INFO("Compaction summarizer: model={} cached_prompt_tokens={} prompt_tokens={} completion_tokens={}",
+        LOG_INFO("Compaction summarizer: model={} cached_prompt_tokens={} "
+                 "cache_write_tokens={} prompt_tokens={} completion_tokens={}",
                  opts.model, res.usage.cached_prompt_tokens,
-                 res.usage.prompt_tokens, res.usage.completion_tokens);
+                 res.usage.cache_write_tokens, res.usage.prompt_tokens,
+                 res.usage.completion_tokens);
         if (stop_token.stop_requested()) {
             fail("Compaction cancelled");
             return;

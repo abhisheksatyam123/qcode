@@ -180,6 +180,18 @@ static session::SessionCost session_cost_view(const ChatState& state, const Mode
                                  *state.total_completion_tokens);
 }
 
+// Share of the context window: one decimal under 10% (a 1M window shows
+// "0.3%", not "0%"), whole percents above - like the WebUI pctLabel.
+static std::string format_context_percent(long long used, int window_size) {
+  if (window_size <= 0) return {};
+  const double pct = static_cast<double>(used) * 100.0 / window_size;
+  std::ostringstream os;
+  os << std::fixed << std::setprecision(pct > 0.0 && pct < 10.0 ? 1 : 0)
+     << (pct > 0.0 && pct < 10.0 ? pct : static_cast<double>(static_cast<long long>(pct)))
+     << "%";
+  return os.str();
+}
+
 static std::string format_usage_upstream(long long total, int window_size,
                                          double cost, bool have_cost) {
   if (total <= 0) {
@@ -191,8 +203,7 @@ static std::string format_usage_upstream(long long total, int window_size,
     return {};
   }
   std::string text = format_grouped(total);
-  if (window_size > 0)
-    text += " (" + std::to_string((int)(total * 100 / window_size)) + "%)";
+  if (window_size > 0) text += " (" + format_context_percent(total, window_size) + ")";
   if (have_cost && cost > 0) {
     std::ostringstream os;
     os << "$" << std::fixed << std::setprecision(4) << cost;
@@ -303,7 +314,12 @@ static Element build_stats_tab(const ChatState& state,
             if (!m.thinking_allow_off) thinking += " · always on";
             rows.push_back(row_text("Thinking", thinking));
         }
-        if (model && (m.input_cost > 0.0 || m.output_cost > 0.0)) {
+        const bool free_model = m.cost_configured && m.input_cost <= 0.0 &&
+                                m.output_cost <= 0.0 && m.cache_read_cost <= 0.0 &&
+                                m.cache_write_cost <= 0.0;
+        if (model && free_model) {
+            rows.push_back(row_text("Price / 1M tok", "free (opencode.json cost 0)"));
+        } else if (model && (m.cost_configured || m.input_cost > 0.0 || m.output_cost > 0.0)) {
             std::string prices =
                 fmt_rate(m.input_cost) + " in · " + fmt_rate(m.output_cost) + " out";
             if (m.cache_read_cost > 0.0) prices += " · " + fmt_rate(m.cache_read_cost) + " cache read";
@@ -395,6 +411,21 @@ static Element build_stats_tab(const ChatState& state,
         if (cost.available && cost.unpriced_calls > 0) {
             rows.push_back(text("  " + std::to_string(cost.unpriced_calls) +
                                 " call(s) on models without a price are not included") | dim);
+        }
+        // Delegated work is billed in the child sessions (task tool).
+        if (state.subagent_usage && state.subagent_usage->sessions > 0) {
+            const auto& sub = *state.subagent_usage;
+            std::string line = std::to_string(sub.sessions) + " session" +
+                               (sub.sessions == 1 ? "" : "s") + " · " +
+                               std::to_string(sub.usage.model_calls) + " calls · ";
+            line += sub.usage.priced_calls > 0 ? fmt_usd(sub.usage.cost.total())
+                                               : std::string("no price");
+            rows.push_back(row_text("Subagents", line));
+            if (cost.available && sub.usage.priced_calls > 0) {
+                rows.push_back(row(
+                    "Total incl. subagents",
+                    text(fmt_usd(cost.total + sub.usage.cost.total())) | color(Color::Green)));
+            }
         }
         if (cost.legacy_calls > 0 && !cost.estimated) {
             rows.push_back(text("  " + std::to_string(cost.legacy_calls) +

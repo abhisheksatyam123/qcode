@@ -312,5 +312,120 @@ TEST(CompactionCacheTest, OpenRouterClaudeMarksLastToolForCache) {
   EXPECT_FALSE(req2["tools"].back().contains("cache_control"));
 }
 
+// ── The summarizer replays the turn's request parameters ─────────────
+
+ModelInfo thinking_model() {
+  ModelInfo m;
+  m.id = m.name = "claude-sonnet-5-5";
+  m.reasoning = true;
+  m.tool_call = true;
+  m.max_tokens = 32000;
+  m.output_limit = 64000;
+  m.thinking_type = "adaptive";
+  m.thinking_display = "summarized";
+  m.thinking_allow_off = false;
+  VariantInfo high;
+  high.id = "high";
+  VariantInfo ultra;
+  ultra.id = "ultra";
+  ultra.effort = "max";
+  ultra.max_tokens = 64000;
+  ultra.prompt = "ULTRA VARIANT PROMPT";
+  m.variants = {high, ultra};
+  m.reasoning_efforts = {"high", "ultra"};
+  return m;
+}
+
+// A thinking turn: every assistant step carries a signed thinking block.
+Messages thinking_history() {
+  Messages h;
+  h.push_back(Message::user("Run ls"));
+  Message step = Message::assistant_with_tools(
+      "Listing.", {ToolCallContentPart{"toolu_1", "bash", {{"command", "ls"}}}});
+  step.content.emplace_back(ReasoningContentPart{"Need the file list.", "sig-1"});
+  h.push_back(std::move(step));
+  h.push_back(Message::tool_results({{"toolu_1", {{"output", "a b"}}, false}}));
+  h.push_back(Message::assistant_with_reasoning("Two files.", "Count them.", "sig-2"));
+  return h;
+}
+
+// What run_generation routes for `history` under `variant`.
+GenerateOptions live_turn(const std::vector<ProviderInfo>& providers,
+                          const ModelInfo& model, const std::string& variant,
+                          Messages history) {
+  GenerateOptions o;
+  o.model = model.id;
+  o.system = build_turn_system_prompt("BASE SYSTEM PROMPT", false, providers);
+  const Model transform_model(model.id, "anthropic");
+  o.messages = ProviderTransform::normalize_messages(std::move(history), transform_model);
+  apply_turn_sampling(o, &model, transform_model);
+  apply_variant_options(o, &model, variant, model.id);
+  o.tools = build_turn_tools(/*enable_task_tool=*/true, model.vision);
+  o.session_id = "ses_cache_test";
+  return o;
+}
+
+// Anthropic invalidates the message cache when thinking settings change and
+// drops signed thinking blocks when thinking is off: the summarizer must send
+// the turn's thinking, effort, output budget and variant prompt.
+TEST(CompactionCacheTest, AnthropicSummarizerKeepsTheTurnsThinkingAndSignedBlocks) {
+  const auto providers = make_providers();
+  const ModelInfo model = thinking_model();
+  for (const std::string variant : {"high", "ultra"}) {
+    SCOPED_TRACE(variant);
+    auto in = make_input(providers);
+    in.model = &model;
+    in.reasoning_mode = variant;
+    const auto comp = compaction::build_cache_replay_request(
+        in, model.id, "anthropic", thinking_history());
+    const auto turn = live_turn(providers, model, variant, thinking_history());
+
+    anthropic::AnthropicRequestBuilder builder;
+    const auto comp_json = builder.build_request_json(comp);
+    const auto turn_json = builder.build_request_json(turn);
+    EXPECT_EQ(comp_json["thinking"], turn_json["thinking"]);
+    EXPECT_EQ(comp_json["thinking"].value("type", ""), "adaptive");
+    EXPECT_EQ(comp_json.value("output_config", nlohmann::json()),
+              turn_json.value("output_config", nlohmann::json()));
+    EXPECT_EQ(comp_json["max_tokens"], turn_json["max_tokens"]);
+    EXPECT_EQ(comp_json["system"], turn_json["system"]);
+    EXPECT_EQ(comp_json["system"].dump().find("ULTRA VARIANT PROMPT") != std::string::npos,
+              variant == "ultra");
+    EXPECT_EQ(comp_json["tools"], turn_json["tools"]);
+    ASSERT_EQ(comp_json["messages"].size(), turn_json["messages"].size() + 1);
+    for (size_t i = 0; i < turn_json["messages"].size(); ++i) {
+      SCOPED_TRACE("prefix diverges at message " + std::to_string(i));
+      EXPECT_EQ(strip_markers(comp_json["messages"][i]),
+                strip_markers(turn_json["messages"][i]));
+    }
+    const auto& step = comp_json["messages"][1]["content"];
+    ASSERT_TRUE(step.is_array());
+    EXPECT_EQ(step[0].value("type", ""), "thinking");
+    EXPECT_EQ(step[0].value("signature", ""), "sig-1");
+  }
+}
+
+// Each app's turns and its /compact share one history transform.
+TEST(CompactionCacheTest, TurnHistoryCutsAtTheSummaryAndDropsTuiNotes) {
+  Messages h;
+  h.push_back(Message::user("old question"));
+  h.push_back(Message::system("Conversation compacted: 9 messages -> handoff packet"));
+  h.push_back(Message::user(
+      "This conversation was compacted into a handoff packet.\n\nsummary"));
+  h.push_back(Message::assistant("ok"));
+  h.push_back(Message::system("Unknown command: /x"));
+  h.push_back(Message::user("next"));
+
+  const auto tui = prepare_turn_history(h, /*drop_system_notes=*/true);
+  ASSERT_EQ(tui.size(), 3u);
+  EXPECT_EQ(tui[0].get_text().rfind("This conversation was compacted", 0), 0u);
+  EXPECT_EQ(tui[1].get_text(), "ok");
+  EXPECT_EQ(tui[2].get_text(), "next");
+
+  const auto server = prepare_turn_history(h, /*drop_system_notes=*/false);
+  ASSERT_EQ(server.size(), 4u);
+  EXPECT_EQ(server[2].role, kMessageRoleSystem);
+}
+
 }  // namespace
 }  // namespace qcode

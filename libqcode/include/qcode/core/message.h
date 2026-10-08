@@ -2,6 +2,9 @@
 
 #include <qcode/core/enums.h>
 
+#include <algorithm>
+#include <climits>
+#include <cstddef>
 #include <string>
 #include <variant>
 #include <vector>
@@ -277,6 +280,88 @@ inline Messages apply_compaction_cutoff(Messages messages) {
     }
   }
   return messages;
+}
+
+namespace detail {
+// Position of call `id` among `assistant`'s tool calls, -1 when absent.
+inline int tool_call_index(const Message& assistant, const std::string& id) {
+  int k = 0;
+  for (const auto& part : assistant.content) {
+    if (const auto* call = std::get_if<ToolCallContentPart>(&part)) {
+      if (call->id == id) return k;
+      ++k;
+    }
+  }
+  return -1;
+}
+
+// Call id answered by a tool-result message (its first result).
+inline const std::string* first_tool_result_id(const Message& message) {
+  for (const auto& part : message.content) {
+    if (const auto* result = std::get_if<ToolResultContentPart>(&part)) {
+      return &result->tool_call_id;
+    }
+  }
+  return nullptr;
+}
+
+inline bool is_tool_result_message(const Message& message) {
+  return message.has_tool_results() && !message.has_tool_calls();
+}
+}  // namespace detail
+
+// Where the result of `tool_call_id` goes in a live history so the trailing
+// step's results follow its calls in call order - the order the tool loop
+// sends them - whatever order parallel tools finish in. The end when the
+// call is not part of the trailing step.
+inline size_t tool_result_insert_position(const Messages& history,
+                                          const std::string& tool_call_id) {
+  size_t first_result = history.size();
+  while (first_result > 0 &&
+         detail::is_tool_result_message(history[first_result - 1])) {
+    --first_result;
+  }
+  if (first_result == 0) return history.size();
+  const Message& assistant = history[first_result - 1];
+  if (assistant.role != kMessageRoleAssistant) return history.size();
+  const int k = detail::tool_call_index(assistant, tool_call_id);
+  if (k < 0) return history.size();
+  size_t pos = first_result;
+  while (pos < history.size()) {
+    const std::string* id = detail::first_tool_result_id(history[pos]);
+    const int other = id != nullptr ? detail::tool_call_index(assistant, *id) : -1;
+    if (other < 0 || other > k) break;
+    ++pos;
+  }
+  return pos;
+}
+
+// The same order for a whole history (session reload): the result messages
+// right after each tool-calling assistant message sorted by call position.
+inline void order_tool_results_by_call(Messages& history) {
+  for (size_t i = 0; i < history.size(); ++i) {
+    const Message& assistant = history[i];
+    if (assistant.role != kMessageRoleAssistant || !assistant.has_tool_calls()) {
+      continue;
+    }
+    size_t end = i + 1;
+    while (end < history.size() && detail::is_tool_result_message(history[end])) {
+      ++end;
+    }
+    if (end - i > 2) {
+      auto rank = [&assistant](const Message& message) {
+        const std::string* id = detail::first_tool_result_id(message);
+        const int k = id != nullptr ? detail::tool_call_index(assistant, *id) : -1;
+        return k < 0 ? INT_MAX : k;
+      };
+      std::stable_sort(history.begin() + static_cast<std::ptrdiff_t>(i + 1),
+                       history.begin() + static_cast<std::ptrdiff_t>(end),
+                       [&rank](const Message& a, const Message& b) {
+                         return rank(a) < rank(b);
+                       });
+    }
+    i = end - 1;
+  }
 }
 
 }  // namespace qcode

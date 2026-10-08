@@ -10,6 +10,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -19,6 +20,7 @@ struct Config {
     std::string model;
     std::string prompt;
     std::string session_id;
+    std::string workspace;  // new sessions; default: current directory
     std::string reasoning_mode = "off";
     bool verbose = false;
 };
@@ -31,6 +33,7 @@ static void print_usage(const char* argv0) {
               << "  --model <id>      Model ID\n"
               << "  --reasoning <mode> Reasoning mode\n"
               << "  --session <id>    Continue existing session\n"
+              << "  --workspace <dir> Workspace of a new session (default: current dir)\n"
               << "  --verbose, -v     Print tool calls to stderr\n"
               << "  --help, -h        Show this help\n";
 }
@@ -45,6 +48,7 @@ static Config parse_args(int argc, char* argv[]) {
         else if (arg == "--model" && i + 1 < argc) cfg.model = argv[++i];
         else if (arg == "--reasoning" && i + 1 < argc) cfg.reasoning_mode = argv[++i];
         else if (arg == "--session" && i + 1 < argc) cfg.session_id = argv[++i];
+        else if (arg == "--workspace" && i + 1 < argc) cfg.workspace = argv[++i];
         else if (arg == "--verbose" || arg == "-v") cfg.verbose = true;
         else if (arg == "--help" || arg == "-h") { print_usage(argv[0]); exit(0); }
     }
@@ -77,6 +81,35 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Generation runs in a session: start one here unless --session names it.
+    if (cfg.session_id.empty()) {
+        if (cfg.workspace.empty()) {
+            std::error_code ec;
+            const auto cwd = std::filesystem::current_path(ec);
+            if (!ec) cfg.workspace = cwd.string();
+        }
+        nlohmann::json create = {{"provider", cfg.provider}, {"model", cfg.model}};
+        if (!cfg.workspace.empty()) create["workspace"] = cfg.workspace;
+        auto created = cli.Post("/sessions", create.dump(), "application/json");
+        if (!created) {
+            std::cerr << "Error: " << httplib::to_string(created.error()) << "\n";
+            return 1;
+        }
+        if (created->status != 200) {
+            std::cerr << "Error: creating a session: HTTP " << created->status << " "
+                      << created->body << "\n";
+            return 1;
+        }
+        try {
+            cfg.session_id = nlohmann::json::parse(created->body).value("id", "");
+        } catch (...) {
+        }
+        if (cfg.session_id.empty()) {
+            std::cerr << "Error: the server returned no session id\n";
+            return 1;
+        }
+    }
+
     // Build request
     nlohmann::json body = {
         {"text", cfg.prompt},
@@ -84,7 +117,7 @@ int main(int argc, char* argv[]) {
         {"model", cfg.model},
         {"reasoning_mode", cfg.reasoning_mode}
     };
-    if (!cfg.session_id.empty()) body["session_id"] = cfg.session_id;
+    body["session_id"] = cfg.session_id;
 
     // Send POST and get streaming response
     auto res = cli.Post("/generate", body.dump(), "application/json");
@@ -115,8 +148,10 @@ int main(int argc, char* argv[]) {
             std::string type = evt.value("type", "");
 
             if (type == "backend.message.delta") {
-                full_text = evt.value("text", "");
-                std::cout << "\r" << full_text << std::flush;
+                // Append-only deltas (MessageDelta): print each as it comes.
+                const std::string delta = evt.value("text", "");
+                full_text += delta;
+                std::cout << delta << std::flush;
             } else if (type == "backend.tool.call.started" && cfg.verbose) {
                 std::cerr << "\n[Tool] " << evt.value("tool_name", "?") << " started\n";
             } else if (type == "backend.tool.call.completed" && cfg.verbose) {

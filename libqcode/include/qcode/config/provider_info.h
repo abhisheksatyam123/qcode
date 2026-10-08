@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,15 @@ struct ModelInfo {
     // From opencode.json cost.cache_read / cost.cache_write (USD per 1M tokens).
     double cache_read_cost = 0.0;
     double cache_write_cost = 0.0;
+    // opencode.json has a "cost" object: its calls are priced, and an
+    // all-zero cost means free (not "no price").
+    bool cost_configured = false;
+    // Sampling from opencode.json ("temperature" / "top_p", also under
+    // "options"); unset = the model family's default. "temperature": false
+    // sends none.
+    std::optional<double> temperature;
+    std::optional<double> top_p;
+    bool temperature_supported = true;
 };
 
 struct ProviderInfo {

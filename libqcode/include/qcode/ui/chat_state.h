@@ -132,6 +132,10 @@ struct ChatState {
     // (written by generation_service) and is reloaded on session switch.
     std::shared_ptr<qcode::session::SessionUsageStats> usage =
         std::make_shared<qcode::session::SessionUsageStats>();
+    // Calls of the session's subagents (child sessions), refreshed on
+    // session switch and at each turn's end.
+    std::shared_ptr<qcode::session::SubagentUsage> subagent_usage =
+        std::make_shared<qcode::session::SubagentUsage>();
 
     std::shared_ptr<double> total_tool_time_ms = std::make_shared<double>(0.0);
 

@@ -41,4 +41,10 @@ bool login_anthropic_oauth(std::string* out_error = nullptr);
 // Load providers (and per-model context/cost/capabilities) from opencode.json.
 [[nodiscard]] std::vector<ProviderInfo> load_providers_from_config();
 
+// Problems found by the latest load_providers_from_config(): values of the
+// wrong type (ignored: the default applies) and parse errors, each as
+// "<provider>/<model>.<key> should be a number (got string)". Logged as
+// warnings; the TUI shows a startup toast.
+[[nodiscard]] std::vector<std::string> config_warnings();
+
 } // namespace qcode

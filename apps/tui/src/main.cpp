@@ -225,6 +225,14 @@ int main(int argc, char* argv[]) {
     auto providers_list = qcode::load_providers_from_config();
     int selected_provider = 0;
     int selected_model = 0;
+    // Mistyped opencode.json values are ignored (defaults apply): say so once.
+    if (const auto warnings = qcode::config_warnings(); !warnings.empty()) {
+        std::string message = "opencode.json: " + warnings.front();
+        if (warnings.size() > 1) {
+            message += " (+" + std::to_string(warnings.size() - 1) + " more in the log)";
+        }
+        store.add_toast(message, "warning", 10000);
+    }
 
     // Surface expired Antigravity credentials early instead of failing mid-turn.
     for (const auto& provider : providers_list) {
@@ -369,6 +377,58 @@ int main(int argc, char* argv[]) {
 
     apply_config_variant_if_unset();
     sync_tool_config_and_system_prompt();
+
+    // /reload: re-read opencode.json in place. A running turn or compaction
+    // keeps the provider list it copied at its start; the selection carries
+    // over by provider/model id (else the first configured model).
+    auto reload_config = [&]() {
+        std::string provider_id;
+        std::string model_id;
+        if (const auto* model = current_model_info()) {
+            provider_id = providers_list[selected_provider].id;
+            model_id = model->id;
+        }
+        auto fresh = qcode::load_providers_from_config();
+        const auto warnings = qcode::config_warnings();
+        size_t models = 0;
+        for (const auto& provider : fresh) models += provider.models.size();
+        if (models == 0) {
+            store.add_toast("Reload: opencode.json has no models" +
+                                (warnings.empty() ? std::string() : " (" + warnings.front() + ")") +
+                                "; kept the current config",
+                            "error", 8000);
+            return;
+        }
+        providers_list = std::move(fresh);
+        selected_provider = 0;
+        selected_model = 0;
+        if (auto resolved = qcode::tui::resolve_provider_model_indices(
+                providers_list, provider_id, model_id)) {
+            selected_provider = resolved->first;
+            selected_model = resolved->second;
+        } else {
+            for (size_t i = 0; i < providers_list.size(); ++i) {
+                if (!providers_list[i].models.empty()) {
+                    selected_provider = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+        qcode::session::seed_model_capabilities(providers_list);
+        overlays.model_entries = qcode::build_model_entries(providers_list);
+        sync_tool_config_and_system_prompt();
+        clamp_variant_to_current_model();
+        std::string message = "Reloaded opencode.json: " + std::to_string(models) + " models";
+        if (const auto* model = current_model_info(); model && model->id != model_id) {
+            message += " · now " + model->id;
+        }
+        if (!warnings.empty()) {
+            message += " · " + std::to_string(warnings.size()) + " warning" +
+                       (warnings.size() == 1 ? "" : "s") + ": " + warnings.front();
+        }
+        store.add_toast(message, warnings.empty() ? "success" : "warning",
+                        warnings.empty() ? 3000 : 8000);
+    };
 
     auto open_variant_picker = [&]() {
         qcode::ModelInfo fallback;
@@ -802,6 +862,13 @@ int main(int argc, char* argv[]) {
             if (cmd == "variant" || cmd == "variants") {
                 prompt_input = "";
                 open_variant_picker();
+                return;
+            }
+
+            if (cmd == "reload") {
+                prompt_input = "";
+                reload_config();
+                sessions_dirty = true;
                 return;
             }
 

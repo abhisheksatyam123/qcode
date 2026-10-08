@@ -80,12 +80,17 @@ void deliver_bus_events(qcode::bus::BusRuntime& bus) {
 
 void flush_turn_text(GenSession& session) {
     if (!session.reasoning_text.empty()) {
-        qcode::session::save_message(session.id, "Reasoning", session.reasoning_text);
+        // Keep the signature: the next turn replays the signed thinking block.
+        qcode::session::save_message(
+            session.id, "Reasoning",
+            qcode::session::encode_reasoning_row(session.reasoning_text,
+                                                 session.reasoning_signature));
     }
     if (!session.assistant_text.empty()) {
         qcode::session::save_message(session.id, "Assistant", session.assistant_text);
     }
     session.reasoning_text.clear();
+    session.reasoning_signature.clear();
     session.assistant_text.clear();
 }
 
@@ -207,7 +212,18 @@ std::vector<qcode::bus::Subscription> subscribe_session(
             if (!p.session_id.empty() && p.session_id != session->id) return;
             std::lock_guard<std::mutex> lock(session->queue_mutex);
             session->reasoning_text += p.text;
+            if (!p.signature.empty()) session->reasoning_signature = p.signature;
             push_event(*session, qcode::server::reasoning_delta_to_json(p));
+        }
+    ));
+
+    // Per-call latency, tokens and cost (persisted before it is published):
+    // the WebUI Stats tab follows a turn call by call.
+    subs.push_back(subscribe_weak<StepLatency>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const StepLatency::Payload& p) {
+            if (!p.session_id.empty() && p.session_id != session->id) return;
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
+            push_event(*session, qcode::server::step_latency_to_json(p));
         }
     ));
 

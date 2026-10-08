@@ -1,5 +1,7 @@
 #include <gmock/gmock.h>
 #include <qcode/config/config.h>
+#include <qcode/generation/turn_prefix.h>
+#include <qcode/session/usage_stats.h>
 #include <qcode/transform/provider_transform.h>
 #include <qcode/ui/commands.h>
 
@@ -411,6 +413,110 @@ TEST(TuiConfigTest, MistypedVariantFieldsDoNotAbortConfig) {
   EXPECT_TRUE(model->thinking_allow_off);
   EXPECT_DOUBLE_EQ(model->input_cost, 0.0);
   EXPECT_DOUBLE_EQ(model->cache_read_cost, 0.2);
+}
+
+// An explicit all-zero cost is a free model (priced at $0); no cost object
+// means no price.
+TEST(TuiConfigTest, ZeroCostMarksAFreeModel) {
+  ScopedConfig config(R"({
+      "provider": {
+        "qpilot": {
+          "name": "QPilot",
+          "models": {
+            "free-model": {"cost": {"input": 0, "output": 0}},
+            "unpriced-model": {}
+          }
+        }
+      }
+    })");
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  const auto* free_model = FindModel(providers.front().models, "free-model");
+  const auto* unpriced = FindModel(providers.front().models, "unpriced-model");
+  ASSERT_NE(free_model, nullptr);
+  ASSERT_NE(unpriced, nullptr);
+  EXPECT_TRUE(free_model->cost_configured);
+  EXPECT_FALSE(unpriced->cost_configured);
+
+  session::ModelCallUsage call;
+  call.input_tokens = 1000;
+  call.output_tokens = 10;
+  const auto free_cost = session::price_call(call, *free_model);
+  EXPECT_TRUE(free_cost.priced);
+  EXPECT_DOUBLE_EQ(free_cost.total(), 0.0);
+  EXPECT_FALSE(session::price_call(call, *unpriced).priced);
+}
+
+// Mistyped values never abort the config: the default applies and the
+// problem is reported by its path (log + config_warnings()).
+TEST(TuiConfigTest, MistypedValuesAreReportedNotFatal) {
+  ScopedConfig config(R"({
+      "provider": {
+        "anthropic": {
+          "models": {
+            "claude-a": {"name": 5, "tool_call": "yes",
+                         "limit": {"context": "big", "output": 64000}},
+            "claude-b": {"tool_call": true, "limit": 7}
+          }
+        }
+      }
+    })");
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  ASSERT_EQ(providers.front().models.size(), 2u);
+  const auto* a = FindModel(providers.front().models, "claude-a");
+  ASSERT_NE(a, nullptr);
+  EXPECT_EQ(a->name, "claude-a");
+  EXPECT_FALSE(a->tool_call);
+  EXPECT_EQ(a->context_window, 0);
+  EXPECT_EQ(a->output_limit, 64000);
+  const auto* b = FindModel(providers.front().models, "claude-b");
+  ASSERT_NE(b, nullptr);
+  EXPECT_TRUE(b->tool_call);
+
+  const auto warnings = config_warnings();
+  using testing::Contains;
+  using testing::HasSubstr;
+  EXPECT_THAT(warnings, Contains(HasSubstr("anthropic/claude-a.name should be a string (got number)")));
+  EXPECT_THAT(warnings, Contains(HasSubstr("anthropic/claude-a.tool_call should be true or false (got string)")));
+  EXPECT_THAT(warnings, Contains(HasSubstr("anthropic/claude-a.limit.context should be a number (got string)")));
+  EXPECT_THAT(warnings, Contains(HasSubstr("anthropic/claude-b.limit should be an object (got number)")));
+  EXPECT_EQ(warnings.size(), 4u);
+}
+
+// Sampling is config first ("temperature"/"top_p", also under "options");
+// the model family's default only fills the gaps, and false sends none.
+TEST(TuiConfigTest, SamplingComesFromConfigBeforeFamilyDefaults) {
+  ScopedConfig config(R"({
+      "provider": {
+        "qpilot": {
+          "name": "QPilot",
+          "models": {
+            "qwen3-coder": {"temperature": 0.3, "options": {"top_p": 0.9}},
+            "qwen3-plain": {},
+            "qwen3-notemp": {"temperature": false}
+          }
+        }
+      }
+    })");
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  const auto& models = providers.front().models;
+  auto sampled = [&](const char* id) {
+    const auto* model = FindModel(models, id);
+    EXPECT_NE(model, nullptr);
+    GenerateOptions opts;
+    if (model != nullptr) apply_turn_sampling(opts, model, Model(model->id, "qpilot"));
+    return opts;
+  };
+  const auto tuned = sampled("qwen3-coder");
+  ASSERT_TRUE(tuned.temperature.has_value());
+  EXPECT_DOUBLE_EQ(*tuned.temperature, 0.3);
+  ASSERT_TRUE(tuned.top_p.has_value());
+  EXPECT_DOUBLE_EQ(*tuned.top_p, 0.9);
+  const auto plain = sampled("qwen3-plain");
+  EXPECT_EQ(plain.temperature, ProviderTransform::temperature(Model("qwen3-plain", "qpilot")));
+  EXPECT_FALSE(sampled("qwen3-notemp").temperature.has_value());
 }
 
 TEST(TuiConfigTest, PickerVariantsComeFromJsonNotHardcodedCatalog) {

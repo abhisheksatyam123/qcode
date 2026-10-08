@@ -48,6 +48,12 @@ bool session_exists(const std::string& session_id);
 // Save a single chat message into the SQLite database
 void save_message(const std::string& session_id, const std::string& sender, const std::string& content);
 
+// Content of a "Reasoning" row: the thinking text, or {"text","signature"}
+// when the provider signed it. Anthropic replays signed thinking blocks
+// only, so a reloaded history without the signature drops them and no
+// longer matches the cached prefix of the turn that produced them.
+std::string encode_reasoning_row(const std::string& text, const std::string& signature);
+
 // Clear current session messages in state and reload from SQLite
 void reload_session_history(const std::string& session_id, ChatState& state);
 
@@ -156,6 +162,10 @@ void persist_session_token_stats(const std::string& session_id,
 SessionUsageStats get_session_usage_stats(const std::string& session_id);
 void record_session_model_call(const std::string& session_id,
                                const ModelCallUsage& call);
+
+// Usage of the subagents a session delegated to: its child sessions,
+// recursively (each child records its own model calls and cost).
+SubagentUsage get_subagent_usage(const std::string& session_id);
 
 // Delete a session and its associated messages
 std::vector<std::string> get_child_session_ids(const std::string& parent_session_id);

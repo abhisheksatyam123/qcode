@@ -11,10 +11,13 @@
 #include <qcode/providers/provider_profile.h>
 #include <qcode/tools/tool_catalog.h>
 #include <qcode/compaction/compaction_request.h>
+#include <qcode/generation/call_usage.h>
+#include <qcode/generation/turn_prefix.h>
 #include <qcode/core/logger.h>
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -86,8 +89,9 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     provider_options.project_id = sel.project_id;
     // Wire model id, exactly as the generate route resolves it — a raw
     // config id can silently route elsewhere (and break the cache prefix).
+    // Session id too: Zen keys its cache routing on x-opencode-session.
     const auto call = qcode::prepare_provider_call(provider_options, sel.id,
-                                                   model_id);
+                                                   model_id, sid);
     const std::string wire_model = call.wire_model_id;
     auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
         sel.id, provider_options);
@@ -146,10 +150,15 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         }
     }
 
+    // The generate route stores the modes of each turn (set_session_modes).
+    const auto stored_modes = qcode::session::get_session_modes(sid);
     std::string agent_mode = body.value("agent_mode", "");
     if (agent_mode.empty()) {
-        auto modes = qcode::session::get_session_modes(sid);
-        agent_mode = modes.first;
+        agent_mode = stored_modes.first;
+    }
+    std::string reasoning_mode = body.value("reasoning_mode", "");
+    if (reasoning_mode.empty()) {
+        reasoning_mode = stored_modes.second;
     }
     if (agent_mode.empty()) {
         agent_mode = (sid.rfind("ses_", 0) == 0) ? "subagent" : "orchestrator";
@@ -164,15 +173,30 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         (selected_model != nullptr && selected_model->vision);
     replay.providers = providers_list.get();
     replay.session_id = sid;
+    replay.model = selected_model;
+    replay.reasoning_mode = reasoning_mode;
+    // The history exactly as the generate route sends it.
     qcode::GenerateOptions opts = qcode::compaction::build_cache_replay_request(
-        replay, wire_model, sel.id, snapshot);
+        replay, wire_model, sel.id,
+        qcode::prepare_turn_history(snapshot, /*drop_system_notes=*/false));
 
-    qcode::GenerateResult gen_res = client.generate_text(opts);
+    const auto started = std::chrono::steady_clock::now();
+    qcode::GenerateResult gen_res = qcode::compaction::run_summarizer(client, opts);
+    const double model_ms = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - started)
+                                .count();
+    // Billed like any turn call: the session's Stats include it.
+    qcode::record_model_call(
+        nullptr, sid, selected_model,
+        qcode::model_call_usage(opts, gen_res, sel.id, selected_model, model_ms),
+        0, false, gen_res.is_success());
     // Observable evidence of the warm-prefix replay: a cache hit here means
     // the summarizer call reused the last routed request's prefix.
-    LOG_INFO("Compaction summarizer: model={} cached_prompt_tokens={} prompt_tokens={} completion_tokens={}",
+    LOG_INFO("Compaction summarizer: model={} cached_prompt_tokens={} "
+             "cache_write_tokens={} prompt_tokens={} completion_tokens={}",
              opts.model, gen_res.usage.cached_prompt_tokens,
-             gen_res.usage.prompt_tokens, gen_res.usage.completion_tokens);
+             gen_res.usage.cache_write_tokens, gen_res.usage.prompt_tokens,
+             gen_res.usage.completion_tokens);
     if (!gen_res.is_success() || (gen_res.error && !gen_res.error->empty())) {
         res.status = 500;
         std::string err = gen_res.error && !gen_res.error->empty() ? *gen_res.error : gen_res.error_message();
@@ -316,6 +340,10 @@ svr.Get("/session/([^/]+)/stats", [providers_list](const httplib::Request& req, 
     // from opencode.json limit.context (0 = unknown).
     j["context"] = {{"used", usage.last_input_tokens},
                     {"window", model != nullptr ? model->context_window : 0}};
+    // Delegated work is billed in the child sessions; roll it up here.
+    const auto subagents = qcode::session::get_subagent_usage(sid);
+    j["subagents"] = qcode::session::usage_summary_json(subagents.usage, nullptr);
+    j["subagents"]["sessions"] = subagents.sessions;
     res.set_content(j.dump(2), "application/json");
 });
 

@@ -3,6 +3,7 @@
 #include <qcode/core/logger.h>
 #include <qcode/core/perf.h>
 #include <qcode/generation/generation_service.h>
+#include <qcode/generation/turn_prefix.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/core/event.h>
 #include <qcode/session/session_store.h>
@@ -328,14 +329,11 @@ void GenerationController::spawn_unlocked(std::string prompt,
                 // Snapshot history via shared_ptr so compaction cannot race the
                 // vector while we copy.
                 const auto history = state_ptr->messages_history;
-                qcode::Messages gen_messages = history ? *history : qcode::Messages{};
-                gen_messages = qcode::apply_compaction_cutoff(std::move(gen_messages));
-                gen_messages.erase(
-                    std::remove_if(gen_messages.begin(), gen_messages.end(),
-                                   [](const qcode::Message& message) {
-                                       return message.role == qcode::kMessageRoleSystem;
-                                   }),
-                    gen_messages.end());
+                // Same transform /compact replays (turn_prefix.h), so the
+                // summarizer stays a prefix of this request.
+                qcode::Messages gen_messages = qcode::prepare_turn_history(
+                    history ? *history : qcode::Messages{},
+                    /*drop_system_notes=*/true);
 
                 const size_t ctx_window =
                     providers_copy[sel_prov].models[sel_mod].context_window;

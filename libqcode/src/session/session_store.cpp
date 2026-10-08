@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <cctype>
 #include <mutex>
+#include <set>
 
 #include <qcode/core/message.h>
 #include <qcode/ui/chat_state.h>
@@ -562,6 +563,31 @@ void ensure_session_row(const std::string& id,
 }
 
 
+std::string encode_reasoning_row(const std::string& text, const std::string& signature) {
+    if (signature.empty()) return text;
+    return nlohmann::json{{"text", text}, {"signature", signature}}.dump(
+        -1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+namespace {
+// encode_reasoning_row() inverse: {text, signature} for a signed row, the
+// content as plain text otherwise.
+qcode::ReasoningContentPart decode_reasoning_row(const std::string& content) {
+    if (!content.empty() && content.front() == '{') {
+        try {
+            const auto j = nlohmann::json::parse(content);
+            if (j.is_object() && j.size() == 2 && j.contains("text") &&
+                j.contains("signature") && j["text"].is_string() &&
+                j["signature"].is_string()) {
+                return {j["text"].get<std::string>(), j["signature"].get<std::string>()};
+            }
+        } catch (...) {
+        }
+    }
+    return {content, ""};
+}
+}  // namespace
+
 void save_message(const std::string& session_id, const std::string& sender, const std::string& content) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
@@ -761,14 +787,14 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
                 continue;
             }
             if (sender == "Reasoning" || sender == "reasoning") {
+                auto reasoning = decode_reasoning_row(content);
                 if (!history.empty() &&
                     history.back().role == qcode::kMessageRoleAssistant &&
                     !history.back().has_tool_results()) {
-                    history.back().content.push_back(
-                        qcode::ReasoningContentPart{content, ""});
+                    history.back().content.push_back(std::move(reasoning));
                 } else {
-                    history.push_back(
-                        qcode::Message::assistant_with_reasoning("", content));
+                    history.push_back(qcode::Message::assistant_with_reasoning(
+                        "", reasoning.text, reasoning.signature));
                 }
                 continue;
             }
@@ -886,6 +912,9 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
         sqlite3_finalize(stmt);
     }
 
+    // Parallel tool results land in completion order; the tool loop sent
+    // them in call order (and the next request must replay that prefix).
+    qcode::order_tool_results_by_call(history);
     return history;
 }
 
@@ -994,7 +1023,9 @@ static bool write_session_history_rows(sqlite3* db, const std::string& session_i
             if (!ok) break;
             if (const auto* rcp = std::get_if<qcode::ReasoningContentPart>(&part)) {
                 if (rcp->text.empty()) continue;
-                ok = insert_row("Reasoning", rcp->text, "Reasoning");
+                ok = insert_row("Reasoning",
+                                encode_reasoning_row(rcp->text, rcp->signature),
+                                "Reasoning");
             } else if (const auto* tcp = std::get_if<qcode::ToolCallContentPart>(&part)) {
                 nlohmann::json call_json = {
                     {"id", tcp->id},
@@ -1472,7 +1503,16 @@ void record_session_model_call(const std::string& session_id,
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
     if (!db) return;
-    // Read-modify-write under the shared handle lock (one writer per process).
+    // Read-modify-write. The handle lock serializes this process; BEGIN
+    // IMMEDIATE takes the database write lock before the read, so a TUI and a
+    // server recording calls on one session never drop each other's call.
+    // (busy_timeout bounds the wait; on failure the update runs unguarded.)
+    const bool txn = sqlite3_get_autocommit(db) != 0 &&
+                     sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) == SQLITE_OK;
+    if (!txn) {
+        LOG_WARN("SQLite: usage stats update for {} runs without a write lock: {}",
+                 session_id, sqlite3_errmsg(db));
+    }
     SessionUsageStats stats;
     sqlite3_stmt* stmt = nullptr;
     if (prepare_stmt(db, "SELECT COALESCE(usage_stats, '') FROM sessions WHERE id = ?;",
@@ -1490,11 +1530,22 @@ void record_session_model_call(const std::string& session_id,
     }
     stats.add(call);
     const std::string blob = stats.to_json().dump();
+    bool written = false;
     if (prepare_stmt(db, "UPDATE sessions SET usage_stats = ? WHERE id = ?;", &stmt)) {
         sqlite3_bind_text(stmt, 1, blob.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, session_id.c_str(), -1, SQLITE_STATIC);
-        sqlite3_step(stmt);
+        written = sqlite3_step(stmt) == SQLITE_DONE;
         sqlite3_finalize(stmt);
+    }
+    if (txn) {
+        if (sqlite3_exec(db, written ? "COMMIT;" : "ROLLBACK;", nullptr, nullptr, nullptr) !=
+            SQLITE_OK) {
+            LOG_ERROR("SQLite: usage stats commit failed: {}", sqlite3_errmsg(db));
+            rollback_if_open(db);
+        }
+    }
+    if (!written) {
+        LOG_ERROR("SQLite: usage stats update failed for {}", session_id);
     }
 }
 
@@ -1636,6 +1687,23 @@ std::vector<std::string> get_child_session_ids(const std::string& parent_session
         sqlite3_finalize(stmt);
     }
     return children;
+}
+
+SubagentUsage get_subagent_usage(const std::string& session_id) {
+    SubagentUsage out;
+    std::vector<std::string> pending = get_child_session_ids(session_id);
+    std::set<std::string> seen{session_id};
+    while (!pending.empty()) {
+        const std::string child = std::move(pending.back());
+        pending.pop_back();
+        if (!seen.insert(child).second) continue;
+        ++out.sessions;
+        out.usage.merge(get_session_usage_stats(child));
+        for (auto& grandchild : get_child_session_ids(child)) {
+            pending.push_back(std::move(grandchild));
+        }
+    }
+    return out;
 }
 
 std::string get_parent_session_id(const std::string& session_id) {

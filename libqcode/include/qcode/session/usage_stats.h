@@ -91,9 +91,17 @@ struct SessionUsageStats {
     std::map<std::string, ModelUsageTotals> by_model;  // "provider/model"
 
     void add(const ModelCallUsage& call);
+    // Adds another session's totals (subagent roll-up); last_* stay ours.
+    void merge(const SessionUsageStats& other);
     [[nodiscard]] bool empty() const { return model_calls == 0; }
     [[nodiscard]] nlohmann::json to_json() const;
     [[nodiscard]] static SessionUsageStats from_json(const nlohmann::json& j);
+};
+
+// Calls of the subagents a session delegated to (its child sessions).
+struct SubagentUsage {
+    int sessions = 0;
+    SessionUsageStats usage;
 };
 
 // Whole-session tokens at one model's prices. Only for sessions recorded

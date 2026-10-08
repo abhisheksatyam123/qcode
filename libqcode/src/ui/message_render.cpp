@@ -556,7 +556,10 @@ static Element render_reasoning(const qcode::ReasoningContentPart& rp,
                                  HitBox* header_box = nullptr,
                                  int terminal_width = 0,
                                  bool cache_markdown = true) {
-    if (rp.text.empty()) return emptyElement();
+    // Blank thinking (whitespace chunks kept for replay) has nothing to show.
+    if (rp.text.find_first_not_of(" \t\r\n") == std::string::npos) {
+        return emptyElement();
+    }
 
     auto thought_line = [&](const char* marker) {
         return hbox({

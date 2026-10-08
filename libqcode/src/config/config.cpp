@@ -490,24 +490,76 @@ static bool is_supported_provider(std::string_view /*id*/) {
 }
 
 namespace {
+std::mutex g_config_warnings_mutex;
+std::vector<std::string> g_config_warnings;
+
+// A value of the wrong type: logged and kept for config_warnings().
+void warn_mistyped(const std::string& where, const char* key, const char* expected,
+                   const nlohmann::ordered_json& got) {
+    std::string message = where + "." + key + " should be " + expected + " (got " +
+                          got.type_name() + "); ignored";
+    LOG_WARN("opencode.json: {}", message);
+    std::lock_guard<std::mutex> lock(g_config_warnings_mutex);
+    g_config_warnings.push_back(std::move(message));
+}
+
 // Type-tolerant readers: a mistyped field must not abort the whole config.
-std::string json_string(const nlohmann::ordered_json& obj, const char* key) {
+// With `where` (e.g. "anthropic/claude-sonnet-5-5.limit") a present value of
+// the wrong type is reported; absent and null values are silent.
+std::string json_string(const nlohmann::ordered_json& obj, const char* key,
+                        const std::string& where = {}, std::string fallback = {}) {
     const auto it = obj.find(key);
-    return (it != obj.end() && it->is_string()) ? it->get<std::string>() : std::string{};
+    if (it == obj.end() || it->is_null()) return fallback;
+    if (it->is_string()) return it->get<std::string>();
+    if (!where.empty()) warn_mistyped(where, key, "a string", *it);
+    return fallback;
 }
-int json_int(const nlohmann::ordered_json& obj, const char* key) {
+int json_int(const nlohmann::ordered_json& obj, const char* key,
+             const std::string& where = {}) {
     const auto it = obj.find(key);
-    if (it == obj.end() || !it->is_number()) return 0;
-    return static_cast<int>(it->get<double>());
+    if (it == obj.end() || it->is_null()) return 0;
+    if (it->is_number()) return static_cast<int>(it->get<double>());
+    if (!where.empty()) warn_mistyped(where, key, "a number", *it);
+    return 0;
 }
-double json_number(const nlohmann::ordered_json& obj, const char* key) {
+double json_number(const nlohmann::ordered_json& obj, const char* key,
+                   const std::string& where = {}) {
     const auto it = obj.find(key);
-    return (it != obj.end() && it->is_number()) ? it->get<double>() : 0.0;
+    if (it == obj.end() || it->is_null()) return 0.0;
+    if (it->is_number()) return it->get<double>();
+    if (!where.empty()) warn_mistyped(where, key, "a number", *it);
+    return 0.0;
+}
+bool json_bool(const nlohmann::ordered_json& obj, const char* key, bool fallback,
+               const std::string& where = {}) {
+    const auto it = obj.find(key);
+    if (it == obj.end() || it->is_null()) return fallback;
+    if (it->is_boolean()) return it->get<bool>();
+    if (!where.empty()) warn_mistyped(where, key, "true or false", *it);
+    return fallback;
+}
+// An object-valued key ("limit", "cost", ...); reports any other type.
+bool json_object_at(const nlohmann::ordered_json& obj, const char* key,
+                    const std::string& where) {
+    const auto it = obj.find(key);
+    if (it == obj.end() || it->is_null()) return false;
+    if (it->is_object()) return true;
+    warn_mistyped(where, key, "an object", *it);
+    return false;
 }
 }  // namespace
 
+std::vector<std::string> config_warnings() {
+    std::lock_guard<std::mutex> lock(g_config_warnings_mutex);
+    return g_config_warnings;
+}
+
 std::vector<ProviderInfo> load_providers_from_config() {
     std::vector<ProviderInfo> loaded;
+    {
+        std::lock_guard<std::mutex> lock(g_config_warnings_mutex);
+        g_config_warnings.clear();
+    }
     std::string path = config_path();
     LOG_DEBUG("load_providers: path={}", path);
     if (!std::filesystem::exists(path)) {
@@ -549,15 +601,19 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 if (!is_supported_provider(prov_id)) {
                     continue;
                 }
+                if (!prov_data.is_object()) {
+                    warn_mistyped("provider", prov_id.c_str(), "an object", prov_data);
+                    continue;
+                }
                 ProviderInfo prov;
                 prov.id = prov_id;
-                prov.name = prov_data.value("name", prov_id);
+                prov.name = json_string(prov_data, "name", prov_id, prov_id);
                 const auto options = prov_data.value(
                     "options", ordered_json::object());
                 prov.api_url = normalize_api_url(
                     resolve_config_value(options.value("baseURL", ordered_json{})));
                 if (prov.api_url.empty()) {
-                    prov.api_url = normalize_api_url(prov_data.value("api", ""));
+                    prov.api_url = normalize_api_url(json_string(prov_data, "api", prov_id));
                 }
                 prov.api_key = resolve_config_value(
                     options.value("apiKey", ordered_json{}));
@@ -567,7 +623,7 @@ std::vector<ProviderInfo> load_providers_from_config() {
                         if (!resolved.empty()) prov.headers.emplace(name, resolved);
                     }
                 }
-                const auto package = prov_data.value("npm", "");
+                const auto package = json_string(prov_data, "npm", prov_id);
                 if (options.contains("protocol") && options["protocol"].is_string()) {
                     prov.protocol = options["protocol"].get<std::string>();
                 } else if (prov_data.contains("protocol") &&
@@ -580,7 +636,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
                 }
                 prov.project_id = resolve_config_value(
                     options.value("project", ordered_json{}));
-                if (prov_data.contains("models")) {
+                if (prov_data.contains("models") && !prov_data["models"].is_object()) {
+                    warn_mistyped(prov_id, "models", "an object", prov_data["models"]);
+                } else if (prov_data.contains("models")) {
                     // "model_defaults" (thinking, variants, limit, max_tokens,
                     // cost, ...) are merged under every model, top-level first,
                     // then the provider's (RFC 7386 merge patch: model keys win,
@@ -595,37 +653,63 @@ std::vector<ProviderInfo> load_providers_from_config() {
                         if (raw_model_data.is_object()) {
                             model_data.merge_patch(raw_model_data);
                         }
+                        // Report a mistyped value by its path, e.g.
+                        // "anthropic/claude-sonnet-5-5.limit.output".
+                        const std::string where = prov_id + "/" + model_id;
                         ModelInfo model;
-                        model.name = model_data.value("name", model_id);
+                        model.name = json_string(model_data, "name", where, model_id);
                         model.id = model_id;
-                        if (model_data.contains("limit") &&
-                            model_data["limit"].is_object()) {
+                        if (json_object_at(model_data, "limit", where)) {
                             const auto& limit = model_data["limit"];
-                            model.context_window = json_int(limit, "context");
-                            model.output_limit = json_int(limit, "output");
+                            model.context_window = json_int(limit, "context", where + ".limit");
+                            model.output_limit = json_int(limit, "output", where + ".limit");
                         }
-                        model.max_tokens = json_int(model_data, "max_tokens");
-                        if (model_data.contains("cost") &&
-                            model_data["cost"].is_object()) {
+                        model.max_tokens = json_int(model_data, "max_tokens", where);
+                        if (json_object_at(model_data, "cost", where)) {
                             const auto& cost = model_data["cost"];
-                            model.input_cost = json_number(cost, "input");
-                            model.output_cost = json_number(cost, "output");
-                            model.cache_read_cost = json_number(cost, "cache_read");
-                            model.cache_write_cost = json_number(cost, "cache_write");
+                            const std::string at = where + ".cost";
+                            model.cost_configured = true;
+                            model.input_cost = json_number(cost, "input", at);
+                            model.output_cost = json_number(cost, "output", at);
+                            model.cache_read_cost = json_number(cost, "cache_read", at);
+                            model.cache_write_cost = json_number(cost, "cache_write", at);
                         }
-                        if (model_data.contains("thinking") &&
-                            model_data["thinking"].is_object()) {
+                        if (json_object_at(model_data, "thinking", where)) {
                             const auto& thinking = model_data["thinking"];
-                            model.thinking_type = json_string(thinking, "type");
-                            model.thinking_display = json_string(thinking, "display");
-                            if (thinking.contains("allow_off") &&
-                                thinking["allow_off"].is_boolean()) {
-                                model.thinking_allow_off =
-                                    thinking["allow_off"].get<bool>();
-                            }
+                            const std::string at = where + ".thinking";
+                            model.thinking_type = json_string(thinking, "type", at);
+                            model.thinking_display = json_string(thinking, "display", at);
+                            model.thinking_allow_off = json_bool(thinking, "allow_off", true, at);
                         }
-                        model.tool_call = model_data.value("tool_call", false);
-                        model.vision = model_data.value("vision", false);
+                        // Sampling: "temperature" (number, or false = send
+                        // none) and "top_p", at the model or under "options".
+                        auto read_sampling = [&](const nlohmann::ordered_json& obj,
+                                                 const std::string& at) {
+                            if (const auto it = obj.find("temperature");
+                                it != obj.end() && !it->is_null()) {
+                                if (it->is_boolean()) {
+                                    model.temperature_supported = it->get<bool>();
+                                } else if (it->is_number()) {
+                                    model.temperature = it->get<double>();
+                                } else {
+                                    warn_mistyped(at, "temperature", "a number or false", *it);
+                                }
+                            }
+                            if (const auto it = obj.find("top_p");
+                                it != obj.end() && !it->is_null()) {
+                                if (it->is_number()) {
+                                    model.top_p = it->get<double>();
+                                } else {
+                                    warn_mistyped(at, "top_p", "a number", *it);
+                                }
+                            }
+                        };
+                        read_sampling(model_data, where);
+                        if (json_object_at(model_data, "options", where)) {
+                            read_sampling(model_data["options"], where + ".options");
+                        }
+                        model.tool_call = json_bool(model_data, "tool_call", false, where);
+                        model.vision = json_bool(model_data, "vision", false, where);
                         if (model_data.contains("protocol") &&
                             model_data["protocol"].is_string()) {
                             model.protocol = model_data["protocol"].get<std::string>();
@@ -646,9 +730,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
                                     }
                                 }
                                 model.reasoning_default =
-                                    reasoning.value("default", "");
+                                    json_string(reasoning, "default", where + ".reasoning");
                                 model.reasoning_field =
-                                    reasoning.value("field", "");
+                                    json_string(reasoning, "field", where + ".reasoning");
                             }
                         }
                         auto append_efforts = [&model](const ordered_json& value) {
@@ -687,12 +771,13 @@ std::vector<ProviderInfo> load_providers_from_config() {
                                 VariantInfo variant;
                                 variant.id = variant_id;
                                 if (spec.is_object()) {
-                                    variant.label = json_string(spec, "label");
-                                    variant.description = json_string(spec, "description");
-                                    variant.effort = json_string(spec, "effort");
-                                    variant.max_tokens = json_int(spec, "max_tokens");
-                                    variant.budget_tokens = json_int(spec, "budget_tokens");
-                                    variant.prompt = json_string(spec, "prompt");
+                                    const std::string at = where + ".variants." + variant_id;
+                                    variant.label = json_string(spec, "label", at);
+                                    variant.description = json_string(spec, "description", at);
+                                    variant.effort = json_string(spec, "effort", at);
+                                    variant.max_tokens = json_int(spec, "max_tokens", at);
+                                    variant.budget_tokens = json_int(spec, "budget_tokens", at);
+                                    variant.prompt = json_string(spec, "prompt", at);
                                 }
                                 model.reasoning_efforts.push_back(variant_id);
                                 model.variants.push_back(std::move(variant));
@@ -719,11 +804,10 @@ std::vector<ProviderInfo> load_providers_from_config() {
                         }
                         if (model.reasoning_default.empty()) {
                             model.reasoning_default =
-                                model_data.value("reasoning_default", "");
+                                json_string(model_data, "reasoning_default", where);
                         }
                         if (model.reasoning_default.empty()) {
-                            model.reasoning_default =
-                                model_data.value("variant", "");
+                            model.reasoning_default = json_string(model_data, "variant", where);
                         }
                         if (model.reasoning_field.empty() &&
                             model_data.contains("reasoning_field") &&
@@ -745,6 +829,8 @@ std::vector<ProviderInfo> load_providers_from_config() {
         }
     } catch (const std::exception& e) {
         LOG_ERROR("Config parse error: {}", e.what());
+        std::lock_guard<std::mutex> lock(g_config_warnings_mutex);
+        g_config_warnings.push_back(std::string("parse error: ") + e.what());
     }
     return loaded;
 }
@@ -779,7 +865,9 @@ bool is_provider_authenticated(const ProviderInfo& provider) {
 bool is_model_working(const ProviderInfo& provider, const ModelInfo& model) {
     if (model.id.empty()) return false;
     if (provider.id == "opencode" && zen_id_is_retired(model.id)) return false;
-    if (!model.tool_call && model.context_window > 0) return false;
+    // Delegation runs a tool loop: a model configured without tool calls
+    // ("tool_call": false or absent) cannot serve it.
+    if (!model.tool_call) return false;
     return true;
 }
 
