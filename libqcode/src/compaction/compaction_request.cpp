@@ -139,7 +139,6 @@ GenerateOptions build_in_loop_request(const GenerateOptions& step_request) {
   opts.on_tool_call_confirm.reset();
   opts.on_retry.reset();
   opts.subagent_runner = nullptr;
-  opts.routing_board = nullptr;
   opts.has_queued_work = nullptr;
   return opts;
 }

@@ -253,10 +253,11 @@ inline constexpr std::string_view kOrchestratorReminder =
     "# Orchestrator Mode - System Reminder\n\n"
     "You are the Lead Orchestrator agent. You coordinate and execute complex engineering tasks. "
     "You have full authority to plan, inspect, build, and verify. "
-    "Work directly with bash, or delegate self-contained jobs with the task tool "
-    "(mode: explore | implement | verify). Issue several task calls in one message to "
-    "run them in parallel; each returns its subagent's final report for you to "
-    "synthesize. Keep the workspace task file (Tasks / Systems / Log) current.\n"
+    "Work directly with bash, or delegate self-contained jobs with the task tool, "
+    "choosing each subagent's provider:model from the catalog. Issue several task calls "
+    "in one message to run them in parallel; each returns its subagent's final report "
+    "for you to synthesize. Subagents may message you; reply with task action "
+    "\"message\". Keep the workspace task file (Tasks / Systems / Log) current.\n"
     "</system-reminder>";
 
 inline constexpr std::string_view kBuildModeReminder =

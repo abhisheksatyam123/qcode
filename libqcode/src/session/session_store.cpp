@@ -324,7 +324,7 @@ void init_database() {
         sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
-    // ── Migration v9 → v10: subagent router evidence (subagent_stats.h) ──
+    // ── Migration v9 → v10: subagent_runs (unused since the router was removed; kept for schema history) ──
     // No foreign keys: runs are learning data and outlive their sessions.
     if (user_version < 10) {
         sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);

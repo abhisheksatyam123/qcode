@@ -27,21 +27,13 @@ std::vector<ToolDescriptor> ToolCatalog::descriptors() {
     },
     {
       "task",
-      "Delegate a self-contained job to a subagent and wait for its report. "
-      "Several task calls in one message run in parallel. background: true keeps "
-      "working while it runs (report arrives as a message); task_id + prompt "
-      "resumes a subagent with its history.",
-      R"(task = { prompt: string, description?: string,
-         mode?: "explore"|"implement"|"verify",
-         difficulty?: "easy"|"medium"|"hard", model?: "provider:model",
-         background?: boolean, task_id?: string }
-     | { action: "status"|"wait"|"kill", task_id?: string, timeout_s?: number })",
-      true
-    },
-    {
-      "rate_task",
-      "Rate finished task reports 1-5 so future tasks go to the free models that do well.",
-      R"(rate_task = { ratings: { task_id: string, score: 1..5, note?: string }[] })",
+      "Work with subagents: start or resume one (run), list the team (status), "
+      "block for a report or message (wait), stop one (kill), talk to one or to "
+      "the lead (message).",
+      R"(task = { prompt: string, description?: string, model?: "provider:model",
+         background?: boolean, task_id?: string }                  // run (default)
+     | { action: "status"|"wait"|"kill", task_id?: string, timeout_s?: number }
+     | { action: "message", task_id: string | "lead", prompt: string })",
       true
     },
     {
@@ -61,13 +53,13 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. You have three sets of tools available:\n\n"
           "1. **Bash tool** - works as a Swiss Army knife; it can execute anything in the shell and read the output. Prefer relative paths under the session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n"
-          "2. **Task tools** - `task` delegates a job to a subagent; `rate_task` scores its report 1-5 so future jobs go to models that do well.\n"
+          "2. **Task tool** - `task` starts subagents on any catalog model, lists the team, waits for reports and messages, stops tasks, and sends messages to subagents or the lead.\n"
           "3. **Image tool** - loads a local png/jpeg/webp/gif image so you can see it.\n\n";
   } else if (cfg.enable_task) {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. You have two sets of tools available:\n\n"
           "1. **Bash tool** - works as a Swiss Army knife; it can execute anything in the shell and read the output. Prefer relative paths under the session workspace (on Android: app sandbox `$HOME`; do not use `/tmp` or `/` — use `$HOME/tmp` / `$TMPDIR` for temporary files).\n"
-          "2. **Task tools** - `task` delegates a job to a subagent; `rate_task` scores its report 1-5 so future jobs go to models that do well.\n\n";
+          "2. **Task tool** - `task` starts subagents on any catalog model, lists the team, waits for reports and messages, stops tasks, and sends messages to subagents or the lead.\n\n";
   } else if (cfg.enable_image) {
     ss << "The main purpose of this section is to define the purpose of tool calls "
           "and how to use them. You have two sets of tools available:\n\n"
@@ -87,7 +79,7 @@ std::string ToolCatalog::build_tool_section(const ToolConfig& cfg) {
 
   for (const auto& d : descriptors()) {
     if ((d.name == "bash" && !cfg.enable_bash) ||
-        ((d.name == "task" || d.name == "rate_task") && !cfg.enable_task) ||
+        (d.name == "task" && !cfg.enable_task) ||
         (d.name == "image" && !cfg.enable_image))
       continue;
     ss << d.schema_text << "\n\n";
@@ -120,10 +112,8 @@ qcode::ToolSet ToolCatalog::build_definitions(const ToolConfig& cfg) {
   qcode::ToolSet tools;
   if (cfg.enable_bash)
     tools["bash"] = qcode::BashTool::definition();
-  if (cfg.enable_task) {
+  if (cfg.enable_task)
     tools["task"] = qcode::TaskTool::definition();
-    tools["rate_task"] = qcode::TaskTool::rate_definition();
-  }
   if (cfg.enable_image)
     tools["image"] = qcode::ImageTool::definition();
   return tools;

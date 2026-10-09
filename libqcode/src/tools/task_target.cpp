@@ -168,156 +168,23 @@ bool is_inherit_model_id(std::string_view id) {
   return id == "inherit" || id == "parent" || id == "default";
 }
 
-bool matches_orchestrator(
-    std::string_view prov, std::string_view mod,
-    std::string_view orch_prov, std::string_view orch_mod) {
-  if (orch_prov.empty() || orch_mod.empty()) return false;
-  auto clean = [](std::string s) {
-    s = to_lower(s);
-    s.erase(std::remove_if(s.begin(), s.end(), [](char c) {
-      return c == '-' || c == '_' || c == ' ' || c == '.';
-    }), s.end());
-    return s;
-  };
-  const bool prov_match = (clean(std::string(prov)) == clean(std::string(orch_prov)));
-  const bool mod_match = (to_lower(std::string(mod)) == to_lower(std::string(orch_mod))) ||
-                         (clean(std::string(mod)) == clean(std::string(orch_mod)));
-  return prov_match && mod_match;
-}
-
-SubagentTarget pick_alternate_working_target(
-    const std::vector<ProviderInfo>& providers,
-    std::string_view orchestrator_provider_id,
-    std::string_view orchestrator_model_id,
-    bool allow_cursor) {
-  struct Cand {
-    const ProviderInfo* p = nullptr;
-    const ModelInfo* m = nullptr;
-  };
-  std::vector<Cand> candidates;
-
-  for (const auto& pr : providers) {
-    if (!is_provider_authenticated(pr)) continue;
-    const bool is_cursor = (pr.id == "cursor" || pr.id.find("cursor") != std::string::npos);
-    if (is_cursor && !allow_cursor) continue;
-
-    for (const auto& mo : pr.models) {
-      if (mo.id.empty()) continue;
-      if (!is_model_working(pr, mo)) continue;
-      if (matches_orchestrator(pr.id, mo.id, orchestrator_provider_id, orchestrator_model_id)) {
-        continue;
-      }
-      candidates.push_back({&pr, &mo});
-    }
-  }
-
-  if (candidates.empty()) {
-    // If only 1 model configured in entire catalog, return whatever is available
-    for (const auto& pr : providers) {
-      for (const auto& mo : pr.models) {
-        if (!mo.id.empty()) {
-          SubagentTarget t;
-          t.provider = &pr;
-          t.provider_id = pr.id;
-          t.model_info = &mo;
-          t.model_id = mo.id;
-          return t;
-        }
-      }
-    }
-    SubagentTarget err;
-    err.error = "No available AI provider configured for subagent";
-    return err;
-  }
-
-  // Preference ranking:
-  // 1. Different provider than orchestrator (+100 penalty for same provider)
-  // 2. High-speed reasoning / tool providers (antigravity > openrouter > opencode > cursor)
-  auto prio = [&](const Cand& c) {
-    int p_val = 0;
-    if (to_lower(c.p->id) == to_lower(std::string(orchestrator_provider_id))) {
-      p_val += 100;
-    }
-    if (c.p->id.find("antigravity") != std::string::npos) p_val += 1;
-    else if (c.p->id == "openrouter") p_val += 2;
-    else if (c.p->id == "opencode") p_val += 3;
-    else p_val += 4;
-    return p_val;
-  };
-
-  std::stable_sort(candidates.begin(), candidates.end(),
-                   [&](const Cand& a, const Cand& b) { return prio(a) < prio(b); });
-
-  const auto& best = candidates.front();
-  SubagentTarget out;
-  out.provider = best.p;
-  out.provider_id = best.p->id;
-  out.model_info = best.m;
-  out.model_id = best.m->id;
-  return out;
-}
-
 SubagentTarget resolve_subagent_target(
-    const nlohmann::json& args,
+    std::string_view spec,
     const std::vector<ProviderInfo>& providers,
     std::string_view default_provider_id,
     std::string_view default_model_id) {
+  std::string raw(spec);
+  if (raw.empty() || is_inherit_model_id(raw)) {
+    raw = std::string(default_provider_id) + ":" + std::string(default_model_id);
+  }
   std::vector<Spec> specs;
-  const std::string provider_arg = args.value("provider", "");
-  std::string model_arg;
-  if (args.contains("model") && args["model"].is_string()) {
-    model_arg = args["model"].get<std::string>();
+  parse_combo(raw, providers, specs);
+  if (specs.empty()) {
+    SubagentTarget out;
+    out.error = "No model given and no default model to inherit.";
+    return out;
   }
-
-  if (!provider_arg.empty()) {
-    Spec spec;
-    spec.provider = provider_arg;
-    spec.raw = provider_arg;
-    if (!model_arg.empty() && !is_inherit_model_id(model_arg)) {
-      const auto colon = model_arg.find(':');
-      if (colon != std::string::npos) {
-        const std::string prefix = model_arg.substr(0, colon);
-        if (prefix == provider_arg ||
-            find_provider(providers, prefix) == find_provider(providers, provider_arg)) {
-          spec.model = model_arg.substr(colon + 1);
-        } else {
-          spec.model = model_arg;
-        }
-      } else {
-        spec.model = model_arg;
-      }
-      spec.raw += ":" + spec.model;
-    }
-    specs.push_back(std::move(spec));
-  } else if (!model_arg.empty()) {
-    parse_combo(model_arg, providers, specs);
-  }
-
-  if (args.contains("models") && args["models"].is_array()) {
-    for (const auto& m : args["models"]) {
-      if (m.is_string()) parse_combo(m.get<std::string>(), providers, specs);
-    }
-  }
-
-  for (const auto& spec : specs) {
-    SubagentTarget t = bind_spec(spec, providers, default_provider_id, default_model_id);
-    if (!t.error.empty() && specs.size() == 1) return t;
-    if (!t.error.empty() || !t.provider) continue;
-
-    // Check if target matches the orchestrator
-    if (matches_orchestrator(t.provider_id, t.model_id, default_provider_id, default_model_id)) {
-      if (specs.size() > 1) {
-        continue;  // Try remaining fallback specs first
-      }
-      // If caller specifically requested the orchestrator model, steer to alternate working model
-      return pick_alternate_working_target(providers, default_provider_id, default_model_id);
-    }
-    return t;
-  }
-
-  // No specific alternate model resolved from specs (or all matched orchestrator / inherit / empty).
-  // Automatically select the best alternate working model different from the orchestrator.
-  return pick_alternate_working_target(providers, default_provider_id, default_model_id);
+  return bind_spec(specs.front(), providers, default_provider_id, default_model_id);
 }
 
 }  // namespace qcode

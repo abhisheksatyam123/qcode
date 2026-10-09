@@ -21,35 +21,19 @@ TEST(ToolCatalogTest, DescriptorsIncludeBashAndImage) {
 }
 
 TEST(ToolCatalogTest, OrchestratorAndSubagentToolSets) {
-    // Orchestrator without vision: bash, task and rate_task
-    auto orch_tools = ToolCatalog::build_definitions(ToolConfig::orchestrator(false));
-    EXPECT_EQ(orch_tools.size(), 3u);
-    EXPECT_TRUE(orch_tools.count("bash"));
-    EXPECT_TRUE(orch_tools.count("task"));
-    EXPECT_TRUE(orch_tools.count("rate_task"));
-    EXPECT_FALSE(orch_tools.count("image"));
-
-    // Orchestrator with vision adds image
-    auto orch_vis_tools = ToolCatalog::build_definitions(ToolConfig::orchestrator(true));
-    EXPECT_EQ(orch_vis_tools.size(), 4u);
-    EXPECT_TRUE(orch_vis_tools.count("bash"));
-    EXPECT_TRUE(orch_vis_tools.count("task"));
-    EXPECT_TRUE(orch_vis_tools.count("image"));
-
-    // Subagent without vision has exactly 1 tool: bash (it cannot delegate or rate)
-    auto sub_tools = ToolCatalog::build_definitions(ToolConfig::subagent(false));
-    EXPECT_EQ(sub_tools.size(), 1u);
-    EXPECT_TRUE(sub_tools.count("bash"));
-    EXPECT_FALSE(sub_tools.count("task"));
-    EXPECT_FALSE(sub_tools.count("rate_task"));
-    EXPECT_FALSE(sub_tools.count("image"));
-
-    // Subagent with vision has 2 tools: bash and image
-    auto sub_vis_tools = ToolCatalog::build_definitions(ToolConfig::subagent(true));
-    EXPECT_EQ(sub_vis_tools.size(), 2u);
-    EXPECT_TRUE(sub_vis_tools.count("bash"));
-    EXPECT_FALSE(sub_vis_tools.count("task"));
-    EXPECT_TRUE(sub_vis_tools.count("image"));
+    // Both agents get bash and task; vision adds image.
+    for (const auto& cfg : {ToolConfig::orchestrator(false), ToolConfig::subagent(false)}) {
+        auto tools = ToolCatalog::build_definitions(cfg);
+        EXPECT_EQ(tools.size(), 2u);
+        EXPECT_TRUE(tools.count("bash"));
+        EXPECT_TRUE(tools.count("task"));
+        EXPECT_FALSE(tools.count("image"));
+    }
+    for (const auto& cfg : {ToolConfig::orchestrator(true), ToolConfig::subagent(true)}) {
+        auto tools = ToolCatalog::build_definitions(cfg);
+        EXPECT_EQ(tools.size(), 3u);
+        EXPECT_TRUE(tools.count("image"));
+    }
 }
 
 TEST(ToolCatalogTest, BuildDefinitionsHonorsConfig) {

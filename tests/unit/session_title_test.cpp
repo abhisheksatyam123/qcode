@@ -27,7 +27,7 @@ TEST(SessionTitleTest, CleansModelOutputToOneShortLine) {
   EXPECT_NE(longer.back(), ' ');  // cut at a word boundary
 }
 
-TEST(SessionTitleTest, CandidatesPreferSmallModelThenFreeFastOnes) {
+TEST(SessionTitleTest, CandidatesAreSmallModelThenTheSessionModel) {
   ProviderInfo zen;
   zen.id = "opencode";
   zen.name = "OpenCode Zen";
@@ -48,15 +48,18 @@ TEST(SessionTitleTest, CandidatesPreferSmallModelThenFreeFastOnes) {
   paid.models = {haiku};
   const std::vector<ProviderInfo> providers{paid, zen};
 
-  auto c = session_title::candidates(providers, "");
-  ASSERT_FALSE(c.empty());
-  EXPECT_EQ(c[0].second->id, "ling-3.1-flash-free");  // free + fast, Zen first
-  for (const auto& [p, m] : c) EXPECT_NE(p->id, "anthropic");  // paid only when named
+  // No code picks models: nothing configured and no session model, no title.
+  EXPECT_TRUE(session_title::candidates(providers, "").empty());
 
-  c = session_title::candidates(providers, "anthropic/claude-haiku-5-5");
-  ASSERT_FALSE(c.empty());
+  auto c = session_title::candidates(providers, "anthropic/claude-haiku-5-5",
+                                     "opencode:nemotron-3-ultra-free");
+  ASSERT_EQ(c.size(), 2u);
   EXPECT_EQ(c[0].second->id, "claude-haiku-5-5");
-  EXPECT_LE(c.size(), 3u);
+  EXPECT_EQ(c[1].second->id, "nemotron-3-ultra-free");
+
+  c = session_title::candidates(providers, "", "opencode:ling-3.1-flash-free");
+  ASSERT_EQ(c.size(), 1u);
+  EXPECT_EQ(c[0].second->id, "ling-3.1-flash-free");
 }
 
 }  // namespace

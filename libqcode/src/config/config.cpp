@@ -1,5 +1,4 @@
 #include <qcode/config/config.h>
-#include <qcode/tools/subagent_router.h>
 #include <qcode/core/ssl_config.h>
 #include <qcode/transform/provider_transform.h>
 #include "providers/anthropic/anthropic_oauth.h"
@@ -904,56 +903,38 @@ std::string format_provider_catalog_for_prompt(
     const auto& catalog = working_providers.empty() ? providers : working_providers;
     if (catalog.empty()) return "";
 
-    std::ostringstream ss;
-    ss << "### Available Providers & Models (from opencode.json)\n\n";
-
-    const bool has_lead = !current_provider_id.empty() && !current_model_id.empty();
-    ss << "Subagents started with `task` run on a different model than yours ("
-       << (has_lead ? "`" + std::string(current_provider_id) + ":" + std::string(current_model_id) + "`"
-                    : std::string("the lead"))
-       << "). Omit `model` and the router picks a free model by learned success; "
-       << "[paid] models run only when you name one with "
-       << "`model: \"<provider>:<model_id>\"`:\n\n";
-
+    const bool has_self = !current_provider_id.empty() && !current_model_id.empty();
+    std::string out = "### Models for subagents (from opencode.json)\n\n";
+    out += "Pick the provider:model that fits each task (capability, speed, cost) and pass "
+           "it as `model` to `task`. Omit `model` to use your own";
+    if (has_self) {
+        out += " (`" + std::string(current_provider_id) + ":" + std::string(current_model_id) + "`)";
+    }
+    out += ". Prices are USD per 1M input/output tokens.\n\n";
+    char price[64];
     for (const auto& provider : catalog) {
-        if (provider.models.empty()) continue;
-        std::vector<const ModelInfo*> available_models;
+        std::string lines;
         for (const auto& model : provider.models) {
             if (model.id.empty()) continue;
-            available_models.push_back(&model);
-        }
-        if (available_models.empty()) continue;
-
-        ss << "- **" << provider.id << "** (" << (provider.name.empty() ? provider.id : provider.name) << "):\n";
-        for (const auto* model : available_models) {
-            const bool is_lead = has_lead &&
+            lines += "  - `" + model.id + "`";
+            if (!model.name.empty() && model.name != model.id) lines += " (" + model.name + ")";
+            if (model.reasoning) lines += " [reasoning]";
+            if (model.vision) lines += " [vision]";
+            if (model.input_cost > 0 || model.output_cost > 0) {
+                std::snprintf(price, sizeof(price), " $%g/$%g", model.input_cost, model.output_cost);
+                lines += price;
+            }
+            const bool is_self = has_self &&
                 (provider.id == current_provider_id || provider.name == current_provider_id) &&
-                (model->id == current_model_id || model->name == current_model_id);
-
-            ss << "  - `" << model->id << "`";
-            if (!model->name.empty() && model->name != model->id) {
-                ss << " (" << model->name << ")";
-            }
-            if (model->reasoning) {
-                ss << " [reasoning]";
-            }
-            if (routing::is_paid(provider, *model)) {
-                ss << " [paid]";
-            }
-            if (is_lead) {
-                ss << " [you]";
-            }
-            ss << "\n";
+                (model.id == current_model_id || model.name == current_model_id);
+            if (is_self) lines += " [you]";
+            lines += "\n";
         }
+        if (lines.empty()) continue;
+        out += "- **" + provider.id + "** (" + (provider.name.empty() ? provider.id : provider.name) +
+               "):\n" + lines;
     }
-
-    ss << "\nTo run subagents in parallel, issue several `task` calls in one message; "
-       << "each call returns its subagent's final report. Omit `model` and the router "
-       << "picks a free model from learned success; `rate_task` with no ratings shows "
-       << "that board.\n";
-    // The board itself is not included here: it changes after every run, and
-    // this text heads the provider's prompt cache.
-    return ss.str();
+    return out;
 }
 
 std::string format_provider_catalog_for_error(

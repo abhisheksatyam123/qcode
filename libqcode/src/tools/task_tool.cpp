@@ -1,22 +1,19 @@
 #include <qcode/tools/task_tool.h>
 
 #include <qcode/session/session_store.h>
-#include <qcode/session/subagent_stats.h>
-#include <qcode/tools/subagent_router.h>
 #include <qcode/tools/task_target.h>
 
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
-#include <thread>
 #include <cctype>
 #include <chrono>
-#include <iterator>
+#include <condition_variable>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -24,11 +21,7 @@ namespace qcode {
 
 namespace {
 
-constexpr const char* kModes[] = {"explore", "implement", "verify"};
-
-bool is_mode(const std::string& s) {
-  return std::find(std::begin(kModes), std::end(kModes), s) != std::end(kModes);
-}
+constexpr const char* kLead = "lead";
 
 std::string new_child_session_id() {
   const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -50,101 +43,112 @@ std::string error_text(const JsonValue& error) {
   return error.dump();
 }
 
-// Subagents that are running right now, for the UI. An entry lives exactly as
-// long as the blocking task call that owns it.
+// The orchestrator session of the team `session_id` belongs to.
+std::string lead_of(const std::string& session_id) {
+  if (!session_id.empty() && qcode::session::is_child_session(session_id)) {
+    const std::string parent = qcode::session::get_parent_session_id(session_id);
+    if (!parent.empty()) return parent;
+  }
+  return session_id;
+}
+
+bool in_team(const std::string& lead, const std::string& id) {
+  return !id.empty() && id != lead && qcode::session::is_child_session(id) &&
+         qcode::session::get_parent_session_id(id) == lead;
+}
+
+// A subagent that is running now; the entry lives exactly as long as its run.
 struct RunningTask {
-  std::string parent_session_id;
-  std::string description;
-  std::string mode;
+  std::string lead_session_id;
+  std::string owner_session_id;  // who started it; a background report goes there
+  std::string title;
   std::string model;
-  // The parent turn's abort flag: a subagent is part of that turn.
+  // Background: its own flag (only kill or shutdown stop it). Blocking: the
+  // starter's turn flag (the subagent is part of that turn).
   std::shared_ptr<std::atomic<bool>> abort_flag;
+  bool background = false;
+  std::chrono::steady_clock::time_point started;
 };
 
-class RunningTasks {
+struct InboxItem {
+  std::string task_id;  // set for a background report (delivered at most once)
+  std::string text;
+};
+
+struct Report {
+  std::string text;
+  bool delivered = false;
+};
+
+std::string report_text(const std::string& id, const std::string& title, const JsonValue& r) {
+  if (r.contains("error")) {
+    return "[Background task " + id + " (" + title + ") failed]\nError: " +
+           error_text(r["error"]);
+  }
+  return "[Background task " + id + " (" + title + ") finished]\n" +
+         r.value("output", std::string("(no output)"));
+}
+
+// Running subagents, background reports and inboxes. Leaked on purpose:
+// detached background workers may outlive static destruction.
+class Team {
  public:
-  static RunningTasks& instance() {
-    static RunningTasks tasks;
-    return tasks;
+  static Team& instance() {
+    static auto* team = new Team();
+    return *team;
   }
 
-  void add(const std::string& session_id, RunningTask task) {
+  void add(const std::string& id, RunningTask task) {
     std::lock_guard<std::mutex> lock(mutex_);
-    tasks_[session_id] = std::move(task);
+    task.started = std::chrono::steady_clock::now();
+    running_[id] = std::move(task);
   }
 
-  void remove(const std::string& session_id) {
+  void remove(const std::string& id) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      running_.erase(id);
+    }
+    cv_.notify_all();
+  }
+
+  std::optional<RunningTask> running(const std::string& id) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    tasks_.erase(session_id);
+    auto it = running_.find(id);
+    if (it == running_.end()) return std::nullopt;
+    return it->second;
   }
 
-  bool contains(const std::string& session_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return tasks_.contains(session_id);
-  }
-
-  std::vector<std::pair<std::string, RunningTask>> of_parent(const std::string& parent) const {
+  // Running subagents of `lead` (all when empty).
+  std::vector<std::pair<std::string, RunningTask>> running_of(const std::string& lead) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::pair<std::string, RunningTask>> out;
-    for (const auto& [sid, task] : tasks_) {
-      if (parent.empty() || task.parent_session_id == parent) out.emplace_back(sid, task);
+    for (const auto& [id, t] : running_) {
+      if (lead.empty() || t.lead_session_id == lead) out.emplace_back(id, t);
     }
     return out;
   }
 
   void abort_related(const std::string& session_id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& [sid, task] : tasks_) {
-      if ((sid == session_id || task.parent_session_id == session_id) && task.abort_flag) {
-        task.abort_flag->store(true);
+    for (const auto& [id, t] : running_) {
+      if ((id == session_id || t.lead_session_id == session_id) && t.abort_flag) {
+        t.abort_flag->store(true);
       }
     }
   }
 
- private:
-  mutable std::mutex mutex_;
-  std::map<std::string, RunningTask> tasks_;
-};
-
-// Subagents started with background: true. Each runs on its own thread with
-// its own abort flag (the lead's turn ending or Esc does not stop it), and
-// its result waits here until the lead reads it (notice, status or wait).
-struct BackgroundTask {
-  std::string parent_session_id;
-  std::string title;
-  std::shared_ptr<std::atomic<bool>> abort_flag;
-  std::chrono::steady_clock::time_point started;
-  bool finished = false;
-  bool delivered = false;
-  JsonValue result;
-};
-
-std::string notice_text(const std::string& id, const BackgroundTask& task) {
-  const JsonValue& r = task.result;
-  if (r.contains("error")) {
-    return "[Background task " + id + " (" + task.title + ") failed]\nError: " +
-           error_text(r["error"]);
-  }
-  return "[Background task " + id + " (" + task.title + ") finished]\n" +
-         r.value("output", std::string("(no output)"));
-}
-
-class BackgroundTasks {
- public:
-  // Leaked on purpose: detached workers may outlive static destruction.
-  static BackgroundTasks& instance() {
-    static auto* tasks = new BackgroundTasks();
-    return *tasks;
-  }
-
-  void start(const std::string& id, BackgroundTask task, std::function<JsonValue()> job) {
+  // Runs `job` on its own thread; its report goes to the starter's inbox, or
+  // to the lead's when the starter is a subagent that is no longer running.
+  void start_background(const std::string& id, RunningTask task,
+                        std::function<JsonValue()> job) {
+    task.background = true;
+    add(id, task);
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      task.started = std::chrono::steady_clock::now();
-      tasks_[id] = std::move(task);
-      ++running_;
+      ++workers_;
     }
-    std::thread([this, id, job = std::move(job)] {
+    std::thread([this, id, task, job = std::move(job)] {
       JsonValue result;
       try {
         result = job();
@@ -156,10 +160,14 @@ class BackgroundTasks {
       std::function<void()> listener;
       {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto& t = tasks_[id];
-        t.finished = true;
-        t.result = std::move(result);
-        --running_;
+        running_.erase(id);
+        const bool owner_alive = task.owner_session_id == task.lead_session_id ||
+                                 running_.contains(task.owner_session_id);
+        const std::string to = owner_alive ? task.owner_session_id : task.lead_session_id;
+        const std::string text = report_text(id, task.title, result);
+        reports_[id] = {text, false};
+        inbox_[to].push_back({id, text});
+        --workers_;
         listener = listener_;
       }
       cv_.notify_all();
@@ -167,64 +175,55 @@ class BackgroundTasks {
     }).detach();
   }
 
-  std::optional<BackgroundTask> get(const std::string& id) {
+  // A finished background task's report (marked delivered), if there is one.
+  std::optional<std::string> take_report(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = tasks_.find(id);
-    if (it == tasks_.end()) return std::nullopt;
-    return it->second;
-  }
-
-  // The finished task's report, marked delivered.
-  std::optional<std::string> take_result(const std::string& id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = tasks_.find(id);
-    if (it == tasks_.end() || !it->second.finished) return std::nullopt;
+    auto it = reports_.find(id);
+    if (it == reports_.end()) return std::nullopt;
     it->second.delivered = true;
-    return notice_text(id, it->second);
+    return it->second.text;
   }
 
-  std::vector<std::string> running_of(const std::string& parent) {
+  void post(const std::string& to, std::string text) {
+    std::function<void()> listener;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      inbox_[to].push_back({"", std::move(text)});
+      listener = listener_;
+    }
+    cv_.notify_all();
+    if (listener) listener();
+  }
+
+  std::vector<std::string> take(const std::string& session_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> out;
-    for (const auto& [id, t] : tasks_) {
-      if (!t.finished && t.parent_session_id == parent) out.push_back(id);
+    auto it = inbox_.find(session_id);
+    if (it == inbox_.end()) return out;
+    for (auto& item : it->second) {
+      if (stale(item)) continue;
+      if (!item.task_id.empty()) reports_[item.task_id].delivered = true;
+      out.push_back(std::move(item.text));
     }
+    inbox_.erase(it);
     return out;
   }
 
-  std::vector<std::string> take_notices(const std::string& parent) {
+  bool has(const std::string& session_id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<std::string> out;
-    for (auto& [id, t] : tasks_) {
-      if (t.finished && !t.delivered && t.parent_session_id == parent) {
-        t.delivered = true;
-        out.push_back(notice_text(id, t));
-      }
-    }
-    return out;
+    return has_locked(session_id);
   }
 
-  bool has_notices(const std::string& parent) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& [id, t] : tasks_) {
-      if (t.finished && !t.delivered && t.parent_session_id == parent) return true;
-    }
-    return false;
-  }
-
-  // Wait until every id finished, `timeout` passed or `abort` is set.
-  void wait(const std::vector<std::string>& ids, std::chrono::milliseconds timeout,
-            const std::shared_ptr<std::atomic<bool>>& abort) {
+  // Until `id` (when set) stops running, something lands in `session_id`'s
+  // inbox, `timeout` passes or `abort` is set.
+  void wait(const std::string& session_id, const std::string& id,
+            std::chrono::milliseconds timeout, const std::shared_ptr<std::atomic<bool>>& abort) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     std::unique_lock<std::mutex> lock(mutex_);
-    auto done = [&] {
-      for (const auto& id : ids) {
-        auto it = tasks_.find(id);
-        if (it != tasks_.end() && !it->second.finished) return false;
-      }
-      return true;
+    auto ready = [&] {
+      return has_locked(session_id) || (!id.empty() && !running_.contains(id));
     };
-    while (!done() && !(abort && abort->load()) &&
+    while (!ready() && !(abort && abort->load()) &&
            std::chrono::steady_clock::now() < deadline) {
       cv_.wait_for(lock, std::chrono::milliseconds(200));
     }
@@ -232,9 +231,9 @@ class BackgroundTasks {
 
   bool kill(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = tasks_.find(id);
-    if (it == tasks_.end() || it->second.finished) return false;
-    if (it->second.abort_flag) it->second.abort_flag->store(true);
+    auto it = running_.find(id);
+    if (it == running_.end() || !it->second.background || !it->second.abort_flag) return false;
+    it->second.abort_flag->store(true);
     return true;
   }
 
@@ -246,31 +245,70 @@ class BackgroundTasks {
   void shutdown(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(mutex_);
     listener_ = nullptr;
-    for (auto& [id, t] : tasks_) {
-      if (!t.finished && t.abort_flag) t.abort_flag->store(true);
+    for (auto& [id, t] : running_) {
+      if (t.background && t.abort_flag) t.abort_flag->store(true);
     }
-    cv_.wait_for(lock, timeout, [this] { return running_ == 0; });
+    cv_.wait_for(lock, timeout, [this] { return workers_ == 0; });
   }
 
  private:
-  std::mutex mutex_;
+  bool stale(const InboxItem& item) const {
+    if (item.task_id.empty()) return false;
+    auto it = reports_.find(item.task_id);
+    return it != reports_.end() && it->second.delivered;
+  }
+
+  bool has_locked(const std::string& session_id) const {
+    auto it = inbox_.find(session_id);
+    if (it == inbox_.end()) return false;
+    for (const auto& item : it->second) {
+      if (!stale(item)) return true;
+    }
+    return false;
+  }
+
+  mutable std::mutex mutex_;
   std::condition_variable cv_;
-  std::map<std::string, BackgroundTask> tasks_;
-  int running_ = 0;
+  std::map<std::string, RunningTask> running_;
+  std::map<std::string, Report> reports_;
+  std::map<std::string, std::vector<InboxItem>> inbox_;
+  int workers_ = 0;
   std::function<void()> listener_;
 };
 
-JsonValue task_item(const std::string& session_id, const std::string& parent_session_id,
-                    const std::string& description, const std::string& mode,
-                    const std::string& model, const std::string& status) {
+JsonValue task_item(const std::string& session_id, const std::string& lead,
+                    const std::string& title, const std::string& model,
+                    const std::string& status) {
   return {{"task_id", session_id},   {"sessionId", session_id},
-          {"parent_session_id", parent_session_id},
-          {"description", description}, {"agent", mode},
-          {"mode", mode},             {"model", model},
+          {"parent_session_id", lead}, {"description", title},
+          {"agent", "subagent"},     {"model", model},
           {"status", status}};
 }
 
-bool is_known_mode_token(const std::string& s) {
+std::string seconds_since(std::chrono::steady_clock::time_point t) {
+  return std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::steady_clock::now() - t)
+                            .count()) +
+         "s";
+}
+
+// What a finished (or interrupted) child session says, read from its rows.
+std::string stored_task_status(const std::string& id, std::string* output) {
+  auto last = qcode::session::load_last_session_message(id);
+  if (!last || last->first != "Assistant") return "interrupted";
+  if (output) *output = last->second;
+  return last->second.rfind("Error", 0) == 0 ? "error" : "done";
+}
+
+std::string session_model(const std::string& id) {
+  const auto [provider, model] = qcode::session::get_session_provider_model(id);
+  if (provider.empty() || model.empty()) return model;
+  return provider + ":" + model;
+}
+
+// ── Cursor Task argument repair ──
+
+bool is_cursor_agent_type(const std::string& s) {
   return s == "explore" || s == "implement" || s == "verify" || s == "general" ||
          s == "generalPurpose";
 }
@@ -325,7 +363,7 @@ std::string reassemble_numbered_prompt_shards(const JsonValue& args) {
   for (auto it = args.begin(); it != args.end(); ++it) {
     if (!is_numeric_json_key(it.key()) || !it.value().is_string()) continue;
     const std::string v = it.value().get<std::string>();
-    if (v.empty() || is_known_mode_token(v) || looks_like_model_id(v) ||
+    if (v.empty() || is_cursor_agent_type(v) || looks_like_model_id(v) ||
         looks_like_hex_id(v) || looks_like_tool_call_label(v)) {
       continue;
     }
@@ -365,46 +403,44 @@ std::string reassemble_numbered_prompt_shards(const JsonValue& args) {
   return best;
 }
 
+
 }  // namespace
 
-JsonValue TaskTool::list_tasks(const std::string& parent_session_id) {
+JsonValue TaskTool::list_tasks(const std::string& lead_session_id) {
   JsonValue tasks = JsonValue::array();
   std::string summary;
   std::vector<std::string> running_ids;
-  for (const auto& [sid, task] : RunningTasks::instance().of_parent(parent_session_id)) {
-    tasks.push_back(task_item(sid, task.parent_session_id, task.description, task.mode,
-                              task.model, "running"));
-    summary += "- " + sid + " [running] " + task.description + "\n";
-    running_ids.push_back(sid);
+  for (const auto& [id, t] : Team::instance().running_of(lead_session_id)) {
+    const std::string status = t.background ? "running (background)" : "running";
+    std::string model = session_model(id);  // set by the runner once it resolved the model
+    if (model.empty()) model = t.model;
+    tasks.push_back(task_item(id, t.lead_session_id, t.title, model, "running"));
+    summary += "- " + id + " [" + status + ", " + seconds_since(t.started) + "] " + model +
+               " · " + t.title + "\n";
+    running_ids.push_back(id);
   }
-
   // Finished subagents are durable child sessions; their last row says how
   // they ended (a run cut short by a crash has no final Assistant row).
-  if (!parent_session_id.empty()) {
-    for (const auto& s : qcode::session::list_sessions_full(true, parent_session_id)) {
+  if (!lead_session_id.empty()) {
+    for (const auto& s : qcode::session::list_sessions_full(true, lead_session_id)) {
       if (std::find(running_ids.begin(), running_ids.end(), s.id) != running_ids.end()) continue;
-      std::string status = "interrupted";
-      if (auto last = qcode::session::load_last_session_message(s.id);
-          last && last->first == "Assistant") {
-        status = last->second.rfind("Error", 0) == 0 ? "error" : "done";
-      }
+      const std::string status = stored_task_status(s.id, nullptr);
       const std::string model = !s.provider.empty() ? (s.provider + ":" + s.model) : s.model;
-      tasks.push_back(task_item(s.id, s.parent_session_id, s.title, "", model, status));
-      summary += "- " + s.id + " [" + status + "] " + s.title + "\n";
+      tasks.push_back(task_item(s.id, s.parent_session_id, s.title, model, status));
+      summary += "- " + s.id + " [" + status + "] " + model + " · " + s.title + "\n";
     }
   }
-
   return {{"title", "subagent tasks"},
           {"output", summary.empty() ? "No subagents." : summary},
           {"metadata", {{"tasks", tasks}}}};
 }
 
 bool TaskTool::is_session_running(const std::string& session_id) {
-  return !session_id.empty() && RunningTasks::instance().contains(session_id);
+  return !session_id.empty() && Team::instance().running(session_id).has_value();
 }
 
 void TaskTool::delete_session_tasks(const std::string& session_id) {
-  if (!session_id.empty()) RunningTasks::instance().abort_related(session_id);
+  if (!session_id.empty()) Team::instance().abort_related(session_id);
 }
 
 JsonValue TaskTool::normalize_spawn_args(JsonValue args) {
@@ -413,7 +449,7 @@ JsonValue TaskTool::normalize_spawn_args(JsonValue args) {
   const std::string assembled = reassemble_numbered_prompt_shards(args);
   if (!assembled.empty()) {
     const std::string prompt = args.value("prompt", "");
-    if (prompt.empty() || is_known_mode_token(prompt) ||
+    if (prompt.empty() || is_cursor_agent_type(prompt) ||
         assembled.size() > prompt.size()) {
       args["prompt"] = assembled;
     }
@@ -421,7 +457,7 @@ JsonValue TaskTool::normalize_spawn_args(JsonValue args) {
     const std::string f10 = args["10"].get<std::string>();
     const std::string prompt = args.value("prompt", "");
     if (looks_like_prompt_text(f10) &&
-        (prompt.empty() || is_known_mode_token(prompt))) {
+        (prompt.empty() || is_cursor_agent_type(prompt))) {
       args["prompt"] = f10;
     }
   }
@@ -433,7 +469,7 @@ JsonValue TaskTool::normalize_spawn_args(JsonValue args) {
 
   // Lead models mix Cursor Task fields with qcode spawn fields:
   // prompt=mode, subagent_type=model id, model=actual prompt.
-  if (is_known_mode_token(prompt_text) && looks_like_prompt_text(model)) {
+  if (is_cursor_agent_type(prompt_text) && looks_like_prompt_text(model)) {
     const std::string actual_prompt = model;
     if (mode.empty()) mode = prompt_text;
     if (looks_like_model_id(subagent_type)) {
@@ -452,36 +488,34 @@ JsonValue TaskTool::normalize_spawn_args(JsonValue args) {
   if (looks_like_model_id(subagent_type) &&
       (model.empty() || looks_like_prompt_text(model))) {
     if (looks_like_prompt_text(model) &&
-        (prompt_text.empty() || is_known_mode_token(prompt_text))) {
-      if (is_known_mode_token(prompt_text) && mode.empty()) mode = prompt_text;
+        (prompt_text.empty() || is_cursor_agent_type(prompt_text))) {
+      if (is_cursor_agent_type(prompt_text) && mode.empty()) mode = prompt_text;
       args["prompt"] = model;
       prompt_text = model;
     }
     args["model"] = subagent_type;
     model = subagent_type;
     subagent_type = !mode.empty() ? mode
-                    : (is_known_mode_token(prompt_text) ? prompt_text : "general");
+                    : (is_cursor_agent_type(prompt_text) ? prompt_text : "general");
     args["subagent_type"] = subagent_type;
   }
 
   if (looks_like_prompt_text(model) &&
-      (prompt_text.empty() || is_known_mode_token(prompt_text))) {
-    if (is_known_mode_token(prompt_text) && mode.empty()) mode = prompt_text;
+      (prompt_text.empty() || is_cursor_agent_type(prompt_text))) {
+    if (is_cursor_agent_type(prompt_text) && mode.empty()) mode = prompt_text;
     args["prompt"] = model;
     prompt_text = model;
     args.erase("model");
     model.clear();
   }
 
-  if (mode.empty() && is_mode(subagent_type)) mode = subagent_type;
-  if (!is_mode(mode)) mode = "explore";
 
   if (prompt_text.empty()) prompt_text = args.value("task", "");
   if (prompt_text.empty()) prompt_text = args.value("objective", "");
   if (prompt_text.empty()) prompt_text = args.value("description", "");
 
-  JsonValue out = {{"prompt", prompt_text}, {"mode", mode}};
-  for (const char* key : {"description", "difficulty"}) {
+  JsonValue out = {{"prompt", prompt_text}};
+  for (const char* key : {"description"}) {
     if (args.contains(key) && args[key].is_string()) out[key] = args[key];
   }
   model = args.value("model", "");
@@ -499,7 +533,7 @@ std::string TaskTool::session_id_from_result(const JsonValue& result) {
       const std::string s = result.get<std::string>();
       const auto pos = s.find("task_id: ");
       if (pos != std::string::npos) {
-        auto end = s.find_first_of(" \n\r\t", pos + 9);
+        auto end = s.find_first_of(" \n\r\t]", pos + 9);
         return s.substr(pos + 9, end == std::string::npos ? std::string::npos
                                                           : end - (pos + 9));
       }
@@ -521,7 +555,7 @@ std::string TaskTool::session_id_from_result(const JsonValue& result) {
     const std::string s = result["output"].get<std::string>();
     auto pos = s.find("task_id: ");
     if (pos != std::string::npos) {
-      auto end = s.find_first_of(" \n\r\t", pos + 9);
+      auto end = s.find_first_of(" \n\r\t]", pos + 9);
       sid = s.substr(pos + 9, end == std::string::npos ? std::string::npos
                                                        : end - (pos + 9));
       if (!sid.empty() && sid.rfind("bg_", 0) != 0) return sid;
@@ -534,370 +568,269 @@ namespace {
 
 // The task tool result for a finished subagent run; also saves its final row.
 JsonValue finish_task(const std::string& session_id, const std::string& title,
-                      const std::string& mode, const std::string& difficulty,
                       const std::string& model, JsonValue sub) {
   if (!sub.is_object()) sub = {{"error", "subagent failed"}};
   std::string used_model = sub.value("model", model);
   if (sub.contains("provider") && sub["provider"].is_string() && !used_model.empty()) {
     used_model = sub["provider"].get<std::string>() + ":" + used_model;
   }
-  JsonValue metadata = {{"sessionId", session_id},       {"task_id", session_id},
-                        {"mode", mode},                  {"difficulty", difficulty},
-                        {"model", used_model},           {"attempts", sub.value("attempts", 1)},
-                        {"route_reason", sub.value("route_reason", "")}};
+  JsonValue metadata = {{"sessionId", session_id}, {"task_id", session_id}, {"model", used_model}};
   if (sub.contains("error")) {
     const std::string err = error_text(sub["error"]);
     qcode::session::save_message(session_id, "Assistant", "Error: " + err);
     metadata["status"] = "error";
-    return {{"error", err}, {"metadata", metadata}};
+    return {{"error", err + "\n[task_id: " + session_id + "]"}, {"metadata", metadata}};
   }
   const std::string output = sub.value("output", "(subagent finished without output)");
   qcode::session::save_message(session_id, "Assistant", output);
   metadata["status"] = "done";
-  // One line so the lead knows what to rate / resume; it is read on a paid model.
   std::string footer = "\n\n[task_id: " + session_id;
   if (!used_model.empty()) footer += " · " + used_model;
-  footer += " · resume with task_id · rate with rate_task]";
+  footer += "]";
   return {{"title", "task: " + title}, {"output", output + footer}, {"metadata", metadata}};
 }
 
-// Earlier attempts of a task: the next attempt number, and the mode and
-// model of its last successful attempt (a resumed task keeps them).
-struct PriorRuns {
-  int attempts = 0;
-  std::string mode;
-  std::string model;  // provider:model
-};
-
-PriorRuns prior_runs(const std::string& parent, const std::string& task_id) {
-  PriorRuns out;
-  for (const auto& run : qcode::session::list_subagent_runs(parent, 1000)) {
-    if (run.task_id != task_id) continue;
-    out.attempts = std::max(out.attempts, run.attempt);
-    if (run.outcome == routing::Outcome::kSuccess && out.model.empty()) {
-      out.model = run.provider + ":" + run.model;  // newest first
-      out.mode = run.mode;
-    }
-    if (out.mode.empty()) out.mode = run.mode;
-  }
-  return out;
+JsonValue tool_text(const std::string& title, const std::string& text) {
+  return {{"title", title}, {"output", text}};
 }
 
-// What a finished (or interrupted) child session says, read from its rows:
-// for tasks that ran before a restart or were already delivered.
-std::string stored_task_status(const std::string& id, std::string* output) {
-  auto last = qcode::session::load_last_session_message(id);
-  if (!last || last->first != "Assistant") return "interrupted";
-  if (output) *output = last->second;
-  return last->second.rfind("Error", 0) == 0 ? "error" : "done";
-}
-
-JsonValue task_status(const JsonValue& args, const ToolExecutionContext& context) {
-  const std::string id = args.value("task_id", "");
-  if (id.empty()) {
-    JsonValue list = TaskTool::list_tasks(context.session_id);
-    const auto running = BackgroundTasks::instance().running_of(context.session_id);
-    if (!running.empty()) {
-      std::string extra = "\nBackground tasks still running:";
-      for (const auto& r : running) extra += " " + r;
-      list["output"] = list.value("output", std::string()) + extra;
-    }
+JsonValue task_status(const std::string& id, const ToolExecutionContext& context) {
+  const std::string lead = lead_of(context.session_id);
+  if (id.empty() || id == kLead) {
+    JsonValue list = TaskTool::list_tasks(lead);
+    std::string head = "Lead (orchestrator): " + (lead.empty() ? std::string("-") : lead);
+    if (context.session_id != lead) head += "\nYou: " + context.session_id;
+    list["output"] = head + "\n\n" + list.value("output", std::string());
     return list;
   }
-  if (auto report = BackgroundTasks::instance().take_result(id)) {
-    return {{"title", "task status"}, {"output", *report}};
+  if (auto t = Team::instance().running(id)) {
+    return tool_text("task status", "Task " + id + " (" + t->title + ") is running (" +
+                                        seconds_since(t->started) + ", " + t->model + ").");
   }
-  if (auto bg = BackgroundTasks::instance().get(id); bg && !bg->finished) {
-    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
-                          std::chrono::steady_clock::now() - bg->started).count();
-    return {{"title", "task status"},
-            {"output", "Task " + id + " (" + bg->title + ") is still running (" +
-                           std::to_string(secs) + "s). Use action \"wait\" to block for it."}};
-  }
-  if (TaskTool::is_session_running(id)) {
-    return {{"title", "task status"}, {"output", "Task " + id + " is running."}};
-  }
+  if (auto report = Team::instance().take_report(id)) return tool_text("task status", *report);
   if (qcode::session::get_session_title(id).empty()) {
     return {{"error", "Unknown task_id " + id}};
   }
   std::string output;
-  const std::string status = stored_task_status(id, &output);
-  std::string text = "Task " + id + ": " + status;
+  std::string text = "Task " + id + ": " + stored_task_status(id, &output);
   if (!output.empty()) text += "\n" + output;
-  return {{"title", "task status"}, {"output", text}};
+  return tool_text("task status", text);
 }
 
 JsonValue task_wait(const JsonValue& args, const ToolExecutionContext& context) {
-  auto& tasks = BackgroundTasks::instance();
-  std::vector<std::string> ids;
-  if (const std::string id = args.value("task_id", ""); !id.empty()) {
-    ids.push_back(id);
-  } else {
-    ids = tasks.running_of(context.session_id);
-  }
+  auto& team = Team::instance();
+  const std::string me = context.session_id;
+  const std::string lead = lead_of(me);
+  std::string id = args.value("task_id", "");
+  // Waiting "for the lead" (or for yourself) means waiting for a message.
+  if (id == kLead || id == me) id.clear();
   int timeout_s = 600;
   if (args.contains("timeout_s") && args["timeout_s"].is_number()) {
     timeout_s = std::clamp(args["timeout_s"].get<int>(), 1, 3600);
   }
-  tasks.wait(ids, std::chrono::seconds(timeout_s), context.abort_flag);
-  std::string text;
-  for (const auto& id : ids) {
-    if (!text.empty()) text += "\n\n";
-    if (auto report = tasks.take_result(id)) {
-      text += *report;
-    } else if (auto bg = tasks.get(id); bg && !bg->finished) {
-      text += "Task " + id + " (" + bg->title + ") is still running after " +
-              std::to_string(timeout_s) + "s.";
-    } else {
-      text += task_status({{"task_id", id}}, context).value("output", "Task " + id + ": unknown");
+  if (id.empty() && !team.has(me) && me == lead) {
+    bool any_running = false;
+    for (const auto& [tid, t] : team.running_of(lead)) {
+      if (t.background) any_running = true;
+    }
+    if (!any_running) {
+      return tool_text("task wait", "Nothing to wait for: no background task is running and "
+                                    "no message is waiting.");
     }
   }
-  // Reports of other finished background tasks come along too.
-  for (auto& notice : tasks.take_notices(context.session_id)) {
-    text += (text.empty() ? "" : "\n\n") + notice;
+  team.wait(me, id, std::chrono::seconds(timeout_s), context.abort_flag);
+  std::string text;
+  if (!id.empty()) {
+    if (auto report = team.take_report(id)) {
+      text = *report;
+    } else if (auto t = team.running(id)) {
+      text = "Task " + id + " (" + t->title + ") is still running.";
+    } else {
+      text = task_status(id, context).value("output", "Task " + id + ": unknown");
+    }
   }
-  if (text.empty()) text = "No background tasks to wait for.";
-  return {{"title", "task wait"}, {"output", text}};
+  for (auto& item : team.take(me)) text += (text.empty() ? "" : "\n\n") + item;
+  if (text.empty()) text = "Nothing arrived within " + std::to_string(timeout_s) + "s.";
+  return tool_text("task wait", text);
 }
 
-}  // namespace
-
-JsonValue TaskTool::execute(const JsonValue& args, const ToolExecutionContext& context) {
-  const std::string action = args.value("action", "run");
-  if (action == "status") return task_status(args, context);
-  if (action == "wait") return task_wait(args, context);
-  if (action == "kill") {
-    const std::string id = args.value("task_id", "");
-    if (id.empty()) return {{"error", "kill needs task_id."}};
-    if (BackgroundTasks::instance().kill(id)) {
-      return {{"title", "task kill"}, {"output", "Stopping background task " + id + "."}};
+JsonValue task_message(const JsonValue& args, const ToolExecutionContext& context) {
+  const std::string to = args.value("task_id", "");
+  const std::string text = args.value("prompt", "");
+  if (to.empty() || text.empty()) {
+    return {{"error", "message needs task_id (a subagent, or \"lead\") and prompt."}};
+  }
+  const std::string me = context.session_id;
+  const std::string lead = lead_of(me);
+  std::string recipient = to;
+  if (to == kLead) {
+    if (me == lead) return {{"error", "You are the lead; message a subagent by task_id."}};
+    recipient = lead;
+  } else if (!Team::instance().running(to)) {
+    if (in_team(lead, to)) {
+      return {{"error", "Task " + to + " is not running; resume it with action run, task_id "
+                        "and prompt."}};
     }
-    return {{"error", "Task " + id + " is not a running background task."}};
+    return {{"error", "Unknown or finished task_id " + to + "."}};
   }
-  if (action != "run") {
-    return {{"error", "Unknown action '" + action + "'. Use run, status, wait or kill."}};
+  const std::string from = me == lead ? std::string(kLead) : me;
+  std::string label = from;
+  if (me != lead) {
+    const std::string title = qcode::session::get_session_title(me);
+    if (!title.empty()) label += " (" + title + ")";
   }
+  Team::instance().post(recipient, "[Message from " + label + "]\n" + text +
+                                       "\n(reply: task action \"message\", task_id \"" + from +
+                                       "\")");
+  return tool_text("task message", "Sent to " + to + ".");
+}
 
+JsonValue task_run(const JsonValue& args, const ToolExecutionContext& context) {
   const std::string prompt = args.value("prompt", "");
   const std::string description = args.value("description", "");
   const std::string resume_id = args.value("task_id", "");
-  std::string mode = args.value("mode", "");
   std::string model = args.value("model", "");
   const bool background = args.value("background", false);
-  const std::string difficulty(
-      routing::to_string(routing::parse_difficulty(args.value("difficulty", "medium"))));
   if (prompt.empty()) {
     return {{"error", "task needs a prompt: the full, self-contained instructions."}};
   }
   if (!context.subagent_runner) {
     return {{"error", "Subagents are not available in this context."}};
   }
-  if (!context.session_id.empty() && qcode::session::is_child_session(context.session_id)) {
-    return {{"error", "Subagents cannot delegate further. Do the work directly."}};
-  }
+  const std::string lead = lead_of(context.session_id);
 
   std::string session_id;
   std::string title;
-  int attempt_base = 0;
   if (!resume_id.empty()) {
-    // Resume: the subagent continues its own conversation with `prompt`.
-    if (!qcode::session::is_child_session(resume_id) ||
-        qcode::session::get_parent_session_id(resume_id) != context.session_id) {
-      return {{"error", "Unknown task_id " + resume_id + " (not a subagent of this session)."}};
+    if (!in_team(lead, resume_id)) {
+      return {{"error", "Unknown task_id " + resume_id + " (not a subagent of this team)."}};
     }
-    if (is_session_running(resume_id)) {
-      return {{"error", "Task " + resume_id + " is still running; use action \"wait\" first."}};
+    if (TaskTool::is_session_running(resume_id)) {
+      return {{"error", "Task " + resume_id + " is still running; use action \"message\" "
+                        "to talk to it or \"wait\" for it."}};
     }
-    const PriorRuns prior = prior_runs(context.session_id, resume_id);
-    attempt_base = prior.attempts;
-    if (mode.empty()) mode = prior.mode;
-    if (model.empty()) model = prior.model;
+    if (model.empty()) model = session_model(resume_id);
     session_id = resume_id;
     title = qcode::session::get_session_title(resume_id);
-  }
-  if (mode.empty()) mode = "explore";
-  if (!is_mode(mode)) {
-    return {{"error", "Unknown mode '" + mode + "'. Use explore, implement, or verify."}};
-  }
-  if (session_id.empty()) {
+  } else {
     session_id = new_child_session_id();
-    title = description.empty() ? mode : description;
-    qcode::session::ensure_session_row(session_id, title, "", "", context.workspace,
-                                       context.session_id);
+    title = description;
+    if (title.empty()) {
+      title = prompt.substr(0, std::min(prompt.find('\n'), std::size_t{48}));
+    }
+    qcode::session::ensure_session_row(session_id, title, "", "", context.workspace, lead);
   }
-  if (title.empty()) title = description.empty() ? mode : description;
   qcode::session::save_message(session_id, "User", prompt);
 
-  JsonValue sub_args = {{"prompt", prompt},          {"description", description},
-                        {"mode", mode},              {"difficulty", difficulty},
-                        {"session_id", session_id},  {"parent_session_id", context.session_id}};
+  JsonValue sub_args = {{"prompt", prompt},
+                        {"description", title},
+                        {"session_id", session_id},
+                        {"parent_session_id", lead}};
   if (!model.empty()) sub_args["model"] = model;
-  if (!resume_id.empty()) {
-    sub_args["resume"] = true;
-    sub_args["attempt_base"] = attempt_base;
-  }
+  if (!resume_id.empty()) sub_args["resume"] = true;
+
+  RunningTask task;
+  task.lead_session_id = lead;
+  task.owner_session_id = context.session_id;
+  task.title = title;
+  task.model = model.empty() ? std::string("(caller's model)") : model;
 
   if (background) {
-    // Own abort flag: the lead's turn ending (or Esc) does not stop it;
-    // action "kill" or deleting the session does.
     auto abort_flag = std::make_shared<std::atomic<bool>>(false);
-    sub_args["background"] = true;
-    RunningTasks::instance().add(session_id,
-                                 {context.session_id, title, mode, model, abort_flag});
-    BackgroundTask task;
-    task.parent_session_id = context.session_id;
-    task.title = title;
     task.abort_flag = abort_flag;
-    BackgroundTasks::instance().start(
-        session_id, std::move(task),
-        [runner = context.subagent_runner, sub_args, abort_flag, session_id, title, mode,
-         difficulty, model]() -> JsonValue {
-          struct Unregister {
-            std::string session_id;
-            ~Unregister() { RunningTasks::instance().remove(session_id); }
-          } unregister{session_id};
+    Team::instance().start_background(
+        session_id, task,
+        [runner = context.subagent_runner, sub_args, abort_flag, session_id, title,
+         model]() -> JsonValue {
           JsonValue sub;
           try {
             sub = runner(sub_args, abort_flag);
           } catch (const std::exception& e) {
             sub = {{"error", std::string("subagent crashed: ") + e.what()}};
           }
-          if (abort_flag->load() && sub.contains("error")) {
-            sub = {{"error", "killed"}};
-          }
-          return finish_task(session_id, title, mode, difficulty, model, std::move(sub));
+          if (abort_flag->load() && sub.contains("error")) sub = {{"error", "killed"}};
+          return finish_task(session_id, title, model, std::move(sub));
         });
-    JsonValue metadata = {{"sessionId", session_id}, {"task_id", session_id},
-                          {"mode", mode},            {"difficulty", difficulty},
-                          {"status", "running"},     {"background", true}};
     return {{"title", "task (background): " + title},
             {"output", "Started background task " + session_id + " (" + title +
-                           "). Keep working: its report arrives as a message when it "
-                           "finishes. task {action: \"wait\" | \"status\" | \"kill\", "
-                           "task_id} to block for, check or stop it."},
-            {"metadata", metadata}};
+                           "). Keep working; its report arrives as a message."},
+            {"metadata",
+             {{"sessionId", session_id}, {"task_id", session_id}, {"status", "running"},
+              {"background", true}}}};
   }
 
-  RunningTasks::instance().add(
-      session_id, {context.session_id, title, mode, model, context.abort_flag});
+  task.abort_flag = context.abort_flag;
+  Team::instance().add(session_id, task);
   struct Unregister {
-    std::string session_id;
-    ~Unregister() { RunningTasks::instance().remove(session_id); }
+    std::string id;
+    ~Unregister() { Team::instance().remove(id); }
   } unregister{session_id};
-
   JsonValue sub;
   try {
     sub = context.subagent_runner(sub_args, context.abort_flag);
   } catch (const std::exception& e) {
     sub = {{"error", std::string("subagent crashed: ") + e.what()}};
   }
-  return finish_task(session_id, title, mode, difficulty, model, std::move(sub));
+  return finish_task(session_id, title, model, std::move(sub));
 }
 
-std::vector<std::string> TaskTool::take_notices(const std::string& parent_session_id) {
-  return BackgroundTasks::instance().take_notices(parent_session_id);
+}  // namespace
+
+JsonValue TaskTool::execute(const JsonValue& args, const ToolExecutionContext& context) {
+  const std::string action = args.value("action", "run");
+  if (action == "run") return task_run(args, context);
+  if (action == "status") return task_status(args.value("task_id", ""), context);
+  if (action == "wait") return task_wait(args, context);
+  if (action == "message") return task_message(args, context);
+  if (action == "kill") {
+    const std::string id = args.value("task_id", "");
+    if (id.empty()) return {{"error", "kill needs task_id."}};
+    if (Team::instance().kill(id)) return tool_text("task kill", "Stopping task " + id + ".");
+    return {{"error", "Task " + id + " is not a running background task."}};
+  }
+  return {{"error", "Unknown action '" + action + "'. Use run, status, wait, kill or message."}};
 }
 
-bool TaskTool::has_notices(const std::string& parent_session_id) {
-  return BackgroundTasks::instance().has_notices(parent_session_id);
+std::vector<std::string> TaskTool::take_notices(const std::string& session_id) {
+  return Team::instance().take(session_id);
+}
+
+bool TaskTool::has_notices(const std::string& session_id) {
+  return Team::instance().has(session_id);
 }
 
 void TaskTool::set_notice_listener(std::function<void()> listener) {
-  BackgroundTasks::instance().set_listener(std::move(listener));
+  Team::instance().set_listener(std::move(listener));
 }
 
 void TaskTool::shutdown_background(std::chrono::milliseconds timeout) {
-  BackgroundTasks::instance().shutdown(timeout);
-}
-
-JsonValue TaskTool::execute_rate(const JsonValue& args, const ToolExecutionContext& context) {
-  const JsonValue ratings = args.is_object() ? args.value("ratings", JsonValue::array())
-                                             : JsonValue::array();
-  if (!ratings.is_array()) {
-    return {{"error", "rate_task takes ratings: [{task_id, score 1-5, note?}]."}};
-  }
-  int rated = 0;
-  std::string notes;
-  for (const auto& r : ratings) {
-    const std::string task_id =
-        r.is_object() && r.contains("task_id") && r["task_id"].is_string()
-            ? r["task_id"].get<std::string>()
-            : "";
-    const int score = r.is_object() && r.contains("score") && r["score"].is_number()
-                          ? r["score"].get<int>()
-                          : 0;
-    if (task_id.empty() || score < 1 || score > 5) {
-      notes += "\nSkipped " + r.dump() + ": needs task_id and score 1-5.";
-      continue;
-    }
-    const std::string note =
-        r.contains("note") && r["note"].is_string() ? r["note"].get<std::string>() : "";
-    if (qcode::session::rate_subagent_run(task_id, score, note)) {
-      ++rated;
-    } else {
-      notes += "\nUnknown task_id " + task_id + " (no finished task report).";
-    }
-  }
-  // The board rides in this tool result rather than the system prompt: it
-  // changes after every run, and a result in history stays cache-stable.
-  std::string output = ratings.empty() ? std::string()
-                                       : "Rated " + std::to_string(rated) + " task(s)." + notes;
-  if (context.routing_board) {
-    const std::string board = context.routing_board();
-    if (!board.empty()) output += (output.empty() ? "" : "\n\n") + board;
-  }
-  if (output.empty()) output = "No ratings given and no model board available.";
-  return {{"title", "rate_task"}, {"output", output}};
+  Team::instance().shutdown(timeout);
 }
 
 JsonValue TaskTool::parameters() {
+  auto str = [](const char* d) { return JsonValue{{"type", "string"}, {"description", d}}; };
   return {
       {"type", "object"},
       {"properties",
-       {{"description",
-         {{"type", "string"}, {"description", "Short label (3-6 words) shown in the UI."}}},
-        {"prompt",
+       {{"action",
          {{"type", "string"},
-          {"description",
-           "Complete instructions: goal, relevant files/paths, constraints, and what to "
-           "report back."}}},
-        {"mode",
-         {{"type", "string"},
-          {"enum", {"explore", "implement", "verify"}},
-          {"description",
-           "explore = read-only (default), implement = may edit files, verify = "
-           "build/test/audit."}}},
-        {"difficulty",
-         {{"type", "string"},
-          {"enum", {"easy", "medium", "hard"}},
-          {"default", "medium"},
-          {"description",
-           "easy = lookup/small edit, hard = design/tricky bug; hard jobs go to proven "
-           "strong models."}}},
-        {"model",
-         {{"type", "string"},
-          {"description",
-           "Optional provider:model from the catalog. Omit to let the router pick a free "
-           "model."}}},
-        {"background",
-         {{"type", "boolean"},
-          {"description",
-           "Return at once with a task_id; the report arrives later as a message."}}},
-        {"task_id",
-         {{"type", "string"},
-          {"description",
-           "With prompt: resume that subagent (it keeps its history). With action: the "
-           "task to check, wait for or stop."}}},
-        {"action",
-         {{"type", "string"},
-          {"enum", {"run", "status", "wait", "kill"}},
+          {"enum", {"run", "status", "wait", "kill", "message"}},
           {"default", "run"},
           {"description",
-           "run (default) starts or resumes a subagent; status / wait / kill manage "
-           "background tasks (without task_id: all of yours)."}}},
-        {"timeout_s",
-         {{"type", "integer"},
-          {"description", "wait: give up after this many seconds (default 600)."}}}}},
+           "run (default): start or resume a subagent. status: the team, or one task_id. "
+           "wait: block until a background task finishes or a message arrives. kill: stop "
+           "a background task. message: send prompt to task_id."}}},
+        {"prompt", str("run: complete instructions (goal, paths, constraints, what to report). "
+                       "message: the message text.")},
+        {"description", str("run: short name (3-6 words) shown in the UI.")},
+        {"model", str("run: provider:model from the catalog. Omit for your own model.")},
+        {"background", {{"type", "boolean"},
+                        {"description", "run: return at once; the report arrives later as a "
+                                        "message."}}},
+        {"task_id", str("run: resume this finished subagent. status/wait/kill: the task. "
+                        "message: the recipient (a subagent, or \"lead\").")},
+        {"timeout_s", {{"type", "integer"},
+                       {"description", "wait: give up after this many seconds (default 600)."}}}}},
   };
 }
 
@@ -907,30 +840,6 @@ Tool TaskTool::definition() {
               return TaskTool::execute(args, context);
             });
   tool.name = "task";
-  return tool;
-}
-
-JsonValue TaskTool::rate_parameters() {
-  const JsonValue rating = {
-      {"type", "object"},
-      {"properties",
-       {{"task_id", {{"type", "string"}, {"description", "From the task result footer."}}},
-        {"score", {{"type", "integer"}, {"minimum", 1}, {"maximum", 5}}},
-        {"note", {{"type", "string"}, {"description", "Optional: what was wrong or missing."}}}}},
-      {"required", JsonValue::array({"task_id", "score"})},
-  };
-  return {
-      {"type", "object"},
-      {"properties", {{"ratings", {{"type", "array"}, {"items", rating}}}}},
-  };
-}
-
-Tool TaskTool::rate_definition() {
-  Tool tool(TaskTool::kRateDescription, TaskTool::rate_parameters(),
-            [](const JsonValue& args, const ToolExecutionContext& context) -> JsonValue {
-              return TaskTool::execute_rate(args, context);
-            });
-  tool.name = "rate_task";
   return tool;
 }
 

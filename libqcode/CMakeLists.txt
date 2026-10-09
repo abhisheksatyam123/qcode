@@ -95,7 +95,6 @@ target_sources(qcode-engine PRIVATE
     src/session/session_store.cpp
     src/session/session_telemetry.cpp
     src/session/usage_stats.cpp
-    src/session/subagent_stats.cpp
     src/session/study_store.cpp
     src/session/study_assistant.cpp
     src/session/system_prompt.cpp
@@ -109,7 +108,6 @@ target_sources(qcode-engine PRIVATE
     src/tools/bash_tool.cpp
     src/tools/task_tool.cpp
     src/tools/task_target.cpp
-    src/tools/subagent_router.cpp
     src/tools/image_tool.cpp
     src/tools/multi_step_coordinator.cpp
     src/tools/tool_catalog.cpp

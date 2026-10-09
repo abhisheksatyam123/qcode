@@ -15,7 +15,6 @@
 #include <qcode/compaction/compaction_request.h>
 #include <qcode/core/tool.h>
 #include <qcode/session/session_store.h>
-#include <qcode/session/subagent_stats.h>
 #include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/tools/task_tool.h>
 #include <qcode/tools/tool_executor.h>
@@ -50,10 +49,8 @@ TEST(TaskToolTest, RunsSubagentAndReturnsItsReport) {
   ASSERT_FALSE(out.contains("error")) << out.dump();
   EXPECT_THAT(out.value("output", ""), testing::StartsWith("found 3 TODOs in src/\n\n["));
   EXPECT_EQ(out["metadata"].value("status", ""), "done");
-  EXPECT_EQ(out["metadata"].value("mode", ""), "explore");
-  EXPECT_EQ(out["metadata"].value("difficulty", ""), "medium");
   EXPECT_EQ(seen.value("prompt", ""), "find all TODOs");
-  EXPECT_EQ(seen.value("mode", ""), "explore");
+  EXPECT_FALSE(seen.contains("model"));  // omitted: the runner uses the caller's model
 
   // The run is a durable child session of the caller.
   const std::string child = out["metadata"].value("sessionId", "");
@@ -61,7 +58,6 @@ TEST(TaskToolTest, RunsSubagentAndReturnsItsReport) {
   EXPECT_EQ(seen.value("session_id", ""), child);
   // The footer names the task to rate; the child session keeps the bare report.
   EXPECT_THAT(out.value("output", ""), testing::HasSubstr("[task_id: " + child));
-  EXPECT_THAT(out.value("output", ""), testing::HasSubstr("rate_task]"));
   EXPECT_EQ(TaskTool::session_id_from_result(JsonValue(out.value("output", ""))), child);
   EXPECT_TRUE(qcode::session::is_child_session(child));
   auto last = qcode::session::load_last_session_message(child);
@@ -80,7 +76,7 @@ TEST(TaskToolTest, RunnerErrorIsReportedAndPersisted) {
   };
 
   const JsonValue out = TaskTool::execute(JsonValue{{"prompt", "p"}}, context);
-  EXPECT_EQ(out.value("error", ""), "provider exploded");
+  EXPECT_THAT(out.value("error", ""), testing::StartsWith("provider exploded"));
   EXPECT_EQ(out["metadata"].value("status", ""), "error");
 
   const auto tasks = TaskTool::list_tasks("parent_err_1")["metadata"]["tasks"];
@@ -92,29 +88,38 @@ TEST(TaskToolTest, RejectsBadArguments) {
   ToolExecutionContext context;
   context.subagent_runner = echo_runner("ok");
   EXPECT_TRUE(TaskTool::execute(JsonValue{{"description", "x"}}, context).contains("error"));
-  EXPECT_THAT(TaskTool::execute(JsonValue{{"prompt", "p"}, {"mode", "general"}}, context)
-                  .value("error", ""),
-              testing::HasSubstr("explore, implement, or verify"));
+  EXPECT_THAT(TaskTool::execute(JsonValue{{"action", "rate"}}, context).value("error", ""),
+              testing::HasSubstr("Unknown action"));
 
   ToolExecutionContext no_runner;
   EXPECT_TRUE(TaskTool::execute(JsonValue{{"prompt", "p"}}, no_runner).contains("error"));
 }
 
-TEST(TaskToolTest, SubagentsCannotDelegateFurther) {
+// A subagent that starts a task starts a sister: a child of the lead.
+TEST(TaskToolTest, SubagentStartsASisterUnderTheLead) {
   qcode::session::ensure_session_row("parent_nest_1", "Parent", "p", "m", "/ws");
   qcode::session::ensure_session_row("ses_nest_child_1", "Child", "p", "m", "/ws",
                                      "parent_nest_1");
-  bool called = false;
+  JsonValue seen;
   ToolExecutionContext context;
   context.session_id = "ses_nest_child_1";
-  context.subagent_runner = [&called](const JsonValue&, std::shared_ptr<std::atomic<bool>>) {
-    called = true;
-    return JsonValue{{"output", "nope"}};
+  context.subagent_runner = [&seen](const JsonValue& args, std::shared_ptr<std::atomic<bool>>) {
+    seen = args;
+    return JsonValue{{"output", "sister done"}};
   };
 
-  const JsonValue out = TaskTool::execute(JsonValue{{"prompt", "do something"}}, context);
-  EXPECT_THAT(out.value("error", ""), testing::HasSubstr("cannot delegate"));
-  EXPECT_FALSE(called);
+  const JsonValue started = TaskTool::execute(JsonValue{{"prompt", "do something"}}, context);
+  ASSERT_FALSE(started.contains("error")) << started.dump();
+  const std::string sister = started["metadata"].value("task_id", "");
+  EXPECT_EQ(seen.value("parent_session_id", ""), "parent_nest_1");
+  EXPECT_EQ(qcode::session::get_parent_session_id(sister), "parent_nest_1");
+
+  // Its status shows the whole team and who is asking.
+  const std::string team =
+      TaskTool::execute(JsonValue{{"action", "status"}}, context).value("output", "");
+  EXPECT_THAT(team, testing::HasSubstr("Lead (orchestrator): parent_nest_1"));
+  EXPECT_THAT(team, testing::HasSubstr("You: ses_nest_child_1"));
+  EXPECT_THAT(team, testing::HasSubstr(sister));
 }
 
 TEST(TaskToolTest, ReportsTheModelTheRunnerActuallyUsed) {
@@ -135,9 +140,8 @@ TEST(TaskToolTest, DefinitionHasMinimalSchema) {
   const auto& props = tool.parameters_schema["properties"];
   std::set<std::string> keys;
   for (auto it = props.begin(); it != props.end(); ++it) keys.insert(it.key());
-  EXPECT_EQ(keys, (std::set<std::string>{"description", "prompt", "mode", "difficulty",
-                                         "model", "background", "task_id", "action",
-                                         "timeout_s"}));
+  EXPECT_EQ(keys, (std::set<std::string>{"description", "prompt", "model", "background",
+                                         "task_id", "action", "timeout_s"}));
   // prompt is checked by execute(): status / wait / kill take none.
   EXPECT_FALSE(tool.parameters_schema.contains("required"));
 }
@@ -191,7 +195,7 @@ TEST(TaskToolTest, BackgroundTaskReturnsAtOnceAndReportsLater) {
   lead_abort->store(false);
   EXPECT_THAT(TaskTool::execute(JsonValue{{"action", "status"}, {"task_id", id}}, context)
                   .value("output", ""),
-              testing::HasSubstr("still running"));
+              testing::HasSubstr("is running"));
 
   release->store(true);
   const auto notices = wait_for_notices(parent);
@@ -206,7 +210,7 @@ TEST(TaskToolTest, BackgroundTaskReturnsAtOnceAndReportsLater) {
   EXPECT_FALSE(TaskTool::is_session_running(id));
   {
     std::lock_guard<std::mutex> lock(*seen_mutex);
-    EXPECT_TRUE(seen->value("background", false));
+    EXPECT_EQ(seen->value("parent_session_id", ""), parent);
   }
   auto last = qcode::session::load_last_session_message(id);
   ASSERT_TRUE(last.has_value());
@@ -257,18 +261,10 @@ TEST(TaskToolTest, ResumeContinuesTheSameSubagentSession) {
     return JsonValue{{"output", "report " + std::to_string(seen.size())}};
   };
   const JsonValue first = TaskTool::execute(
-      JsonValue{{"prompt", "audit parser"}, {"mode", "verify"}, {"description", "audit"}},
-      context);
+      JsonValue{{"prompt", "audit parser"}, {"description", "audit"}}, context);
   const std::string id = first["metadata"].value("task_id", "");
   ASSERT_FALSE(id.empty());
-  qcode::session::SubagentRun run;
-  run.task_id = id;
-  run.attempt = 1;
-  run.parent_session_id = parent;
-  run.provider = "opencode";
-  run.model = "m1";
-  run.mode = "verify";
-  qcode::session::record_subagent_run(run);
+  qcode::session::set_session_provider_model(id, "opencode", "m1");  // set by the runner
 
   const JsonValue second =
       TaskTool::execute(JsonValue{{"prompt", "now check the lexer"}, {"task_id", id}}, context);
@@ -277,9 +273,7 @@ TEST(TaskToolTest, ResumeContinuesTheSameSubagentSession) {
   ASSERT_EQ(seen.size(), 2u);
   EXPECT_EQ(seen[1].value("session_id", ""), id);
   EXPECT_TRUE(seen[1].value("resume", false));
-  EXPECT_EQ(seen[1].value("mode", ""), "verify");        // kept from the first run
   EXPECT_EQ(seen[1].value("model", ""), "opencode:m1");  // same model
-  EXPECT_EQ(seen[1].value("attempt_base", 0), 1);
   // The child keeps one conversation: prompt, report, follow-up, report.
   const auto rows = qcode::session::load_session_messages(id);
   ASSERT_EQ(rows.size(), 4u);
@@ -291,73 +285,72 @@ TEST(TaskToolTest, ResumeContinuesTheSameSubagentSession) {
   other.session_id = "someone_else";
   EXPECT_THAT(TaskTool::execute(JsonValue{{"prompt", "x"}, {"task_id", id}}, other)
                   .value("error", ""),
-              testing::HasSubstr("not a subagent of this session"));
+              testing::HasSubstr("not a subagent of this team"));
 }
 
-TEST(TaskToolTest, DifficultyAndParentReachTheRunner) {
+TEST(TaskToolTest, ModelAndParentReachTheRunner) {
   qcode::session::ensure_session_row("parent_diff_1", "Parent", "p", "m", "/ws");
   JsonValue seen;
   ToolExecutionContext context;
   context.session_id = "parent_diff_1";
   context.subagent_runner = [&seen](const JsonValue& args, std::shared_ptr<std::atomic<bool>>) {
     seen = args;
-    return JsonValue{{"output", "designed"}, {"provider", "antigravity"},
-                     {"model", "gemini-3.1-pro"}, {"attempts", 2},
-                     {"route_reason", "explore 92% (25)"}};
+    return JsonValue{{"output", "designed"}, {"provider", "anthropic"},
+                     {"model", "claude-opus-5-5"}};
   };
-
-  const JsonValue out = TaskTool::execute(
-      JsonValue{{"prompt", "design the cache"}, {"difficulty", "hard"}}, context);
-  ASSERT_FALSE(out.contains("error")) << out.dump();
-  EXPECT_EQ(seen.value("difficulty", ""), "hard");
+  const JsonValue res = TaskTool::execute(
+      JsonValue{{"prompt", "design the cache"}, {"model", "anthropic:claude-opus-5-5"}}, context);
+  ASSERT_FALSE(res.contains("error")) << res.dump();
+  EXPECT_EQ(seen.value("model", ""), "anthropic:claude-opus-5-5");  // paid is fine
   EXPECT_EQ(seen.value("parent_session_id", ""), "parent_diff_1");
-  EXPECT_EQ(out["metadata"].value("difficulty", ""), "hard");
-  EXPECT_EQ(out["metadata"].value("attempts", 0), 2);
-  EXPECT_EQ(out["metadata"].value("route_reason", ""), "explore 92% (25)");
-  EXPECT_THAT(out.value("output", ""), testing::HasSubstr("antigravity:gemini-3.1-pro"));
-
-  // Unknown difficulty falls back to medium.
-  TaskTool::execute(JsonValue{{"prompt", "p"}, {"difficulty", "extreme"}}, context);
-  EXPECT_EQ(seen.value("difficulty", ""), "medium");
+  EXPECT_THAT(res.value("output", ""), testing::HasSubstr("anthropic:claude-opus-5-5"));
 }
 
-TEST(TaskToolTest, CursorSpawnArgsKeepDifficulty) {
-  const JsonValue norm = TaskTool::normalize_spawn_args(
-      JsonValue{{"prompt", "scan the repo"}, {"difficulty", "easy"}});
-  EXPECT_EQ(norm.value("difficulty", ""), "easy");
-}
+// Messages: the lead and a running subagent talk through their inboxes.
+TEST(TaskToolTest, LeadAndSubagentExchangeMessages) {
+  const std::string lead = "parent_msg_1";
+  qcode::session::ensure_session_row(lead, "Parent", "p", "m", "/ws");
+  ToolExecutionContext context;
+  context.session_id = lead;
+  // The subagent asks the lead a question, waits for the answer, reports it.
+  context.subagent_runner = [](const JsonValue& args, std::shared_ptr<std::atomic<bool>> flag) {
+    ToolExecutionContext me;
+    me.session_id = args.value("session_id", "");
+    me.abort_flag = flag;
+    const JsonValue sent = TaskTool::execute(
+        JsonValue{{"action", "message"}, {"task_id", "lead"}, {"prompt", "which port?"}}, me);
+    if (sent.contains("error")) return JsonValue{{"error", sent["error"]}};
+    const JsonValue reply =
+        TaskTool::execute(JsonValue{{"action", "wait"}, {"task_id", "lead"}, {"timeout_s", 5}}, me);
+    return JsonValue{{"output", "got: " + reply.value("output", "")}};
+  };
+  const std::string id =
+      TaskTool::execute(JsonValue{{"prompt", "serve"}, {"background", true}}, context)
+          ["metadata"].value("task_id", "");
+  ASSERT_FALSE(id.empty());
 
-// rate_task validates its input and reports task ids it cannot rate. Uses the
-// default session DB like the tests above; an unknown id never matches a row.
-TEST(TaskToolTest, RateTaskReportsUnknownAndInvalidRatings) {
-  const Tool tool = TaskTool::rate_definition();
-  EXPECT_EQ(tool.name, "rate_task");
-  ToolExecutionContext ctx;
+  const JsonValue question =
+      TaskTool::execute(JsonValue{{"action", "wait"}, {"timeout_s", 5}}, context);
+  EXPECT_THAT(question.value("output", ""), testing::HasSubstr("[Message from " + id));
+  EXPECT_THAT(question.value("output", ""), testing::HasSubstr("which port?"));
 
-  EXPECT_TRUE(TaskTool::execute_rate(JsonValue{{"ratings", "4"}}, ctx).contains("error"));
+  const JsonValue answered = TaskTool::execute(
+      JsonValue{{"action", "message"}, {"task_id", id}, {"prompt", "9196"}}, context);
+  ASSERT_FALSE(answered.contains("error")) << answered.dump();
 
-  const JsonValue out = TaskTool::execute_rate(JsonValue{
-      {"ratings", JsonValue::array({{{"task_id", "ses_no_such_task_zz9"}, {"score", 4}},
-                                    {{"task_id", "ses_x"}, {"score", 9}}})}}, ctx);
-  ASSERT_FALSE(out.contains("error")) << out.dump();
-  const std::string text = out.value("output", "");
-  EXPECT_THAT(text, testing::StartsWith("Rated 0 task(s)."));
-  EXPECT_THAT(text, testing::HasSubstr("Unknown task_id ses_no_such_task_zz9"));
-  EXPECT_THAT(text, testing::HasSubstr("score 1-5"));
-}
+  const JsonValue report = TaskTool::execute(
+      JsonValue{{"action", "wait"}, {"task_id", id}, {"timeout_s", 5}}, context);
+  EXPECT_THAT(report.value("output", ""), testing::HasSubstr("got: [Message from lead]\n9196"));
 
-// The learned board rides in rate_task's result (not the cached system
-// prompt); with no ratings the call just shows it.
-TEST(TaskToolTest, RateTaskShowsTheRoutingBoard) {
-  ToolExecutionContext ctx;
-  ctx.routing_board = [] { return std::string("### Subagent models (board)"); };
-  const JsonValue board_only = TaskTool::execute_rate(JsonValue::object(), ctx);
-  EXPECT_EQ(board_only.value("output", ""), "### Subagent models (board)");
-
-  const JsonValue rated = TaskTool::execute_rate(
-      JsonValue{{"ratings", JsonValue::array({{{"task_id", "ses_none_zz9"}, {"score", 3}}})}},
-      ctx);
-  EXPECT_THAT(rated.value("output", ""), testing::HasSubstr("### Subagent models (board)"));
+  // A finished subagent cannot be messaged; the lead cannot message itself.
+  EXPECT_THAT(TaskTool::execute(JsonValue{{"action", "message"}, {"task_id", id},
+                                          {"prompt", "x"}}, context).value("error", ""),
+              testing::HasSubstr("not running"));
+  EXPECT_TRUE(TaskTool::execute(JsonValue{{"action", "message"}, {"task_id", "lead"},
+                                          {"prompt", "x"}}, context).contains("error"));
+  // With nothing running and nothing waiting, wait returns at once.
+  EXPECT_THAT(TaskTool::execute(JsonValue{{"action", "wait"}}, context).value("output", ""),
+              testing::HasSubstr("Nothing to wait for"));
 }
 
 // Several task calls in one message run concurrently through the executor.
@@ -471,7 +464,6 @@ TEST(TaskToolTest, SwappedCursorTaskFieldsAreRepaired) {
       {"description", "readme"},
   });
   EXPECT_THAT(norm.value("prompt", ""), testing::HasSubstr("README.md"));
-  EXPECT_EQ(norm.value("mode", ""), "explore");
   EXPECT_EQ(norm.value("model", ""), "cursor-grok-4.6");
   EXPECT_EQ(norm.value("description", ""), "readme");
 }
@@ -503,7 +495,6 @@ TEST(TaskToolTest, ReassemblesShreddedProtoPromptFields) {
   EXPECT_THAT(norm.value("prompt", ""), testing::HasSubstr("/home/ai/project/qcode"));
   EXPECT_THAT(norm.value("prompt", ""), testing::HasSubstr("TaskTool"));
   EXPECT_EQ(norm.value("model", ""), "composer-2.5-fast");
-  EXPECT_EQ(norm.value("mode", ""), "explore");
 }
 
 TEST(TaskToolTest, Field10AloneStillBecomesPromptWhenNamedIsModeToken) {
@@ -512,7 +503,6 @@ TEST(TaskToolTest, Field10AloneStillBecomesPromptWhenNamedIsModeToken) {
       {"10", "AD-ONLY large session test. Do not edit files. Workspace is /home/abh"},
   });
   EXPECT_THAT(norm.value("prompt", ""), testing::HasSubstr("Workspace is /home/abh"));
-  EXPECT_EQ(norm.value("mode", ""), "explore");
 }
 
 TEST(TaskToolTest, ProviderAndModelFieldsAreJoined) {

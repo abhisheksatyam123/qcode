@@ -124,8 +124,14 @@ Limits and request size:
 
 Session titles: like opencode, a new session is named from its first prompt
 by a small model: `"small_model": "opencode/ling-3.1-flash-free"` at the top
-level of opencode.json (any `provider/model`), else the free fast models.
+level of opencode.json (any `provider/model`), else the session's own model.
 `/rename` or a title given to `/new` is never replaced.
+
+Subagents: two kinds of agent, the orchestrator and its subagents, and one
+`task` tool for both. The orchestrator sees every opencode.json model in its
+prompt and picks one per task (omit `model` for its own). Subagents can list
+the team, message the lead or a sister, and start sisters; messages and
+background reports are delivered before the recipient's next step.
 
 Automatic compaction: like Claude Code, a session compacts itself during the
 tool loop once the next request would carry `compaction.threshold_tokens` of

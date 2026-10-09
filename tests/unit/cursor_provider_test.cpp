@@ -550,7 +550,6 @@ TEST(CursorProviderTest, ExecMcpProtobufTaskArgsInvokeRunner) {
     called = true;
     EXPECT_EQ(args.value("prompt", ""), "summarize README");
     EXPECT_EQ(args.value("description", ""), "readme");
-    EXPECT_EQ(args.value("mode", ""), "explore");
     return nlohmann::json{{"output", "ok proto"}};
   };
 

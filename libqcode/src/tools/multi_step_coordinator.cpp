@@ -7,6 +7,8 @@
 #include <qcode/core/logger.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/tools/multi_step_coordinator.h>
+#include <qcode/session/session_store.h>
+#include <qcode/tools/task_tool.h>
 #include <qcode/tools/tool_executor.h>
 #include <qcode/core/enums.h>
 #include <qcode/core/tool.h>
@@ -131,6 +133,15 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
       final_result.finish_reason = kFinishReasonError;
       final_result.error = "Aborted by user";
       break;
+    }
+
+    // The subagent's inbox (messages from the lead or its sisters, reports of
+    // background tasks it started) joins the conversation before each request.
+    if (!initial_options.session_id.empty()) {
+      for (auto& note : TaskTool::take_notices(initial_options.session_id)) {
+        qcode::session::save_message(initial_options.session_id, "User", note);
+        response_messages.push_back(Message::user(std::move(note)));
+      }
     }
 
     // Truncate to the immutable prefix and re-append the running accumulator.

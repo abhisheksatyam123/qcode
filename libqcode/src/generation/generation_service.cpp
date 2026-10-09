@@ -10,12 +10,10 @@
 #include <qcode/config/config.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/tools/tool_catalog.h>
-#include <qcode/tools/subagent_router.h>
 #include <qcode/tools/task_target.h>
 #include <qcode/tools/tool_executor.h>
 #include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/session/session_store.h>
-#include <qcode/session/subagent_stats.h>
 #include <qcode/core/event.h>
 #include <qcode/core/errors.h>
 #include "generation/stream_step.h"
@@ -91,67 +89,6 @@ static size_t tool_step_fingerprint(const std::vector<qcode::ToolCall>& calls,
   return h;
 }
 
-// ──────────────────────────────────────────────────────────────
-//  Multi-agent: nested subagent turn (routed model with fallback)
-// ──────────────────────────────────────────────────────────────
-namespace {
-// Models tried per task: the one the lead named (if any), then free models
-// ranked by the subagent router (qcode/tools/subagent_router.h).
-constexpr int kSubagentMaxAttempts = 4;
-
-// The lead named a provider/model (not inherit/parent/default).
-bool subagent_model_named(const nlohmann::json& args) {
-  const auto named = [](const nlohmann::json& v) {
-    return v.is_string() && !v.get<std::string>().empty() &&
-           !is_inherit_model_id(v.get<std::string>());
-  };
-  if ((args.contains("provider") && named(args["provider"])) ||
-      (args.contains("model") && named(args["model"]))) {
-    return true;
-  }
-  return args.contains("models") && args["models"].is_array() &&
-         std::any_of(args["models"].begin(), args["models"].end(), named);
-}
-
-// An account-wide limit (OpenRouter's free-models-per-day, exhausted credits)
-// covers every model of the provider, so the rest of this task's chain skips
-// it. Plain 429s are per model (antigravity meters each model family on its
-// own): only that model rests, the provider's other models are still tried.
-bool provider_wide_limit(std::string msg) {
-  std::transform(msg.begin(), msg.end(), msg.begin(), ::tolower);
-  if (msg.find("upstream") != std::string::npos) return false;
-  for (const char* s : {"per-day", "per day", "daily", "credits", "insufficient balance"}) {
-    if (msg.find(s) != std::string::npos) return true;
-  }
-  return false;
-}
-
-bool subagent_wants_cursor(const nlohmann::json& args) {
-  auto has = [](const std::string& v) {
-    std::string l = v;
-    std::transform(l.begin(), l.end(), l.begin(), ::tolower);
-    return l.find("cursor") != std::string::npos;
-  };
-  if (has(args.value("provider", "")) || has(args.value("model", ""))) return true;
-  if (args.contains("models") && args["models"].is_array())
-    for (const auto& m : args["models"])
-      if (m.is_string() && has(m.get<std::string>())) return true;
-  return false;
-}
-}  // namespace
-
-// opencode.json catalog entry for provider/model (id or display name).
-static const ModelInfo* find_catalog_model(const std::vector<ProviderInfo>& providers,
-                                           const std::string& provider_id,
-                                           const std::string& model_id) {
-  for (const auto& p : providers) {
-    if (p.id != provider_id && p.name != provider_id) continue;
-    for (const auto& m : p.models) {
-      if (m.id == model_id || m.name == model_id) return &m;
-    }
-  }
-  return nullptr;
-}
 
 // Client + wire model id for one catalog model, with the provider's
 // credentials (OAuth tokens, env keys) filled in like a lead turn.
@@ -216,213 +153,102 @@ ResolvedModelClient resolve_model_client(const ProviderInfo& provider,
     return out;
 }
 
-static JsonValue run_subagent_turn_multi(
-    std::shared_ptr<std::vector<ProviderInfo>> providers,
-    const std::string& default_provider_id,
-    const std::string& default_model_id,
-    const std::string& workspace,
-    std::shared_ptr<std::atomic<bool>> main_abort_flag,
-    std::shared_ptr<std::atomic<bool>> task_abort_flag,
-    const JsonValue& args) {
-  std::string prompt_text = args.value("prompt", args.value("task", args.value("objective", "")));
-  if (prompt_text.empty()) {
-    prompt_text = args.value("description", "");
-  }
-  if (prompt_text.empty()) {
-    return JsonValue{{"error", "task prompt is required"}};
-  }
+// ──────────────────────────────────────────────────────────────
+//  Multi-agent: subagent turn
+// ──────────────────────────────────────────────────────────────
 
-  const bool is_background = args.value("background", args.value("run_in_background", false));
-  auto aborted = [&]() {
-    if (task_abort_flag && task_abort_flag->load()) return true;
-    if (!is_background && main_abort_flag && main_abort_flag->load()) return true;
-    return false;
-  };
-  if (aborted()) {
-    return JsonValue{{"error", "Subagent cancelled due to abort flag"}};
-  }
+// Who a subagent inherits from: the caller's model is the default model of a
+// task, so the runner a subagent gets defaults to the subagent's own model.
+struct SubagentEnv {
+  std::shared_ptr<std::vector<ProviderInfo>> providers;
+  std::string provider_id;
+  std::string model_id;
+  std::string workspace;
+};
 
-  std::shared_ptr<std::atomic<bool>> effective_abort;
-  if (is_background) {
-    effective_abort = task_abort_flag ? task_abort_flag : std::make_shared<std::atomic<bool>>(false);
-  } else {
-    effective_abort = main_abort_flag ? main_abort_flag : (task_abort_flag ? task_abort_flag : std::make_shared<std::atomic<bool>>(false));
-  }
+static SubagentRunner make_subagent_runner(SubagentEnv env);
 
-  std::string subagent_type = args.value("subagent_type", "general");
-  std::string mode = args.value("mode", "explore");
-  std::string description = args.value("description", "");
-  std::string objective = args.value("objective", "");
-  const routing::Difficulty difficulty =
-      routing::parse_difficulty(args.value("difficulty", "medium"));
-  const std::string parent_session_id = args.value("parent_session_id", "");
-  const std::string sub_session_id =
-      args.value("sessionId", args.value("session_id", args.value("task_id", "")));
-
-  if (!providers) {
-    return JsonValue{{"error", "No available AI provider configured for subagent"}};
-  }
-
-  // Chain: the model the lead named (paid allowed), then free models ranked
-  // by learned success, difficulty, latency and load.
-  struct Candidate {
-    const ProviderInfo* provider;
-    const ModelInfo* model;  // null for a named model missing from the catalog
-    std::string model_id;
-    std::string reason;
-    std::optional<double> expected;
-  };
-  std::vector<Candidate> chain;
-  if (subagent_model_named(args)) {
-    // Resolved without the lead's ids: naming the lead's own model falls
-    // through to the router instead of a fixed alternate.
-    const SubagentTarget t = resolve_subagent_target(args, *providers, "", "");
-    if (!t.provider) {
-      return JsonValue{{"error", t.error.empty() ? "No available AI provider configured for subagent"
-                                                 : t.error}};
-    }
-    if (!matches_orchestrator(t.provider_id, t.model_id, default_provider_id, default_model_id)) {
-      chain.push_back({t.provider, t.model_info, t.model_id, "explicit", std::nullopt});
+// opencode.json catalog entry for provider/model (id or display name).
+static const ModelInfo* find_catalog_model(const std::vector<ProviderInfo>& providers,
+                                           const std::string& provider_id,
+                                           const std::string& model_id) {
+  for (const auto& p : providers) {
+    if (p.id != provider_id && p.name != provider_id) continue;
+    for (const auto& m : p.models) {
+      if (m.id == model_id || m.name == model_id) return &m;
     }
   }
-  routing::RouteRequest req;
-  req.mode = mode;
-  req.difficulty = difficulty;
-  req.lead_provider = default_provider_id;
-  req.lead_model = default_model_id;
-  req.allow_cursor = subagent_wants_cursor(args);
-  req.now = std::time(nullptr);
-  req.inflight_by_provider = routing::inflight_snapshot();
-  static thread_local std::mt19937 rng{std::random_device{}()};
-  for (const auto& r : routing::rank_targets(*providers, session::load_subagent_stats(), req, rng)) {
-    if (!chain.empty() && r.provider == chain.front().provider &&
-        r.model->id == chain.front().model_id) {
-      continue;
-    }
-    chain.push_back({r.provider, r.model, r.model->id, r.reason, r.expected});
-  }
-  if (chain.empty()) {
-    return JsonValue{{"error", "No free working model for subagents; name one with "
-                               "model: \"provider:model\"."}};
-  }
+  return nullptr;
+}
 
-  JsonValue out;
+static std::string subagent_system_prompt(const SubagentEnv& env, const std::string& task_id,
+                                          const std::string& provider_id,
+                                          const std::string& model_id,
+                                          const std::string& description, bool vision) {
+  std::string s = "You are a subagent working for the orchestrator (the lead). Your task_id is " +
+                  task_id + "; you run on " + provider_id + ":" + model_id + ".\n";
+  if (!description.empty()) s += "Task: " + description + "\n";
+  s += "\n"
+       "- Work on your own. The orchestrator sees only your final message: end with a "
+       "clear, structured report (findings, changes, how you verified them).\n"
+       "- Do not ask the user. When you are blocked or need a decision, send a question "
+       "with task {action: \"message\", task_id: \"lead\", prompt: ...} and then "
+       "task {action: \"wait\"} for the reply.\n"
+       "- task {action: \"status\"} lists your sister subagents. Message a running "
+       "sister, or start (or resume) one for a separate sub-job.\n"
+       "- Messages from the lead or your sisters appear in the conversation as they "
+       "arrive.\n";
+  const auto notes = qcode::task_notes::resolve(env.workspace);
+  if (notes.exists) {
+    s += "- Task file: `" + notes.path +
+         "` (sections: Tasks, Systems, Log). Read it first for context. Do NOT rewrite "
+         "it; you may only append one-line entries to its Log section with a single `>>` "
+         "append, formatted `- YYYY-MM-DD HH:MM [sub] <event>`.\n";
+  }
+  s += "\n" + ToolCatalog::build_tool_section(ToolConfig::subagent(vision));
+  s += "\n" + format_provider_catalog_for_prompt(*env.providers, provider_id, model_id);
+  return s;
+}
+
+// One subagent turn on one model: the one named in args["model"], else the
+// caller's. No fallback: an error goes back to the caller, which decides.
+static JsonValue run_subagent_turn(const SubagentEnv& env,
+                                   std::shared_ptr<std::atomic<bool>> abort_flag,
+                                   const JsonValue& args) {
+  const std::string prompt_text = args.value("prompt", "");
+  if (prompt_text.empty()) return JsonValue{{"error", "task prompt is required"}};
+  if (!abort_flag) abort_flag = std::make_shared<std::atomic<bool>>(false);
+  if (abort_flag->load()) return JsonValue{{"error", "Subagent cancelled due to abort flag"}};
+  if (!env.providers) return JsonValue{{"error", "No AI provider configured for subagents"}};
+  const std::string description = args.value("description", "");
+  const std::string sub_session_id = args.value("session_id", "");
+
+  const SubagentTarget target = resolve_subagent_target(
+      args.value("model", ""), *env.providers, env.provider_id, env.model_id);
+  if (!target.provider) {
+    return JsonValue{{"error", target.error.empty() ? "No provider for the subagent"
+                                                    : target.error}};
+  }
+  const ProviderInfo* target_provider = target.provider;
+  const ModelInfo* target_model_info = target.model_info;
+  const std::string target_model_id = target.model_id;
+
   try {
-  std::string last_error;
-  std::set<std::string> limited_providers;  // hit a provider-wide 429/quota
-  int attempt = 0;
-  for (const auto& cand : chain) {
-    if (attempt >= kSubagentMaxAttempts) break;
-    if (limited_providers.contains(cand.provider->id)) continue;
-    ++attempt;
-    const ProviderInfo* target_provider = cand.provider;
-    const ModelInfo* target_model_info = cand.model;
-    const std::string& target_model_id = cand.model_id;
-    if (attempt > 1) {
-      LOG_WARN("subagent attempt {}/{}: {}:{} ({}; prev: {})", attempt, kSubagentMaxAttempts,
-               target_provider->id, target_model_id, cand.reason, last_error);
-    }
-
-    routing::ScopedInflight inflight(target_provider->id);
-    const auto started = std::chrono::steady_clock::now();
-    const int64_t started_at = std::time(nullptr);
-    const auto record = [&](routing::Outcome outcome, const std::string& error) {
-      session::SubagentRun run;
-      run.task_id = sub_session_id;
-      // A resumed task numbers its attempts after the earlier ones.
-      run.attempt = args.value("attempt_base", 0) + attempt;
-      run.parent_session_id = parent_session_id;
-      run.provider = target_provider->id;
-      run.model = target_model_id;
-      run.mode = mode;
-      run.difficulty = std::string(routing::to_string(difficulty));
-      run.outcome = outcome;
-      run.error = error;
-      run.latency_ms = std::chrono::duration<double, std::milli>(
-                           std::chrono::steady_clock::now() - started).count();
-      run.started_at = started_at;
-      session::record_subagent_run(run);
-    };
-
-    ResolvedModelClient resolved = resolve_model_client(
-        *target_provider, target_model_info, target_model_id, "");
-    if (!resolved.ok()) {
-      last_error = resolved.error;
-      LOG_WARN("subagent fallback: {}", last_error);
-      record(routing::Outcome::kTransientError, last_error);  // setup, not model quality
-      continue;
-    }
-    std::string wire_model = resolved.wire_model;
+    ResolvedModelClient resolved =
+        resolve_model_client(*target_provider, target_model_info, target_model_id, "");
+    if (!resolved.ok()) return JsonValue{{"error", resolved.error}};
     qcode::Client subagent_client = std::move(resolved.client);
 
     // Route this thread's logs to the child's own session file for the
     // duration of the subagent turn (restored when the scope exits).
     std::optional<qcode::logger::ScopedThreadSession> child_bind;
-    if (!sub_session_id.empty()) child_bind.emplace(sub_session_id);
-    if (!sub_session_id.empty() && target_provider) {
-      qcode::session::set_session_provider_model(
-          sub_session_id, target_provider->name, target_model_id);
+    if (!sub_session_id.empty()) {
+      child_bind.emplace(sub_session_id);
+      qcode::session::set_session_provider_model(sub_session_id, target_provider->id,
+                                                 target_model_id);
     }
 
-    std::ostringstream sub_sys;
-    sub_sys << "You are an autonomous '" << subagent_type
-            << "' subagent delegated by the Lead Orchestrator.\n";
-    if (!description.empty()) {
-      sub_sys << "Task: " << description << "\n";
-    }
-    if (!objective.empty()) {
-      sub_sys << "Objective: " << objective << "\n";
-    }
-    if (!mode.empty()) {
-      sub_sys << "Delegation Mode: " << mode << "\n";
-    }
-    if (args.contains("scope") && args["scope"].is_array() && !args["scope"].empty()) {
-      sub_sys << "Scope:\n";
-      for (const auto& s : args["scope"]) {
-        if (s.is_string()) sub_sys << "- " << s.get<std::string>() << "\n";
-      }
-    }
-    if (args.contains("out_of_scope") && args["out_of_scope"].is_array() && !args["out_of_scope"].empty()) {
-      sub_sys << "Out of Scope:\n";
-      for (const auto& s : args["out_of_scope"]) {
-        if (s.is_string()) sub_sys << "- " << s.get<std::string>() << "\n";
-      }
-    }
-    if (mode == "implement" && args.contains("allowed_paths") && args["allowed_paths"].is_array()) {
-      sub_sys << "Allowed Paths for edits:\n";
-      for (const auto& p : args["allowed_paths"]) {
-        if (p.is_string()) sub_sys << "- " << p.get<std::string>() << "\n";
-      }
-    }
-
-    sub_sys << "\nOperational Directives:\n";
-    if (mode == "explore") {
-      sub_sys << "- Mode is EXPLORE: Read-only inspection and analysis. STRICTLY FORBIDDEN to modify any files.\n";
-    } else if (mode == "implement") {
-      sub_sys << "- Mode is IMPLEMENT: Execute focused, high-precision edits strictly within the allowed paths.\n";
-    } else if (mode == "verify") {
-      sub_sys << "- Mode is VERIFY: Run tests, build checks, linters, or audits to verify correctness.\n";
-    } else {
-      sub_sys << "- Work independently and execute the required operations.\n";
-    }
-    sub_sys << "- Do not prompt or query the user. Use the bash tool to inspect files and execute commands.\n";
-    {
-      const auto notes = qcode::task_notes::resolve(workspace);
-      if (notes.exists) {
-        sub_sys << "- Task file: `" << notes.path
-                << "` (sections: Tasks, Systems, Log). Read it first for context. "
-                   "Do NOT rewrite it; you may only append one-line entries to its "
-                   "Log section with a single `>>` append, formatted "
-                   "`- YYYY-MM-DD HH:MM [sub:" << mode << "] <event>`.\n";
-      }
-    }
-    sub_sys << "- Conclude with a clear, concise, structured summary detailing findings, changes, or test outcomes.\n\n";
-    const bool subagent_vision = (target_model_info != nullptr && target_model_info->vision);
-    const auto subagent_tool_cfg = ToolConfig::subagent(subagent_vision);
-    sub_sys << ToolCatalog::build_tool_section(subagent_tool_cfg);
-
-
-
+    const bool vision = target_model_info != nullptr && target_model_info->vision;
     int max_steps = 0;
     if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
       try {
@@ -430,39 +256,36 @@ static JsonValue run_subagent_turn_multi(
         if (v >= 0) max_steps = v;
       } catch (...) {}
     }
-    qcode::GenerateOptions sub_opts(wire_model, sub_sys.str(), "");
-    // Subagent turns use the same bounded output budget as the parent:
-    // opencode.json max_tokens (model_defaults) capped by limit.output. Leaving
-    // it unset lets OpenRouter apply a model-specific default (for some
-    // models, 131072), which can turn an otherwise valid delegation into HTTP
-    // 402 when the account cannot afford that completion budget. A model
-    // missing from the catalog inherits the lead model's budget.
+    qcode::GenerateOptions sub_opts(
+        resolved.wire_model,
+        subagent_system_prompt(env, sub_session_id, target_provider->id, target_model_id,
+                               description, vision),
+        "");
+    // Same bounded output budget as the lead: opencode.json max_tokens capped
+    // by limit.output (an unset budget lets OpenRouter pick 131072 and fail
+    // with 402). A model missing from the catalog inherits the caller's.
     const ModelInfo* budget_model =
         target_model_info != nullptr
             ? target_model_info
-            : find_catalog_model(*providers, default_provider_id, default_model_id);
+            : find_catalog_model(*env.providers, env.provider_id, env.model_id);
     if (budget_model != nullptr) {
       sub_opts.max_tokens = ProviderTransform::max_output_tokens(*budget_model);
     }
-    // Subagents think at their model's configured default variant.
     apply_variant_options(sub_opts, target_model_info, "", target_model_id);
-    sub_opts.tools = ToolCatalog::build_definitions(subagent_tool_cfg);
+    sub_opts.tools = ToolCatalog::build_definitions(ToolConfig::subagent(vision));
     sub_opts.max_steps = max_steps;
-    sub_opts.workspace = workspace;
-    sub_opts.abort_flag = effective_abort;
+    sub_opts.workspace = env.workspace;
+    sub_opts.abort_flag = abort_flag;
     sub_opts.session_id = sub_session_id;
-    bool can_edit = args.value("can_edit", false);
-    if (mode == "explore") can_edit = false;
-    if (mode == "implement") can_edit = true;
-    sub_opts.can_edit = can_edit;
+    sub_opts.subagent_runner = make_subagent_runner(
+        {env.providers, target_provider->id, target_model_id, env.workspace});
     if (args.value("resume", false) && !sub_session_id.empty()) {
       // Resumed task: its own conversation so far (from the latest summary
       // on), which already ends with the new prompt (TaskTool saved it).
       sub_opts.messages = prepare_turn_history(
           qcode::session::load_session_history_parsed(sub_session_id),
           /*drop_system_notes=*/true);
-      if (sub_opts.messages.empty() ||
-          sub_opts.messages.back().role != kMessageRoleUser) {
+      if (sub_opts.messages.empty() || sub_opts.messages.back().role != kMessageRoleUser) {
         sub_opts.messages.push_back(Message::user(prompt_text));
       }
     } else {
@@ -516,52 +339,33 @@ static JsonValue run_subagent_turn_multi(
                   }
                 }});
 
-    std::string error;
+    if (abort_flag->load()) return JsonValue{{"error", "Subagent cancelled due to abort flag"}};
     if (!res.is_success()) {
-      error = !res.error_message().empty() ? res.error_message() : "subagent generation failed";
+      return JsonValue{{"error", !res.error_message().empty() ? res.error_message()
+                                                              : "subagent generation failed"}};
     }
-    routing::Outcome outcome = aborted() ? routing::Outcome::kAborted
-                                         : routing::classify_outcome(res.is_success(), error);
-    if (outcome == routing::Outcome::kSuccess &&
-        res.text.find_first_not_of(" \t\r\n") == std::string::npos) {
-      outcome = routing::Outcome::kModelFailure;
-      error = "empty output";
+    if (res.text.find_first_not_of(" \t\r\n") == std::string::npos) {
+      return JsonValue{{"error", "empty output"}};
     }
-    record(outcome, error);
-
-    if (outcome == routing::Outcome::kAborted) {
-      out["error"] = "Subagent cancelled due to abort flag";
-      return out;
+    if (qcode::task_notes::resolve(env.workspace).exists) {
+      const std::string label = !description.empty() ? description : prompt_text;
+      qcode::task_notes::append_log(env.workspace, "sub",
+                                    "done (" + target_provider->id + ":" + target_model_id +
+                                        "): " + label.substr(0, 120));
     }
-    if (outcome == routing::Outcome::kSuccess) {
-      if (qcode::task_notes::resolve(workspace).exists) {
-        const std::string label = !description.empty() ? description : prompt_text;
-        qcode::task_notes::append_log(
-            workspace, "sub:" + mode,
-            "done (" + target_provider->id + ":" + target_model_id + "): " +
-                label.substr(0, 120));
-      }
-      out = {{"output", res.text},
-             {"provider", target_provider->id},
-             {"model", target_model_id},
-             {"attempts", attempt},
-             {"route_reason", cand.reason}};
-      if (cand.expected) out["expected"] = *cand.expected;
-      return out;
-    }
-    last_error = error;
-    LOG_WARN("subagent attempt {}/{} failed on {}:{}: {}", attempt, kSubagentMaxAttempts,
-             target_provider->id, target_model_id, error);
-    if (outcome == routing::Outcome::kTransientError && provider_wide_limit(error)) {
-      limited_providers.insert(target_provider->id);
-    }
-  }  // end fallback loop
-  out["error"] = last_error.empty() ? "subagent generation failed" : last_error;
-  out["attempts"] = attempt;
+    return JsonValue{{"output", res.text},
+                     {"provider", target_provider->id},
+                     {"model", target_model_id}};
   } catch (const std::exception& e) {
-    out["error"] = std::string("subagent crashed: ") + e.what();
+    return JsonValue{{"error", std::string("subagent crashed: ") + e.what()}};
   }
-  return out;
+}
+
+static SubagentRunner make_subagent_runner(SubagentEnv env) {
+  return [env = std::move(env)](const JsonValue& args,
+                                std::shared_ptr<std::atomic<bool>> abort_flag) {
+    return run_subagent_turn(env, std::move(abort_flag), args);
+  };
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1828,26 +1632,9 @@ void run_generation_with_bus(
       base_opts.max_steps = max_tool_steps;
 
       if (enable_task_tool) {
-        auto providers_ptr = std::make_shared<std::vector<ProviderInfo>>(providers);
-        std::string current_prov_id = provider_id;
-        std::string current_model_id = resolved_model_id;
-        std::string current_workspace = ctx.workspace;
-        std::shared_ptr<std::atomic<bool>> main_abort = ctx.abort_flag;
-
-        base_opts.subagent_runner =
-            [providers_ptr, current_prov_id, current_model_id, current_workspace, main_abort](
-                const JsonValue& args,
-                std::shared_ptr<std::atomic<bool>> task_abort) -> JsonValue {
-              return run_subagent_turn_multi(
-                  providers_ptr, current_prov_id, current_model_id,
-                  current_workspace, main_abort, std::move(task_abort), args);
-            };
-        base_opts.routing_board = [providers_ptr, current_prov_id, current_model_id] {
-          return routing::format_routing_table(*providers_ptr,
-                                               qcode::session::load_subagent_stats(),
-                                               current_prov_id, current_model_id,
-                                               std::time(nullptr));
-        };
+        base_opts.subagent_runner = make_subagent_runner(
+            {std::make_shared<std::vector<ProviderInfo>>(providers), provider_id,
+             resolved_model_id, ctx.workspace});
       }
     }
     if (enable_tools && !is_server_duplex_agent) {

@@ -551,7 +551,6 @@ CursorExecReply handle_task(const CursorExecRequest& req,
   if (options) {
     ctx.session_id = options->session_id;  // links the child to its parent
     ctx.subagent_runner = options->subagent_runner;
-    ctx.routing_board = options->routing_board;
   }
 
   const std::string label = args.value(

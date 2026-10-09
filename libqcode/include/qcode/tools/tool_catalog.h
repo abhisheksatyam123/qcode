@@ -20,14 +20,14 @@ struct ToolDescriptor {
 
 struct ToolConfig {
   bool enable_bash{true};
-  bool enable_task{true};  // task + rate_task (the lead only)
+  bool enable_task{true};  // the task tool (orchestrator and subagents)
   bool enable_image{false};
 
   static ToolConfig orchestrator(bool vision = false) {
     return ToolConfig{true, true, vision};
   }
   static ToolConfig subagent(bool vision = false) {
-    return ToolConfig{true, false, vision};
+    return ToolConfig{true, true, vision};
   }
 };
 

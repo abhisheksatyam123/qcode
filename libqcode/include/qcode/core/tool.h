@@ -23,22 +23,16 @@ using JsonValue = nlohmann::json;
 using SubagentRunner = std::function<JsonValue(
     const JsonValue& args, std::shared_ptr<std::atomic<bool>> abort_flag)>;
 
-/// The learned subagent model board (qcode/tools/subagent_router.h) as text.
-using RoutingBoard = std::function<std::string()>;
-
 /// Context provided to tool execution functions
 struct ToolExecutionContext {
   std::string tool_call_id;
   std::string workspace;
   std::string session_id;  // parent/orchestrator session when set
   std::shared_ptr<std::atomic<bool>> abort_flag{nullptr};
-  // Runs the task tool's subagent turn. Args: {prompt, description, mode,
-  // session_id, model?}; returns JSON with "output" or "error".
+  // Runs the task tool's subagent turn. Args: {prompt, description,
+  // session_id, parent_session_id, model?, resume?}; returns JSON with
+  // "output" or "error".
   SubagentRunner subagent_runner{nullptr};
-  // Shown by rate_task; set together with subagent_runner.
-  RoutingBoard routing_board{nullptr};
-  // When false, bash refuses workspace-mutating commands (explore subagents).
-  bool can_edit{true};
 };
 
 /// Tool execution function signature

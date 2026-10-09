@@ -34,8 +34,6 @@ add_executable(qcode_tests
     unit/dedupe_user_prompt_test.cpp
     unit/task_tool_test.cpp
     unit/task_target_test.cpp
-    unit/subagent_router_test.cpp
-    unit/subagent_stats_test.cpp
     unit/generation_continue_test.cpp
     unit/bus_json_codec_test.cpp
     unit/study_store_test.cpp

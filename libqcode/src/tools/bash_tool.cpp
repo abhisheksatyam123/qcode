@@ -266,110 +266,6 @@ static std::string android_shell_prelude() {
 }
 
 
-static bool is_dev_null_target(const std::string& command, size_t i) {
-  while (i < command.size() && (command[i] == ' ' || command[i] == '\t')) ++i;
-  return command.compare(i, 9, "/dev/null") == 0;
-}
-
-static bool looks_like_mutating_command(const std::string& command) {
-  // Unquoted redirects (except >/dev/null and 2>/dev/null).
-  bool in_single = false, in_double = false;
-  for (size_t i = 0; i < command.size(); ++i) {
-    char c = command[i];
-    if (!in_single && c == '\\' && i + 1 < command.size()) {
-      ++i;
-      continue;
-    }
-    if (c == '\'' && !in_double) {
-      in_single = !in_single;
-      continue;
-    }
-    if (c == '"' && !in_single) {
-      in_double = !in_double;
-      continue;
-    }
-    if (in_single || in_double) continue;
-    if (c == '>') {
-      size_t t = i + 1;
-      // fd duplication (2>&1, >&2, >&-) moves streams, it never writes a file.
-      if (t + 1 < command.size() && command[t] == '&' &&
-          (std::isdigit(static_cast<unsigned char>(command[t + 1])) ||
-           command[t + 1] == '-')) {
-        continue;
-      }
-      if (t < command.size() && command[t] == '>') ++t;
-      if (!is_dev_null_target(command, t)) return true;
-    }
-  }
-
-  auto first_word = [](const std::string& s, size_t start) {
-    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
-    size_t end = start;
-    while (end < s.size() && !std::isspace(static_cast<unsigned char>(s[end])) &&
-           s[end] != '|' && s[end] != ';' && s[end] != '&' && s[end] != '<' &&
-           s[end] != '>') {
-      ++end;
-    }
-    return std::make_pair(s.substr(start, end - start), end);
-  };
-
-  static const char* kMutating[] = {
-      "rm", "mv", "cp", "mkdir", "rmdir", "touch", "tee", "chmod", "chown",
-      "ln", "dd", "install", "truncate", "shred", "mkfifo", "unlink", "patch",
-      "sed", "perl", "ruby"};
-
-  size_t i = 0;
-  while (i < command.size()) {
-    auto [word, after] = first_word(command, i);
-    if (word.empty()) break;
-    if (word == "sudo" || word == "env" || word == "command" || word == "nice") {
-      i = after;
-      continue;
-    }
-    std::string lower = word;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower == "git") {
-      auto [sub, sub_after] = first_word(command, after);
-      (void)sub_after;
-      std::string sl = sub;
-      std::transform(sl.begin(), sl.end(), sl.begin(),
-                     [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-      if (sl == "add" || sl == "commit" || sl == "checkout" || sl == "reset" ||
-          sl == "rebase" || sl == "stash" || sl == "rm" || sl == "mv" ||
-          sl == "clean" || sl == "restore" || sl == "switch" || sl == "merge" ||
-          sl == "cherry-pick" || sl == "revert" || sl == "tag" || sl == "push" ||
-          sl == "apply" || sl == "am") {
-        return true;
-      }
-    } else {
-      for (const char* verb : kMutating) {
-        if (lower == verb) {
-          if (lower == "sed" || lower == "perl" || lower == "ruby") {
-            if (command.find(" -i") != std::string::npos ||
-                command.find(" -i'") != std::string::npos ||
-                command.find(" -i\"") != std::string::npos) {
-              return true;
-            }
-            break;
-          }
-          return true;
-        }
-      }
-    }
-    size_t next = command.find_first_of("|&;\n", after);
-    if (next == std::string::npos) break;
-    if (command[next] == '&' && next + 1 < command.size() && command[next + 1] == '&') {
-      i = next + 2;
-    } else if (command[next] == '|' && next + 1 < command.size() && command[next + 1] == '|') {
-      i = next + 2;
-    } else {
-      i = next + 1;
-    }
-  }
-  return false;
-}
-
 static bool is_safe_command(const std::string& command, std::string& warning) {
   bool in_single_quote = false;
   bool in_double_quote = false;
@@ -887,13 +783,6 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
     err["error"] = warning;
     return err;
   }
-  if (!context.can_edit && looks_like_mutating_command(command)) {
-    JsonValue err;
-    err["error"] =
-        "Read-only subagent (explore) cannot mutate the workspace. "
-        "Refused command. Use ls, cat, rg, git status/diff/log, or similar.";
-    return err;
-  }
 
   std::string cwd = resolve_cwd(args.value("workdir", ""), context.workspace);
   int timeout = args.value("timeout", 120000);
@@ -934,13 +823,6 @@ JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionCo
   if (!is_safe_command(command, warning)) {
     JsonValue err;
     err["error"] = warning;
-    return err;
-  }
-  if (!context.can_edit && looks_like_mutating_command(command)) {
-    JsonValue err;
-    err["error"] =
-        "Read-only subagent (explore) cannot mutate the workspace. "
-        "Refused command. Use ls, cat, rg, git status/diff/log, or similar.";
     return err;
   }
 

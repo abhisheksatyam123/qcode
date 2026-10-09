@@ -679,14 +679,19 @@ TEST(TuiConfigTest, FormatProviderCatalogForPrompt) {
   providers.push_back(p1);
   providers.push_back(p2);
 
-  std::string catalog_md = format_provider_catalog_for_prompt(providers);
-  EXPECT_THAT(catalog_md, testing::HasSubstr("### Available Providers & Models"));
+  providers[0].models[0].input_cost = 0.27;
+  providers[0].models[0].output_cost = 1.1;
+  std::string catalog_md =
+      format_provider_catalog_for_prompt(providers, "antigravity", "gemini-3.8-flash");
+  EXPECT_THAT(catalog_md, testing::HasSubstr("### Models for subagents"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("$0.27/$1.1"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("`gemini-3.8-flash` (Gemini 3.8 Flash) [you]"));
+  EXPECT_THAT(catalog_md, testing::HasSubstr("(`antigravity:gemini-3.8-flash`)"));
   EXPECT_THAT(catalog_md, testing::HasSubstr("**openrouter** (OpenRouter)"));
   EXPECT_THAT(catalog_md, testing::HasSubstr("`deepseek/deepseek-v4-flash-0731`"));
   EXPECT_THAT(catalog_md, testing::HasSubstr("[reasoning]"));
   EXPECT_THAT(catalog_md, testing::HasSubstr("**antigravity** (Antigravity)"));
   EXPECT_THAT(catalog_md, testing::HasSubstr("`gemini-3.8-flash`"));
-  EXPECT_THAT(catalog_md, testing::HasSubstr("model: \"<provider>:<model_id>\""));
 }
 
 TEST(TuiConfigTest, LoadsEveryConfiguredProvider) {

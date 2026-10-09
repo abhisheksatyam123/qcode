@@ -80,10 +80,6 @@ ToolResult ToolExecutor::execute_tool(const ToolCall& tool_call,
   }
   if (options && options->subagent_runner) {
     context.subagent_runner = options->subagent_runner;
-    context.routing_board = options->routing_board;
-  }
-  if (options) {
-    context.can_edit = options->can_edit;
   }
   if (options && options->abort_flag) {
     context.abort_flag = options->abort_flag;

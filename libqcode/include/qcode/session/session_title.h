@@ -22,11 +22,11 @@ bool is_default_title(const std::string& title, const std::string& session_id);
 // Empty when nothing usable is left.
 std::string clean_title(std::string raw);
 
-// Models to ask, best first (at most 3): opencode.json "small_model"
-// ("provider/model"), then free fast models (opencode first), then other
-// free models. Paid models only when named by small_model.
+// Models to ask, in order: opencode.json "small_model" ("provider/model" or
+// "provider:model"), then the session's own model ("provider:model").
 std::vector<std::pair<const ProviderInfo*, const ModelInfo*>> candidates(
-    const std::vector<ProviderInfo>& providers, const std::string& small_model);
+    const std::vector<ProviderInfo>& providers, const std::string& small_model,
+    const std::string& session_model = "");
 
 // Name `session_id` from `first_prompt` on a background thread when it is a
 // top-level session with a default title (once per session per process).

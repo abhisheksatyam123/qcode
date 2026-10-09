@@ -7,7 +7,6 @@
 #include <qcode/generation/model_client.h>
 #include <qcode/generation/turn_prefix.h>
 #include <qcode/session/session_store.h>
-#include <qcode/tools/subagent_router.h>
 
 #include <nlohmann/json.hpp>
 
@@ -129,43 +128,32 @@ std::string clean_title(std::string raw) {
 }
 
 std::vector<std::pair<const ProviderInfo*, const ModelInfo*>> candidates(
-    const std::vector<ProviderInfo>& providers, const std::string& small_model) {
+    const std::vector<ProviderInfo>& providers, const std::string& small_model,
+    const std::string& session_model) {
   std::vector<std::pair<const ProviderInfo*, const ModelInfo*>> out;
-  auto add = [&out](const ProviderInfo* p, const ModelInfo* m) {
-    for (const auto& [op, om] : out) {
-      if (op == p && om == m) return;
-    }
-    if (out.size() < 3) out.emplace_back(p, m);
-  };
-  if (!small_model.empty()) {
-    // "provider/model" (opencode) or "provider:model"; model ids may hold '/'.
-    const size_t sep = small_model.find_first_of("/:");
-    if (sep != std::string::npos) {
-      const std::string pid = small_model.substr(0, sep);
-      const std::string mid = small_model.substr(sep + 1);
-      for (const auto& p : providers) {
-        if (p.id != pid) continue;
-        for (const auto& m : p.models) {
-          if (m.id == mid) add(&p, &m);
-        }
-      }
-    }
-    if (out.empty()) LOG_WARN("session title: small_model '{}' is not in the catalog", small_model);
-  }
-  auto usable = [](const ProviderInfo& p, const ModelInfo& m) {
-    return p.id != "cursor" && is_provider_authenticated(p) && !routing::is_paid(p, m);
-  };
-  for (int pass = 0; pass < 3; ++pass) {
+  // "provider/model" (opencode) or "provider:model"; model ids may hold '/'.
+  auto add = [&](const std::string& spec) {
+    const size_t sep = spec.find_first_of("/:");
+    if (sep == std::string::npos) return false;
+    const std::string pid = spec.substr(0, sep);
+    const std::string mid = spec.substr(sep + 1);
     for (const auto& p : providers) {
+      if (p.id != pid && p.name != pid) continue;
       for (const auto& m : p.models) {
-        if (!usable(p, m)) continue;
-        const bool fast = routing::tier_of(m) == routing::Tier::kFast;
-        if ((pass == 0 && fast && p.id == "opencode") || (pass == 1 && fast) || pass == 2) {
-          add(&p, &m);
+        if (m.id != mid) continue;
+        for (const auto& [op, om] : out) {
+          if (op == &p && om == &m) return true;
         }
+        out.emplace_back(&p, &m);
+        return true;
       }
     }
+    return false;
+  };
+  if (!small_model.empty() && !add(small_model)) {
+    LOG_WARN("session title: small_model '{}' is not in the catalog", small_model);
   }
+  if (!session_model.empty()) add(session_model);
   return out;
 }
 
@@ -188,7 +176,10 @@ void maybe_generate_async(
     logger::ScopedThreadSession bind(session_id);
     std::string title;
     try {
-      for (const auto& [provider, model] : candidates(*providers, config_small_model())) {
+      for (const auto& [provider, model] : candidates(*providers, config_small_model(), [&] {
+             const auto [prov, model] = session::get_session_provider_model(session_id);
+             return prov.empty() || model.empty() ? std::string() : prov + ":" + model;
+           }())) {
         ResolvedModelClient rc = resolve_model_client(*provider, model, model->id, session_id);
         if (!rc.ok()) {
           LOG_WARN("session title: {}", rc.error);
