@@ -304,10 +304,23 @@ ResolvedModel resolve_provider_model(const std::vector<qcode::ProviderInfo>& pro
         }
     }
     if (!out.model && !out.provider->models.empty()) {
-        out.model = &out.provider->models.front();
-        if (!model.empty()) {
-            LOG_WARN("Model '{}' is not configured for provider '{}'; using '{}'",
-                     model, out.provider->id, out.model->id);
+        // An empty model means the caller did not pick one: default to the
+        // provider's first model. A *named* model that is not in the catalog
+        // is an error, not a licence to answer with someone else's model --
+        // silently substituting wrongs the answer and breaks the prompt-cache
+        // prefix, so report the mismatch with the ids we do have.
+        if (model.empty()) {
+            out.model = &out.provider->models.front();
+        } else {
+            nlohmann::json ids = nlohmann::json::array();
+            for (const auto& m : out.provider->models) ids.push_back(m.id);
+            res.status = 400;
+            res.set_content(nlohmann::json({
+                {"error", "model '" + model + "' is not configured for provider '" +
+                              out.provider->id + "'"},
+                {"provider", out.provider->id},
+                {"models", ids}
+            }).dump(), "application/json");
         }
     }
     return out;
@@ -397,9 +410,9 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
         if (model.empty() && !stored_m.empty()) model = stored_m;
     }
     const auto resolved = resolve_provider_model(*providers_list, provider, model, res);
-    if (!resolved.provider) return;
+    if (!resolved.provider || !resolved.model) return;
     provider = resolved.provider->id;
-    if (resolved.model) model = resolved.model->id;
+    model = resolved.model->id;
     const bool vision_supported = resolved.model && resolved.model->vision;
     std::string persona_name = body.value("persona", "");
     if (persona_name.empty()) {
@@ -702,7 +715,7 @@ svr.Get("/tasks", [](const httplib::Request& req, httplib::Response& res) {
 });
 
 // ── Create session ──
-svr.Post("/sessions", [default_workspace](const httplib::Request& req, httplib::Response& res) {
+svr.Post("/sessions", [default_workspace, providers_list](const httplib::Request& req, httplib::Response& res) {
     nlohmann::json body;
     try { body = nlohmann::json::parse(req.body); } catch (...) {
         res.status = 400;
@@ -724,6 +737,12 @@ svr.Post("/sessions", [default_workspace](const httplib::Request& req, httplib::
         res.set_content(R"({"error":"provider and model required"})", "application/json");
         return;
     }
+    // Reject a provider/model pair the catalog does not know here, so a session
+    // is never stored with a model that cannot be served. Without this the row
+    // keeps the bogus id and every later turn silently answers with the
+    // provider's first model instead (see resolve_provider_model).
+    const auto resolved = resolve_provider_model(*providers_list, provider, model, res);
+    if (!resolved.provider || !resolved.model) return;
     std::string persona = body.value("persona", "");
     auto id = qcode::session::create_new_session(provider, model, workspace, custom_id);
     if (!persona.empty()) {

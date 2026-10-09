@@ -72,10 +72,10 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         model_id = s->model;
     }
     const auto resolved = resolve_provider_model(*providers_list, provider_id, model_id, res);
-    if (!resolved.provider) return;
+    if (!resolved.provider || !resolved.model) return;
     const auto& sel = *resolved.provider;
     const qcode::ModelInfo* selected_model = resolved.model;
-    if (selected_model) model_id = selected_model->id;
+    model_id = selected_model->id;
 
     qcode::providers::register_authenticated_providers();
     qcode::providers::ProviderOptions provider_options;

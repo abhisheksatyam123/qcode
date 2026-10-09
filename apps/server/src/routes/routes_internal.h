@@ -20,9 +20,11 @@ struct ResolvedModel {
 };
 
 // Resolve `provider` / `model` by id or name. An empty provider means the
-// first configured one; an empty or unknown model the provider's first model
-// (logged when unknown). A provider that is named but not configured yields
-// a null provider and a 400 on `res` listing the configured provider ids.
+// first configured one; an empty model the provider's first model. A *named*
+// model that is not in the provider's catalog yields a null model and a 400
+// on `res` listing that provider's model ids. A provider that is named but
+// not configured yields a null provider and a 400 on `res` listing the
+// configured provider ids.
 ResolvedModel resolve_provider_model(const std::vector<qcode::ProviderInfo>& providers,
                                      const std::string& provider,
                                      const std::string& model,

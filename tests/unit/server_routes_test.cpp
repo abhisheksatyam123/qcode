@@ -527,3 +527,77 @@ TEST_F(ServerRoutesTest, SessionLogsEndpointReturnsIsolatedSessionLogs) {
     qcode::server::g_session_logger.reset();
     fs::remove_all(test_log_dir, ec);
 }
+
+TEST_F(ServerRoutesTest, UnknownModelIsRejectedInsteadOfSubstituted) {
+    // A model name that is not in the provider's catalog must fail loudly.
+    // Falling back to the provider's first model silently answers with
+    // someone else's model (and breaks the prompt-cache prefix).
+    nlohmann::json bad = {
+        {"provider", "mock-provider"},
+        {"model", "no-such-model"},
+        {"workspace", test_workspace_dir_}
+    };
+    auto res_bad = client_->Post("/sessions", bad.dump(), "application/json");
+    ASSERT_TRUE(res_bad != nullptr);
+    EXPECT_EQ(res_bad->status, 400);
+    auto j_bad = nlohmann::json::parse(res_bad->body);
+    EXPECT_EQ(j_bad.value("provider", ""), "mock-provider");
+    ASSERT_TRUE(j_bad["models"].is_array());
+    EXPECT_EQ(j_bad["models"].size(), 1u);
+    EXPECT_EQ(j_bad["models"][0].get<std::string>(), "mock-model");
+    EXPECT_TRUE(j_bad.value("error", "").find("no-such-model") != std::string::npos);
+
+    // No session was created by the rejected request.
+    auto res_list = client_->Get("/sessions");
+    ASSERT_TRUE(res_list != nullptr);
+    EXPECT_EQ(nlohmann::json::parse(res_list->body).size(), 0);
+
+    // An omitted model is still rejected as incomplete: this route requires both.
+    nlohmann::json omitted = {
+        {"provider", "mock-provider"},
+        {"workspace", test_workspace_dir_}
+    };
+    auto res_omitted = client_->Post("/sessions", omitted.dump(), "application/json");
+    ASSERT_TRUE(res_omitted != nullptr);
+    EXPECT_EQ(res_omitted->status, 400);
+    EXPECT_EQ(nlohmann::json::parse(res_omitted->body).value("error", ""),
+              "provider and model required");
+
+    // A provider that is not configured is rejected here too (it used to be
+    // stored, and only failed later at generate time).
+    nlohmann::json bad_provider = {
+        {"provider", "ghost-provider"},
+        {"model", "whatever"},
+        {"workspace", test_workspace_dir_}
+    };
+    auto res_ghost = client_->Post("/sessions", bad_provider.dump(), "application/json");
+    ASSERT_TRUE(res_ghost != nullptr);
+    EXPECT_EQ(res_ghost->status, 400);
+    EXPECT_TRUE(nlohmann::json::parse(res_ghost->body).value("error", "")
+                    .find("ghost-provider") != std::string::npos);
+
+    // The valid model still works, and no session leaked from the failures.
+    nlohmann::json ok = {
+        {"provider", "mock-provider"},
+        {"model", "mock-model"},
+        {"workspace", test_workspace_dir_}
+    };
+    auto res_ok = client_->Post("/sessions", ok.dump(), "application/json");
+    ASSERT_TRUE(res_ok != nullptr);
+    EXPECT_EQ(res_ok->status, 200);
+    EXPECT_EQ(nlohmann::json::parse(res_ok->body).value("title", ""), "Session - mock-model");
+
+    // Resolving by the model's display name keeps working (session rows store
+    // display names, e.g. compaction resolving "MiMo-V2.6-Flash Free").
+    nlohmann::json by_name = {
+        {"provider", "mock-provider"},
+        {"model", "Mock Model"},
+        {"workspace", test_workspace_dir_}
+    };
+    auto res_name = client_->Post("/sessions", by_name.dump(), "application/json");
+    ASSERT_TRUE(res_name != nullptr);
+    EXPECT_EQ(res_name->status, 200);
+    // The stored display name is kept verbatim in the title.
+    EXPECT_EQ(nlohmann::json::parse(res_name->body).value("title", ""),
+              "Session - Mock Model");
+}
