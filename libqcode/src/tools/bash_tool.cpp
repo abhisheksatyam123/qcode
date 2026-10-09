@@ -51,8 +51,27 @@ void BackgroundRegistry::register_task(const std::string& id, int pid,
   tasks_[id] = std::move(entry);
 }
 
+void BackgroundRegistry::reap_locked() const {
+  for (auto& [id, t] : tasks_) {
+    if (t.status != "running" || t.pid <= 0) continue;
+    int status = 0;
+    const pid_t r = ::waitpid(t.pid, &status, WNOHANG);
+    if (r == 0) continue;  // still running
+    t.end_time = std::chrono::system_clock::now();
+    if (r == t.pid && WIFEXITED(status)) {
+      t.status = "exited";
+      t.exit_code = WEXITSTATUS(status);
+    } else if (r == t.pid && WIFSIGNALED(status)) {
+      t.status = "killed";
+    } else {
+      t.status = "exited";  // already reaped elsewhere; exit code unknown
+    }
+  }
+}
+
 std::optional<BackgroundTaskEntry> BackgroundRegistry::get_task(const std::string& id) const {
   std::lock_guard<std::mutex> lock(mutex_);
+  reap_locked();
   auto it = tasks_.find(id);
   if (it != tasks_.end()) return it->second;
   return std::nullopt;
@@ -60,6 +79,7 @@ std::optional<BackgroundTaskEntry> BackgroundRegistry::get_task(const std::strin
 
 std::vector<BackgroundTaskEntry> BackgroundRegistry::list_tasks() const {
   std::lock_guard<std::mutex> lock(mutex_);
+  reap_locked();
   std::vector<BackgroundTaskEntry> result;
   for (const auto& [k, v] : tasks_) result.push_back(v);
   return result;
@@ -73,8 +93,11 @@ bool BackgroundRegistry::kill_task(const std::string& id) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto it = tasks_.find(id);
   if (it == tasks_.end()) return false;
+  reap_locked();
+  if (it->second.status != "running") return true;  // already finished
   if (it->second.pid > 0) {
     ::kill(it->second.pid, SIGTERM);
+    ::waitpid(it->second.pid, nullptr, WNOHANG);
   }
   it->second.status = "killed";
   it->second.end_time = std::chrono::system_clock::now();

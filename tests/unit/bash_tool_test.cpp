@@ -223,6 +223,27 @@ TEST(BashToolTest, AllowsEscapedQuotesInPythonInlineCommands) {
   EXPECT_NE(result["output"].get<std::string>().find("65536"), std::string::npos);
 }
 
+// A background command that ends is reported as exited with its exit code
+// (the registry reaps it), not "running" forever.
+TEST(BashToolTest, FinishedBackgroundCommandIsReportedAsExited) {
+  ToolExecutionContext ctx;
+  ctx.workspace = std::filesystem::temp_directory_path().string();
+  const JsonValue started = BashTool::execute(
+      JsonValue{{"mode", "background"}, {"command", "exit 3"}, {"description", "exits"}}, ctx);
+  ASSERT_FALSE(started.contains("error")) << started.dump();
+  const std::string id = started["metadata"].value("backgroundTaskId", "");
+  ASSERT_FALSE(id.empty());
+  std::optional<BackgroundTaskEntry> task;
+  for (int i = 0; i < 300; ++i) {
+    task = BackgroundRegistry::instance().get_task(id);
+    if (task && task->status != "running") break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_TRUE(task.has_value());
+  EXPECT_EQ(task->status, "exited");
+  EXPECT_EQ(task->exit_code, 3);
+  BackgroundRegistry::instance().remove_task(id);
+}
 
 }  // namespace
 }  // namespace qcode

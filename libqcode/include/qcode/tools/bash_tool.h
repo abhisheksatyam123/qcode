@@ -56,8 +56,12 @@ class BackgroundRegistry {
 
  private:
   BackgroundRegistry() = default;
+  // Reaps finished children so their status leaves "running" (and no
+  // zombie is left). Called with mutex_ held.
+  void reap_locked() const;
+
   mutable std::mutex mutex_;
-  std::map<std::string, BackgroundTaskEntry> tasks_;
+  mutable std::map<std::string, BackgroundTaskEntry> tasks_;
 };
 
 // ── Bash Tool Schema ──
