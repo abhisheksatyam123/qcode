@@ -157,14 +157,6 @@ TEST(AntigravityClientTest, UnsignedFunctionCallGetsDummyThoughtSignature) {
   EXPECT_TRUE(saw_fn) << req.dump();
 }
 
-TEST(AntigravityClientTest, EmbeddingsFailWithoutNetworkRequest) {
-  auto client = create_client("dummy-token");
-  const auto result = client.embeddings(
-      EmbeddingOptions{"embedding-model", "hello"});
-  ASSERT_TRUE(result.error.has_value());
-  EXPECT_THAT(*result.error, testing::HasSubstr("does not support"));
-}
-
 }  // namespace
 
 TEST(AntigravityClientTest, GenerateTextE2E) {

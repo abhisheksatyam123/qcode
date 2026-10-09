@@ -185,35 +185,7 @@ Creates a session row in SQLite and returns the generated UUID and resolved disp
 
 *Security*: Absolute paths, null bytes, and path escapes outside the session's workspace root are strictly rejected. File read payloads are capped at 2 MiB.
 
-## Terminal (PTY Sessions)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/terminal/create` | Spawn a pseudo-terminal process: `{"workspace": "...", "cols": 80, "rows": 24}` |
-| DELETE | `/terminal/:id` | Terminate active terminal process |
-| POST | `/terminal/:id/input` | Send raw keystrokes/input to terminal: `{"data": "..."}` |
-| POST | `/terminal/:id/resize` | Resize terminal PTY window: `{"cols": 120, "rows": 36}` |
-| GET | `/terminal/:id/stream` | Poll: the PTY output available since the last call, as `text/plain` (empty when none) |
-
-## Study
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/study/courses` | List ingested study courses |
-| POST | `/study/courses/ingest` | Ingest markdown curriculum vault from root path |
-| GET | `/study/courses/:id/chapters` | List chapters for course |
-| GET | `/study/courses/:id/next` | Determine next recommended study chapter |
-| POST | `/study/chapters/:id/prepare` | Prepare chapter quiz questions |
-| GET | `/study/chapters/:id/quiz` | Fetch active chapter quiz |
-| POST | `/study/quiz/submit` | Submit question attempt and record score |
-
-## Vision & Images
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/vision/providers` | Configured vision-capable providers/models (incl. local Ollama) |
-| POST | `/api/vision/ocr` | Image → Markdown (OCR/diagram transcription): `{image, mode, provider, model}` |
-| POST | `/api/images/generate` | **Generate an image**: `{prompt, provider?, model?, size?, workspace?}` |
+## Images
 
 ### Image attachments on generation
 
@@ -236,16 +208,3 @@ the user message in the provider's own format (OpenAI `image_url` data URL / Res
 `image` tool: png/jpeg/webp/gif, max 3.75 MB. Raw `data` requires `mime_type` (`image/*`,
 max 10 MiB decoded). Attachments persist in the session history across reloads and
 compaction.
-
-### Generate image (`POST /api/images/generate`)
-
-| Provider | Transport | Status (verified through qcode) |
-|----------|-----------|--------------------------------|
-| `antigravity` | Gemini `generationConfig.responseModalities: ["TEXT","IMAGE"]` via `/v1internal:generateContent` | **200** — `inlineData` when present, otherwise the model's inline `<svg>` text block is extracted as `image/svg+xml` |
-| `openrouter` | `POST /api/v1/images/generations` (`response_format: b64_json`) | Provider-dependent: 404 when the model has no images endpoint (`502` relayed with provider error) |
-| `opencode` (Zen) | `POST /zen/v1/images/generations` | 404 — no images endpoint (relayed as `502`) |
-| `cursor` / others | — | `501 {"image_generation": false}` (text-only transport) |
-
-Response `200`: `{status, provider, model, mime_type, data, data_url, path, text}` —
-`data` is base64, `data_url` a ready-to-render data URL, `path` the file written to the
-workspace (`generated-<epoch>.<ext>`).

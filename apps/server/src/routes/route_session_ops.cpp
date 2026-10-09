@@ -107,21 +107,8 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     // replays the last routed request's cacheable prefix byte-for-byte
     // (system prompt + tool schemas + history), with the directive appended
     // as the final user message. See compaction_request.h (dsh rule).
-    // Same study-mode resolution and default system prompt as the generate
-    // route (route_session.cpp), so the replayed system prefix matches.
-    bool study_mode =
-#ifdef __ANDROID__
-        true;
-#else
-        false;
-#endif
-    if (body.contains("study_mode") && body["study_mode"].is_boolean()) {
-        study_mode = body["study_mode"].get<bool>();
-    }
-    const std::string mode_str = body.value("mode", "");
-    if (mode_str == "study") study_mode = true;
-    if (mode_str == "code") study_mode = false;
-
+    // Same default system prompt as the generate route (route_session.cpp),
+    // so the replayed system prefix matches.
     std::string persona_name = body.value("persona", "");
     if (persona_name.empty()) {
         persona_name = qcode::session::get_session_persona(sid);
@@ -140,14 +127,9 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         }
     }
     if (system_prompt.empty()) {
-        if (study_mode) {
-            system_prompt =
-                qcode::SystemPrompt::build(qcode::SystemPrompt::study_identity());
-        } else {
-            system_prompt = qcode::SystemPrompt::build_default(
-                qcode::ToolConfig::orchestrator(
-                    selected_model != nullptr && selected_model->vision));
-        }
+        system_prompt = qcode::SystemPrompt::build_default(
+            qcode::ToolConfig::orchestrator(
+                selected_model != nullptr && selected_model->vision));
     }
 
     // The generate route stores the modes of each turn (set_session_modes).

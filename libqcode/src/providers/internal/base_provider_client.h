@@ -2,7 +2,6 @@
 
 #include <qcode/core/retry_policy.h>
 #include <qcode/core/client.h>
-#include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
 #include <qcode/core/stream_options.h>
 #include "core/http_request_handler.h"
@@ -20,7 +19,6 @@ struct ProviderConfig {
   std::string api_key;
   std::string base_url;
   std::string completions_endpoint_path;  // e.g. "/v1/chat/completions"
-  std::string embeddings_endpoint_path;
   std::string auth_header_name;    // e.g., "Authorization" or "x-api-key"
   std::string auth_header_prefix;  // e.g., "Bearer " or ""
   httplib::Headers extra_headers;  // Additional headers like anthropic-version
@@ -43,8 +41,6 @@ class RequestBuilder {
     j["stream"] = true;
     return j;
   }
-  virtual nlohmann::json build_request_json(
-      const EmbeddingOptions& options) = 0;
   virtual httplib::Headers build_headers(const ProviderConfig& config) = 0;
 };
 
@@ -55,11 +51,6 @@ class ResponseParser {
   virtual GenerateResult parse_success_completion_response(
       const nlohmann::json& response) = 0;
   virtual GenerateResult parse_error_completion_response(
-      int status_code,
-      const std::string& body) = 0;
-  virtual EmbeddingResult parse_success_embedding_response(
-      const nlohmann::json& response) = 0;
-  virtual EmbeddingResult parse_error_embedding_response(
       int status_code,
       const std::string& body) = 0;
 };
@@ -74,7 +65,6 @@ class BaseProviderClient : public Client {
   // Implements the common flow using the composed components
   GenerateResult generate_text(const GenerateOptions& options) override;
   StreamResult stream_text(const StreamOptions& options) override;
-  EmbeddingResult embeddings(const EmbeddingOptions& options) override;
 
   bool is_valid() const override { return !config_.api_key.empty(); }
 

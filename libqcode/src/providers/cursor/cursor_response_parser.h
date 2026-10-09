@@ -72,10 +72,6 @@ class CursorResponseParser : public providers::ResponseParser {
       const nlohmann::json& response) override;
   GenerateResult parse_error_completion_response(
       int status_code, const std::string& body) override;
-  EmbeddingResult parse_success_embedding_response(
-      const nlohmann::json& response) override;
-  EmbeddingResult parse_error_embedding_response(
-      int status_code, const std::string& body) override;
 
   // body = raw protobuf from GetUsableModelsResponse { 1: models[] }.
   static std::vector<CursorModelInfo> parse_get_usable_models(

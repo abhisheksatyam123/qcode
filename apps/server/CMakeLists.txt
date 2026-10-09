@@ -9,14 +9,10 @@ add_executable(qcode-server
     src/routes/route_session.cpp
     src/routes/route_session_ops.cpp
     src/routes/session_runtime.cpp
-    src/routes/route_terminal.cpp
     src/routes/route_fs.cpp
-    src/routes/route_study.cpp
-    src/routes/route_vision.cpp
     src/bus_json_codec.cpp
     src/http_utils.cpp
     src/workspace_fs.cpp
-    src/terminal_pty.cpp
 )
 
 target_include_directories(qcode-server PRIVATE

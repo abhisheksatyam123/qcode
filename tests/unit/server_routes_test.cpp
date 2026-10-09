@@ -379,42 +379,6 @@ TEST_F(ServerRoutesTest, WorkspaceFsOperations) {
     EXPECT_EQ(res_escape_write->status, 400);
 }
 
-TEST_F(ServerRoutesTest, TerminalLifecycleAndResize) {
-    nlohmann::json req_term = {
-        {"workspace", test_workspace_dir_},
-        {"cols", 80},
-        {"rows", 24}
-    };
-    auto res_create = client_->Post("/terminal/create", req_term.dump(), "application/json");
-    ASSERT_TRUE(res_create != nullptr);
-    EXPECT_EQ(res_create->status, 200);
-    auto j_term = nlohmann::json::parse(res_create->body);
-    std::string term_id = j_term.value("id", "");
-    ASSERT_FALSE(term_id.empty());
-
-    // Input to terminal
-    nlohmann::json req_in = {{"data", "echo hello\n"}};
-    auto res_in = client_->Post("/terminal/" + term_id + "/input", req_in.dump(), "application/json");
-    ASSERT_TRUE(res_in != nullptr);
-    EXPECT_EQ(res_in->status, 200);
-
-    // Resize terminal
-    nlohmann::json req_resize = {{"cols", 120}, {"rows", 40}};
-    auto res_resize = client_->Post("/terminal/" + term_id + "/resize", req_resize.dump(), "application/json");
-    ASSERT_TRUE(res_resize != nullptr);
-    EXPECT_EQ(res_resize->status, 200);
-
-    // Delete terminal
-    auto res_del = client_->Delete("/terminal/" + term_id);
-    ASSERT_TRUE(res_del != nullptr);
-    EXPECT_EQ(res_del->status, 200);
-
-    // Resize non-existent terminal returns 404
-    auto res_bad_resize = client_->Post("/terminal/" + term_id + "/resize", req_resize.dump(), "application/json");
-    ASSERT_TRUE(res_bad_resize != nullptr);
-    EXPECT_EQ(res_bad_resize->status, 404);
-}
-
 TEST_F(ServerRoutesTest, TasksAndSubagentSessionLookup) {
     auto res_tasks = client_->Get("/tasks");
     ASSERT_TRUE(res_tasks);

@@ -23,7 +23,6 @@ providers::ProviderConfig make_config(
   cfg.api_key = api_key;
   cfg.base_url = base_url;
   cfg.completions_endpoint_path = kCompletionsPath;
-  cfg.embeddings_endpoint_path = "";
   cfg.auth_header_name = "Authorization";
   cfg.auth_header_prefix = "Bearer ";
   cfg.extra_headers = {};
@@ -76,10 +75,6 @@ StreamResult AntigravityClient::stream_text(const StreamOptions& options) {
 
   LOG_INFO("Antigravity streaming started - model: {}", options.model);
   return StreamResult(std::move(impl));
-}
-
-EmbeddingResult AntigravityClient::embeddings(const EmbeddingOptions&) {
-  return EmbeddingResult("Antigravity does not support embeddings");
 }
 
 std::string AntigravityClient::provider_name() const { return "antigravity"; }

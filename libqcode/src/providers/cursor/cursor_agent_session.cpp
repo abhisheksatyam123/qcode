@@ -94,7 +94,6 @@ providers::ProviderConfig make_agent_config(const std::string& api_key,
   cfg.api_key = api_key;
   cfg.base_url = base_url;
   cfg.completions_endpoint_path = kAgentPath;
-  cfg.embeddings_endpoint_path = "";
   cfg.auth_header_name = "Authorization";
   cfg.auth_header_prefix = "Bearer ";
   cfg.extra_headers = {};

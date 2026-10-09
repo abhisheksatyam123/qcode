@@ -375,14 +375,6 @@ nlohmann::json AnthropicRequestBuilder::build_request_json(
   return request;
 }
 
-nlohmann::json AnthropicRequestBuilder::build_request_json(
-    const EmbeddingOptions& options) {
-  // Note: Anthropic does not currently offer embeddings API
-  // This is a placeholder for future compatibility or custom endpoints
-  nlohmann::json request{{"model", options.model}, {"input", options.input}};
-  return request;
-}
-
 httplib::Headers AnthropicRequestBuilder::build_headers(
     const providers::ProviderConfig& config) {
   const auto key =

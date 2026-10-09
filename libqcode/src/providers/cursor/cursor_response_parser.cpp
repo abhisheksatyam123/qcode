@@ -1,6 +1,5 @@
 #include "cursor_response_parser.h"
 
-#include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
 #include "cursor_proto.h"
 
@@ -217,16 +216,6 @@ GenerateResult CursorResponseParser::parse_success_completion_response(
 GenerateResult CursorResponseParser::parse_error_completion_response(
     int, const std::string& body) {
   return GenerateResult(body.empty() ? "cursor error" : body);
-}
-
-EmbeddingResult CursorResponseParser::parse_success_embedding_response(
-    const nlohmann::json&) {
-  return EmbeddingResult();
-}
-
-EmbeddingResult CursorResponseParser::parse_error_embedding_response(
-    int, const std::string& body) {
-  return EmbeddingResult(body.empty() ? "cursor embedding error" : body);
 }
 
 std::vector<CursorModelInfo> CursorResponseParser::parse_get_usable_models(

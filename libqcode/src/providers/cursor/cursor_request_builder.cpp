@@ -95,11 +95,6 @@ nlohmann::json CursorRequestBuilder::build_request_json(
   return nlohmann::json::object();
 }
 
-nlohmann::json CursorRequestBuilder::build_request_json(
-    const EmbeddingOptions&) {
-  return nlohmann::json::object();
-}
-
 httplib::Headers CursorRequestBuilder::build_headers(
     const providers::ProviderConfig& config) {
   httplib::Headers headers;

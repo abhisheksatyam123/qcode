@@ -20,15 +20,5 @@ GenerateResult AntigravityResponseParser::parse_error_completion_response(
       "Antigravity", status_code, body);
 }
 
-EmbeddingResult AntigravityResponseParser::parse_success_embedding_response(
-    const nlohmann::json&) {
-  return EmbeddingResult("Antigravity does not support embeddings");
-}
-
-EmbeddingResult AntigravityResponseParser::parse_error_embedding_response(
-    int, const std::string&) {
-  return EmbeddingResult("Antigravity does not support embeddings");
-}
-
 }  // namespace antigravity
 }  // namespace qcode

@@ -401,19 +401,6 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
     provider = resolved.provider->id;
     if (resolved.model) model = resolved.model->id;
     const bool vision_supported = resolved.model && resolved.model->vision;
-    bool study_mode =
-#ifdef __ANDROID__
-        true;
-#else
-        false;
-#endif
-    if (body.contains("study_mode") && body["study_mode"].is_boolean()) {
-        study_mode = body["study_mode"].get<bool>();
-    }
-    const std::string mode = body.value("mode", "");
-    if (mode == "study") study_mode = true;
-    if (mode == "code") study_mode = false;
-
     std::string persona_name = body.value("persona", "");
     if (persona_name.empty()) {
         persona_name = qcode::session::get_session_persona(session_id);
@@ -434,12 +421,7 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
     }
 
     if (system_prompt.empty()) {
-        if (study_mode) {
-            system_prompt =
-                qcode::SystemPrompt::build(qcode::SystemPrompt::study_identity());
-        } else {
-            system_prompt = qcode::SystemPrompt::build_default(qcode::ToolConfig::orchestrator(vision_supported));
-        }
+        system_prompt = qcode::SystemPrompt::build_default(qcode::ToolConfig::orchestrator(vision_supported));
     }
     std::string reasoning_mode = body.value("reasoning_mode", "off");
     std::string agent_mode = body.value("agent_mode", "");

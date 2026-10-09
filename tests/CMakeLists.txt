@@ -15,7 +15,6 @@ add_executable(qcode_tests
     unit/stream_result_test.cpp
     unit/stream_step_test.cpp
     unit/anthropic_stream_test.cpp
-    unit/openai_embeddings_test.cpp
     unit/registry_test.cpp
     unit/gemini_transform_test.cpp
     unit/provider_transform_test.cpp
@@ -36,14 +35,12 @@ add_executable(qcode_tests
     unit/task_target_test.cpp
     unit/generation_continue_test.cpp
     unit/bus_json_codec_test.cpp
-    unit/study_store_test.cpp
     unit/git_workspace_test.cpp
     unit/session_store_test.cpp
     unit/session_file_logger_test.cpp
     unit/token_budget_test.cpp
     unit/tool_catalog_test.cpp
     unit/workspace_fs_test.cpp
-    unit/study_assistant_test.cpp
     unit/commands_test.cpp
     unit/tui_scroll_test.cpp
     unit/prompt_wrap_test.cpp
@@ -55,16 +52,12 @@ add_executable(qcode_tests
     ${CMAKE_SOURCE_DIR}/apps/server/src/bus_json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/workspace_fs.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/http_utils.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/terminal_pty.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/server_routes.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_system.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_session.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_session_ops.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/routes/session_runtime.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_terminal.cpp
     ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_fs.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_study.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_vision.cpp
     unit/server_routes_test.cpp
     unit/app_store_latency_test.cpp
     unit/anthropic_sse_test.cpp
@@ -73,7 +66,6 @@ add_executable(qcode_tests
     integration/openai_integration_test.cpp
     integration/anthropic_integration_test.cpp
     integration/tool_calling_integration_test.cpp
-    integration/openai_embeddings_integration_test.cpp
     integration/multi_step_duplicate_execution_test.cpp
 
     # Test helpers

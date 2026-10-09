@@ -17,10 +17,7 @@ test('WebUI static source files exist and are populated', () => {
     'style.css',
     'vendor-marked.min.js',
     'vendor-jsyaml.min.js',
-    'vendor-xterm.min.js',
-    'vendor-addon-fit.min.js',
     'vendor-hljs.min.js',
-    'vendor-xterm.min.css',
     'vendor-hljs-github-dark.min.css'
   ];
 
@@ -42,7 +39,6 @@ test('index.html references all required scripts and styles', () => {
   assert.match(indexHtml, /src="\/vendor-marked\.min\.js"/, 'Missing vendor-marked.min.js');
   assert.match(indexHtml, /src="\/vendor-jsyaml\.min\.js"/, 'Missing vendor-jsyaml.min.js');
   assert.match(indexHtml, /src="\/vendor-hljs\.min\.js"/, 'Missing vendor-hljs.min.js (T8.3)');
-  assert.match(indexHtml, /src="\/vendor-xterm\.min\.js"/, 'Missing vendor-xterm.min.js (T8.3)');
   assert.match(indexHtml, /src="\/app\.js"/, 'Missing app.js module');
   assert.match(indexHtml, /href="\/vendor-hljs-github-dark\.min\.css"/, 'Missing vendored hljs css (T8.3)');
 
@@ -91,16 +87,12 @@ test('WebUI fetch endpoints conform to documented server-api.md', () => {
     '/tasks',
     '/session/last',
     '/session/cancel',
-    '/rename',
-    '/terminal/create'
+    '/rename'
   ];
 
   for (const prefix of staticPrefixes) {
     assert.ok(serverApiDoc.includes(prefix), `server-api.md should document ${prefix}`);
   }
-
-  // Ensure resize is documented
-  assert.ok(serverApiDoc.includes('/terminal/:id/resize'), 'server-api.md must document /terminal/:id/resize');
 });
 
 test('WebUI includes TUI command palette, slash commands, and session chrome', () => {
@@ -251,7 +243,7 @@ test('WebUI subagents tab: named Subagents, scoped to parent session, cascade de
   assert.match(appJs, /removedIds\.has/, 'deleteSessionPermanently should remove child sessions');
 });
 
-test('WebUI collapsible navigation, file tree, clean title, and dedicated terminal', () => {
+test('WebUI collapsible navigation, file tree and clean title', () => {
   const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
   const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
   const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
@@ -278,8 +270,8 @@ test('WebUI collapsible navigation, file tree, clean title, and dedicated termin
   assert.match(styleCss, /\.files-explorer\.tree-collapsed \.fs-browser/, 'style.css should hide file tree when collapsed');
   assert.match(styleCss, /\.files-explorer\.tree-collapsed \.fs-editor-pane/, 'style.css should expand editor pane when tree is collapsed');
 
-  // Dedicated terminal without split view:
-  assert.match(styleCss, /\.layout-toggle-btn\s*\{\s*display:\s*none\s*!important;\s*\}/, 'layout-toggle-btn should be permanently hidden');
+  // No terminal, canvas or split view.
+  assert.doesNotMatch(appJs, /\/terminal\/|InfiniteCanvas|\/api\/vision/, 'removed features must stay removed');
   assert.doesNotMatch(appJs, /state\.layoutMode\s*=\s*'split'/, 'app.js should not enter split mode');
 });
 

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
 #include "core/http_request_handler.h"
 #include "providers/internal/base_provider_client.h"
@@ -23,7 +22,6 @@ class AntigravityRequestBuilder : public providers::RequestBuilder {
       : project_id_(std::move(project_id)) {}
 
   nlohmann::json build_request_json(const GenerateOptions& options) override;
-  nlohmann::json build_request_json(const EmbeddingOptions& options) override;
   httplib::Headers build_headers(const providers::ProviderConfig& config) override;
 
  private:

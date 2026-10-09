@@ -28,12 +28,6 @@ nlohmann::json AntigravityRequestBuilder::build_request_json(
       options.model, project_id_);
 }
 
-nlohmann::json AntigravityRequestBuilder::build_request_json(
-    const EmbeddingOptions& options) {
-  (void)options;
-  return nlohmann::json::object();
-}
-
 httplib::Headers AntigravityRequestBuilder::build_headers(
     const providers::ProviderConfig& config) {
   httplib::Headers headers;

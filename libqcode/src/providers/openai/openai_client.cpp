@@ -33,10 +33,6 @@ std::string compute_completions_path(const std::string& base_url,
   return has_version_suffix(base_url) ? resource : "/v1" + resource;
 }
 
-std::string get_embeddings_path(const std::string& base_url) {
-  return has_version_suffix(base_url) ? "/embeddings" : "/v1/embeddings";
-}
-
 httplib::Headers make_headers(
     const std::map<std::string, std::string>& headers) {
   httplib::Headers result;
@@ -54,7 +50,6 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
               .api_key = api_key,
               .base_url = base_url,
               .completions_endpoint_path = compute_completions_path(base_url),
-              .embeddings_endpoint_path = get_embeddings_path(base_url),
               .auth_header_name = "Authorization",
               .auth_header_prefix = "Bearer ",
               .extra_headers = {}},
@@ -73,7 +68,6 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
               .api_key = api_key,
               .base_url = base_url,
               .completions_endpoint_path = compute_completions_path(base_url),
-              .embeddings_endpoint_path = get_embeddings_path(base_url),
               .auth_header_name = "Authorization",
               .auth_header_prefix = "Bearer ",
               .extra_headers = {},
@@ -106,7 +100,6 @@ OpenAIClient::OpenAIClient(const std::string& api_key,
               .completions_endpoint_path = compute_completions_path(
                   base_url, options.protocol == "responses",
                   options.completions_path),
-              .embeddings_endpoint_path = get_embeddings_path(base_url),
               .auth_header_name =
                   options.protocol == "google" &&
                           options.base_url.find("opencode.ai") ==

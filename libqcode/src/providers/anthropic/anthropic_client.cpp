@@ -92,7 +92,6 @@ AnthropicClient::AnthropicClient(const std::string& api_key,
                 .base_url = options.base_url,
                 .completions_endpoint_path =
                     messages_path(options.base_url, options.completions_path),
-                .embeddings_endpoint_path = "/v1/embeddings",
                 .auth_header_name = bearer ? "Authorization" : "x-api-key",
                 .auth_header_prefix = bearer ? "Bearer " : "",
                 .extra_headers = extra_headers(options.headers, oauth, api_key),

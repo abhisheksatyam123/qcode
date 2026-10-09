@@ -129,46 +129,6 @@ GenerateResult AnthropicResponseParser::parse_error_completion_response(
   return utils::parse_standard_error_response("Anthropic", status_code, body);
 }
 
-EmbeddingResult AnthropicResponseParser::parse_success_embedding_response(
-    const nlohmann::json& response) {
-  LOG_DEBUG("Parsing Anthropic embeddings response");
-
-  EmbeddingResult result;
-
-  // Extract basic fields
-  result.model = response.value("model", "");
-
-  // Extract choices
-  if (response.contains("data") && !response["data"].empty()) {
-    result.data = response["data"];
-  }
-
-  // Extract usage
-  if (response.contains("usage")) {
-    auto& usage = response["usage"];
-    result.usage.prompt_tokens = usage.value("prompt_tokens", 0);
-    result.usage.completion_tokens = usage.value("completion_tokens", 0);
-    result.usage.total_tokens = usage.value("total_tokens", 0);
-    LOG_DEBUG("Token usage - prompt: {}, completion: {}, total: {}",
-                          result.usage.prompt_tokens,
-                          result.usage.completion_tokens,
-                          result.usage.total_tokens);
-  }
-
-  // Store full metadata
-  result.provider_metadata = response.dump();
-
-  return result;
-}
-
-EmbeddingResult AnthropicResponseParser::parse_error_embedding_response(
-    int status_code,
-    const std::string& body) {
-  auto generate_result =
-      utils::parse_standard_error_response("Anthropic", status_code, body);
-  return EmbeddingResult(generate_result.error);
-}
-
 FinishReason AnthropicResponseParser::parse_stop_reason(
     const std::string& reason) {
   if (reason == "end_turn") {

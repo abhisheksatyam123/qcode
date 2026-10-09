@@ -1,6 +1,5 @@
 #pragma once
 
-#include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
 #include <qcode/transform/provider_transform.h>
 #include "providers/internal/base_provider_client.h"
@@ -31,7 +30,6 @@ class OpenAIRequestBuilder : public providers::RequestBuilder {
 
   nlohmann::json build_request_json(const GenerateOptions& options) override;
   nlohmann::json build_stream_request_json(const StreamOptions& options) override;
-  nlohmann::json build_request_json(const EmbeddingOptions& options) override;
   httplib::Headers build_headers(
       const providers::ProviderConfig& config) override;
 

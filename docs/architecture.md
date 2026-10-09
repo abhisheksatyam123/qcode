@@ -44,7 +44,7 @@ libqcode/
     providers/              providers/     # openai/anthropic/cursor/antigravity/zen/registry
     transform/              transform/     # wire transforms + reasoning variants
     generation/             generation/    # generation_service / controller / continue
-    session/                session/       # session_store, study, system_prompt, git_workspace
+    session/                session/       # session_store, system_prompt, git_workspace
     tools/                  tools/         # bash/task/catalog/executor
     ui/                     ui/            # commands, app_store, markdown, message_render
 ```
@@ -91,7 +91,7 @@ Key database characteristics:
   - `content` (TEXT): Message markdown, code blocks, or structured tool invocation/result JSON.
 - **`queued_prompts`**: Queued user prompts awaiting completion of active generation turns.
 - **`model_capabilities` & `model_runtime_stats`**: Telemetry on context window limits, benchmark scores, turn latencies, and user thumbs-up/down ratings.
-- **`study_*`**: Curriculum courses, chapters, topics, questions, and attempt history.
+- **`study_*`**: legacy tables from the removed study feature (left in place; unused).
 
 ### 3. Comparison with Upstream OpenCode (`anomalyco/opencode`)
 - **Storage Strategy**:

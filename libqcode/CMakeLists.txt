@@ -28,7 +28,6 @@ target_sources(qcode-engine PRIVATE
     src/core/message.cpp
     src/core/stream_options.cpp
     src/core/stream_result.cpp
-    src/core/embedding_options.cpp
     src/core/generate_options.cpp
     src/core/random.cpp
     src/core/in_process_bus.cpp
@@ -93,8 +92,6 @@ target_sources(qcode-engine PRIVATE
     src/session/session_store.cpp
     src/session/session_telemetry.cpp
     src/session/usage_stats.cpp
-    src/session/study_store.cpp
-    src/session/study_assistant.cpp
     src/session/system_prompt.cpp
     src/session/task_notes.cpp
     src/session/git_workspace.cpp

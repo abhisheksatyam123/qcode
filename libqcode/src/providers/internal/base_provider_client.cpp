@@ -29,9 +29,8 @@ BaseProviderClient::BaseProviderClient(
 
   LOG_DEBUG(
       R"(BaseProviderClient initialized - base_url: {},
-     completions_endpoint: {}, embeddings_endpoint: {})",
-      config.base_url, config.completions_endpoint_path,
-      config.embeddings_endpoint_path);
+     completions_endpoint: {})",
+      config.base_url, config.completions_endpoint_path);
 }
 
 GenerateResult BaseProviderClient::generate_text(
@@ -123,54 +122,6 @@ StreamResult BaseProviderClient::stream_text(const StreamOptions& options) {
   (void)options;
   LOG_ERROR("Streaming not implemented directly in BaseProviderClient");
   return StreamResult();
-}
-
-EmbeddingResult BaseProviderClient::embeddings(
-    const EmbeddingOptions& options) {
-  LOG_DEBUG(
-      "Starting embeddings generation - model: {}",
-      options.model);
-
-  try {
-    // Build request JSON using the provider-specific builder
-    auto request_json = request_builder_->build_request_json(options);
-    std::string json_body = request_json.dump();
-
-    // Build headers
-    auto headers = request_builder_->build_headers(config_);
-
-    // Make the request
-    auto result = http_handler_->post(config_.embeddings_endpoint_path, headers,
-                                      json_body);
-
-    if (!result.is_success()) {
-      LOG_ERROR("HTTP request for embeddings failed: {}",
-                            result.error_message());
-      if (result.provider_metadata.has_value()) {
-        int status_code = std::stoi(result.provider_metadata.value());
-        return response_parser_->parse_error_embedding_response(
-            status_code, result.error.value_or(""));
-      }
-      return EmbeddingResult(result.error_message());
-    }
-
-    // Parse response
-    nlohmann::json json_response;
-    try {
-      json_response = nlohmann::json::parse(result.text);
-    } catch (const nlohmann::json::exception& e) {
-      LOG_ERROR("Failed to parse embedding response JSON: {}",
-                            e.what());
-      return EmbeddingResult("Failed to parse response: " +
-                             std::string(e.what()));
-    }
-
-    return response_parser_->parse_success_embedding_response(json_response);
-
-  } catch (const std::exception& e) {
-    LOG_ERROR("Exception in generate_embeddings: {}", e.what());
-    return EmbeddingResult("Exception: " + std::string(e.what()));
-  }
 }
 
 }  // namespace providers

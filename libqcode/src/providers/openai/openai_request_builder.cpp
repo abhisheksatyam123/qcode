@@ -411,30 +411,6 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
   return to_responses_request(request);
 }
 
-nlohmann::json OpenAIRequestBuilder::build_request_json(
-    const EmbeddingOptions& options) {
-  nlohmann::json request{{"model", options.model}, {"input", options.input}};
-
-  // Set encoding format (default to float for compatibility)
-  if (options.encoding_format) {
-    request["encoding_format"] = options.encoding_format.value();
-  } else {
-    request["encoding_format"] = "float";
-  }
-
-  // Add dimensions if specified
-  if (options.dimensions && options.dimensions.value() > 0) {
-    request["dimensions"] = options.dimensions.value();
-  }
-
-  // Add user identifier if specified
-  if (options.user) {
-    request["user"] = options.user.value();
-  }
-
-  return request;
-}
-
 httplib::Headers OpenAIRequestBuilder::build_headers(
     const providers::ProviderConfig& config) {
   httplib::Headers headers;

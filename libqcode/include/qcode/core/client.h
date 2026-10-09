@@ -1,6 +1,5 @@
 #pragma once
 
-#include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
 #include <qcode/core/stream_options.h>
 #include <qcode/core/stream_result.h>
@@ -35,12 +34,6 @@ class Client {
     if (pimpl_)
       return pimpl_->generate_text(options);
     return GenerateResult("Client not initialized");
-  }
-
-  virtual EmbeddingResult embeddings(const EmbeddingOptions& options) {
-    if (pimpl_)
-      return pimpl_->embeddings(options);
-    return EmbeddingResult("Client not initialized");
   }
 
   virtual StreamResult stream_text(const StreamOptions& options) {

@@ -78,12 +78,10 @@ window.copyPlantUmlCode = function(diagramId, btn) {
   });
 };
 
-import { InfiniteCanvas } from "./canvas/infinite-canvas.js";
 import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
-  terminal: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
   folder: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
   file: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`,
   user: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
@@ -178,13 +176,7 @@ function closeMobileSidebar() {
   closeSidebar();
 }
 
-function handleSidebarResize() {
-  if (term && fitAddon && state.terminalOpen && state.activeTab === 'terminal') {
-    setTimeout(() => {
-      try { fitAddon.fit(); } catch (_) {}
-    }, 260);
-  }
-}
+function handleSidebarResize() {}
 
 function restoreSidebarState() {
   if (isMobileLayout()) return;
@@ -240,11 +232,10 @@ const state = {
   sessionTitle: '',
   sessionWorkspace: '',
   // UI Tabs & layout state
-  activeTab: 'chat', // 'chat' | 'terminal' | 'files' | 'stats' | 'sessions'
+  activeTab: 'chat', // 'chat' | 'files' | 'stats' | 'sessions'
   parentSessionId: null,
   agentMode: 'orchestrator',
   layoutMode: 'tab', // 'tab' or 'split'
-  terminalOpen: false,
   // Files tab: explorer + editor
   filesSubtab: 'explorer', // 'explorer' | 'git'
   fsDir: '',               // relative path of current directory
@@ -278,9 +269,6 @@ const modalOverlay = document.getElementById('modal-overlay');
 const statusSession = document.getElementById('header-session-title');
 const statusWorkspace = document.getElementById('header-session-workspace');
 const newSessionBtn = document.getElementById('new-session-btn');
-const terminalPanel = document.getElementById('terminal-panel');
-const terminalContainer = document.getElementById('terminal-container');
-const terminalCloseBtn = document.getElementById('terminal-close-btn');
 const filesPanel = document.getElementById('files-panel');
 const filesContent = document.getElementById('files-content');
 const filesRefreshBtn = document.getElementById('files-refresh-btn');
@@ -300,7 +288,6 @@ const fsFileBadge = document.getElementById('fs-file-badge');
 const fsCopyPathBtn = document.getElementById('fs-copy-path-btn');
 const fsCopyContentBtn = document.getElementById('fs-copy-content-btn');
 const fsMdToggle = document.getElementById('fs-md-toggle');
-const fsCanvasBtn = document.getElementById('fs-canvas-btn');
 
 const fsMdPreviewBtn = document.getElementById('fs-md-preview-btn');
 const fsMdCodeBtn = document.getElementById('fs-md-code-btn');
@@ -348,87 +335,11 @@ const thinkingToggleBtn = document.getElementById('thinking-toggle-btn');
 // New DOM refs for tabs & layout toggle
 const mainEl = document.getElementById('main');
 const mainContentWrapperEl = document.getElementById('main-content-wrapper');
-const tabTerminalBtn = document.getElementById('tab-terminal-btn');
 const tabChatBtn = document.getElementById('tab-chat-btn');
-const layoutToggleBtn = document.getElementById('layout-toggle-btn');
 const sessionTabsContainer = document.getElementById('session-tabs-container');
 
 // ── Modal state ──
 let pickerCleanup = null;
-
-// ── Terminal state ──
-let term = null;       // xterm instance
-let termFontSize = window.innerWidth <= 600 ? 12 : 13;
-let fitAddon = null;   // xterm fit addon
-let termId = null;     // server terminal session id
-let termPollFails = 0; // T6.1 consecutive stream failures
-let termPollTimer = null;
-// Self-scheduling output poll: one request in flight, backing off while idle,
-// paused while the document is hidden. termPollGen invalidates stale loops.
-const TERM_POLL_MIN_MS = 80;
-const TERM_POLL_MAX_MS = 1000;
-let termPollDelay = TERM_POLL_MIN_MS;
-let termPollGen = 0;
-let termPollBusy = false;  // a /stream request is in flight
-function scheduleTermPoll(delay) {
-  if (termPollTimer) clearTimeout(termPollTimer);
-  termPollTimer = null;
-  if (!termId) return;
-  const gen = termPollGen;
-  termPollTimer = setTimeout(() => { termPollTimer = null; pollTerminalOnce(gen); }, delay);
-}
-function stopTerminalPoll() {
-  termPollGen++;
-  termPollBusy = false;
-  if (termPollTimer) clearTimeout(termPollTimer);
-  termPollTimer = null;
-}
-function resetTerminalPollBackoff() {
-  termPollDelay = TERM_POLL_MIN_MS;
-  if (termPollTimer) scheduleTermPoll(TERM_POLL_MIN_MS);
-}
-async function pollTerminalOnce(gen) {
-  if (gen !== termPollGen || !termId) return;
-  if (document.hidden) return;  // resumed by the visibilitychange handler
-  termPollBusy = true;
-  try {
-    const res = await fetch('/terminal/' + termId + '/stream');
-    if (gen !== termPollGen) return;
-    if (res.ok) {
-      termPollFails = 0;
-      const text = await res.text();
-      if (gen !== termPollGen) return;
-      if (text) {
-        if (term) term.write(text);
-        termPollDelay = TERM_POLL_MIN_MS;
-      } else {
-        termPollDelay = Math.min(TERM_POLL_MAX_MS, termPollDelay * 2);
-      }
-    } else {
-      termPollFails = (termPollFails || 0) + 1;
-      termPollDelay = Math.min(TERM_POLL_MAX_MS, termPollDelay * 2);
-    }
-  } catch (e) {
-    if (gen !== termPollGen) return;
-    termPollFails = (termPollFails || 0) + 1;
-    termPollDelay = Math.min(TERM_POLL_MAX_MS, termPollDelay * 2);
-  }
-  termPollBusy = false;
-  if ((termPollFails || 0) >= 12) {
-    termPollFails = 0;
-    if (term) term.write('\r\n[reconnecting…]\r\n');
-    try { await startTerminal(state.sessionWorkspace || ''); }
-    catch (_) { showToast('Terminal reconnect failed'); }
-    return;  // startTerminal starts a new poll loop
-  }
-  scheduleTermPoll(termPollDelay);
-}
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && termId && !termPollTimer && !termPollBusy) {
-    termPollDelay = TERM_POLL_MIN_MS;
-    scheduleTermPoll(0);
-  }
-});
 
 // ── Slash commands ──
 
@@ -1105,12 +1016,6 @@ function getSessionIdFromHash() {
 
 async function handleHashChange() {
   const hash = window.location.hash;
-  if (hash === '#/terminal') {
-    if (state.activeTab !== 'terminal') {
-      switchTab('terminal');
-    }
-    return;
-  }
   
   const sid = getSessionIdFromHash();
   if (sid) {
@@ -1166,9 +1071,6 @@ async function init() {
       restoreSidebarState();
     } else {
       if (sidebar) sidebar.classList.remove('collapsed');
-    }
-    if (term && fitAddon && state.terminalOpen && state.activeTab === 'terminal') {
-      try { fitAddon.fit(); } catch (_) {}
     }
   });
   updateStatusBar();
@@ -1334,40 +1236,6 @@ function setupEventListeners() {
   }
   
 
-  if (terminalCloseBtn) {
-    terminalCloseBtn.addEventListener('click', closeTerminal);
-  }
-  const termZoomOutBtn = document.getElementById('term-zoom-out-btn');
-  const termZoomInBtn = document.getElementById('term-zoom-in-btn');
-  if (termZoomOutBtn) {
-    termZoomOutBtn.addEventListener('click', () => changeTerminalFontSize(-1));
-  }
-  if (termZoomInBtn) {
-    termZoomInBtn.addEventListener('click', () => changeTerminalFontSize(1));
-  }
-  const virtualKeysContainer = document.getElementById('terminal-virtual-keys');
-  if (virtualKeysContainer) {
-    const keyMap = {
-      'Esc': '',
-      'Tab': '	',
-      'CtrlC': '',
-      'CtrlD': '',
-      'Up': '[A',
-      'Down': '[B',
-      'Left': '[D',
-      'Right': '[C'
-    };
-    virtualKeysContainer.addEventListener('click', (e) => {
-      const btn = e.target.closest('.term-key-btn');
-      if (!btn) return;
-      const keyName = btn.dataset.key;
-      const seq = keyMap[keyName];
-      if (seq) {
-        sendTerminalInput(seq);
-        if (term) term.focus();
-      }
-    });
-  }
   if (pauseBtn) {
     pauseBtn.addEventListener('click', () => pauseActiveGeneration());
   }
@@ -1375,9 +1243,6 @@ function setupEventListeners() {
   // Tab and layout event listeners
   if (tabChatBtn) {
     tabChatBtn.addEventListener('click', () => switchTab('chat'));
-  }
-  if (tabTerminalBtn) {
-    tabTerminalBtn.addEventListener('click', () => switchTab('terminal'));
   }
   if (tabFilesBtn) {
     tabFilesBtn.addEventListener('click', () => switchTab('files'));
@@ -1451,11 +1316,6 @@ function setupEventListeners() {
       if (!text) return;
       navigator.clipboard.writeText(text);
       showToast('Copied file content');
-    });
-  }
-    if (fsCanvasBtn) {
-    fsCanvasBtn.addEventListener('click', () => {
-      openCanvasModal();
     });
   }
   if (fsMdPreviewBtn) {
@@ -1536,9 +1396,6 @@ function setupEventListeners() {
   }
   if (statsCopyBtn) {
     statsCopyBtn.addEventListener('click', copyStatsSummary);
-  }
-  if (layoutToggleBtn) {
-    layoutToggleBtn.addEventListener('click', toggleLayoutMode);
   }
 
   // Sidebar event listeners
@@ -1769,135 +1626,10 @@ function showNewSessionModal() {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  TERMINAL
-// ═══════════════════════════════════════════════════════════════════
-
-function changeTerminalFontSize(delta) {
-  if (!term) return;
-  termFontSize = Math.min(24, Math.max(9, termFontSize + delta));
-  term.options.fontSize = termFontSize;
-  if (fitAddon) {
-    try {
-      fitAddon.fit();
-      sendResize(term.cols, term.rows);
-    } catch (e) {}
-  }
-}
-
-function sendTerminalInput(data) {
-  if (!termId) return;
-  resetTerminalPollBackoff();
-  fetch('/terminal/' + termId + '/input', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ data })
-  }).catch(() => {});
-}
-
-async function startTerminal(workspace) {
-  // Cleanup existing terminal
-  if (term) { term.dispose(); term = null; }
-  stopTerminalPoll();
-  if (termId) {
-    try { await fetch('/terminal/' + termId, { method: 'DELETE' }); } catch(e) {}
-    termId = null;
-  }
-  terminalContainer.innerHTML = '';
-
-  try {
-    const res = await fetch('/terminal/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace })
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    termId = data.id;
-
-    // Create xterm with optimized responsive font size & line height
-    termFontSize = window.innerWidth <= 600 ? 12 : 13;
-    term = new Terminal({
-      fontFamily: '"Symbols Nerd Font", "SymbolsNerdFontMono", "FiraCode Nerd Font", "Fira Code", "DejaVu Sans Mono", "Cascadia Code", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace',
-      fontSize: termFontSize,
-      lineHeight: 1.25,
-      cursorBlink: true,
-      allowProposedApi: true,
-      customGlyphs: true,
-      rescaleOverlappingGlyphs: true,
-      theme: { background: '#0d1117', foreground: '#c9d1d9', cursor: '#64ffda' }
-    });
-    fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(terminalContainer);
-
-    // xterm swallows key events, so intercept Escape here too and route
-    // it through the same global pause path used by the rest of the UI.
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.key === 'Escape' && e.type === 'keydown') {
-        pauseActiveGeneration();
-      }
-      return true;
-    });
-    
-    setTimeout(() => {
-      if (fitAddon) {
-        try {
-          fitAddon.fit();
-          sendResize(term.cols, term.rows);
-        } catch (e) {}
-      }
-    }, 50);
-
-    term.onResize(size => {
-      sendResize(size.cols, size.rows);
-    });
-
-    // Send input to server
-    term.onData((data) => {
-      sendTerminalInput(data);
-    });
-
-    // Poll for output (T6.1: auto-reconnect after repeated failures)
-    termPollFails = 0;
-    termPollDelay = TERM_POLL_MIN_MS;
-    scheduleTermPoll(0);
-
-  } catch (e) {
-    showToast('Terminal error: ' + e.message);
-    terminalContainer.innerHTML = '<div class="error-panel">Terminal failed: ' + esc(e.message)
-      + '<br><button type="button" class="msg-action-btn" data-retry="term">Retry</button></div>';
-    const tb = terminalContainer.querySelector('[data-retry="term"]');
-    if (tb) tb.addEventListener('click', () => startTerminal(state.sessionWorkspace || ''));
-    state.terminalOpen = false;
-    updateLayoutUI();
-  }
-}
-
-async function closeTerminal() {
-  state.terminalOpen = false;
-  stopTerminalPoll();
-  if (term) { term.dispose(); term = null; }
-  if (termId) {
-    try { await fetch('/terminal/' + termId, { method: 'DELETE' }); } catch(e) {}
-    termId = null;
-  }
-  if (state.layoutMode === 'tab') {
-    switchTab('chat');
-  } else {
-    updateLayoutUI();
-  }
-}
-
 function switchTab(tab) {
   state.activeTab = tab;
   state.layoutMode = 'tab';
   persistPrefs();
-  if (tab === 'terminal' && !state.terminalOpen) {
-    state.terminalOpen = true;
-    const ws = state.sessionWorkspace || '';
-    startTerminal(ws);
-  }
   if (tab === 'files') loadFilesTab();
   if (tab === 'stats') loadStatsTab();
   if (tab === 'sessions') loadDelegatedSessionsTab();
@@ -1905,35 +1637,22 @@ function switchTab(tab) {
   closeMobileSidebar();
 }
 
-function toggleLayoutMode() {
-  if (state.activeTab === 'terminal') {
-    switchTab('chat');
-  } else {
-    switchTab('terminal');
-  }
-}
-
 function updateLayoutUI() {
   state.layoutMode = 'tab';
   if (mainContentWrapperEl) mainContentWrapperEl.classList.remove('split-view');
-  if (layoutToggleBtn) layoutToggleBtn.classList.add('hidden');
 
   // Exclusive tab mode: hide every pane, then show only the active one.
   if (mainEl) mainEl.classList.add('hidden');
-  if (terminalPanel) terminalPanel.classList.add('hidden');
   if (filesPanel) filesPanel.classList.add('hidden');
   if (statsPanel) statsPanel.classList.add('hidden');
   if (sessionsPanel) sessionsPanel.classList.add('hidden');
-  [tabChatBtn, tabTerminalBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
+  [tabChatBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
     if (b) b.classList.remove('active');
   });
 
   if (state.activeTab === 'chat') {
     if (mainEl) mainEl.classList.remove('hidden');
     if (tabChatBtn) tabChatBtn.classList.add('active');
-  } else if (state.activeTab === 'terminal') {
-    if (terminalPanel) terminalPanel.classList.remove('hidden');
-    if (tabTerminalBtn) tabTerminalBtn.classList.add('active');
   } else if (state.activeTab === 'files') {
     if (filesPanel) filesPanel.classList.remove('hidden');
     if (tabFilesBtn) tabFilesBtn.classList.add('active');
@@ -1946,14 +1665,6 @@ function updateLayoutUI() {
   }
 
   renderSessionTabs();
-
-  if (term && fitAddon && state.terminalOpen && state.activeTab === 'terminal') {
-    setTimeout(() => {
-      try {
-        fitAddon.fit();
-      } catch (e) {}
-    }, 50);
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3974,7 +3685,6 @@ async function openFsFile(relPath, fragment = null) {
 
   if (fsMdToggle) {
     fsMdToggle.classList.toggle('hidden', !isMd);
-    if (fsCanvasBtn) fsCanvasBtn.classList.toggle('hidden', !isMd);
     if (isMd) {
       state.fsMdMode = 'preview';
       if (fsMdPreviewBtn) fsMdPreviewBtn.classList.add('active');
@@ -5597,9 +5307,6 @@ async function createNewSession(title = '', workspace = '', persona = '') {
       state.openSessions.push(newSession);
       switchSession(data.id);
       showToast('New session created');
-      if (state.terminalOpen && workspace) {
-        await startTerminal(workspace);
-      }
     }
   } catch (e) {
     showToast('Failed to create session: ' + e.message);
@@ -5647,14 +5354,6 @@ function cancelSession(id) {
 
 let pendingSwitchId = null;
 async function switchSession(id) {
-  if (id === 'terminal') {
-    if (window.location.hash !== '#/terminal') {
-      window.location.hash = '/terminal';
-    }
-    switchTab('terminal');
-    return;
-  }
-
   if (state.layoutMode === 'tab') {
     switchTab('chat');
   }
@@ -5876,537 +5575,4 @@ function renderSessionTabs() {
   });
 
 
-}
-
-
-async function sendResize(cols, rows) {
-  if (!termId) return;
-  try {
-    await fetch('/terminal/' + termId + '/resize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cols, rows })
-    });
-  } catch (e) {}
-}
-
-window.addEventListener('resize', () => {
-  if (term && fitAddon && state.terminalOpen) {
-    try {
-      fitAddon.fit();
-    } catch (e) {}
-  }
-});
-
-
-// ── Infinite Canvas & Diagram/Math OCR Integration ──
-let activeInfiniteCanvas = null;
-
-const VISION_PROVIDERS_CONFIG = {
-  antigravity: {
-    name: 'Antigravity (Vertex)',
-    models: [
-      { id: 'gemini-3.8-flash-medium', name: 'Gemini 3.8 Flash (Latest)' },
-      { id: 'gemini-3.1-pro-low', name: 'Gemini 3.1 Pro (Deep Reasoning)' },
-      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Vision)' },
-      { id: 'claude-opus-4-6-thinking', name: 'Claude Opus 4.6 Thinking' }
-    ]
-  },
-  openrouter: {
-    name: 'OpenRouter',
-    models: [
-      { id: 'nex-agi/nex-n2.5-pro:free', name: 'Nex N2.5 Pro (Free Vision)' },
-      { id: 'inclusionai/ling-3.0-flash-vl:free', name: 'Ling 3.0 Flash VL (Free)' },
-      { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash' },
-      { id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' }
-    ]
-  },
-  opencode: {
-    name: 'OpenCode Zen',
-    models: [
-      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Zen)' },
-      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Zen)' },
-      { id: 'deepseek-v4-flash-vision-exp', name: 'DeepSeek V4 Flash Vision Exp' }
-    ]
-  },
-  ollama: {
-    name: 'Local Ollama',
-    models: [
-      { id: 'qwen2.5-vl', name: 'Qwen 2.5 VL (Local)' },
-      { id: 'llama3.2-vision', name: 'Llama 3.2 Vision (Local)' }
-    ]
-  }
-};
-
-function openCanvasModal() {
-  let modal = document.getElementById('canvas-modal-root');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'canvas-modal-root';
-    modal.className = 'canvas-modal-overlay';
-    modal.innerHTML = `
-      <div class="canvas-modal-container">
-        <!-- Top Header Bar -->
-        <div class="canvas-modal-header">
-          <div class="canvas-modal-title">
-            <svg class="ui-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-            <span>Excalidraw Whiteboard</span>
-            <span class="badge">AI Diagram & Math</span>
-          </div>
-          <div class="canvas-modal-actions">
-            <div class="canvas-selector-group">
-              <label class="canvas-sel-label" for="canvas-provider-select">Provider:</label>
-              <select id="canvas-provider-select" class="canvas-mode-select"></select>
-            </div>
-            <div class="canvas-selector-group">
-              <label class="canvas-sel-label" for="canvas-model-select">Model:</label>
-              <select id="canvas-model-select" class="canvas-mode-select"></select>
-            </div>
-            <div class="canvas-selector-group">
-              <label class="canvas-sel-label" for="canvas-ocr-mode">Format:</label>
-              <select id="canvas-ocr-mode" class="canvas-mode-select">
-                <option value="diagram" selected>Flowchart (Mermaid)</option>
-                <option value="plantuml">PlantUML Diagram</option>
-                <option value="math">Mathematics (LaTeX)</option>
-                <option value="notes">Notes / Markdown</option>
-                <option value="auto">Auto-Detect</option>
-              </select>
-            </div>
-            <button id="canvas-do-convert-btn" class="canvas-convert-btn" type="button" title="Transcribe canvas drawing into markdown">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              <span>Convert to Text</span>
-            </button>
-            <button id="canvas-modal-close-btn" class="canvas-modal-close" type="button" title="Close">&times;</button>
-          </div>
-        </div>
-
-        <!-- Canvas Body -->
-        <div class="canvas-modal-body">
-          <canvas id="infinite-canvas-el" class="canvas-viewport"></canvas>
-
-          <!-- Top Excalidraw Tool Palette -->
-          <div class="canvas-floating-toolbar">
-            <button type="button" class="canvas-tool-btn active" data-tool="select" title="Selection (1 / V)">↖</button>
-            <button type="button" class="canvas-tool-btn" data-tool="rect" title="Rectangle (2 / R)">▭</button>
-            <button type="button" class="canvas-tool-btn" data-tool="diamond" title="Diamond (3 / D)">◇</button>
-            <button type="button" class="canvas-tool-btn" data-tool="circle" title="Ellipse (4 / O)">◯</button>
-            <button type="button" class="canvas-tool-btn" data-tool="arrow" title="Arrow (5 / A)">➔</button>
-            <button type="button" class="canvas-tool-btn" data-tool="line" title="Line (6 / L)">━</button>
-            <button type="button" class="canvas-tool-btn" data-tool="pen" title="Draw (7 / P)">✏️</button>
-            <button type="button" class="canvas-tool-btn" data-tool="text" title="Text (8 / T)">T</button>
-            <button type="button" class="canvas-tool-btn" data-tool="eraser" title="Eraser (9 / E)">🧹</button>
-            <button type="button" class="canvas-tool-btn" data-tool="pan" title="Hand / Pan (0 / H)">✋</button>
-          </div>
-
-          <!-- Left Excalidraw Properties Dock -->
-          <div class="canvas-properties-panel" id="canvas-props-panel">
-            <!-- Stroke Color -->
-            <div class="canvas-prop-group">
-              <span class="canvas-prop-label">Stroke</span>
-              <div class="canvas-swatch-row">
-                <div class="canvas-color-dot active" data-stroke="#f8fafc" style="background:#f8fafc" title="White"></div>
-                <div class="canvas-color-dot" data-stroke="#38bdf8" style="background:#38bdf8" title="Sky"></div>
-                <div class="canvas-color-dot" data-stroke="#4ade80" style="background:#4ade80" title="Green"></div>
-                <div class="canvas-color-dot" data-stroke="#fbbf24" style="background:#fbbf24" title="Amber"></div>
-                <div class="canvas-color-dot" data-stroke="#f87171" style="background:#f87171" title="Red"></div>
-                <div class="canvas-color-dot" data-stroke="#c084fc" style="background:#c084fc" title="Purple"></div>
-              </div>
-            </div>
-
-            <!-- Background / Fill -->
-            <div class="canvas-prop-group">
-              <span class="canvas-prop-label">Background</span>
-              <div class="canvas-swatch-row">
-                <div class="canvas-color-dot active" data-fill="transparent" style="background:none;border:1px dashed #94a3b8" title="Transparent"></div>
-                <div class="canvas-color-dot" data-fill="rgba(56, 189, 248, 0.25)" style="background:#38bdf8" title="Soft Blue"></div>
-                <div class="canvas-color-dot" data-fill="rgba(74, 222, 128, 0.25)" style="background:#4ade80" title="Soft Green"></div>
-                <div class="canvas-color-dot" data-fill="rgba(251, 191, 36, 0.25)" style="background:#fbbf24" title="Soft Amber"></div>
-                <div class="canvas-color-dot" data-fill="rgba(248, 113, 113, 0.25)" style="background:#f87171" title="Soft Red"></div>
-                <div class="canvas-color-dot" data-fill="rgba(192, 132, 252, 0.25)" style="background:#c084fc" title="Soft Purple"></div>
-              </div>
-            </div>
-
-            <!-- Fill Style -->
-            <div class="canvas-prop-group">
-              <span class="canvas-prop-label">Fill Style</span>
-              <div class="canvas-btn-row">
-                <button type="button" class="canvas-chip-btn active" data-fill-style="hachure">Hatch</button>
-                <button type="button" class="canvas-chip-btn" data-fill-style="solid">Solid</button>
-                <button type="button" class="canvas-chip-btn" data-fill-style="none">None</button>
-              </div>
-            </div>
-
-            <!-- Stroke Width -->
-            <div class="canvas-prop-group">
-              <span class="canvas-prop-label">Stroke Width</span>
-              <div class="canvas-btn-row">
-                <button type="button" class="canvas-chip-btn" data-width="1.5">Thin</button>
-                <button type="button" class="canvas-chip-btn active" data-width="2.5">Med</button>
-                <button type="button" class="canvas-chip-btn" data-width="4.5">Bold</button>
-              </div>
-            </div>
-
-            <!-- Sloppiness / Roughness -->
-            <div class="canvas-prop-group">
-              <span class="canvas-prop-label">Sloppiness</span>
-              <div class="canvas-btn-row">
-                <button type="button" class="canvas-chip-btn" data-roughness="0.5">Clean</button>
-                <button type="button" class="canvas-chip-btn active" data-roughness="1.2">Artist</button>
-                <button type="button" class="canvas-chip-btn" data-roughness="2.2">Cartoon</button>
-              </div>
-            </div>
-
-            <!-- Font Size -->
-            <div class="canvas-prop-group">
-              <span class="canvas-prop-label">Font Size</span>
-              <div class="canvas-btn-row">
-                <button type="button" class="canvas-chip-btn" data-size="14">S</button>
-                <button type="button" class="canvas-chip-btn active" data-size="20">M</button>
-                <button type="button" class="canvas-chip-btn" data-size="28">L</button>
-                <button type="button" class="canvas-chip-btn" data-size="36">XL</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Result Review Drawer (Copy & Insert Controls) -->
-          <div class="canvas-result-drawer hidden" id="canvas-result-drawer">
-            <div class="canvas-result-header">
-              <span class="canvas-result-title" id="canvas-result-title">✨ Conversion Output</span>
-              <div class="canvas-result-actions">
-                <button type="button" class="canvas-action-chip primary" id="canvas-copy-result-btn" title="Copy output to system clipboard">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                  <span id="canvas-copy-btn-text">Copy to Clipboard</span>
-                </button>
-                <button type="button" class="canvas-action-chip" id="canvas-insert-cursor-btn" title="Insert at current editor cursor">
-                  ✍️ Insert at Cursor
-                </button>
-                <button type="button" class="canvas-action-chip" id="canvas-append-end-btn" title="Append to the end of the markdown file">
-                  ➕ Append to End
-                </button>
-                <button type="button" class="canvas-action-chip close" id="canvas-dismiss-result-btn" title="Close review drawer">
-                  ✕
-                </button>
-              </div>
-            </div>
-            <textarea class="canvas-result-textarea" id="canvas-result-text" readonly spellcheck="false"></textarea>
-          </div>
-
-          <!-- Bottom Action Dock -->
-          <div class="canvas-bottom-dock">
-            <button type="button" class="canvas-zoom-btn" id="canvas-undo-btn" title="Undo (Ctrl+Z)">↶</button>
-            <button type="button" class="canvas-zoom-btn" id="canvas-redo-btn" title="Redo (Ctrl+Y)">↷</button>
-            <div class="canvas-divider"></div>
-            <button type="button" class="canvas-zoom-btn" id="canvas-duplicate-btn" title="Duplicate (Ctrl+D)">❐</button>
-            <button type="button" class="canvas-zoom-btn" id="canvas-delete-btn" title="Delete (Del)">🗑️</button>
-            <div class="canvas-divider"></div>
-            <button type="button" class="canvas-zoom-btn" id="canvas-zoom-out" title="Zoom Out">-</button>
-            <span class="canvas-zoom-btn" id="canvas-zoom-text" title="Reset Zoom">100%</span>
-            <button type="button" class="canvas-zoom-btn" id="canvas-zoom-in" title="Zoom In">+</button>
-            <div class="canvas-divider"></div>
-            <button type="button" class="canvas-zoom-btn" id="canvas-clear-btn" title="Clear Canvas">Clear</button>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-
-    const canvasEl = document.getElementById('infinite-canvas-el');
-    activeInfiniteCanvas = new InfiniteCanvas(canvasEl, {
-      onViewChange: (zoomPercent) => {
-        const zEl = document.getElementById('canvas-zoom-text');
-        if (zEl) zEl.textContent = `${zoomPercent}%`;
-      },
-      onToolChange: (tool) => {
-        modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(b => {
-          b.classList.toggle('active', b.getAttribute('data-tool') === tool);
-        });
-      }
-    });
-
-    const providerSelect = document.getElementById('canvas-provider-select');
-    const modelSelect = document.getElementById('canvas-model-select');
-
-    let dynamicProviders = [];
-
-    function updateModelDropdown() {
-      modelSelect.innerHTML = '';
-      const pId = providerSelect.value;
-      const prov = dynamicProviders.find(p => p.id === pId);
-      if (prov && prov.models) {
-        prov.models.forEach(m => {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = m.name || m.id;
-          modelSelect.appendChild(opt);
-        });
-      }
-      const savedM = localStorage.getItem('qcode_canvas_model_' + pId);
-      if (savedM && Array.from(modelSelect.options).some(o => o.value === savedM)) {
-        modelSelect.value = savedM;
-      }
-    }
-
-    fetch('/api/vision/providers').then(r => r.json()).then(data => {
-      if (data && data.providers && data.providers.length > 0) {
-        dynamicProviders = data.providers;
-        providerSelect.innerHTML = '';
-        data.providers.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = p.id;
-          opt.textContent = p.name || p.id;
-          providerSelect.appendChild(opt);
-        });
-        const savedP = localStorage.getItem('qcode_canvas_provider') || data.default_provider || 'antigravity';
-        if (Array.from(providerSelect.options).some(o => o.value === savedP)) {
-          providerSelect.value = savedP;
-        }
-        updateModelDropdown();
-      }
-    }).catch(() => {});
-
-    providerSelect.addEventListener('change', () => {
-      localStorage.setItem('qcode_canvas_provider', providerSelect.value);
-      updateModelDropdown();
-    });
-
-    modelSelect.addEventListener('change', () => {
-      localStorage.setItem('qcode_canvas_model_' + providerSelect.value, modelSelect.value);
-    });
-
-    // Tool switching
-    modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        modal.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        activeInfiniteCanvas.setTool(btn.getAttribute('data-tool'));
-      });
-    });
-
-    // Stroke colors
-    modal.querySelectorAll('.canvas-color-dot[data-stroke]').forEach(dot => {
-      dot.addEventListener('click', () => {
-        modal.querySelectorAll('.canvas-color-dot[data-stroke]').forEach(d => d.classList.remove('active'));
-        dot.classList.add('active');
-        activeInfiniteCanvas.setStrokeColor(dot.getAttribute('data-stroke'));
-      });
-    });
-
-    // Fill colors
-    modal.querySelectorAll('.canvas-color-dot[data-fill]').forEach(dot => {
-      dot.addEventListener('click', () => {
-        modal.querySelectorAll('.canvas-color-dot[data-fill]').forEach(d => d.classList.remove('active'));
-        dot.classList.add('active');
-        activeInfiniteCanvas.setFillColor(dot.getAttribute('data-fill'));
-      });
-    });
-
-    // Fill style
-    modal.querySelectorAll('.canvas-chip-btn[data-fill-style]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        modal.querySelectorAll('.canvas-chip-btn[data-fill-style]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        const st = btn.getAttribute('data-fill-style');
-        activeInfiniteCanvas.setFillColor(activeInfiniteCanvas.fillColor, st);
-      });
-    });
-
-    // Stroke width
-    modal.querySelectorAll('.canvas-chip-btn[data-width]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        modal.querySelectorAll('.canvas-chip-btn[data-width]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        activeInfiniteCanvas.setLineWidth(parseFloat(btn.getAttribute('data-width')));
-      });
-    });
-
-    // Sloppiness / Roughness
-    modal.querySelectorAll('.canvas-chip-btn[data-roughness]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        modal.querySelectorAll('.canvas-chip-btn[data-roughness]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        activeInfiniteCanvas.setRoughness(parseFloat(btn.getAttribute('data-roughness')));
-      });
-    });
-
-    // Font size
-    modal.querySelectorAll('.canvas-chip-btn[data-size]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        modal.querySelectorAll('.canvas-chip-btn[data-size]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        activeInfiniteCanvas.setFontSize(parseFloat(btn.getAttribute('data-size')));
-      });
-    });
-
-    // Zoom and Action Dock
-    document.getElementById('canvas-undo-btn').addEventListener('click', () => activeInfiniteCanvas.undo());
-    document.getElementById('canvas-redo-btn').addEventListener('click', () => activeInfiniteCanvas.redo());
-    document.getElementById('canvas-duplicate-btn').addEventListener('click', () => activeInfiniteCanvas.duplicateSelected());
-    document.getElementById('canvas-delete-btn').addEventListener('click', () => {
-      if (activeInfiniteCanvas.selectedIds.size > 0) {
-        activeInfiniteCanvas.deleteElements(Array.from(activeInfiniteCanvas.selectedIds));
-      }
-    });
-
-    document.getElementById('canvas-zoom-in').addEventListener('click', () => {
-      const rect = canvasEl.getBoundingClientRect();
-      activeInfiniteCanvas.zoomAt(rect.width / 2, rect.height / 2, 1.2);
-    });
-
-    document.getElementById('canvas-zoom-out').addEventListener('click', () => {
-      const rect = canvasEl.getBoundingClientRect();
-      activeInfiniteCanvas.zoomAt(rect.width / 2, rect.height / 2, 0.8);
-    });
-
-    document.getElementById('canvas-zoom-text').addEventListener('click', () => {
-      activeInfiniteCanvas.resetView();
-    });
-
-    document.getElementById('canvas-clear-btn').addEventListener('click', () => {
-      if (confirm('Clear entire whiteboard?')) activeInfiniteCanvas.clear();
-    });
-
-    document.getElementById('canvas-modal-close-btn').addEventListener('click', () => {
-      modal.classList.add('hidden');
-    });
-
-    // Result review drawer handlers
-    document.getElementById('canvas-copy-result-btn').addEventListener('click', async () => {
-      const text = document.getElementById('canvas-result-text').value;
-      if (text) {
-        await navigator.clipboard.writeText(text);
-        const copyBtnText = document.getElementById('canvas-copy-btn-text');
-        if (copyBtnText) copyBtnText.textContent = 'Copied!';
-        setTimeout(() => { if (copyBtnText) copyBtnText.textContent = 'Copy to Clipboard'; }, 2000);
-        showToast('Copied to clipboard!');
-      }
-    });
-
-    document.getElementById('canvas-insert-cursor-btn').addEventListener('click', () => {
-      const text = document.getElementById('canvas-result-text').value;
-      if (text) {
-        insertTextIntoFsEditor(text);
-        document.getElementById('canvas-result-drawer').classList.add('hidden');
-        modal.classList.add('hidden');
-        showToast('Inserted at cursor position');
-      }
-    });
-
-    document.getElementById('canvas-append-end-btn').addEventListener('click', () => {
-      const text = document.getElementById('canvas-result-text').value;
-      if (text && fsEditor) {
-        const orig = fsEditor.value || '';
-        const prefix = (orig.length > 0 && !orig.endsWith('\n\n')) ? '\n\n' : '';
-        const updated = orig + prefix + text + '\n';
-        fsEditor.value = updated;
-        setFsDirty(true);
-        if (state.fsViewMode !== 'editor') {
-          setFsViewMode('editor');
-        }
-        updateMarkdownViewer(updated);
-        document.getElementById('canvas-result-drawer').classList.add('hidden');
-        modal.classList.add('hidden');
-        showToast('Appended to end of markdown document');
-      }
-    });
-
-    document.getElementById('canvas-dismiss-result-btn').addEventListener('click', () => {
-      document.getElementById('canvas-result-drawer').classList.add('hidden');
-    });
-
-    // Convert to Text / Markdown Trigger
-    document.getElementById('canvas-do-convert-btn').addEventListener('click', async () => {
-      const convertBtn = document.getElementById('canvas-do-convert-btn');
-      const base64 = activeInfiniteCanvas.exportImageBase64();
-      if (!base64) {
-        showToast('Canvas is empty. Draw a diagram or formula first.');
-        return;
-      }
-
-      const mode = document.getElementById('canvas-ocr-mode').value;
-      const chosenProvider = providerSelect.value;
-      const chosenModel = modelSelect.value;
-
-      convertBtn.disabled = true;
-      convertBtn.innerHTML = '<span>Processing with AI...</span>';
-
-      try {
-        const res = await fetch('/api/vision/ocr', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            image: base64,
-            mode: mode,
-            provider: chosenProvider,
-            model: chosenModel
-          })
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || ('Server error ' + res.status));
-        }
-
-        const data = await res.json();
-        const markdown = data.markdown;
-
-        if (markdown) {
-          // 1. Copy directly to clipboard (copy-first workflow)
-          try {
-            await navigator.clipboard.writeText(markdown);
-          } catch (clipErr) {
-            console.warn('Clipboard write failed:', clipErr);
-          }
-
-          // 2. Populate and display Result Review Drawer
-          const drawer = document.getElementById('canvas-result-drawer');
-          const resultText = document.getElementById('canvas-result-text');
-          const resultTitle = document.getElementById('canvas-result-title');
-          const copyBtnText = document.getElementById('canvas-copy-btn-text');
-
-          if (resultText && drawer) {
-            resultText.value = markdown;
-            drawer.classList.remove('hidden');
-            if (resultTitle) {
-              resultTitle.textContent = '✨ Output from ' + (data.provider || chosenProvider) + ' (' + (data.model || chosenModel) + ') — Copied to Clipboard!';
-            }
-            if (copyBtnText) copyBtnText.textContent = 'Copied!';
-            setTimeout(() => { if (copyBtnText) copyBtnText.textContent = 'Copy to Clipboard'; }, 2500);
-          }
-
-          showToast('📋 Copied to clipboard! Ready to paste (Ctrl+V) into your markdown file');
-        } else {
-          showToast('No text or diagram detected.');
-        }
-      } catch (err) {
-        showToast('Conversion failed: ' + err.message);
-      } finally {
-        convertBtn.disabled = false;
-        convertBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>Convert to Text</span>';
-      }
-    });
-  }
-
-  modal.classList.remove('hidden');
-  if (activeInfiniteCanvas) {
-    setTimeout(() => activeInfiniteCanvas.resize(), 50);
-  }
-}
-
-function insertTextIntoFsEditor(textToInsert) {
-  if (!fsEditor) return;
-  const start = fsEditor.selectionStart || fsEditor.value.length;
-  const end = fsEditor.selectionEnd || fsEditor.value.length;
-  const original = fsEditor.value;
-
-  const prefix = (start > 0 && original[start - 1] !== '\n') ? '\n\n' : '';
-  const suffix = (end < original.length && original[end] !== '\n') ? '\n\n' : '';
-
-  const newContent = original.slice(0, start) + prefix + textToInsert + suffix + original.slice(end);
-  fsEditor.value = newContent;
-  setFsDirty(true);
-
-  if (state.fsViewMode !== 'editor') {
-    setFsViewMode('editor');
-  }
-  updateMarkdownViewer(newContent);
 }

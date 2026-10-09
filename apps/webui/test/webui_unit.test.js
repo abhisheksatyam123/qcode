@@ -113,7 +113,6 @@ test('new UI classes have CSS', () => {
   }
   assert.ok(appjsIncludes('data-retry="stats"'), 'stats panel needs Retry');
   assert.ok(appjsIncludes('data-retry="sessions"'), 'sessions panel needs Retry');
-  assert.ok(appjsIncludes('data-retry="term"'), 'terminal panel needs Retry');
 });
 
 function appjsIncludes(t) {

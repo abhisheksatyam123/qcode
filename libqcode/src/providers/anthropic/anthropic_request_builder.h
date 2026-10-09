@@ -1,6 +1,5 @@
 #pragma once
 
-#include <qcode/core/embedding_options.h>
 #include <qcode/core/generate_options.h>
 #include "providers/internal/base_provider_client.h"
 
@@ -18,7 +17,6 @@ class AnthropicRequestBuilder : public providers::RequestBuilder {
   // for Claude >=4.6, legacy budget_tokens before that) and is planned by
   // anthropic_plan_thinking() in anthropic_thinking.h.
   nlohmann::json build_request_json(const GenerateOptions& options) override;
-  nlohmann::json build_request_json(const EmbeddingOptions& options) override;
   httplib::Headers build_headers(
       const providers::ProviderConfig& config) override;
 
