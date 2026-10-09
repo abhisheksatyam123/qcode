@@ -8,6 +8,7 @@
 #include "providers/openai/openai_stream.h"
 #include "routes/session_runtime.h"
 
+#include <qcode/compaction/compaction_request.h>
 #include <qcode/core/event.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/generation/generation_service.h>
@@ -583,6 +584,112 @@ TEST_F(HistoryMirrorTest, TuiSessionRowsReplayTheLoopsRequestsAfterRestart) {
   }
   expect_replays_last_request(prepare_turn_history(
       session::load_session_history_parsed(sid_), /*drop_system_notes=*/true));
+}
+
+// ── Auto-compaction in the tool loop ─────────────────────────────────
+
+class AutoCompactLoopTest : public HistoryMirrorTest {
+ protected:
+  void SetUp() override {
+    HistoryMirrorTest::SetUp();
+    providers_[0].models[0].compact_threshold = 1000;
+    StreamEvent finish_tools(kStreamEventTypeFinish);
+    finish_tools.finish_reason = kFinishReasonToolCalls;
+    Usage big;
+    big.prompt_tokens = 5000;  // over the threshold
+    finish_tools.usage = big;
+    script_->steps = {
+        {StreamEvent::reasoning("Need files."), StreamEvent::reasoning("", "sig-1"),
+         StreamEvent("Listing."),
+         StreamEvent::tool_call("call_1", "bash", R"({"command":"echo one"})"),
+         finish_tools},
+        {StreamEvent("## Tasks\n- finish listing\n\n## Systems\n- (none)"),
+         StreamEvent(kStreamEventTypeFinish)},
+        {StreamEvent("Done."), StreamEvent(kStreamEventTypeFinish)},
+    };
+    subs_.push_back(bus_.subscribe<ConversationCompacted>(
+        [this](const ConversationCompacted::Payload& p) { compacted_.push_back(p); }));
+  }
+
+  // The loop summarized with its exact request and continued from one
+  // continuation message.
+  void expect_compacted_requests() {
+    std::lock_guard<std::mutex> lock(script_->requests_mutex);
+    ASSERT_EQ(script_->requests.size(), 3u);
+    const Messages& summarizer = script_->requests[1];
+    ASSERT_EQ(summarizer.size(), 4u);  // user, step, results, directive
+    EXPECT_EQ(std::get<TextContentPart>(summarizer.back().content[0]).text,
+              compaction::directive());
+    EXPECT_EQ(wire(Messages(summarizer.begin(), summarizer.begin() + 1)),
+              wire(script_->requests[0]));
+    const Messages& next = script_->requests[2];
+    ASSERT_EQ(next.size(), 1u);
+    const auto& text = std::get<TextContentPart>(next[0].content[0]).text;
+    EXPECT_EQ(text.rfind(compaction::kSummaryMarker, 0), 0u);
+    EXPECT_NE(text.find("finish listing"), std::string::npos);
+    ASSERT_EQ(compacted_.size(), 1u);
+    EXPECT_EQ(compacted_[0].tokens_before >= 5000, true);
+    EXPECT_EQ(compacted_[0].threshold, 1000);
+    EXPECT_EQ(compacted_[0].text, text);
+  }
+
+  // A stored/mirrored history cut at the marker replays the last request.
+  void expect_history_continues(const Messages& history) {
+    Messages last;
+    {
+      std::lock_guard<std::mutex> lock(script_->requests_mutex);
+      ASSERT_EQ(script_->requests.size(), 3u);
+      last = script_->requests.back();
+    }
+    const auto sent = wire(last);
+    const auto replay = wire(history);
+    ASSERT_EQ(replay.size(), sent.size() + 1);  // + "Done."
+    EXPECT_EQ(replay[0], sent[0]);
+  }
+
+  std::vector<ConversationCompacted::Payload> compacted_;
+};
+
+TEST_F(AutoCompactLoopTest, TuiLiveAndStoredHistoryContinueFromTheSummary) {
+  session::save_message(sid_, "User", "list files");
+  {
+    AppStore store(bus_);
+    store.wire();
+    store.set_session_id(sid_);
+    store.state().messages_history->push_back(Message::user("list files"));
+    run_turn();
+    expect_compacted_requests();
+    expect_history_continues(
+        prepare_turn_history(*store.state().messages_history, /*drop_system_notes=*/true));
+  }
+  expect_history_continues(prepare_turn_history(
+      session::load_session_history_parsed(sid_), /*drop_system_notes=*/true));
+  EXPECT_TRUE(std::filesystem::exists(compaction::handoff_path(sid_)));
+}
+
+TEST_F(AutoCompactLoopTest, ServerStoredHistoryContinuesFromTheSummary) {
+  session::save_message(sid_, "User", "list files");
+  auto session = std::make_shared<server::GenSession>();
+  session->id = sid_;
+  auto subs = server::subscribe_session(bus_, session);
+  run_turn();
+  {
+    std::lock_guard<std::mutex> lock(session->queue_mutex);
+    server::flush_turn_text(*session);
+  }
+  expect_compacted_requests();
+  expect_history_continues(prepare_turn_history(
+      session::load_session_history_parsed(sid_), /*drop_system_notes=*/false));
+}
+
+TEST_F(AutoCompactLoopTest, DisabledModelNeverCompacts) {
+  providers_[0].models[0].auto_compact = false;
+  script_->steps.erase(script_->steps.begin() + 1);  // no summarizer call
+  run_turn();
+  std::lock_guard<std::mutex> lock(script_->requests_mutex);
+  ASSERT_EQ(script_->requests.size(), 2u);
+  EXPECT_EQ(script_->requests[1].size(), 3u);
+  EXPECT_TRUE(compacted_.empty());
 }
 
 TEST(ToolResultOrderTest, LiveInsertKeepsCallOrderWhateverFinishesFirst) {

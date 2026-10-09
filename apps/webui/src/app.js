@@ -2971,6 +2971,21 @@ function applyInjectedPrompt(session, stream, text) {
   if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
 }
 
+// The server compacted the conversation mid-turn: show the notice and the
+// summary that replaced the history; the turn continues in a new bubble.
+function applyCompaction(session, stream, evt) {
+  closeOpenThought(stream.msg);
+  session.messages.push({ role: 'system', content: evt.note || 'Context auto-compacted', createdAt: Date.now() });
+  session.messages.push({ role: 'user', content: evt.text || '', createdAt: Date.now() });
+  const msg = { role: 'assistant', content: '', toolEvents: [], timeline: [], createdAt: Date.now() };
+  session.messages.push(msg);
+  stream.msg = msg;
+  if (session.id === state.sessionId) {
+    renderMessages(); scrollToBottom();
+    showToast(`Context compacted: ${evt.tokens_before} -> ~${evt.tokens_after} tokens`);
+  }
+}
+
 function applyTurnEvent(session, stream, evt) {
   if (evt.turn != null) {
     if (evt.turn === session.stoppedTurn) { stream.stopped = true; return; }
@@ -2982,6 +2997,10 @@ function applyTurnEvent(session, stream, evt) {
   if (!stream.msg) return;  // resume found no running turn
   if (evt.type === 'backend.user.message.injected') {
     applyInjectedPrompt(session, stream, evt.text || '');
+    return;
+  }
+  if (evt.type === 'backend.conversation.compacted') {
+    applyCompaction(session, stream, evt);
     return;
   }
   handleEvent(evt, stream.msg, session);

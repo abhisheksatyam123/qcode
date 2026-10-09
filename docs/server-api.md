@@ -72,6 +72,12 @@ variant is the session's `reasoning_mode`, stored by every generate call (overri
 last `keep` messages and is written to `<workspace>/scratchpad/handoff-<id>.md`; the call
 is billed in the session's `usage`.
 
+Automatic compaction runs inside a turn (see README, `compaction` in opencode.json): the
+stream gets `{"type":"backend.conversation.compacted","text":<continuation message>,
+"note":...,"tokens_before":N,"tokens_after":N,"threshold":N,"todo_path":...}`, the
+session gains a `System` note and a `User` row holding the summary (later turns read
+history from it), and the turn continues.
+
 ### Generation turns
 
 A turn runs on the server and persists itself (user prompt, reasoning, tool calls/results,

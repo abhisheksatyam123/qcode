@@ -3,7 +3,9 @@
 #include <map>
 #include <string_view>
 
+#include <qcode/compaction/compaction_request.h>
 #include <qcode/core/logger.h>
+#include <qcode/session/token_budget.h>
 #include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/tools/tool_executor.h>
 #include <qcode/core/enums.h>
@@ -44,6 +46,14 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     const GenerateOptions& initial_options,
     const std::function<GenerateResult(const GenerateOptions&)>&
         generate_func) {
+  return execute_multi_step(initial_options, generate_func, AutoCompact{});
+}
+
+GenerateResult MultiStepCoordinator::execute_multi_step(
+    const GenerateOptions& initial_options,
+    const std::function<GenerateResult(const GenerateOptions&)>&
+        generate_func,
+    const AutoCompact& auto_compact) {
   if (initial_options.max_steps == 1) {
     // Single step - just execute normally.
     // max_steps <= 0 means uncapped: keep looping on tool calls until the
@@ -81,7 +91,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
   if (initial_messages.empty() && !initial_options.prompt.empty()) {
     initial_messages.push_back(Message::user(initial_options.prompt));
   }
-  const size_t initial_count = initial_messages.size();
+  size_t initial_count = initial_messages.size();
   Messages response_messages;
 
   // step_messages is grown in place each iteration (truncate to the immutable
@@ -105,6 +115,12 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
   // status output a few times in a row) never trips it.
   constexpr int kMaxIdenticalSteps = 5;
 
+  // Context of the next request (auto-compaction): the last step's reported
+  // prompt tokens plus estimates of what it appended.
+  size_t live_context = 0;
+  size_t compact_threshold = auto_compact.threshold;
+  int last_compact_step = -1;
+
   for (int step = 0; step_cap < 0 || step < step_cap; ++step) {
     pending_tool_results = false;
 
@@ -124,6 +140,38 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     step_messages.insert(step_messages.end(), response_messages.begin(),
                          response_messages.end());
     step_options.messages = step_messages;
+
+    if (compact_threshold > 0 && live_context >= compact_threshold &&
+        step_options.messages.size() > 2 &&
+        (last_compact_step < 0 || step - last_compact_step >= 2)) {
+      last_compact_step = step;
+      LOG_INFO("MultiStepCoordinator: auto-compaction at {} tokens (threshold {}, "
+               "messages={})", live_context, compact_threshold,
+               step_options.messages.size());
+      GenerateResult summary =
+          generate_func(compaction::build_in_loop_request(step_options));
+      if (summary.is_success() &&
+          summary.text.find_first_not_of(" \t\r\n") != std::string::npos) {
+        // Handoff file only for a stored session (it lives in its workspace).
+        const std::string handoff =
+            initial_options.session_id.empty()
+                ? std::string()
+                : compaction::write_handoff(initial_options.session_id, summary.text);
+        const std::string body = compaction::continuation_message(
+            summary.text, handoff, initial_options.workspace, /*mid_turn=*/true);
+        step_messages.clear();
+        step_messages.push_back(Message::user(body));
+        initial_count = 1;
+        response_messages.clear();
+        step_options.messages = step_messages;
+        live_context = estimate_tokens(step_messages);
+        if (auto_compact.on_compacted) auto_compact.on_compacted(body);
+      } else {
+        LOG_WARN("MultiStepCoordinator: auto-compaction failed ({}); continuing",
+                 summary.error_message());
+        compact_threshold = 0;
+      }
+    }
 
     LOG_DEBUG("Executing step {} of {}, messages={}", step + 1,
                           (step_cap < 0 ? -1 : step_cap),
@@ -233,6 +281,13 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
 
       Messages tool_messages =
           tool_results_to_messages(step_result.tool_calls, tool_results);
+      if (step_result.usage.prompt_tokens > 0) {
+        live_context = static_cast<size_t>(step_result.usage.prompt_tokens) +
+                       static_cast<size_t>(step_result.usage.completion_tokens) +
+                       estimate_tokens(tool_messages);
+      } else {
+        live_context = estimate_tokens(step_messages) + estimate_tokens(tool_messages);
+      }
       response_messages.insert(response_messages.end(), tool_messages.begin(),
                                tool_messages.end());
       pending_tool_results = true;

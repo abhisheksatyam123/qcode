@@ -48,6 +48,20 @@ nlohmann::json user_message_injected_to_json(const UserMessageInjected::Payload&
     };
 }
 
+nlohmann::json conversation_compacted_to_json(const ConversationCompacted::Payload& p) {
+    return {
+        {"type", ConversationCompacted::type},
+        {"session_id", p.session_id},
+        {"text", p.text},
+        {"note", compacted_note(p)},
+        {"todo_path", p.todo_path},
+        {"tokens_before", p.tokens_before},
+        {"tokens_after", p.tokens_after},
+        {"threshold", p.threshold},
+        {"messages_before", p.messages_before}
+    };
+}
+
 nlohmann::json session_status_to_json(const SessionStatusChanged::Payload& p) {
     return {
         {"type", SessionStatusChanged::type},
@@ -131,6 +145,9 @@ std::optional<nlohmann::json> serialize_event(
     }
     if (event_type == UserMessageInjected::type) {
         return user_message_injected_to_json(std::any_cast<const UserMessageInjected::Payload&>(payload));
+    }
+    if (event_type == ConversationCompacted::type) {
+        return conversation_compacted_to_json(std::any_cast<const ConversationCompacted::Payload&>(payload));
     }
     if (event_type == SessionStatusChanged::type) {
         return session_status_to_json(std::any_cast<const SessionStatusChanged::Payload&>(payload));

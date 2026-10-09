@@ -708,6 +708,13 @@ std::vector<ProviderInfo> load_providers_from_config() {
                         if (json_object_at(model_data, "options", where)) {
                             read_sampling(model_data["options"], where + ".options");
                         }
+                        if (json_object_at(model_data, "compaction", where)) {
+                            const auto& compaction = model_data["compaction"];
+                            const std::string at = where + ".compaction";
+                            model.auto_compact = json_bool(compaction, "auto", true, at);
+                            model.compact_threshold =
+                                json_int(compaction, "threshold_tokens", at);
+                        }
                         model.tool_call = json_bool(model_data, "tool_call", false, where);
                         model.vision = json_bool(model_data, "vision", false, where);
                         if (model_data.contains("protocol") &&

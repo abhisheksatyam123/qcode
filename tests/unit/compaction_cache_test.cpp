@@ -12,7 +12,10 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
 #include <set>
+#include <unistd.h>
 #include <string>
 #include <utility>
 #include <vector>
@@ -406,6 +409,72 @@ TEST(CompactionCacheTest, AnthropicSummarizerKeepsTheTurnsThinkingAndSignedBlock
 }
 
 // Each app's turns and its /compact share one history transform.
+TEST(AutoCompactTest, ThresholdIsConfiguredValueCappedBelowTheWindow) {
+  ModelInfo m;
+  EXPECT_EQ(compaction::auto_compact_threshold(nullptr), 0u);
+  EXPECT_EQ(compaction::auto_compact_threshold(&m), 0u);  // nothing known
+  m.compact_threshold = 250000;
+  EXPECT_EQ(compaction::auto_compact_threshold(&m), 250000u);  // unknown window
+  m.context_window = 1000000;
+  m.max_tokens = 32000;
+  EXPECT_EQ(compaction::auto_compact_threshold(&m), 250000u);
+  // A 200k window keeps room for the 32k reply.
+  m.context_window = 200000;
+  EXPECT_EQ(compaction::auto_compact_threshold(&m), 168000u);
+  // Unconfigured: the cap (window minus at least 10%).
+  m.compact_threshold = 0;
+  m.context_window = 1000000;
+  EXPECT_EQ(compaction::auto_compact_threshold(&m), 900000u);
+  m.auto_compact = false;
+  m.compact_threshold = 250000;
+  EXPECT_EQ(compaction::auto_compact_threshold(&m), 0u);
+}
+
+TEST(AutoCompactTest, InLoopRequestIsTheStepRequestPlusTheDirective) {
+  GenerateOptions step;
+  step.model = "m";
+  step.system = "sys";
+  step.messages = make_history();
+  step.tools = build_turn_tools(true, false);
+  step.max_tokens = 32000;
+  step.on_tool_call_start = [](const ToolCall&) {};
+  const GenerateOptions req = compaction::build_in_loop_request(step);
+  EXPECT_EQ(req.system, step.system);
+  EXPECT_EQ(req.max_tokens, step.max_tokens);
+  EXPECT_EQ(tool_names(req.tools), tool_names(step.tools));
+  ASSERT_EQ(req.messages.size(), step.messages.size() + 1);
+  EXPECT_EQ(req.messages.back().role, kMessageRoleUser);
+  EXPECT_EQ(std::get<TextContentPart>(req.messages.back().content[0]).text,
+            compaction::directive());
+  EXPECT_FALSE(req.on_tool_call_start.has_value());
+  EXPECT_EQ(req.max_steps, 1);
+}
+
+TEST(AutoCompactTest, ContinuationCarriesMarkerTaskFileAndContinueInstruction) {
+  const auto ws = std::filesystem::temp_directory_path() /
+                  ("qcode_autocompact_" + std::to_string(::getpid()));
+  std::filesystem::create_directories(ws / "scratchpad");
+  {
+    std::ofstream(ws / "scratchpad" / "todo.md")
+        << "## Tasks\n- [ ] T1 port parser\n## Systems\n## Log\n";
+  }
+  const std::string text = compaction::continuation_message(
+      "## Tasks\n- T1 in progress", "/x/handoff.md", ws.string(), true);
+  EXPECT_EQ(text.rfind(compaction::kSummaryMarker, 0), 0u);
+  EXPECT_NE(text.find("written to: /x/handoff.md"), std::string::npos);
+  EXPECT_NE(text.find("T1 port parser"), std::string::npos);
+  EXPECT_NE(text.find("without asking the user"), std::string::npos);
+  // Stored history is cut at it.
+  Messages h = make_history();
+  h.push_back(Message::user(text));
+  h.push_back(Message::assistant("continuing"));
+  const Messages cut = apply_compaction_cutoff(h);
+  ASSERT_EQ(cut.size(), 2u);
+  EXPECT_FALSE(compaction::continuation_message("s", "", ws.string(), false)
+                   .find("without asking") != std::string::npos);
+  std::filesystem::remove_all(ws);
+}
+
 TEST(CompactionCacheTest, TurnHistoryCutsAtTheSummaryAndDropsTuiNotes) {
   Messages h;
   h.push_back(Message::user("old question"));

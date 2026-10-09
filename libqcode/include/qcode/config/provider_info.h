@@ -62,6 +62,11 @@ struct ModelInfo {
     std::optional<double> temperature;
     std::optional<double> top_p;
     bool temperature_supported = true;
+    // From opencode.json "compaction": {"auto", "threshold_tokens"} (usually
+    // under model_defaults). The lead tool loop compacts the conversation
+    // when its context reaches the threshold (see compaction/auto_compact.h).
+    bool auto_compact = true;
+    int compact_threshold = 0;  // 0 = derive from the context window
 };
 
 struct ProviderInfo {

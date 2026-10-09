@@ -100,6 +100,33 @@ struct UserMessageInjected {
     };
 };
 
+// The tool loop compacted the conversation mid-turn (auto-compaction).
+// `text` is the continuation user message that replaced the history (it
+// holds compaction::kSummaryMarker); subscribers persist it as a User row so
+// stored history is cut there, and show a notice.
+struct ConversationCompacted {
+    static constexpr const char* type = "backend.conversation.compacted";
+    struct Payload {
+        std::string session_id;
+        std::string text;
+        std::string todo_path;
+        int tokens_before = 0;
+        int tokens_after = 0;
+        int threshold = 0;
+        int messages_before = 0;
+    };
+};
+
+// One-line notice for a ConversationCompacted event (chat + session row).
+inline std::string compacted_note(const ConversationCompacted::Payload& p) {
+    std::string note = "Context auto-compacted at " + std::to_string(p.tokens_before) +
+                       " tokens (threshold " + std::to_string(p.threshold) + "): " +
+                       std::to_string(p.messages_before) + " messages -> handoff packet, ~" +
+                       std::to_string(p.tokens_after) + " tokens";
+    if (!p.todo_path.empty()) note += "\nHandoff file: " + p.todo_path;
+    return note;
+}
+
 struct SessionStatusChanged {
     static constexpr const char* type = "backend.session.status.changed";
     struct Payload {
@@ -219,6 +246,7 @@ inline void register_all_events(bus::BusPort& bus) {
     bus.register_event<ToolCallStarted>();
     bus.register_event<ToolCallCompleted>();
     bus.register_event<UserMessageInjected>();
+    bus.register_event<ConversationCompacted>();
     bus.register_event<SessionStatusChanged>();
     bus.register_event<ErrorOccurred>();
     bus.register_event<StepLatency>();

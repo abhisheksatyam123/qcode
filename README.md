@@ -122,6 +122,26 @@ Limits and request size:
   default applies. There is no built-in cap. Subagents use the same budget;
   a model missing from the catalog uses the lead model's budget.
 
+Automatic compaction: like Claude Code, a session compacts itself during the
+tool loop once the next request would carry `compaction.threshold_tokens` of
+context. The loop summarizes with the exact request it was about to send plus
+the compaction directive (so the summary is a cheap prompt-cache read), writes
+`<workspace>/scratchpad/handoff-<session>.md`, replaces the conversation with
+one message (summary, the workspace task file, "continue without asking") and
+keeps working. The session rows keep the full transcript; turns read history
+from the latest summary on.
+
+```json
+{"model_defaults": {"compaction": {"auto": true, "threshold_tokens": 250000}}}
+```
+
+The threshold is capped at the context window minus the reply budget (10-25%
+of the window): with 250000, 1M-window models compact at 250k, 262k-window
+models at about 230k and 200k-window models at 168k. Without
+`threshold_tokens` the cap is used; `"auto": false` turns it off, and then the
+TUI prunes old tool output above 85% of the window instead. `/compact` still
+compacts on demand.
+
 Gemini (Antigravity / `protocol: google`): the variant's wire `effort` is sent
 as `thinkingConfig.thinkingLevel` unchanged, `budget_tokens` as
 `thinkingBudget`, and `thinking.display: "omitted"` turns thought text off

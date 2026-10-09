@@ -6,6 +6,7 @@
 #include <qcode/generation/turn_prefix.h>
 #include <qcode/transform/provider_transform.h>
 #include <qcode/session/session_store.h>
+#include <qcode/session/task_notes.h>
 
 #include <chrono>
 #include <cstdlib>
@@ -32,7 +33,9 @@ const char* kDirective =
     "order. Use terse bullets, not prose paragraphs. Write \"(none)\" for an "
     "empty section — never drop a section.\n\n"
     "## Tasks\n"
-    "- [the next actionable task(s) and the verified/current state of each]\n\n"
+    "- [the user's requests and instructions; the task in progress right "
+    "now and its exact next step; other open tasks with the verified/current "
+    "state of each]\n\n"
     "## Systems\n"
     "- [concise facts that matter: code, APIs, data structures, files, "
     "commands, verified evidence, blockers, and user preferences]\n\n"
@@ -108,6 +111,77 @@ GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
   opts.session_id = input.session_id;
   opts.max_steps = 1;  // single wire call; tools are declared, never executed
   return opts;
+}
+
+size_t auto_compact_threshold(const ModelInfo* model) {
+  if (model == nullptr || !model->auto_compact) return 0;
+  const size_t configured =
+      model->compact_threshold > 0 ? static_cast<size_t>(model->compact_threshold) : 0;
+  if (model->context_window <= 0) return configured;
+  const size_t window = static_cast<size_t>(model->context_window);
+  // Room for the reply: the request's output budget, kept between 10% and
+  // 25% of the window.
+  const auto out = ProviderTransform::max_output_tokens(*model);
+  const size_t out_tokens = out ? static_cast<size_t>(*out) : 0;
+  const size_t reserve = std::max(window / 10, std::min(out_tokens, window / 4));
+  const size_t cap = window > reserve ? window - reserve : window / 2;
+  return configured > 0 ? std::min(configured, cap) : cap;
+}
+
+GenerateOptions build_in_loop_request(const GenerateOptions& step_request) {
+  GenerateOptions opts = step_request;
+  opts.messages.push_back(Message::user(directive()));
+  opts.prompt.clear();
+  opts.max_steps = 1;
+  opts.on_step_finish.reset();
+  opts.on_tool_call_start.reset();
+  opts.on_tool_call_finish.reset();
+  opts.on_tool_call_confirm.reset();
+  opts.on_retry.reset();
+  opts.subagent_runner = nullptr;
+  opts.routing_board = nullptr;
+  opts.has_queued_work = nullptr;
+  return opts;
+}
+
+std::string continuation_message(const std::string& summary,
+                                 const std::string& handoff_path,
+                                 const std::string& workspace, bool mid_turn) {
+  std::string out = kSummaryMarker;
+  out += handoff_path.empty() ? std::string(".") : " written to: " + handoff_path + ".";
+  out += "\n\n";
+  out += summary;
+  // The task file is the durable thread state (Tasks / Systems / Log): give
+  // the fresh context its current contents, as Claude Code re-attaches its
+  // todo list after compacting.
+  const auto notes = task_notes::resolve(workspace);
+  if (notes.exists) {
+    std::ifstream in(notes.path);
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    constexpr size_t kMaxTaskFileChars = 24000;
+    if (!text.empty()) {
+      out += "\n\nTask file " + notes.path + " (current contents";
+      if (text.size() > kMaxTaskFileChars) {
+        // Keep the head (Tasks, Systems) and the newest Log lines.
+        const size_t head = kMaxTaskFileChars * 2 / 3;
+        const size_t tail = kMaxTaskFileChars - head;
+        text = text.substr(0, head) + "\n[... truncated ...]\n" +
+               text.substr(text.size() - tail);
+        out += ", truncated";
+      }
+      out += "):\n" + text;
+    }
+  }
+  if (mid_turn) {
+    out +=
+        "\n\nThe earlier conversation was replaced by the summary above "
+        "because the context grew large. Continue the in-progress task from "
+        "where it left off without asking the user any further questions. "
+        "Re-read any file before editing it; earlier tool output is no longer "
+        "visible.";
+  }
+  return out;
 }
 
 GenerateResult run_summarizer(Client& client, const GenerateOptions& request) {

@@ -12,6 +12,7 @@
 #include <set>
 #include <thread>
 
+#include <qcode/compaction/compaction_request.h>
 #include <qcode/core/tool.h>
 #include <qcode/session/session_store.h>
 #include <qcode/tools/multi_step_coordinator.h>
@@ -423,6 +424,54 @@ TEST(MultiStepCoordinatorTest, ProcessesToolCallsEvenWhenFinishReasonIsStop) {
 
   EXPECT_EQ(step_count, 2);
   EXPECT_TRUE(final_res.is_success());
+  EXPECT_EQ(final_res.text, "Result is 42.");
+}
+
+TEST(MultiStepCoordinatorTest, AutoCompactsAndContinuesFromTheSummary) {
+  ToolSet tools;
+  Tool mock_tool;
+  mock_tool.name = "calc_tool";
+  mock_tool.description = "A calculation tool";
+  mock_tool.execute = [](const JsonValue&, const ToolExecutionContext&) -> JsonValue {
+    return JsonValue{{"result", 42}};
+  };
+  tools["calc_tool"] = mock_tool;
+  GenerateOptions opts("mock-model", "system prompt", "initial user prompt");
+  opts.tools = tools;
+  opts.max_steps = 10;
+
+  std::vector<Messages> requests;
+  auto generate_func = [&](const GenerateOptions& step_opts) -> GenerateResult {
+    requests.push_back(step_opts.messages);
+    GenerateResult res;
+    res.finish_reason = kFinishReasonStop;
+    if (requests.size() == 1) {
+      res.tool_calls.push_back(ToolCall("call_1", "calc_tool", JsonValue::object()));
+      res.usage.prompt_tokens = 5000;  // over the threshold
+    } else if (requests.size() == 2) {
+      res.text = "## Tasks\n- report 42";  // the summarizer call
+    } else {
+      res.text = "Result is 42.";
+    }
+    return res;
+  };
+  std::vector<std::string> compacted;
+  GenerateResult final_res = MultiStepCoordinator::execute_multi_step(
+      opts, generate_func,
+      MultiStepCoordinator::AutoCompact{
+          .threshold = 1000,
+          .on_compacted = [&](const std::string& m) { compacted.push_back(m); }});
+
+  ASSERT_EQ(requests.size(), 3u);
+  ASSERT_EQ(requests[1].size(), 4u);  // prompt, call, result, directive
+  EXPECT_EQ(std::get<TextContentPart>(requests[1].back().content[0]).text,
+            compaction::directive());
+  ASSERT_EQ(requests[2].size(), 1u);
+  const auto& text = std::get<TextContentPart>(requests[2][0].content[0]).text;
+  EXPECT_EQ(text.rfind(compaction::kSummaryMarker, 0), 0u);
+  EXPECT_NE(text.find("report 42"), std::string::npos);
+  ASSERT_EQ(compacted.size(), 1u);
+  EXPECT_EQ(compacted[0], text);
   EXPECT_EQ(final_res.text, "Result is 42.");
 }
 

@@ -77,5 +77,38 @@ GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
 // Nothing is published: the summary is not chat output.
 GenerateResult run_summarizer(Client& client, const GenerateOptions& request);
 
+// ── Automatic compaction (lead tool loop) ──
+//
+// Like Claude Code's auto-compact: when the conversation's context reaches
+// the threshold, the tool loop summarizes it with the exact request it was
+// about to send (so the summarizer is a warm-cache prefix), replaces the
+// conversation with one continuation message and keeps working.
+
+// Tokens of context at which the tool loop compacts; 0 = never.
+// opencode.json "compaction": {"auto": false} disables it; "threshold_tokens"
+// sets it (usually in model_defaults). The result is capped below the
+// context window minus an output reserve; with no configured threshold that
+// cap is the threshold. Unknown window and no threshold -> 0.
+size_t auto_compact_threshold(const ModelInfo* model);
+
+// Phrase that marks a compaction summary message. apply_compaction_cutoff
+// (core/message.h) drops everything before the latest user message holding
+// it, so persisting that message is enough to compact a stored session.
+inline constexpr const char* kSummaryMarker =
+    "This conversation was compacted into a handoff packet";
+
+// The summarizer request for an in-loop compaction: `step_request` (the
+// request the loop was about to send) unchanged, plus the directive as the
+// final user message. Callbacks are dropped: nothing is executed.
+GenerateOptions build_in_loop_request(const GenerateOptions& step_request);
+
+// The user message that replaces the compacted conversation: marker, handoff
+// path, the summary, the workspace task file (todo contract, capped), and,
+// when `mid_turn`, the instruction to continue the in-progress work without
+// asking the user.
+std::string continuation_message(const std::string& summary,
+                                 const std::string& handoff_path,
+                                 const std::string& workspace, bool mid_turn);
+
 }  // namespace compaction
 }  // namespace qcode

@@ -1,4 +1,5 @@
 #include <qcode/generation/turn_prefix.h>
+#include <qcode/compaction/compaction_request.h>
 #include <qcode/generation/call_usage.h>
 #include <qcode/generation/generation_service.h>
 #include <qcode/session/task_notes.h>
@@ -468,7 +469,16 @@ static JsonValue run_subagent_turn_multi(
                               0, false, step_res.is_success());
           }
           return step_res;
-        });
+        },
+        MultiStepCoordinator::AutoCompact{
+            .threshold = compaction::auto_compact_threshold(budget_model),
+            .on_compacted =
+                [&sub_session_id](const std::string& message) {
+                  // The child session's history continues from the summary.
+                  if (!sub_session_id.empty()) {
+                    qcode::session::save_message(sub_session_id, "User", message);
+                  }
+                }});
 
     std::string error;
     if (!res.is_success()) {
@@ -666,14 +676,21 @@ static void run_tools_generation_bus(
   // when the provider reports no prompt_tokens. Computed once on first use,
   // then grown by each appended message instead of re-walking the history.
   std::optional<size_t> est_history_tokens;
+  // Context size of the next request: the last step's reported prompt
+  // tokens plus estimates of the messages appended since (auto-compaction).
+  size_t live_context =
+      ctx.context_tokens_hint > 0
+          ? ctx.context_tokens_hint
+          : estimate_system_tokens(options.system) + estimate_tokens(options.messages);
   qcode::Messages scratch;  // estimate_tokens() takes a vector: move through it
-  auto append_message = [&options, &est_history_tokens,
+  auto append_message = [&options, &est_history_tokens, &live_context,
                          &scratch](qcode::Message msg) -> size_t {
     scratch.push_back(std::move(msg));
     const size_t tokens = estimate_tokens(scratch);
     options.messages.push_back(std::move(scratch.back()));
     scratch.clear();
     if (est_history_tokens) *est_history_tokens += tokens;
+    live_context += tokens;
     return tokens;
   };
 
@@ -722,6 +739,69 @@ static void run_tools_generation_bus(
     return fut.get();
   };
 
+  // ── Auto-compaction (Claude Code style) ──
+  // When the next request would carry `compact_threshold` tokens or more,
+  // summarize with that exact request (warm cache prefix) plus the
+  // directive, then continue the turn from one continuation message.
+  size_t compact_threshold = compaction::auto_compact_threshold(model_info);
+  int last_compact_step = -1;
+  auto compact_in_loop = [&](int at_step) -> bool {
+    const size_t before = live_context;
+    const int messages_before = static_cast<int>(options.messages.size());
+    LOG_INFO("auto-compaction: context {} >= threshold {} at step={} messages={}",
+             before, compact_threshold, at_step, messages_before);
+    bus.publish<contract::ErrorOccurred>({
+        .session_id = ctx.session_id,
+        .message = "Context at " + std::to_string(before) +
+                   " tokens: compacting the conversation...",
+        .severity = "info"});
+    const qcode::GenerateOptions summarizer =
+        compaction::build_in_loop_request(options);
+    const qcode::perf::Stopwatch watch;
+    qcode::GenerateResult res = compaction::run_summarizer(client, summarizer);
+    record_model_call(&bus, ctx.session_id, model_info,
+                      model_call_usage(summarizer, res, provider_id, model_info,
+                                       watch.ms()),
+                      at_step, false, res.is_success());
+    LOG_INFO("Compaction summarizer (auto): model={} cached_prompt_tokens={} "
+             "cache_write_tokens={} prompt_tokens={} completion_tokens={}",
+             summarizer.model, res.usage.cached_prompt_tokens,
+             res.usage.cache_write_tokens, res.usage.prompt_tokens,
+             res.usage.completion_tokens);
+    if (ctx.abort_flag && ctx.abort_flag->load()) return false;
+    if (!res.is_success() || res.text.find_first_not_of(" \t\r\n") == std::string::npos) {
+      const std::string err = !res.is_success() ? res.error_message()
+                                                : std::string("empty summary");
+      LOG_WARN("auto-compaction failed ({}); continuing uncompacted", err);
+      bus.publish<contract::ErrorOccurred>({
+          .session_id = ctx.session_id,
+          .message = "Auto-compaction failed: " + format_user_facing_error(err, 80) +
+                     " (continuing)",
+          .severity = "info"});
+      return false;
+    }
+    std::string todo_path = compaction::write_handoff(ctx.session_id, res.text);
+    std::string body = compaction::continuation_message(
+        res.text, todo_path, ctx.workspace, /*mid_turn=*/true);
+    options.messages.clear();
+    est_history_tokens.reset();
+    live_context = estimate_system_tokens(options.system);
+    append_message(qcode::Message::user(body));
+    LOG_INFO("auto-compaction: {} -> {} tokens ({} messages -> 1), handoff {}",
+             before, live_context, messages_before, todo_path);
+    bus.publish<ConversationCompacted>({
+        .session_id = ctx.session_id,
+        .text = std::move(body),
+        .todo_path = std::move(todo_path),
+        .tokens_before = static_cast<int>(before),
+        .tokens_after = static_cast<int>(live_context),
+        .threshold = static_cast<int>(compact_threshold),
+        .messages_before = messages_before,
+    });
+    bus.publish<ContextSizeUpdated>({.context_tokens = static_cast<int>(live_context)});
+    return true;
+  };
+
   int step = 0;
   bool finished = false;
   bool aborted = false;
@@ -746,6 +826,21 @@ static void run_tools_generation_bus(
       break;
     }
     LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, options.messages.size());
+
+    // Compact before sending a request that reached the threshold. Not twice
+    // in a row: a summary that is itself over the threshold must not loop.
+    if (compact_threshold > 0 && live_context >= compact_threshold &&
+        options.messages.size() > 2 &&
+        (last_compact_step < 0 || step - last_compact_step >= 2)) {
+      last_compact_step = step;
+      if (!compact_in_loop(step)) {
+        if (ctx.abort_flag && ctx.abort_flag->load()) {
+          aborted = true;
+          break;
+        }
+        compact_threshold = 0;  // failed: do not retry every step this turn
+      }
+    }
 
     {
       // Streamed steps publish reasoning and text while the model writes.
@@ -877,6 +972,11 @@ static void run_tools_generation_bus(
       }
 
       gen_result.usage.prompt_tokens = step_res.usage.prompt_tokens;
+      if (step_res.usage.prompt_tokens > 0) {
+        // Exact size of the request just sent; the reply and tool results
+        // appended below are added by append_message.
+        live_context = static_cast<size_t>(step_res.usage.prompt_tokens);
+      }
       gen_result.usage.completion_tokens += step_res.usage.completion_tokens;
       gen_result.usage.total_tokens =
           gen_result.usage.prompt_tokens + gen_result.usage.completion_tokens;

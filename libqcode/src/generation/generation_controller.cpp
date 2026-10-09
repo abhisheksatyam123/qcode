@@ -1,5 +1,6 @@
 #include <qcode/generation/generation_controller.h>
 
+#include <qcode/compaction/compaction_request.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/perf.h>
 #include <qcode/generation/generation_service.h>
@@ -361,7 +362,16 @@ void GenerationController::spawn_unlocked(std::string prompt,
                         "window={} model={}]",
                         total, ctx_window, pct, sys_tok, msg_tok, ctx_window,
                         providers_copy[sel_prov].models[sel_mod].name);
-                    if (total > prune_at) {
+                    ctx.context_tokens_hint = total;
+                    // Auto-compaction (tool loop) keeps the context under its
+                    // threshold; pruning would only break the prompt cache.
+                    const size_t auto_at = qcode::compaction::auto_compact_threshold(
+                        &providers_copy[sel_prov].models[sel_mod]);
+                    if (auto_at > 0 && tools_enabled) {
+                        LOG_INFO("Context {}/{}: auto-compaction at {} tokens",
+                                 total, ctx_window, auto_at);
+                        *state_ptr->consecutive_prunes = 0;
+                    } else if (total > prune_at) {
                         LOG_WARN(
                             "Context over window: {}/{} tokens ({}%) >= prune "
                             "threshold {} — pruning",

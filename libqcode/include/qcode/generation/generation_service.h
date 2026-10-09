@@ -41,6 +41,10 @@ struct GenerationContext {
     // contract::UserMessageInjected, so a queued prompt steers the running
     // turn instead of waiting for it to finish. Return {} when there is none.
     std::function<std::vector<std::string>()> take_queued_prompts = nullptr;
+
+    // Caller's (calibrated) estimate of the first request's context size;
+    // 0 = the tool loop estimates it. Drives auto-compaction at step 0.
+    size_t context_tokens_hint = 0;
 };
 
 /**

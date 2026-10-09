@@ -694,6 +694,29 @@ void AppStore::wire() {
         notify();
     }));
 
+    subs_.push_back(bus_.subscribe<ConversationCompacted>([this](const ConversationCompacted::Payload& p) {
+        const std::string sid = p.session_id.empty() ? session_id() : p.session_id;
+        // The reply streamed before the compaction belongs above it.
+        save_pending_turn_text(sid, take_pending_turn_text(p.session_id));
+        const std::string note = qcode::contract::compacted_note(p);
+        // The User row carries the summary marker: a reload (and the next
+        // turn) cuts the history there (apply_compaction_cutoff).
+        qcode::session::save_message(sid, "System", note);
+        qcode::session::save_message(sid, "User", p.text);
+        if (is_live_session(p.session_id)) {
+            append_chat_message("System", note);
+            append_chat_message("User", p.text);
+            *state_.current_context_tokens = p.tokens_after;
+            *state_.last_estimated_tokens = p.tokens_after;
+            *state_.last_actual_prompt_tokens = 0;
+            *state_.consecutive_prunes = 0;
+            add_toast("Context compacted: " + std::to_string(p.tokens_before) + " -> ~" +
+                          std::to_string(p.tokens_after) + " tokens",
+                      "success", 4000);
+        }
+        notify();
+    }));
+
     subs_.push_back(bus_.subscribe<SessionStatusChanged>([this](const SessionStatusChanged::Payload& p) {
         if (!is_live_session(p.session_id)) return;
         set_status(p.status);

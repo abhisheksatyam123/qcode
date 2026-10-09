@@ -309,6 +309,36 @@ TEST(TuiConfigTest, VariantObjectsThinkingAndModelDefaults) {
   EXPECT_EQ(ProviderTransform::find_variant(*haiku, "ultra"), nullptr);
 }
 
+TEST(TuiConfigTest, CompactionSettingsInheritFromModelDefaults) {
+  ScopedConfig config(R"({
+      "model_defaults": {"compaction": {"threshold_tokens": 250000}},
+      "provider": {
+        "opencode": {
+          "models": {
+            "a": {"tool_call": true, "limit": {"context": 1000000}},
+            "b": {"tool_call": true, "compaction": {"auto": false}},
+            "c": {"tool_call": true, "compaction": {"threshold_tokens": 300000}}
+          }
+        }
+      }
+    })");
+  const auto providers = config.load();
+  const auto* zen = FindProvider(providers, "opencode");
+  ASSERT_NE(zen, nullptr);
+  const auto* a = FindModel(zen->models, "a");
+  const auto* b = FindModel(zen->models, "b");
+  const auto* c = FindModel(zen->models, "c");
+  ASSERT_NE(a, nullptr);
+  ASSERT_NE(b, nullptr);
+  ASSERT_NE(c, nullptr);
+  EXPECT_TRUE(a->auto_compact);
+  EXPECT_EQ(a->compact_threshold, 250000);
+  // merge_patch replaces the compaction object key by key.
+  EXPECT_FALSE(b->auto_compact);
+  EXPECT_EQ(b->compact_threshold, 250000);
+  EXPECT_EQ(c->compact_threshold, 300000);
+}
+
 TEST(TuiConfigTest, TopLevelModelDefaultsAndOutputBudget) {
   // Top-level model_defaults < provider model_defaults < model (merge patch).
   // The request budget is max_tokens capped by limit.output; nothing is

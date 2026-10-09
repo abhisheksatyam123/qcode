@@ -184,6 +184,18 @@ std::vector<qcode::bus::Subscription> subscribe_session(
         }
     ));
 
+    subs.push_back(subscribe_weak<ConversationCompacted>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const ConversationCompacted::Payload& p) {
+            if (p.session_id != session->id) return;
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
+            // Reply so far first; then the marker row the next turn cuts at.
+            flush_turn_text(*session);
+            qcode::session::save_message(session->id, "System", compacted_note(p));
+            qcode::session::save_message(session->id, "User", p.text);
+            push_event(*session, qcode::server::conversation_compacted_to_json(p));
+        }
+    ));
+
     subs.push_back(subscribe_weak<SessionStatusChanged>(bus, session,
         [](const std::shared_ptr<GenSession>& session, const SessionStatusChanged::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;
