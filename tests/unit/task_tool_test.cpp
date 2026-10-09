@@ -15,6 +15,7 @@
 #include <qcode/compaction/compaction_request.h>
 #include <qcode/core/tool.h>
 #include <qcode/session/session_store.h>
+#include <qcode/session/subagent_stats.h>
 #include <qcode/tools/multi_step_coordinator.h>
 #include <qcode/tools/task_tool.h>
 #include <qcode/tools/tool_executor.h>
@@ -134,9 +135,163 @@ TEST(TaskToolTest, DefinitionHasMinimalSchema) {
   const auto& props = tool.parameters_schema["properties"];
   std::set<std::string> keys;
   for (auto it = props.begin(); it != props.end(); ++it) keys.insert(it.key());
-  EXPECT_EQ(keys,
-            (std::set<std::string>{"description", "prompt", "mode", "difficulty", "model"}));
-  EXPECT_EQ(tool.parameters_schema["required"], JsonValue::array({"prompt"}));
+  EXPECT_EQ(keys, (std::set<std::string>{"description", "prompt", "mode", "difficulty",
+                                         "model", "background", "task_id", "action",
+                                         "timeout_s"}));
+  // prompt is checked by execute(): status / wait / kill take none.
+  EXPECT_FALSE(tool.parameters_schema.contains("required"));
+}
+
+// ── Background and resumed subagents ──
+
+namespace {
+// Waits until `parent` has a finished background report (or 5 s pass).
+std::vector<std::string> wait_for_notices(const std::string& parent) {
+  for (int i = 0; i < 500 && !TaskTool::has_notices(parent); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return TaskTool::take_notices(parent);
+}
+}  // namespace
+
+TEST(TaskToolTest, BackgroundTaskReturnsAtOnceAndReportsLater) {
+  const std::string parent = "parent_bg_1";
+  qcode::session::ensure_session_row(parent, "Parent", "p", "m", "/ws");
+  auto release = std::make_shared<std::atomic<bool>>(false);
+  auto lead_abort = std::make_shared<std::atomic<bool>>(false);
+  auto seen = std::make_shared<JsonValue>();
+  auto seen_mutex = std::make_shared<std::mutex>();
+  ToolExecutionContext context;
+  context.session_id = parent;
+  context.abort_flag = lead_abort;
+  context.subagent_runner = [seen, seen_mutex, release](const JsonValue& args,
+                                                        std::shared_ptr<std::atomic<bool>> flag) {
+    {
+      std::lock_guard<std::mutex> lock(*seen_mutex);
+      *seen = args;
+    }
+    while (!release->load() && !flag->load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return JsonValue{{"output", "scan done"}, {"model", "m1"}, {"provider", "opencode"}};
+  };
+
+  const JsonValue out = TaskTool::execute(
+      JsonValue{{"prompt", "scan"}, {"description", "bg scan"}, {"background", true}}, context);
+  ASSERT_FALSE(out.contains("error"));
+  const std::string id = out["metadata"].value("task_id", "");
+  ASSERT_FALSE(id.empty());
+  EXPECT_EQ(out["metadata"].value("status", ""), "running");
+  EXPECT_TRUE(TaskTool::is_session_running(id));
+  EXPECT_FALSE(TaskTool::has_notices(parent));
+  // The lead's turn ending (its abort flag) does not stop a background task.
+  lead_abort->store(true);
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  EXPECT_TRUE(TaskTool::is_session_running(id));
+  lead_abort->store(false);
+  EXPECT_THAT(TaskTool::execute(JsonValue{{"action", "status"}, {"task_id", id}}, context)
+                  .value("output", ""),
+              testing::HasSubstr("still running"));
+
+  release->store(true);
+  const auto notices = wait_for_notices(parent);
+  ASSERT_EQ(notices.size(), 1u);
+  EXPECT_THAT(notices[0], testing::StartsWith("[Background task " + id + " (bg scan) finished]"));
+  EXPECT_THAT(notices[0], testing::HasSubstr("scan done"));
+  EXPECT_THAT(notices[0], testing::HasSubstr("opencode:m1"));
+  EXPECT_FALSE(TaskTool::has_notices(parent));  // delivered once
+  for (int i = 0; i < 100 && TaskTool::is_session_running(id); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_FALSE(TaskTool::is_session_running(id));
+  {
+    std::lock_guard<std::mutex> lock(*seen_mutex);
+    EXPECT_TRUE(seen->value("background", false));
+  }
+  auto last = qcode::session::load_last_session_message(id);
+  ASSERT_TRUE(last.has_value());
+  EXPECT_EQ(last->second, "scan done");
+}
+
+TEST(TaskToolTest, WaitBlocksForBackgroundTasksAndKillStopsThem) {
+  const std::string parent = "parent_bg_2";
+  qcode::session::ensure_session_row(parent, "Parent", "p", "m", "/ws");
+  ToolExecutionContext context;
+  context.session_id = parent;
+  context.subagent_runner = [](const JsonValue& args, std::shared_ptr<std::atomic<bool>> flag) {
+    if (args.value("prompt", "") == "quick") {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      return JsonValue{{"output", "quick report"}};
+    }
+    while (!flag->load()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    return JsonValue{{"error", "Subagent cancelled due to abort flag"}};
+  };
+  const std::string quick =
+      TaskTool::execute(JsonValue{{"prompt", "quick"}, {"background", true}}, context)
+          ["metadata"].value("task_id", "");
+  const std::string slow =
+      TaskTool::execute(JsonValue{{"prompt", "slow"}, {"background", true}}, context)
+          ["metadata"].value("task_id", "");
+
+  const JsonValue waited = TaskTool::execute(
+      JsonValue{{"action", "wait"}, {"task_id", quick}, {"timeout_s", 5}}, context);
+  EXPECT_THAT(waited.value("output", ""), testing::HasSubstr("quick report"));
+
+  const JsonValue killed =
+      TaskTool::execute(JsonValue{{"action", "kill"}, {"task_id", slow}}, context);
+  EXPECT_FALSE(killed.contains("error"));
+  const JsonValue after = TaskTool::execute(
+      JsonValue{{"action", "wait"}, {"task_id", slow}, {"timeout_s", 5}}, context);
+  EXPECT_THAT(after.value("output", ""), testing::HasSubstr("Error: killed"));
+  EXPECT_TRUE(TaskTool::take_notices(parent).empty());  // wait delivered both
+}
+
+TEST(TaskToolTest, ResumeContinuesTheSameSubagentSession) {
+  const std::string parent = "parent_resume_1";
+  qcode::session::ensure_session_row(parent, "Parent", "p", "m", "/ws");
+  std::vector<JsonValue> seen;
+  ToolExecutionContext context;
+  context.session_id = parent;
+  context.subagent_runner = [&seen](const JsonValue& args, std::shared_ptr<std::atomic<bool>>) {
+    seen.push_back(args);
+    return JsonValue{{"output", "report " + std::to_string(seen.size())}};
+  };
+  const JsonValue first = TaskTool::execute(
+      JsonValue{{"prompt", "audit parser"}, {"mode", "verify"}, {"description", "audit"}},
+      context);
+  const std::string id = first["metadata"].value("task_id", "");
+  ASSERT_FALSE(id.empty());
+  qcode::session::SubagentRun run;
+  run.task_id = id;
+  run.attempt = 1;
+  run.parent_session_id = parent;
+  run.provider = "opencode";
+  run.model = "m1";
+  run.mode = "verify";
+  qcode::session::record_subagent_run(run);
+
+  const JsonValue second =
+      TaskTool::execute(JsonValue{{"prompt", "now check the lexer"}, {"task_id", id}}, context);
+  ASSERT_FALSE(second.contains("error"));
+  EXPECT_EQ(second["metadata"].value("task_id", ""), id);
+  ASSERT_EQ(seen.size(), 2u);
+  EXPECT_EQ(seen[1].value("session_id", ""), id);
+  EXPECT_TRUE(seen[1].value("resume", false));
+  EXPECT_EQ(seen[1].value("mode", ""), "verify");        // kept from the first run
+  EXPECT_EQ(seen[1].value("model", ""), "opencode:m1");  // same model
+  EXPECT_EQ(seen[1].value("attempt_base", 0), 1);
+  // The child keeps one conversation: prompt, report, follow-up, report.
+  const auto rows = qcode::session::load_session_messages(id);
+  ASSERT_EQ(rows.size(), 4u);
+  EXPECT_EQ(rows[2].second, "now check the lexer");
+  EXPECT_EQ(rows[3].second, "report 2");
+
+  // Only this session's own subagents can be resumed.
+  ToolExecutionContext other = context;
+  other.session_id = "someone_else";
+  EXPECT_THAT(TaskTool::execute(JsonValue{{"prompt", "x"}, {"task_id", id}}, other)
+                  .value("error", ""),
+              testing::HasSubstr("not a subagent of this session"));
 }
 
 TEST(TaskToolTest, DifficultyAndParentReachTheRunner) {

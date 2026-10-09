@@ -184,6 +184,14 @@ std::vector<qcode::bus::Subscription> subscribe_session(
         }
     ));
 
+    subs.push_back(subscribe_weak<SessionTitleChanged>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const SessionTitleChanged::Payload& p) {
+            if (p.session_id != session->id) return;
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
+            push_event(*session, qcode::server::session_title_changed_to_json(p));
+        }
+    ));
+
     subs.push_back(subscribe_weak<ConversationCompacted>(bus, session,
         [](const std::shared_ptr<GenSession>& session, const ConversationCompacted::Payload& p) {
             if (p.session_id != session->id) return;

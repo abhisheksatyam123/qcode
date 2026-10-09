@@ -1,4 +1,6 @@
 #include <qcode/generation/turn_prefix.h>
+#include <qcode/generation/model_client.h>
+#include <qcode/tools/task_tool.h>
 #include <qcode/compaction/compaction_request.h>
 #include <qcode/generation/call_usage.h>
 #include <qcode/generation/generation_service.h>
@@ -151,6 +153,69 @@ static const ModelInfo* find_catalog_model(const std::vector<ProviderInfo>& prov
   return nullptr;
 }
 
+// Client + wire model id for one catalog model, with the provider's
+// credentials (OAuth tokens, env keys) filled in like a lead turn.
+ResolvedModelClient resolve_model_client(const ProviderInfo& provider,
+                                         const ModelInfo* model_info,
+                                         const std::string& model_id,
+                                         const std::string& session_id) {
+  const ProviderInfo* target_provider = &provider;
+  const ModelInfo* target_model_info = model_info;
+  const std::string& target_model_id = model_id;
+  ResolvedModelClient out;
+    qcode::providers::ProviderOptions prov_opts;
+    prov_opts.base_url = target_provider->api_url;
+    prov_opts.api_key = target_provider->api_key;
+    prov_opts.headers = target_provider->headers;
+    prov_opts.protocol = (target_model_info && !target_model_info->protocol.empty())
+                             ? target_model_info->protocol
+                             : target_provider->protocol;
+    prov_opts.project_id = target_provider->project_id;
+
+    qcode::providers::register_authenticated_providers();
+    if (target_provider->id == "cursor") {
+      if (prov_opts.api_key.empty()) {
+        prov_opts.api_key = get_cursor_access_token();
+      }
+    } else if (target_provider->id.find("antigravity") != std::string::npos ||
+               target_provider->name.find("Antigravity") != std::string::npos) {
+      const auto fresh = get_antigravity_token(/*force_refresh=*/false);
+      if (!fresh.empty()) {
+        prov_opts.api_key = fresh;
+      }
+    } else if (target_provider->id == "openrouter") {
+      if (prov_opts.api_key.empty()) {
+        const char* key = std::getenv("OPENROUTER_API_KEY");
+        if (key && *key) prov_opts.api_key = key;
+      }
+    } else if (target_provider->id == "anthropic" ||
+               target_provider->name.find("Anthropic") != std::string::npos) {
+      if (prov_opts.api_key.empty() || prov_opts.api_key.starts_with("sk-ant-oat")) {
+        const auto fresh = get_anthropic_token(/*force_refresh=*/false);
+        if (!fresh.empty()) prov_opts.api_key = fresh;
+      }
+    } else if (target_provider->id == "openai" ||
+               target_provider->name.find("OpenAI") != std::string::npos) {
+      if (prov_opts.api_key.empty()) {
+        const char* key = std::getenv("OPENAI_API_KEY");
+        if (key && *key) prov_opts.api_key = key;
+      }
+    }
+
+    const auto call = prepare_provider_call(prov_opts, target_provider->id, target_model_id, session_id);
+    out.wire_model = call.wire_model_id.empty() ? target_model_id : call.wire_model_id;
+
+    auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
+        target_provider->id, prov_opts);
+    if (!resolution.ok()) {
+      out.error = "Failed to resolve client for provider '" + target_provider->id +
+                  "': " + resolution.error;
+      return out;
+    }
+    out.client = std::move(resolution.client);
+    return out;
+}
+
 static JsonValue run_subagent_turn_multi(
     std::shared_ptr<std::vector<ProviderInfo>> providers,
     const std::string& default_provider_id,
@@ -264,7 +329,8 @@ static JsonValue run_subagent_turn_multi(
     const auto record = [&](routing::Outcome outcome, const std::string& error) {
       session::SubagentRun run;
       run.task_id = sub_session_id;
-      run.attempt = attempt;
+      // A resumed task numbers its attempts after the earlier ones.
+      run.attempt = args.value("attempt_base", 0) + attempt;
       run.parent_session_id = parent_session_id;
       run.provider = target_provider->id;
       run.model = target_model_id;
@@ -278,58 +344,16 @@ static JsonValue run_subagent_turn_multi(
       session::record_subagent_run(run);
     };
 
-    qcode::providers::ProviderOptions prov_opts;
-    prov_opts.base_url = target_provider->api_url;
-    prov_opts.api_key = target_provider->api_key;
-    prov_opts.headers = target_provider->headers;
-    prov_opts.protocol = (target_model_info && !target_model_info->protocol.empty())
-                             ? target_model_info->protocol
-                             : target_provider->protocol;
-    prov_opts.project_id = target_provider->project_id;
-
-    qcode::providers::register_authenticated_providers();
-    if (target_provider->id == "cursor") {
-      if (prov_opts.api_key.empty()) {
-        prov_opts.api_key = get_cursor_access_token();
-      }
-    } else if (target_provider->id.find("antigravity") != std::string::npos ||
-               target_provider->name.find("Antigravity") != std::string::npos) {
-      const auto fresh = get_antigravity_token(/*force_refresh=*/false);
-      if (!fresh.empty()) {
-        prov_opts.api_key = fresh;
-      }
-    } else if (target_provider->id == "openrouter") {
-      if (prov_opts.api_key.empty()) {
-        const char* key = std::getenv("OPENROUTER_API_KEY");
-        if (key && *key) prov_opts.api_key = key;
-      }
-    } else if (target_provider->id == "anthropic" ||
-               target_provider->name.find("Anthropic") != std::string::npos) {
-      if (prov_opts.api_key.empty() || prov_opts.api_key.starts_with("sk-ant-oat")) {
-        const auto fresh = get_anthropic_token(/*force_refresh=*/false);
-        if (!fresh.empty()) prov_opts.api_key = fresh;
-      }
-    } else if (target_provider->id == "openai" ||
-               target_provider->name.find("OpenAI") != std::string::npos) {
-      if (prov_opts.api_key.empty()) {
-        const char* key = std::getenv("OPENAI_API_KEY");
-        if (key && *key) prov_opts.api_key = key;
-      }
-    }
-
-    const auto call = prepare_provider_call(prov_opts, target_provider->id, target_model_id, "");
-    std::string wire_model = call.wire_model_id.empty() ? target_model_id : call.wire_model_id;
-
-    auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
-        target_provider->id, prov_opts);
-    if (!resolution.ok()) {
-      last_error = "Failed to resolve subagent client for provider '" +
-                   target_provider->id + "': " + resolution.error;
+    ResolvedModelClient resolved = resolve_model_client(
+        *target_provider, target_model_info, target_model_id, "");
+    if (!resolved.ok()) {
+      last_error = resolved.error;
       LOG_WARN("subagent fallback: {}", last_error);
       record(routing::Outcome::kTransientError, last_error);  // setup, not model quality
       continue;
     }
-    qcode::Client subagent_client = std::move(resolution.client);
+    std::string wire_model = resolved.wire_model;
+    qcode::Client subagent_client = std::move(resolved.client);
 
     // Route this thread's logs to the child's own session file for the
     // duration of the subagent turn (restored when the scope exits).
@@ -431,7 +455,19 @@ static JsonValue run_subagent_turn_multi(
     if (mode == "explore") can_edit = false;
     if (mode == "implement") can_edit = true;
     sub_opts.can_edit = can_edit;
-    sub_opts.messages.push_back(Message::user(prompt_text));
+    if (args.value("resume", false) && !sub_session_id.empty()) {
+      // Resumed task: its own conversation so far (from the latest summary
+      // on), which already ends with the new prompt (TaskTool saved it).
+      sub_opts.messages = prepare_turn_history(
+          qcode::session::load_session_history_parsed(sub_session_id),
+          /*drop_system_notes=*/true);
+      if (sub_opts.messages.empty() ||
+          sub_opts.messages.back().role != kMessageRoleUser) {
+        sub_opts.messages.push_back(Message::user(prompt_text));
+      }
+    } else {
+      sub_opts.messages.push_back(Message::user(prompt_text));
+    }
 
     if (!sub_session_id.empty()) {
       sub_opts.on_tool_call_start = [sub_session_id](const ToolCall& call) {
@@ -744,6 +780,9 @@ static void run_tools_generation_bus(
   // summarize with that exact request (warm cache prefix) plus the
   // directive, then continue the turn from one continuation message.
   size_t compact_threshold = compaction::auto_compact_threshold(model_info);
+  const bool is_child_turn =
+      ctx.agent_mode == "subagent" ||
+      (!ctx.session_id.empty() && qcode::session::is_child_session(ctx.session_id));
   int last_compact_step = -1;
   auto compact_in_loop = [&](int at_step) -> bool {
     const size_t before = live_context;
@@ -826,6 +865,22 @@ static void run_tools_generation_bus(
       break;
     }
     LOG_DEBUG("run_tools_generation_bus: step={} messages={}", step, options.messages.size());
+
+    // Reports of background subagents that finished since the last request.
+    if (!is_child_turn) {
+      std::string notices;
+      for (auto& notice : TaskTool::take_notices(ctx.session_id)) {
+        if (!notices.empty()) notices += "\n\n";
+        notices += std::move(notice);
+      }
+      if (!notices.empty()) {
+        LOG_INFO("run_tools_generation_bus: injecting background task report(s) at step={}",
+                 step);
+        append_message(qcode::Message::user(notices));
+        bus.publish<UserMessageInjected>(
+            {.session_id = ctx.session_id, .text = std::move(notices)});
+      }
+    }
 
     // Compact before sending a request that reached the threshold. Not twice
     // in a row: a summary that is itself over the threshold must not loop.

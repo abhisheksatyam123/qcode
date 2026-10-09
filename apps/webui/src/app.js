@@ -2971,6 +2971,14 @@ function applyInjectedPrompt(session, stream, text) {
   if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
 }
 
+// A small model named the session (server session_title).
+function applySessionTitle(session, title) {
+  if (!title) return;
+  session.title = title;
+  if (session.id === state.sessionId) { state.sessionTitle = title; updateStatusBar(); }
+  renderSessionTabs();
+}
+
 // The server compacted the conversation mid-turn: show the notice and the
 // summary that replaced the history; the turn continues in a new bubble.
 function applyCompaction(session, stream, evt) {
@@ -3001,6 +3009,10 @@ function applyTurnEvent(session, stream, evt) {
   }
   if (evt.type === 'backend.conversation.compacted') {
     applyCompaction(session, stream, evt);
+    return;
+  }
+  if (evt.type === 'backend.session.title.changed') {
+    applySessionTitle(session, evt.title || '');
     return;
   }
   handleEvent(evt, stream.msg, session);

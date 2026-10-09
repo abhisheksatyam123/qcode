@@ -2,7 +2,10 @@
 
 #include <qcode/core/tool.h>
 
+#include <chrono>
+#include <functional>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -23,7 +26,12 @@ class TaskTool {
       "`prompt`. Issue several task calls in one message to run them in parallel. "
       "mode: explore (read-only, default), implement (may edit files), verify "
       "(build/test/audit). model: omit it and the router picks a free model by "
-      "learned success; paid models run only when named. Rate reports with rate_task.";
+      "learned success; paid models run only when named. Rate reports with rate_task. "
+      "background: true returns at once with a task_id and keeps the subagent "
+      "running; its report arrives later as a message (or use action \"wait\"). "
+      "task_id + prompt resumes that subagent with its own history (follow-up "
+      "questions, fixes). action: \"status\" | \"wait\" | \"kill\" with task_id "
+      "(status/wait without one: all of your background tasks).";
 
   static JsonValue parameters();
   static Tool definition();
@@ -54,6 +62,18 @@ class TaskTool {
   static JsonValue normalize_spawn_args(JsonValue args);
   // Child session id from a task tool result (current and legacy shapes).
   static std::string session_id_from_result(const JsonValue& result);
+
+  // ── Background subagents ──
+  // Reports of background tasks of `parent_session_id` that finished and
+  // were not yet handed to the lead, as message texts; marks them delivered.
+  // The lead's tool loop injects them into its next request; an idle TUI
+  // queues them as a prompt.
+  static std::vector<std::string> take_notices(const std::string& parent_session_id);
+  static bool has_notices(const std::string& parent_session_id);
+  // Called (on the subagent's thread) whenever a background task finishes.
+  static void set_notice_listener(std::function<void()> listener);
+  // Stop every background task and wait up to `timeout` for them to end.
+  static void shutdown_background(std::chrono::milliseconds timeout);
 };
 
 }  // namespace qcode

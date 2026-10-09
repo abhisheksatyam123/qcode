@@ -48,6 +48,10 @@ nlohmann::json user_message_injected_to_json(const UserMessageInjected::Payload&
     };
 }
 
+nlohmann::json session_title_changed_to_json(const SessionTitleChanged::Payload& p) {
+    return {{"type", SessionTitleChanged::type}, {"session_id", p.session_id}, {"title", p.title}};
+}
+
 nlohmann::json conversation_compacted_to_json(const ConversationCompacted::Payload& p) {
     return {
         {"type", ConversationCompacted::type},
@@ -145,6 +149,9 @@ std::optional<nlohmann::json> serialize_event(
     }
     if (event_type == UserMessageInjected::type) {
         return user_message_injected_to_json(std::any_cast<const UserMessageInjected::Payload&>(payload));
+    }
+    if (event_type == SessionTitleChanged::type) {
+        return session_title_changed_to_json(std::any_cast<const SessionTitleChanged::Payload&>(payload));
     }
     if (event_type == ConversationCompacted::type) {
         return conversation_compacted_to_json(std::any_cast<const ConversationCompacted::Payload&>(payload));

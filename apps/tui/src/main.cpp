@@ -31,6 +31,7 @@
 #include <qcode/transform/provider_transform.h>
 #include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
+#include <qcode/session/session_title.h>
 #include <qcode/tools/task_tool.h>
 #include <nlohmann/json.hpp>
 #include <qcode/config/provider_info.h>
@@ -185,6 +186,9 @@ int main(int argc, char* argv[]) {
     };
 
     qcode::GenerationController generation(store, bus, app_running);
+    // A background subagent finished: redraw, so an idle session picks up
+    // its report (see the queue start below).
+    qcode::TaskTool::set_notice_listener([&screen]() { screen.Post(Event::Custom); });
     qcode::tui::TuiGitMonitor git_monitor;
 
     // ── Spinner: advance frame periodically + queue watchdog ──
@@ -1401,6 +1405,14 @@ int main(int argc, char* argv[]) {
         // Start queued work only after the prior worker has fully exited.
         // Build the request (provider catalog + system prompt) only when a
         // queued prompt is actually waiting.
+        // Background subagent reports that arrived while idle start a turn
+        // (a running turn takes them at its next model request).
+        if (!store.is_generating() && !generation.is_busy() &&
+            qcode::TaskTool::has_notices(store.session_id())) {
+            for (const auto& notice : qcode::TaskTool::take_notices(store.session_id())) {
+                store.enqueue_prompt(notice);
+            }
+        }
         if (store.has_queued_prompt()) {
             generation.maybe_start_queued(make_generation_request());
         }
@@ -1512,7 +1524,10 @@ int main(int argc, char* argv[]) {
     // ═══════════════════════════════════════════════════════════
     LOG_DEBUG("Main: app exiting, signalling threads...");
     *app_running = false;
+    qcode::TaskTool::set_notice_listener(nullptr);
     generation.shutdown();
+    qcode::TaskTool::shutdown_background(std::chrono::seconds(3));
+    qcode::session_title::shutdown(std::chrono::seconds(2));
     if (compaction_thread->joinable()) {
         compaction_thread->request_stop();
         compaction_thread->join();

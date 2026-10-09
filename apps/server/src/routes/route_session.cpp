@@ -7,6 +7,7 @@
 #include <qcode/config/provider_info.h>
 #include <qcode/generation/generation_service.h>
 #include <qcode/session/session_store.h>
+#include <qcode/session/session_title.h>
 #include <qcode/generation/turn_prefix.h>
 #include <qcode/session/system_prompt.h>
 #include <qcode/tools/task_tool.h>
@@ -587,6 +588,12 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
         stream = attach_stream(session);
         qcode::session::save_message(session->id, "User", user_row);
     }
+    // A small model names a session that still has its default title.
+    qcode::session_title::maybe_generate_async(
+        providers_list, session->id, text,
+        [bus](const std::string& sid, const std::string& title) {
+            bus->publish<qcode::contract::SessionTitleChanged>({.session_id = sid, .title = title});
+        });
     qcode::session::set_session_provider_model(session->id, provider, model);
     // /compact replays the turn's variant (thinking settings are part of the
     // cached prefix), and the WebUI restores both modes per session.

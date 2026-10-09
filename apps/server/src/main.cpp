@@ -1,6 +1,8 @@
 #include <qcode/core/file_logger.h>
 #include <qcode/core/session_file_logger.h>
 #include <qcode/providers/authenticated_providers.h>
+#include <qcode/session/session_title.h>
+#include <qcode/tools/task_tool.h>
 #include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
 #include <qcode/core/in_process_bus.h>
@@ -118,6 +120,8 @@ int main(int argc, char* argv[]) {
 
     LOG_INFO("Server stopping, signalling active sessions...");
     qcode::server::shutdown_active_sessions();
+    qcode::TaskTool::shutdown_background(std::chrono::seconds(3));
+    qcode::session_title::shutdown(std::chrono::seconds(2));
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     // Release session log handles after all workers have joined.

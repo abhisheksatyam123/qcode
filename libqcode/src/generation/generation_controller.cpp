@@ -1,6 +1,7 @@
 #include <qcode/generation/generation_controller.h>
 
 #include <qcode/compaction/compaction_request.h>
+#include <qcode/session/session_title.h>
 #include <qcode/core/logger.h>
 #include <qcode/core/perf.h>
 #include <qcode/generation/generation_service.h>
@@ -234,6 +235,15 @@ void GenerationController::spawn_unlocked(std::string prompt,
     if (request.append_user_message) {
         store_.append_chat_message("User", prompt);
         session::save_message(store_.session_id(), "User", prompt);
+        // A small model names a session that still has its default title.
+        session_title::maybe_generate_async(
+            std::make_shared<const std::vector<ProviderInfo>>(providers),
+            store_.session_id(), prompt,
+            [bus = bus_](const std::string& sid, const std::string& title) {
+                bus->publish<contract::SessionTitleChanged>(
+                    {.session_id = sid, .title = title});
+                bus->wake();
+            });
     }
     // A TUI restart or Esc mid-tool persists ToolCallStarted without a
     // matching ToolResult. Providers 400 ("No tool output found for

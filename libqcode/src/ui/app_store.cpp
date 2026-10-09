@@ -694,6 +694,12 @@ void AppStore::wire() {
         notify();
     }));
 
+    subs_.push_back(bus_.subscribe<SessionTitleChanged>([this](const SessionTitleChanged::Payload& p) {
+        if (p.session_id != session_id()) return;
+        set_session_title(p.title);
+        add_toast("Session named: " + p.title, "info", 2500);
+    }));
+
     subs_.push_back(bus_.subscribe<ConversationCompacted>([this](const ConversationCompacted::Payload& p) {
         const std::string sid = p.session_id.empty() ? session_id() : p.session_id;
         // The reply streamed before the compaction belongs above it.

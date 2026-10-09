@@ -122,6 +122,11 @@ Limits and request size:
   default applies. There is no built-in cap. Subagents use the same budget;
   a model missing from the catalog uses the lead model's budget.
 
+Session titles: like opencode, a new session is named from its first prompt
+by a small model: `"small_model": "opencode/ling-3.1-flash-free"` at the top
+level of opencode.json (any `provider/model`), else the free fast models.
+`/rename` or a title given to `/new` is never replaced.
+
 Automatic compaction: like Claude Code, a session compacts itself during the
 tool loop once the next request would carry `compaction.threshold_tokens` of
 context. The loop summarizes with the exact request it was about to send plus

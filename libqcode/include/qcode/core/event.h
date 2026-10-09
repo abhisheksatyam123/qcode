@@ -117,6 +117,15 @@ struct ConversationCompacted {
     };
 };
 
+// A small model named the session (session_title.h); the row is renamed.
+struct SessionTitleChanged {
+    static constexpr const char* type = "backend.session.title.changed";
+    struct Payload {
+        std::string session_id;
+        std::string title;
+    };
+};
+
 // One-line notice for a ConversationCompacted event (chat + session row).
 inline std::string compacted_note(const ConversationCompacted::Payload& p) {
     std::string note = "Context auto-compacted at " + std::to_string(p.tokens_before) +
@@ -247,6 +256,7 @@ inline void register_all_events(bus::BusPort& bus) {
     bus.register_event<ToolCallCompleted>();
     bus.register_event<UserMessageInjected>();
     bus.register_event<ConversationCompacted>();
+    bus.register_event<SessionTitleChanged>();
     bus.register_event<SessionStatusChanged>();
     bus.register_event<ErrorOccurred>();
     bus.register_event<StepLatency>();

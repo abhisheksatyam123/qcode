@@ -28,10 +28,14 @@ std::vector<ToolDescriptor> ToolCatalog::descriptors() {
     {
       "task",
       "Delegate a self-contained job to a subagent and wait for its report. "
-      "Several task calls in one message run in parallel.",
+      "Several task calls in one message run in parallel. background: true keeps "
+      "working while it runs (report arrives as a message); task_id + prompt "
+      "resumes a subagent with its history.",
       R"(task = { prompt: string, description?: string,
          mode?: "explore"|"implement"|"verify",
-         difficulty?: "easy"|"medium"|"hard", model?: "provider:model" })",
+         difficulty?: "easy"|"medium"|"hard", model?: "provider:model",
+         background?: boolean, task_id?: string }
+     | { action: "status"|"wait"|"kill", task_id?: string, timeout_s?: number })",
       true
     },
     {

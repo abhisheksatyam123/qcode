@@ -88,6 +88,7 @@ target_sources(qcode-engine PRIVATE
     src/generation/stream_step.cpp
     src/generation/turn_prefix.cpp
     src/generation/call_usage.cpp
+    src/generation/session_title.cpp
 
     # session
     src/compaction/compaction_request.cpp
