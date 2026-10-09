@@ -168,7 +168,6 @@ int main(int argc, char* argv[]) {
     std::cout << "\n";
 
     // Print session_id for continuing conversation
-    for (const auto& line : std::vector<std::string>{}) {}
     if (res->body.find("session.started") != std::string::npos) {
         try {
             auto events = res->body;

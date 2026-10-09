@@ -48,7 +48,8 @@ std::shared_ptr<TerminalSession> create_terminal(const std::string& workspace) {
         dup2(slave, STDERR_FILENO);
         if (slave > 2) close(slave);
         close(master);
-        if (!workspace.empty()) chdir(workspace.c_str());
+        // A missing workspace leaves the shell in the server's directory.
+        if (!workspace.empty() && chdir(workspace.c_str()) != 0) perror("chdir");
         if (!getenv("LANG")) setenv("LANG", "en_US.UTF-8", 1);
         if (!getenv("LC_ALL")) setenv("LC_ALL", "en_US.UTF-8", 1);
         setenv("TERM", "xterm-256color", 1);

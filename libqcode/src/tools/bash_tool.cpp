@@ -51,34 +51,6 @@ void BackgroundRegistry::register_task(const std::string& id, int pid,
   tasks_[id] = std::move(entry);
 }
 
-void BackgroundRegistry::mark_exited(const std::string& id, int exit_code) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = tasks_.find(id);
-  if (it != tasks_.end()) {
-    it->second.status = "exited";
-    it->second.exit_code = exit_code;
-    it->second.end_time = std::chrono::system_clock::now();
-  }
-}
-
-void BackgroundRegistry::mark_killed(const std::string& id) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = tasks_.find(id);
-  if (it != tasks_.end()) {
-    it->second.status = "killed";
-    it->second.end_time = std::chrono::system_clock::now();
-  }
-}
-
-void BackgroundRegistry::mark_failed(const std::string& id, const std::string& /*error*/) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = tasks_.find(id);
-  if (it != tasks_.end()) {
-    it->second.status = "failed";
-    it->second.end_time = std::chrono::system_clock::now();
-  }
-}
-
 std::optional<BackgroundTaskEntry> BackgroundRegistry::get_task(const std::string& id) const {
   std::lock_guard<std::mutex> lock(mutex_);
   auto it = tasks_.find(id);

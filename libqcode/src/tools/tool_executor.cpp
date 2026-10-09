@@ -5,7 +5,6 @@
 #include <chrono>
 #include <future>
 #include <optional>
-#include <random>
 #include <thread>
 
 #include <qcode/tools/tool_executor.h>
@@ -519,41 +518,6 @@ Tool create_simple_async_tool(
   Tool tool = create_async_tool(description, schema, std::move(execute_func));
   tool.name = name;
   return tool;
-}
-
-ToolSet create_tool_set(
-    const std::vector<std::pair<std::string, Tool>>& tool_list) {
-  ToolSet tools;
-  for (const auto& [name, tool] : tool_list) {
-    tools[name] = tool;
-  }
-  return tools;
-}
-
-ToolCall create_tool_call(const std::string& tool_name,
-                          const JsonValue& arguments,
-                          const std::string& call_id) {
-  std::string id = call_id.empty() ? generate_tool_call_id() : call_id;
-  return ToolCall(id, tool_name, arguments);
-}
-
-std::string generate_tool_call_id() {
-  // Generate a unique ID for tool calls
-  static std::random_device rd;
-  static std::mt19937 gen(rd());
-  static std::uniform_int_distribution<> dis(0, 15);
-
-  std::string id = "call_";
-  for (int i = 0; i < 24; ++i) {
-    int val = dis(gen);
-    if (val < 10) {
-      id += static_cast<char>('0' + val);
-    } else {
-      id += static_cast<char>('a' + val - 10);
-    }
-  }
-
-  return id;
 }
 
 }  // namespace qcode

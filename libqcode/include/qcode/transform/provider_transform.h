@@ -94,13 +94,6 @@ JsonValue build_options(const Model& model,
                         const std::optional<std::string>& reasoning_effort = std::nullopt,
                         std::optional<int> budget_tokens = std::nullopt);
 
-/// Build reduced options for compact/fast mode
-JsonValue build_small_options(const Model& model);
-
-/// Wrap options under the correct provider SDK key
-/// Maps provider name to SDK key (e.g., "qpilot" -> "openai", etc.)
-JsonValue wrap_provider_options(const Model& model, const JsonValue& options);
-
 // ── Token management ──
 
 /// Default request max_tokens from opencode.json: the model's "max_tokens"
@@ -121,9 +114,6 @@ JsonValue normalize_schema(const JsonValue& schema, const Model& model);
 
 /// Check if model ID belongs to the Opus family
 [[nodiscard]] bool is_opus_family(std::string_view model_id);
-
-/// Extract SDK key from provider name
-[[nodiscard]] std::string sdk_key(std::string_view provider_name);
 
 // ── Reasoning variants (mirrors transform.ts reasoningVariants) ──
 

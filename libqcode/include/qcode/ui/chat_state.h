@@ -35,7 +35,6 @@ struct FileChangeEntry {
 struct SubagentEntry {
     std::string task_id;
     std::string description;
-    std::string mode;
     std::string model;
     std::string status;
 };

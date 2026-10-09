@@ -3933,7 +3933,6 @@ kbd {
 .delegated-row .child-status.error,
 .delegated-row .child-status.killed { color: var(--danger); }
 .delegated-row .child-desc { flex: 1; color: var(--text); font-size: 13px; }
-.delegated-row .child-meta { font-size: 11px; color: var(--muted); }
 #sessions-content { overflow-y: auto; flex: 1; }
 
 
@@ -3997,7 +3996,6 @@ kbd {
 
 .delegated-row.current { background: var(--surface-raised); }
 .delegated-row .child-marker { color: var(--accent); }
-.delegated-row .child-bg { font-size: 11px; color: var(--faint); font-family: var(--font-mono); }
 .delegated-row .child-model { font-size: 11px; color: var(--faint); }
 .delegated-row .child-open { color: var(--success); font-size: 11px; font-weight: 700; }
 

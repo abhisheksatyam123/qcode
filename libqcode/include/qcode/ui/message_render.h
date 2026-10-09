@@ -29,12 +29,6 @@ ftxui::Element ToolBlock(const std::string& icon,
                           const std::string& tool_call_id = "",
                           const std::string& open_session_id = "");
 
-// ── Legacy BlockTool (compatibility) ──
-ftxui::Element BlockTool(const std::string& title, ftxui::Element content,
-                          bool is_running = false,
-                          const std::string& status = "",
-                          ftxui::Color border_color = ftxui::Color::GrayDark);
-
 // ── Render a complete message (user/assistant/system) ──
 // message_index is the stable row in messages_history (views loop `i`); it
 // keys the per-message Thought expand state so vector reallocs can't orphan

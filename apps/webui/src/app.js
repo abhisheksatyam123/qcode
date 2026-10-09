@@ -4181,10 +4181,7 @@ async function loadDelegatedSessionsTab() {
       if (sid) seenSids.add(sid);
       combined.push({
         sid,
-        bg: task.background_task_id || '',
         status: task.status || 'running',
-        agent: task.agent || 'general',
-        mode: task.mode || '',
         model: task.model || '',
         description: task.description || sid
       });
@@ -4196,10 +4193,7 @@ async function loadDelegatedSessionsTab() {
       seenSids.add(sub.id);
       combined.push({
         sid: sub.id,
-        bg: '',
         status: 'saved',
-        agent: sub.provider || 'subagent',
-        mode: sub.agent_mode || 'subagent',
         model: sub.model || '',
         description: sub.title || sub.id
       });
@@ -4209,13 +4203,13 @@ async function loadDelegatedSessionsTab() {
     let filtered = combined;
     if (state.sessionsFilterText) {
       filtered = combined.filter(c => {
-        const text = `${c.sid} ${c.bg} ${c.status} ${c.agent} ${c.mode} ${c.model} ${c.description}`.toLowerCase();
+        const text = `${c.sid} ${c.status} ${c.model} ${c.description}`.toLowerCase();
         return text.includes(state.sessionsFilterText);
       });
     }
 
     if (totalCount === 0) {
-      sessionsContent.innerHTML = '<div class="delegated-empty">No subagents run for this session.<br>Spawn subagents using the task tool to run parallel explore/implement/verify work.</div>';
+      sessionsContent.innerHTML = '<div class="delegated-empty">No subagents run for this session.<br>The orchestrator starts them with the task tool.</div>';
       return;
     }
 
@@ -4241,13 +4235,10 @@ async function loadDelegatedSessionsTab() {
       row.className = 'delegated-row';
       const isCurrent = sid && sid === state.sessionId;
       if (isCurrent) row.classList.add('current');
-      const bg = item.bg;
       const model = item.model;
       const status = item.status;
       row.innerHTML = (isCurrent ? '<span class="child-marker">●</span>' : '')
-        + (bg ? '<span class="child-bg">' + esc(bg) + '</span>' : '')
         + '<span class="child-status ' + esc(status) + '">[' + esc(status) + ']</span>'
-        + '<span class="child-meta">(' + esc(item.agent) + (item.mode ? ' · ' + esc(item.mode) : '') + ')</span>'
         + (model ? '<span class="child-model">{' + esc(model) + '}</span>' : '')
         + '<span class="child-desc">' + esc(item.description) + '</span>'
         + (isCurrent ? '<span class="child-open">[open]</span>' : '<span class="child-action">↗</span>');

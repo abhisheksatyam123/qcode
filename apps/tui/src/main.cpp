@@ -155,7 +155,6 @@ int main(int argc, char* argv[]) {
                 for (const auto& t : subagent_data["metadata"]["tasks"]) {
                     qcode::SubagentEntry entry;
                     entry.status = t.value("status", "");
-                    entry.mode = t.value("mode", "");
                     entry.model = t.value("model", "");
                     entry.description = t.value("description", "");
                     entry.task_id = t.value("task_id", t.value("sessionId", ""));

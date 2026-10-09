@@ -61,23 +61,6 @@ StreamResult::iterator StreamResult::end() const {
   return iterator(this, true);
 }
 
-void StreamResult::for_each(
-    std::function<void(const StreamEvent&)> callback) const {
-  for (const auto& event : *this) {
-    callback(event);
-  }
-}
-
-std::string StreamResult::collect_all() const {
-  std::string result;
-  for (const auto& event : *this) {
-    if (event.is_text_delta()) {
-      result += event.text_delta;
-    }
-  }
-  return result;
-}
-
 bool StreamResult::has_error() const {
   // Check if any event was an error
   for (const auto& event : *this) {

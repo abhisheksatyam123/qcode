@@ -74,10 +74,6 @@ class StreamResult {
 
   iterator end() const;
 
-  void for_each(std::function<void(const StreamEvent&)> callback) const;
-
-  std::string collect_all() const;
-
   // Consumes remaining events. Do not call before iterating the stream.
   bool has_error() const;
 

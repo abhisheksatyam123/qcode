@@ -41,10 +41,6 @@ class BackgroundRegistry {
   void register_task(const std::string& id, int pid, const std::string& command,
                      const std::string& cwd, const std::string& output_path);
 
-  void mark_exited(const std::string& id, int exit_code);
-  void mark_killed(const std::string& id);
-  void mark_failed(const std::string& id, const std::string& error);
-
   std::optional<BackgroundTaskEntry> get_task(const std::string& id) const;
   std::vector<BackgroundTaskEntry> list_tasks() const;
   std::vector<BackgroundTaskEntry> list_task_details() const;
@@ -149,7 +145,6 @@ class BashTool {
                                int timeout_ms, std::optional<int> max_chars,
                                std::optional<int> max_lines, int& exit_code,
                                std::shared_ptr<std::atomic<bool>> abort_flag = nullptr);
-  static std::string resolve_workdir(const std::string& workdir);
 };
 
 }  // namespace qcode

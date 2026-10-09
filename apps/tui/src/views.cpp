@@ -1399,7 +1399,6 @@ ftxui::Element render_view(
             for (size_t row_i = 0; row_i < tasks.size(); ++row_i) {
                 const auto& t = tasks[row_i];
                 const std::string& status = t.status;
-                const std::string& mode_str = t.mode;
                 const std::string& model_str = t.model;
                 const std::string& desc = t.description;
                 const std::string& sid = t.task_id;
@@ -1416,7 +1415,6 @@ ftxui::Element render_view(
                     text(marker) | color(is_active_cursor ? accent2(theme)
                                          : (is_current ? accent(theme) : Color::Default)),
                     text("[" + status + "] ") | bold | color(status_col),
-                    text(!mode_str.empty() ? ("(" + mode_str + ") ") : "") | color(accent(theme)),
                     text(!model_str.empty() ? ("{" + model_str + "} ") : "") | dim,
                     text(desc) | bold,
                     filler(),

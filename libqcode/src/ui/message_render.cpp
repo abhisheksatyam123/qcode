@@ -320,14 +320,6 @@ Element ToolBlock(const std::string& icon,
     return vbox({std::move(block)});
 }
 
-Element BlockTool(const std::string& title, Element content,
-                   bool is_running, const std::string& status,
-                   Color border_color) {
-    return ToolBlock("⚙", title, "", std::move(content),
-                      is_running, status, border_color, 0.0,
-                      false, true, title);
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 //  Colored truncated output (shell stdout look)
 // ════════════════════════════════════════════════════════════════════════════

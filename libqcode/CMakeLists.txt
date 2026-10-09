@@ -31,7 +31,6 @@ target_sources(qcode-engine PRIVATE
     src/core/embedding_options.cpp
     src/core/generate_options.cpp
     src/core/random.cpp
-    src/core/uuid.cpp
     src/core/in_process_bus.cpp
     src/core/http_request_handler.cpp
     src/core/ssl_config.cpp
@@ -46,7 +45,6 @@ target_sources(qcode-engine PRIVATE
     src/providers/zen_route.cpp
     src/providers/provider_profile.cpp
     src/providers/authenticated_providers.cpp
-    src/providers/langfuse_tracer.cpp
     src/providers/openai/openai_client.cpp
     src/providers/openai/openai_request_builder.cpp
     src/providers/openai/openai_response_parser.cpp
@@ -100,7 +98,6 @@ target_sources(qcode-engine PRIVATE
     src/session/system_prompt.cpp
     src/session/task_notes.cpp
     src/session/git_workspace.cpp
-    src/session/clipboard.cpp
     src/session/token_budget.cpp
 
     # tools
@@ -134,7 +131,6 @@ target_compile_definitions(qcode-engine PUBLIC
     QCODE_HAS_ANTHROPIC=1
     QCODE_HAS_ANTIGRAVITY=1
     QCODE_HAS_CURSOR=1
-    QCODE_HAS_LANGFUSE=1
     QCODE_HAS_REGISTRY=1
 )
 

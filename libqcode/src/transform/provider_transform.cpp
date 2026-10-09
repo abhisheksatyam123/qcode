@@ -13,7 +13,6 @@
 #include <set>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <unordered_set>
 #include <functional>
 
@@ -701,21 +700,6 @@ JsonValue build_options(const Model& model,
   return opts;
 }
 
-JsonValue build_small_options(const Model& model) {
-  (void)model;
-  // Reduced options for compact/fast mode
-  JsonValue opts = JsonValue::object();
-  opts["max_tokens"] = 1024;
-  return opts;
-}
-
-JsonValue wrap_provider_options(const Model& model, const JsonValue& options) {
-  const std::string key = sdk_key(model.provider);
-  JsonValue wrapped = JsonValue::object();
-  wrapped[key] = options;
-  return wrapped;
-}
-
 // ── Token management ──
 
 std::optional<int> max_output_tokens(const ModelInfo& model) {
@@ -818,20 +802,6 @@ bool is_opus_family(std::string_view model_id) {
          id.find("opus-4.6") != std::string::npos ||
          id == "opus" ||
          id.ends_with("/opus");
-}
-
-std::string sdk_key(std::string_view provider_name) {
-  static const std::unordered_map<std::string, std::string> KEY_MAP = {
-    {"cursor", "cursor"},
-    {"opencode", "opencode"},
-    {"zen", "opencode"},
-    {"openrouter", "openrouter"},
-    {"antigravity", "antigravity"},
-  };
-
-  auto it = KEY_MAP.find(to_lower(provider_name));
-  if (it != KEY_MAP.end()) return it->second;
-  return std::string{provider_name};
 }
 
 }  // namespace ProviderTransform
