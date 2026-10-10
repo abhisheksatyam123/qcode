@@ -114,24 +114,33 @@ class ImageToolFileTest : public ::testing::Test {
   }
 
   ToolResult run(const std::string& path) {
+    return run_args(JsonValue{{"path", path}});
+  }
+
+  ToolResult run_args(const JsonValue& args) {
     ToolSet tools{{"image", ImageTool::definition()}};
     return ToolExecutor::execute_tool(
-        ToolCall("call_img", "image", JsonValue{{"path", path}}), tools,
-        &opts_);
+        ToolCall("call_img", "image", args), tools, &opts_);
   }
 
   std::filesystem::path dir_;
   GenerateOptions opts_;
 };
 
-TEST(ImageToolTest, SchemaIsJustPath) {
+// One image or several; neither is listed as required because either
+// parameter alone is valid and an empty required list is what tells a model
+// it may send just one of them.
+TEST(ImageToolTest, SchemaTakesOnePathOrSeveral) {
   Tool tool = ImageTool::definition();
   EXPECT_EQ(tool.name, "image");
   EXPECT_TRUE(tool.has_execute());
   const auto& props = tool.parameters_schema["properties"];
-  EXPECT_EQ(props.size(), 1u);
+  EXPECT_EQ(props.size(), 2u);
   EXPECT_TRUE(props.contains("path"));
-  EXPECT_EQ(tool.parameters_schema["required"], JsonValue::array({"path"}));
+  EXPECT_TRUE(props.contains("paths"));
+  EXPECT_EQ(props["paths"]["type"], "array");
+  EXPECT_EQ(props["paths"]["items"]["type"], "string");
+  EXPECT_TRUE(tool.parameters_schema["required"].empty());
 }
 
 TEST(ImageToolTest, Base64EncodeAndDecodeMatch) {
@@ -785,6 +794,176 @@ TEST_F(ImageToolFileTest, DirectoriesAndUnreadableFilesSayWhatIsWrong) {
   }
 }
 
+// ── Several images in one call ────────────────────────────────────────────
+
+// A batch has to survive the whole pipeline: the tool result is stored, and
+// the lift has to turn each image into its own content part.
+TEST_F(ImageToolFileTest, BatchLoadsEveryImageInOneCall) {
+  write("a.png", png_with_size(64, 48));
+  write("b.gif", gif_with_frames(1, false, false));
+  write("c.jpg", jpeg_with_size(320, 240) + std::string(64, '\0'));
+
+  const auto res = run_args(JsonValue{{"paths",
+                                       JsonValue::array({"a.png", "b.gif", "c.jpg"})}});
+  ASSERT_TRUE(res.is_success()) << res.error_message();
+  const JsonValue images = res.result.at("images");
+  ASSERT_EQ(images.size(), 3u);
+  EXPECT_EQ(images[0]["path"], "a.png");
+  EXPECT_EQ(images[0]["width"], 64);
+  EXPECT_EQ(images[1]["mime_type"], "image/gif");
+  EXPECT_EQ(images[2]["height"], 240);
+  // The batch shape carries no flat image fields.
+  EXPECT_FALSE(res.result.contains("data"));
+  const std::string summary = ImageTool::summary(res.result);
+  EXPECT_NE(summary.find("Loaded 3 images"), std::string::npos) << summary;
+  EXPECT_NE(summary.find("a.png"), std::string::npos) << summary;
+}
+
+// A single path must keep returning the original flat shape, so everything
+// that already reads a one-image result keeps working untouched.
+TEST_F(ImageToolFileTest, OnePathStillReturnsTheFlatShape) {
+  write("a.png", png_with_size(8, 8));
+  const auto res = run("a.png");
+  ASSERT_TRUE(res.is_success()) << res.error_message();
+  EXPECT_EQ(res.result["path"], "a.png");
+  EXPECT_TRUE(res.result.contains("data"));
+  EXPECT_FALSE(res.result.contains("images"));
+  ASSERT_EQ(ImageTool::entries(res.result).size(), 1u);
+}
+
+// One unusable path in a batch must not discard the images that did load.
+TEST_F(ImageToolFileTest, BatchReportsFailuresBesideTheImagesThatLoaded) {
+  write("good.png", png_bytes());
+  write("bad.svg", "<svg/>");
+
+  const auto res = run_args(JsonValue{{"paths", JsonValue::array(
+                                                 {"good.png", "bad.svg", "gone.png"})}});
+  ASSERT_TRUE(res.is_success()) << res.error_message();
+  const JsonValue images = res.result.at("images");
+  ASSERT_EQ(images.size(), 1u);
+  EXPECT_EQ(images[0]["path"], "good.png");
+  const JsonValue errors = res.result.at("errors");
+  ASSERT_EQ(errors.size(), 2u);
+  EXPECT_NE(errors[0].get<std::string>().find("Unsupported image format"),
+            std::string::npos);
+  EXPECT_NE(errors[1].get<std::string>().find("File not found"),
+            std::string::npos);
+  const std::string summary = ImageTool::summary(res.result);
+  EXPECT_NE(summary.find("2 failed"), std::string::npos) << summary;
+}
+
+// When nothing loads there is nothing to show, so it is an error the model
+// reads directly rather than a result holding only failures.
+TEST_F(ImageToolFileTest, BatchWhereEveryPathFailsIsAnError) {
+  write("bad.svg", "<svg/>");
+  const auto res = run_args(JsonValue{{"paths", JsonValue::array({"bad.svg", "missing.png"})}});
+  EXPECT_FALSE(res.is_success());
+  EXPECT_NE(res.error_message().find("Unsupported image format"),
+            std::string::npos);
+  EXPECT_NE(res.error_message().find("File not found"), std::string::npos);
+}
+
+TEST_F(ImageToolFileTest, BatchIsBoundedAndDeduplicated) {
+  write("a.png", png_bytes());
+
+  // The bound is on distinct files, checked before anything is read, so the
+  // names here do not have to exist.
+  JsonValue too_many = JsonValue::array();
+  for (std::size_t i = 0; i <= ImageTool::kMaxImagesPerCall; ++i) {
+    too_many.push_back("shot" + std::to_string(i) + ".png");
+  }
+  const auto over = run_args(JsonValue{{"paths", too_many}});
+  EXPECT_FALSE(over.is_success());
+  EXPECT_NE(over.error_message().find("the limit is"), std::string::npos)
+      << over.error_message();
+
+  // The same path listed twice is one image, so it stays the flat shape
+  // rather than a batch of one.
+  const auto twice = run_args(JsonValue{{"paths",
+                                        JsonValue::array({"a.png", "a.png"})}});
+  ASSERT_TRUE(twice.is_success()) << twice.error_message();
+  EXPECT_FALSE(twice.result.contains("images"));
+  EXPECT_EQ(twice.result["path"], "a.png");
+  EXPECT_TRUE(twice.result.contains("data"));
+}
+
+// The lift is where a batch becomes pixels, so it is where a batch bug would
+// show up: every image needs its own content part, in order, with no base64
+// left in the tool result.
+TEST(ImageToolTest, BatchLiftsEveryImageIntoItsOwnPart) {
+  const auto entry = [](const std::string& path, const std::string& data) {
+    return JsonValue{{"path", path},
+                     {"mime_type", "image/png"},
+                     {"size_bytes", 32},
+                     {"data", data}};
+  };
+  const std::string first = ImageTool::base64_encode("first-image-bytes");
+  const std::string second = ImageTool::base64_encode("second-image-bytes");
+  const JsonValue batch{{"images",
+                         JsonValue::array({entry("a.png", first),
+                                           entry("b.png", second)})}};
+
+  std::vector<ToolCallContentPart> calls;
+  calls.emplace_back("call_1", "image",
+                     JsonValue{{"paths", JsonValue::array({"a.png", "b.png"})}});
+  const Messages history{Message::user("compare these"),
+                         Message::assistant_with_tools("", calls),
+                         Message::tool_results({{"call_1", batch, false}})};
+
+  const Messages lifted = ProviderTransform::lift_tool_result_images(history);
+  size_t count = 0;
+  std::vector<std::string> payloads;
+  for (const auto& msg : lifted) {
+    for (const auto& image : msg.get_images()) {
+      ++count;
+      payloads.push_back(image.data);
+    }
+  }
+  EXPECT_EQ(count, 2u);
+  EXPECT_EQ(payloads[0], first);
+  EXPECT_EQ(payloads[1], second);
+
+  // The tool result keeps a readable description and no base64.
+  const auto texts = [&] {
+    std::vector<std::string> out;
+    for (const auto& msg : lifted) {
+      if (!msg.has_tool_results()) continue;
+      for (const auto& tr : msg.get_tool_results()) {
+        out.push_back(tr.result.get<std::string>());
+      }
+    }
+    return out;
+  }();
+  ASSERT_EQ(texts.size(), 1u);
+  EXPECT_NE(texts[0].find("Loaded 2 images"), std::string::npos) << texts[0];
+  EXPECT_NE(texts[0].find("2 images follow"), std::string::npos) << texts[0];
+  EXPECT_EQ(texts[0].find(first), std::string::npos);
+  EXPECT_EQ(texts[0].find(second), std::string::npos);
+}
+
+// Dedupe has to work across a batch as well as across turns: a before/after
+// pair that are the same file is one upload.
+TEST(ImageToolTest, DuplicateInsideOneBatchIsSentOnce) {
+  const auto entry = [](const std::string& path) {
+    return JsonValue{{"path", path},
+                     {"mime_type", "image/png"},
+                     {"size_bytes", 32},
+                     {"data", kB64}};
+  };
+  const JsonValue batch{
+      {"images", JsonValue::array({entry("a.png"), entry("copy.png")})}};
+  std::vector<ToolCallContentPart> calls;
+  calls.emplace_back("call_1", "image", JsonValue{{"path", "a.png"}});
+  const Messages history{Message::user("look"),
+                         Message::assistant_with_tools("", calls),
+                         Message::tool_results({{"call_1", batch, false}})};
+  size_t count = 0;
+  for (const auto& msg : ProviderTransform::lift_tool_result_images(history)) {
+    count += msg.get_images().size();
+  }
+  EXPECT_EQ(count, 1u);
+}
+
 // ── Duplicate images are uploaded once per request ─────────────────────────
 
 namespace {
@@ -897,6 +1076,17 @@ TEST(ImageToolTest, DedupeDoesNotMutateStoredResults) {
   EXPECT_NE(texts[0].find("Loaded image"), std::string::npos) << texts[0];
 }
 
+
+// A flat one-image result from an older session must still lift exactly as
+// before: the pinned wording is what the model has always seen.
+TEST(ImageToolTest, FlatResultKeepsItsPinnedWording) {
+  const Messages lifted =
+      ProviderTransform::lift_tool_result_images(image_tool_history());
+  const auto texts = tool_result_texts(lifted);
+  ASSERT_EQ(texts.size(), 1u);
+  EXPECT_NE(texts[0].find("; the image follows."), std::string::npos)
+      << texts[0];
+}
 
 TEST(ImageToolTest, LiveOpenRouterVisionWithImageToolResult) {
   const char* api_key_env = std::getenv("OPENROUTER_API_KEY");

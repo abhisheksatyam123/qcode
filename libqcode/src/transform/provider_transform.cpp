@@ -660,28 +660,61 @@ Messages lift_tool_result_images(Messages messages) {
       if (!tr || !ImageTool::is_image_result(*tr)) continue;
       auto& result = tr->result;
       std::string text = ImageTool::summary(result);
-      std::string mime = result["mime_type"].get<std::string>();
-      if (ImageTool::is_supported_mime_type(mime)) {
-        const std::string& payload = result["data"].get_ref<const std::string&>();
+      // A result holds one image (the flat shape) or a batch of them.
+      const std::vector<JsonValue*> entries =
+          ImageTool::mutable_entries(result);
+      const bool single = entries.size() == 1;
+      size_t sent = 0;
+      size_t repeated = 0;
+      size_t unsupported = 0;
+      for (JsonValue* entry : entries) {
+        std::string mime = (*entry)["mime_type"].get<std::string>();
+        if (!ImageTool::is_supported_mime_type(mime)) {
+          // Written by an older image tool; providers reject this format.
+          ++unsupported;
+          continue;
+        }
+        const std::string& payload = (*entry)["data"].get_ref<const std::string&>();
         // Hash rather than keep the base64: the set would otherwise hold
         // megabytes that the lifted copy already owns. The mime is folded in
         // so the same bytes under two types cannot collapse into one.
         const uint64_t key = fnv1a64_cont(fnv1a64(mime), payload);
         if (sent_payloads.insert(key).second) {
+          std::string data = std::move((*entry)["data"].get_ref<std::string&>());
           images.emplace_back(ImageContentPart{
-              std::move(result["data"].get_ref<std::string&>()), std::move(mime),
-              result.value("path", std::string())});
-          text += "; the image follows.";
+              std::move(data), std::move(mime),
+              entry->value("path", std::string())});
+          ++sent;
         } else {
           // The model keeps the text result, so it still knows the file was
           // read and that the pixels it is being asked about are above.
-          text += "; byte-identical to an image already sent in this "
-                  "conversation, so it is not repeated.";
+          ++repeated;
         }
-      } else {
-        // Written by an older image tool; providers reject this format.
+      }
+      // The single-image wording is what the model has always been told, and
+      // the tests pin it; a batch gets a count instead.
+      if (sent == 1 && repeated == 0 && unsupported == 0 && single) {
+        text += "; the image follows.";
+      } else if (sent == 0 && repeated == 0 && unsupported == 1 && single) {
+        // The one image this result holds cannot be shown at all.
         text += "; this format cannot be shown, convert it to png and load "
                 "that instead.";
+      } else {
+        if (sent > 0) {
+          text += "; " + std::to_string(sent) +
+                  (sent == 1 ? " image follows" : " images follow");
+          text += ".";
+        }
+        if (repeated > 0) {
+          text += " " + std::to_string(repeated) +
+                  " byte-identical to an image already sent in this "
+                  "conversation, so not repeated.";
+        }
+        if (unsupported > 0) {
+          text += " " + std::to_string(unsupported) +
+                  " in a format providers reject; convert to png and load "
+                  "that instead.";
+        }
       }
       result = std::move(text);
     }

@@ -2,6 +2,7 @@
 
 #include <qcode/core/logger.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -303,21 +304,73 @@ bool ImageTool::is_supported_mime_type(std::string_view mime_type) {
 bool ImageTool::is_image_result(const ToolResultContentPart& part) {
   const auto& r = part.result;
   if (part.is_error || !r.is_object()) return false;
-  const auto data = r.find("data");
-  const auto mime = r.find("mime_type");
-  return data != r.end() && data->is_string() && mime != r.end() &&
-         mime->is_string();
+  if (!entries(r).empty()) return true;
+  // A batch where every path failed still counts as an image result: it
+  // holds the errors the model has to read.
+  const auto images = r.find("images");
+  return images != r.end() && images->is_array();
 }
 
-std::string ImageTool::summary(const JsonValue& result) {
-  std::string out =
-      "Loaded image " + result.value("path", std::string("image")) + " (" +
-      result.value("mime_type", std::string()) + ", " +
-      std::to_string(result.value("size_bytes", std::uint64_t{0})) + " bytes";
+std::vector<JsonValue*> ImageTool::mutable_entries(JsonValue& result) {
+  std::vector<JsonValue*> out;
+  const auto images = result.find("images");
+  if (images != result.end() && images->is_array()) {
+    for (auto& image : *images) {
+      if (image.is_object()) out.push_back(&image);
+    }
+    return out;
+  }
+  const auto data = result.find("data");
+  const auto mime = result.find("mime_type");
+  if (data != result.end() && data->is_string() && mime != result.end() &&
+      mime->is_string()) {
+    out.push_back(&result);
+  }
+  return out;
+}
+
+std::vector<const JsonValue*> ImageTool::entries(const JsonValue& result) {
+  std::vector<const JsonValue*> out;
+  if (!result.is_object()) return out;
+  const auto images = result.find("images");
+  if (images != result.end() && images->is_array()) {
+    for (const auto& image : *images) {
+      if (image.is_object()) out.push_back(&image);
+    }
+    return out;
+  }
+  // The flat single-image shape: the result is its own one entry.
+  const auto data = result.find("data");
+  const auto mime = result.find("mime_type");
+  if (data != result.end() && data->is_string() && mime != result.end() &&
+      mime->is_string()) {
+    out.push_back(&result);
+  }
+  return out;
+}
+
+namespace {
+
+// Tolerant accessors: a result written by an older build, or a partial one,
+// must still render instead of throwing.
+std::string one_path(const JsonValue& image) {
+  return image.value("path", std::string("image"));
+}
+std::string one_mime(const JsonValue& image) {
+  return image.value("mime_type", std::string());
+}
+std::uint64_t one_size(const JsonValue& image) {
+  return image.value("size_bytes", std::uint64_t{0});
+}
+
+// One image's worth of text, shared by both result shapes.
+std::string describe_one(const JsonValue& image) {
+  std::string out = one_path(image) + " (" + one_mime(image) + ", " +
+                    std::to_string(one_size(image)) + " bytes";
   // Width/height are absent from results written by an older build, and from
   // a container whose header did not yield them; the size is still useful.
-  const int width = result.value("width", 0);
-  const int height = result.value("height", 0);
+  const int width = image.value("width", 0);
+  const int height = image.value("height", 0);
   if (width > 0 && height > 0) {
     out += ", " + std::to_string(width) + "x" + std::to_string(height);
   }
@@ -325,12 +378,12 @@ std::string ImageTool::summary(const JsonValue& result) {
   // An animation is billed and uploaded in full but decoded as frame 1, and a
   // jpeg's EXIF orientation tag is not applied by the provider, so say both
   // rather than let the model draw a wrong conclusion from sideways pixels.
-  if (result.value("animated", false)) {
+  if (image.value("animated", false)) {
     out +=
         " [animated gif: only the first frame is visible, the rest of the "
         "file is not shown]";
   }
-  const int orientation = result.value("orientation", 1);
+  const int orientation = image.value("orientation", 1);
   if (const std::string_view note = orientation_note(orientation);
       !note.empty()) {
     out += " [stored " + std::string(note) +
@@ -339,15 +392,65 @@ std::string ImageTool::summary(const JsonValue& result) {
   return out;
 }
 
-JsonValue ImageTool::execute(const JsonValue& args,
-                             const ToolExecutionContext& context) {
-  namespace fs = std::filesystem;
-  if (!args.is_object() || !args.contains("path") ||
-      !args["path"].is_string() || args["path"].get<std::string>().empty()) {
-    throw ToolError("Missing required string parameter 'path'");
-  }
-  const std::string path = args["path"].get<std::string>();
+}  // namespace
 
+std::string ImageTool::summary(const JsonValue& result) {
+  const std::vector<const JsonValue*> images = entries(result);
+  const auto errors = result.find("errors");
+  const bool has_errors = errors != result.end() && errors->is_array() &&
+                          !errors->empty();
+
+  std::string out = images.empty() ? "No image loaded" : "Loaded image";
+  if (images.size() > 1) {
+    out = "Loaded " + std::to_string(images.size()) + " images";
+  }
+  for (size_t i = 0; i < images.size(); ++i) {
+    out += (i == 0 ? " " : ", ") + describe_one(*images[i]);
+  }
+  if (has_errors) {
+    out += "; " + std::to_string(errors->size()) + " failed: ";
+    for (size_t i = 0; i < errors->size(); ++i) {
+      if (i > 0) out += "; ";
+      out += (*errors)[i].is_string() ? (*errors)[i].get<std::string>()
+                                     : (*errors)[i].dump();
+    }
+  }
+  return out;
+}
+
+namespace {
+
+// Everything the caller asked for, in order, de-duplicated.
+std::vector<std::string> requested_paths(const JsonValue& args) {
+  std::vector<std::string> paths;
+  const auto take = [&paths](const std::string& p) {
+    if (p.empty()) return;
+    if (std::find(paths.begin(), paths.end(), p) == paths.end()) paths.push_back(p);
+  };
+  if (args.is_object()) {
+    const auto one = args.find("path");
+    if (one != args.end() && one->is_string()) take(one->get<std::string>());
+    const auto many = args.find("paths");
+    if (many != args.end() && many->is_array()) {
+      for (const auto& item : *many) {
+        if (item.is_string()) {
+          take(item.get<std::string>());
+        } else if (!item.is_null()) {
+          throw ToolError("Every entry of 'paths' must be a string");
+        }
+      }
+    }
+  }
+  return paths;
+}
+
+}  // namespace
+
+// Loads one file into one result object. Throws ToolError with text the model
+// can act on; the batch wrapper turns that into a per-path error line.
+JsonValue ImageTool::load_one(const std::string& path,
+                              const ToolExecutionContext& context) {
+  namespace fs = std::filesystem;
   fs::path target(path);
   if (target.is_relative() && !context.workspace.empty()) {
     target = fs::path(context.workspace) / target;
@@ -380,7 +483,9 @@ JsonValue ImageTool::execute(const JsonValue& args,
     throw ToolError("Image is " + std::to_string(size) + " bytes; the limit is " +
                     std::to_string(kMaxBytes) +
                     ". Downscale it first (e.g. `convert " + path +
-                    " -resize 1568x1568 smaller.png`) and load that.");
+                    " -resize " + std::to_string(kRecommendedDimension) + "x" +
+                    std::to_string(kRecommendedDimension) + " smaller.png`) and "
+                    "load that.");
   }
 
   std::string bytes(size, '\0');
@@ -439,6 +544,53 @@ JsonValue ImageTool::execute(const JsonValue& args,
   return out;
 }
 
+JsonValue ImageTool::execute(const JsonValue& args,
+                             const ToolExecutionContext& context) {
+  const std::vector<std::string> paths = requested_paths(args);
+  if (paths.empty()) {
+    throw ToolError(
+        "Missing required string parameter 'path' (or an array of them in "
+        "'paths')");
+  }
+  if (paths.size() > kMaxImagesPerCall) {
+    throw ToolError("Asked for " + std::to_string(paths.size()) +
+                    " images; the limit is " +
+                    std::to_string(kMaxImagesPerCall) +
+                    " per call. Load them in batches.");
+  }
+
+  // One bad path must not throw away the images that did load, so failures
+  // are collected and reported alongside whatever succeeded.
+  JsonValue images = JsonValue::array();
+  JsonValue errors = JsonValue::array();
+  for (const std::string& path : paths) {
+    try {
+      images.push_back(load_one(path, context));
+    } catch (const ToolError& e) {
+      errors.push_back(std::string(e.what()));
+    } catch (const std::exception& e) {
+      errors.push_back(std::string("Could not load ") + path + ": " + e.what());
+    }
+  }
+
+  if (images.empty()) {
+    std::string joined;
+    for (const auto& error : errors) {
+      if (!joined.empty()) joined += "; ";
+      joined += error.get<std::string>();
+    }
+    throw ToolError(joined.empty() ? "No image could be loaded" : joined);
+  }
+
+  // A lone successful image keeps the original flat shape, so nothing that
+  // already reads a single-image result has to learn about batches.
+  if (images.size() == 1 && errors.empty()) return images[0];
+  JsonValue out{{"images", std::move(images)}};
+  if (!errors.empty()) out["errors"] = std::move(errors);
+  return out;
+}
+
+
 Tool ImageTool::definition() {
   JsonValue schema{
       {"type", "object"},
@@ -446,12 +598,19 @@ Tool ImageTool::definition() {
        {{"path",
          {{"type", "string"},
           {"description",
-           "Image file (png, jpeg, webp or gif), relative to the workspace "
-           "or absolute. The result reports the pixel size, and flags an "
-           "animated gif or a rotated jpeg."}}}}},
-      {"required", JsonValue::array({"path"})}};
-  Tool t("Load a local image (png, jpeg, webp, gif; max 3.75 MB) so you can "
-         "see it.",
+           "One image file (png, jpeg, webp or gif), relative to the "
+           "workspace or absolute. The result reports the pixel size, and "
+           "flags an animated gif or a rotated jpeg."}}},
+        {"paths",
+         {{"type", "array"},
+          {"items", {{"type", "string"}}},
+          {"description",
+           "Several image files in one call, instead of one call each. Up "
+           "to 8 per call. A file that fails is reported next to the ones "
+           "that loaded."}}}}},
+      {"required", JsonValue::array()}};
+  Tool t("Load a local image (png, jpeg, webp, gif; max 3.75 MB, up to 8 "
+         "per call) so you can see it.",
          std::move(schema), &ImageTool::execute);
   t.name = "image";
   return t;

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace qcode {
 
@@ -26,6 +27,11 @@ struct ImageSize {
 // ProviderTransform::lift_tool_result_images turns it into a short text tool
 // result plus a typed user ImageContentPart, which every request builder
 // already serializes. Failures throw, so they surface as is_error results.
+//
+// A single image keeps that flat shape. Loading several at once returns
+// {images: [<one image object each>], errors: [...]}: one round trip instead
+// of N, and a batch where one bad path does not throw away the rest. Callers
+// that must handle both read entries() rather than poking fields directly.
 class ImageTool {
  public:
   // Base64 of this stays under Anthropic's 5 MB per-image limit.
@@ -40,12 +46,29 @@ class ImageTool {
   // pixels it does not need and small text turns to mush.
   static constexpr int kRecommendedDimension = 1568;
 
+  // Images one call may load. Every image in the history is resent on every
+  // later turn, so an unbounded batch is a request the provider will reject
+  // and a context bill nobody agreed to.
+  static constexpr std::size_t kMaxImagesPerCall = 8;
+
   static Tool definition();
   static JsonValue execute(const JsonValue& args,
                            const ToolExecutionContext& context);
 
-  // True for a successful image tool result (the shape `execute` returns).
+  // Loads exactly one file and throws ToolError on any problem. `execute`
+  // wraps this so one bad path in a batch does not discard the good ones.
+  static JsonValue load_one(const std::string& path,
+                            const ToolExecutionContext& context);
+
+  // True for a successful image tool result (either shape `execute` returns).
   static bool is_image_result(const ToolResultContentPart& part);
+  // The per-image objects inside a result: the result itself for the flat
+  // single-image shape, or each element of "images" for the batch shape.
+  // Pointers stay valid as long as `result` does.
+  static std::vector<const JsonValue*> entries(const JsonValue& result);
+  // Same, over a result the caller owns: lets the lift move each payload
+  // into the outgoing message instead of copying megabytes.
+  static std::vector<JsonValue*> mutable_entries(JsonValue& result);
   // "Loaded image a.png (image/png, 1024 bytes, 800x600)" for an image
   // result. The dimensions are omitted for results stored by an older build.
   static std::string summary(const JsonValue& result);
