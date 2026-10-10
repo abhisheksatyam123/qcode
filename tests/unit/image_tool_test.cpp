@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -166,7 +167,12 @@ TEST_F(ImageToolFileTest, LoadsImageRelativeToWorkspace) {
   EXPECT_EQ(res.result["size_bytes"], sizeof(kRedPng));
   EXPECT_EQ(decode_base64_for_test(res.result["data"].get<std::string>()),
             png_bytes());
-  EXPECT_EQ(res.result.size(), 4u);
+  EXPECT_EQ(res.result["width"], 1);
+  EXPECT_EQ(res.result["height"], 1);
+  EXPECT_EQ(res.result.size(), 6u);
+  // The model reads this line, so it must carry the pixel size.
+  EXPECT_NE(ImageTool::summary(res.result).find("1x1"), std::string::npos)
+      << ImageTool::summary(res.result);
 }
 
 TEST_F(ImageToolFileTest, FailuresAreToolErrors) {
@@ -400,6 +406,322 @@ TEST(ImageToolTest, TokenEstimateCountsImagesFlat) {
   EXPECT_GE(attachment_tokens, 1600u);
   EXPECT_LT(attachment_tokens, 2000u);
 }
+
+// ── Pixel dimensions, read from the header without decoding ────────────────
+
+namespace {
+
+// 24-byte png prefix: signature, an IHDR chunk header, then width/height.
+// Enough for both detect_mime_type and dimensions().
+// The size fields are not constrained to int, so a test can write values
+// that would wrap negative if narrowed carelessly.
+std::string png_with_raw_size(std::uint32_t width, std::uint32_t height) {
+  std::string out("\x89PNG\r\n\x1a\n", 8);
+  // IHDR chunk length 13. Spelled out byte by byte: a "\x00..." literal
+  // would be an empty C string.
+  for (int i = 0; i < 3; ++i) out.push_back('\0');
+  out.push_back('\x0D');
+  out += "IHDR";
+  const auto be = [&out](std::uint32_t v) {
+    for (int i = 3; i >= 0; --i)
+      out.push_back(static_cast<char>((v >> (i * 8)) & 0xFF));
+  };
+  be(width);
+  be(height);
+  return out;
+}
+
+std::string png_with_size(int width, int height) {
+  return png_with_raw_size(static_cast<std::uint32_t>(width),
+                           static_cast<std::uint32_t>(height));
+}
+
+// APP0/JFIF segment then a baseline SOF0 frame header.
+std::string jpeg_with_size(int width, int height) {
+  std::string out("\xFF\xD8", 2);
+  out += "\xFF\xE0";
+  out += '\0';
+  out += '\x10';  // APP0 length = 16
+  out += "JFIF";
+  out.append(10, '\0');  // APP0 payload is 14 bytes (length includes itself)
+  out += "\xFF\xC0";
+  out += '\0';
+  out += '\x11';  // SOF0 length = 17
+  out.push_back('\x08');
+  const auto put = [&out](int v) {
+    out.push_back(static_cast<char>((v >> 8) & 0xFF));
+    out.push_back(static_cast<char>(v & 0xFF));
+  };
+  put(height);
+  put(width);
+  out.append(6, '\0');
+  return out;
+}
+
+std::string gif_with_size(int width, int height) {
+  std::string out("GIF89a", 6);
+  out.push_back(static_cast<char>(width & 0xFF));
+  out.push_back(static_cast<char>((width >> 8) & 0xFF));
+  out.push_back(static_cast<char>(height & 0xFF));
+  out.push_back(static_cast<char>((height >> 8) & 0xFF));
+  return out;
+}
+
+std::string webp_vp8x(int width, int height) {
+  std::string out("RIFF", 4);
+  out.append(4, '\0');
+  out += "WEBPVP8X";
+  out.append(8, '\0');  // chunk size + flags/reserved
+  const auto le24 = [&out](std::uint32_t v) {
+    for (int i = 0; i < 3; ++i) out.push_back(static_cast<char>((v >> (i * 8)) & 0xFF));
+  };
+  le24(static_cast<std::uint32_t>(width) - 1);
+  le24(static_cast<std::uint32_t>(height) - 1);
+  return out;
+}
+
+std::string webp_vp8(int width, int height) {
+  std::string out("RIFF", 4);
+  out.append(4, '\0');
+  out += "WEBPVP8 ";
+  out.append(4, '\0');
+  out.append(3, '\0');   // frame tag
+  out += "\x9D\x01\x2A";  // sync code
+  const auto put = [&out](int v) {
+    out.push_back(static_cast<char>(v & 0xFF));
+    out.push_back(static_cast<char>((v >> 8) & 0xFF));
+  };
+  put(width);
+  put(height);
+  return out;
+}
+
+std::string webp_vp8l(int width, int height) {
+  std::string out("RIFF", 4);
+  out.append(4, '\0');
+  out += "WEBPVP8L";
+  out.append(4, '\0');
+  out.push_back('\x2F');  // VP8L signature byte
+  const auto bits = [width, height](std::string& s) {
+    const unsigned w = static_cast<unsigned>(width) - 1;
+    const unsigned h = static_cast<unsigned>(height) - 1;
+    s.push_back(static_cast<char>(w & 0xFF));
+    s.push_back(static_cast<char>((w >> 8) | ((h & 0x03) << 6)));
+    s.push_back(static_cast<char>((h >> 2) & 0xFF));
+    s.push_back(static_cast<char>(((h >> 10) & 0x0F) << 4));
+  };
+  bits(out);
+  return out;
+}
+
+}  // namespace
+
+TEST(ImageToolTest, ReadsDimensionsFromEveryHeaderItAccepts) {
+  const auto expect = [](const std::string& bytes, int width, int height) {
+    const auto dim = ImageTool::dimensions(bytes);
+    ASSERT_TRUE(dim.has_value()) << ImageTool::detect_mime_type(bytes);
+    EXPECT_EQ(dim->width, width);
+    EXPECT_EQ(dim->height, height);
+  };
+  expect(png_bytes(), 1, 1);
+  expect(png_with_size(1920, 1080), 1920, 1080);
+  expect(gif_with_size(640, 480), 640, 480);
+  expect(jpeg_with_size(800, 600), 800, 600);
+  expect(webp_vp8x(1024, 768), 1024, 768);
+  expect(webp_vp8(320, 240), 320, 240);
+  expect(webp_vp8l(64, 32), 64, 32);
+  EXPECT_EQ(ImageTool::dimensions(png_bytes()).value().pixels(), 1);
+  EXPECT_EQ(ImageTool::dimensions(png_with_size(4000, 3000)).value().pixels(),
+            12'000'000);
+}
+
+// A header claiming a zero side is nonsense: it must neither trip the limit
+// check nor print "0x0" to the model.
+TEST_F(ImageToolFileTest, ZeroSizedHeaderIsIgnoredNotRefused) {
+  write("zero.png", png_with_size(0, 0));
+  const auto res = run("zero.png");
+  ASSERT_TRUE(res.is_success()) << res.error_message();
+  EXPECT_FALSE(res.result.contains("width"));
+  EXPECT_FALSE(res.result.contains("height"));
+  EXPECT_EQ(ImageTool::summary(res.result).find("0x0"), std::string::npos);
+}
+
+// Truncated or foreign data must not read past the end, and an unsupported
+// container has no dimensions to report.
+TEST(ImageToolTest, DimensionsAreAbsentForShortOrUnknownData) {
+  EXPECT_FALSE(ImageTool::dimensions("").has_value());
+  EXPECT_FALSE(ImageTool::dimensions("hello").has_value());
+  EXPECT_FALSE(ImageTool::dimensions("<svg width=\"1\" height=\"1\"></svg>").has_value());
+  // Correct magic bytes, header truncated mid-dimensions.
+  EXPECT_FALSE(ImageTool::dimensions(std::string("\x89PNG\r\n\x1a\n", 8)).has_value());
+  EXPECT_FALSE(
+      ImageTool::dimensions(std::string("\x89PNG\r\n\x1a\n", 8) + std::string(10, '\0'))
+          .has_value());
+  EXPECT_FALSE(ImageTool::dimensions("GIF89a\x01").has_value());
+  EXPECT_FALSE(
+      ImageTool::dimensions(std::string("RIFF\x00\x00\x00\x00WEBP", 12)).has_value());
+  // A jpeg whose SOF never arrives (scan data only).
+  EXPECT_FALSE(ImageTool::dimensions(std::string("\xFF\xD8\xFF\xDA", 4)).has_value());
+}
+
+// The byte limit cannot catch an image that is small on disk but enormous in
+// pixels; Anthropic rejects anything over 8000px per side, so the tool must.
+TEST_F(ImageToolFileTest, RefusesImagesProvidersWouldReject) {
+  write("huge.png", png_with_size(9000, 6000));
+  write("tall.webp", webp_vp8x(400, 12000));
+  write("fine.png", png_with_size(1568, 1568));
+  // A crafted header claiming 0xFFFFFFFF px. Narrowed to int this wraps
+  // negative, which would pass a naive "> 8000" check.
+  write("wrapped.png", png_with_raw_size(0xFFFFFFFFu, 0xFFFFFFFFu));
+
+  const auto expect_error = [&](const std::string& path,
+                                const std::string& needle) {
+    const auto res = run(path);
+    EXPECT_FALSE(res.is_success()) << path;
+    EXPECT_NE(res.error_message().find(needle), std::string::npos)
+        << res.error_message();
+    ASSERT_TRUE(res.result.contains("error")) << res.result.dump();
+    EXPECT_NE(res.result["error"].get<std::string>().find(needle),
+              std::string::npos);
+  };
+  // Names the real size, the limit, and the exact command to run.
+  expect_error("huge.png", "9000x6000");
+  expect_error("huge.png", "8000px per side");
+  expect_error("huge.png", "Downscale");
+  expect_error("tall.webp", "400x12000");
+  expect_error("wrapped.png", "the limit is 8000px per side");
+
+  const auto ok = run("fine.png");
+  ASSERT_TRUE(ok.is_success()) << ok.error_message();
+  EXPECT_EQ(ok.result["width"], 1568);
+  EXPECT_EQ(ok.result["height"], 1568);
+}
+
+// Results stored before this build have no width/height; the summary must
+// still render rather than print "0x0".
+TEST(ImageToolTest, SummaryOmitsDimensionsForOlderStoredResults) {
+  const std::string legacy = ImageTool::summary(image_result());
+  EXPECT_NE(legacy.find("Loaded image shot.png (image/png, 32 bytes)"),
+            std::string::npos)
+      << legacy;
+  JsonValue with_dims = image_result();
+  with_dims["width"] = 1920;
+  with_dims["height"] = 1080;
+  EXPECT_NE(ImageTool::summary(with_dims).find("1920x1080"), std::string::npos);
+}
+
+// ── Duplicate images are uploaded once per request ─────────────────────────
+
+namespace {
+
+// Two turns that loaded the same file: the tool ran again on a path the model
+// already has, or the session was retried.
+Messages duplicated_image_history(const std::string& second_data) {
+  std::vector<ToolCallContentPart> calls;
+  calls.emplace_back("call_1", "image", JsonValue{{"path", "shot.png"}});
+  std::vector<ToolCallContentPart> calls2;
+  calls2.emplace_back("call_2", "image", JsonValue{{"path", "shot2.png"}});
+  JsonValue second = image_result();
+  second["path"] = "shot2.png";
+  second["data"] = second_data;
+  return {Message::user("look at the screenshot"),
+          Message::assistant_with_tools("", calls),
+          Message::tool_results({{"call_1", image_result(), false}}),
+          Message::assistant_with_tools("", calls2),
+          Message::tool_results({{"call_2", second, false}})};
+}
+
+size_t count_lifted_images(const Messages& lifted) {
+  size_t n = 0;
+  for (const auto& msg : lifted) n += msg.get_images().size();
+  return n;
+}
+
+// The lift inserts a user image message between turns, so positions shift
+// with the dedupe. Find tool results by shape instead of by index.
+std::vector<std::string> tool_result_texts(const Messages& messages) {
+  std::vector<std::string> out;
+  for (const auto& msg : messages) {
+    if (!msg.has_tool_results()) continue;
+    for (const auto& tr : msg.get_tool_results()) {
+      out.push_back(tr.result.is_string() ? tr.result.get<std::string>()
+                                          : tr.result.dump());
+    }
+  }
+  return out;
+}
+
+size_t index_of_first_tool_results(const Messages& messages) {
+  for (size_t i = 0; i < messages.size(); ++i) {
+    if (messages[i].has_tool_results()) return i;
+  }
+  return messages.size();
+}
+
+}  // namespace
+
+TEST(ImageToolTest, ByteIdenticalImagesAreSentOnce) {
+  // Same payload under a different filename is still the same image.
+  const Messages lifted =
+      ProviderTransform::lift_tool_result_images(duplicated_image_history(kB64));
+  EXPECT_EQ(count_lifted_images(lifted), 1u);
+  const auto texts = tool_result_texts(lifted);
+  ASSERT_EQ(texts.size(), 2u);
+  // The first still carries pixels; the repeat says so in words instead.
+  EXPECT_NE(texts[0].find("the image follows"), std::string::npos) << texts[0];
+  EXPECT_NE(texts[1].find("already sent"), std::string::npos) << texts[1];
+  // The repeat is still identified, so the model knows which file it was.
+  EXPECT_NE(texts[1].find("shot2.png"), std::string::npos) << texts[1];
+}
+
+// Two genuinely different images must both reach the provider.
+TEST(ImageToolTest, DifferentImagesAreBothSent) {
+  const std::string other =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4nGP8//8/AzJgYkAD"  ;
+  const Messages lifted =
+      ProviderTransform::lift_tool_result_images(duplicated_image_history(other));
+  EXPECT_EQ(count_lifted_images(lifted), 2u);
+  const auto texts = tool_result_texts(lifted);
+  ASSERT_EQ(texts.size(), 2u);
+  EXPECT_EQ(texts[1].find("already sent"), std::string::npos) << texts[1];
+}
+
+// Same bytes, two different mime types: still two images, since a provider
+// decodes them differently.
+TEST(ImageToolTest, DedupeDoesNotCollapseDifferentTypes) {
+  Messages history = image_tool_history();
+  JsonValue second = image_result("image/jpeg");
+  second["data"] = kB64;
+  history.push_back(Message::assistant_with_tools(
+      "", {ToolCallContentPart("call_2", "image", JsonValue{{"path", "s.jpg"}})}));
+  history.push_back(
+      Message::tool_results({{"call_2", second, false}}));
+  const Messages lifted = ProviderTransform::lift_tool_result_images(history);
+  EXPECT_EQ(count_lifted_images(lifted), 2u);
+  const auto texts = tool_result_texts(lifted);
+  ASSERT_EQ(texts.size(), 2u);
+  EXPECT_EQ(texts[1].find("already sent"), std::string::npos) << texts[1];
+}
+
+// The dedupe is per request: the stored history keeps every full payload, so
+// nothing is lost for the UI, persistence or a later turn.
+TEST(ImageToolTest, DedupeDoesNotMutateStoredResults) {
+  const Messages history = duplicated_image_history(kB64);
+  const Messages lifted = ProviderTransform::lift_tool_result_images(history);
+
+  const size_t first = index_of_first_tool_results(history);
+  ASSERT_LT(first, history.size());
+  const auto stored = history[first].get_tool_results();
+  ASSERT_EQ(stored.size(), 1u);
+  EXPECT_TRUE(ImageTool::is_image_result(stored[0]));
+  EXPECT_EQ(stored[0].result.at("data").get<std::string>(), kB64);
+
+  const auto texts = tool_result_texts(lifted);
+  ASSERT_FALSE(texts.empty());
+  // Only the request copy is rewritten.
+  EXPECT_NE(texts[0].find("Loaded image"), std::string::npos) << texts[0];
+}
+
 
 TEST(ImageToolTest, LiveOpenRouterVisionWithImageToolResult) {
   const char* api_key_env = std::getenv("OPENROUTER_API_KEY");

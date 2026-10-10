@@ -453,13 +453,16 @@ static std::string hex_u64(uint64_t v) {
   return out;
 }
 
-static uint64_t fnv1a64(std::string_view s) {
-  uint64_t h = 14695981039346656037ull;
+static uint64_t fnv1a64_cont(uint64_t h, std::string_view s) {
   for (unsigned char c : s) {
     h ^= static_cast<uint64_t>(c);
     h *= 1099511628211ull;
   }
   return h;
+}
+
+static uint64_t fnv1a64(std::string_view s) {
+  return fnv1a64_cont(14695981039346656037ull, s);;
 }
 
 std::string canonicalize_tool_call_id(std::string_view id) {
@@ -640,6 +643,10 @@ Messages lift_tool_result_images(Messages messages) {
   Messages out;
   out.reserve(messages.size() + 1);
   MessageContent images;  // pixels from the current run of tool results
+  // Payloads already sent in this request. Reloading the same screenshot
+  // (a re-read path, a retry, two turns of "look again") otherwise re-uploads
+  // the same megabytes on every later turn, since history is resent whole.
+  std::unordered_set<uint64_t> sent_payloads;
   const auto flush = [&] {
     if (images.empty()) return;
     out.emplace_back(kMessageRoleUser, std::move(images));
@@ -655,10 +662,22 @@ Messages lift_tool_result_images(Messages messages) {
       std::string text = ImageTool::summary(result);
       std::string mime = result["mime_type"].get<std::string>();
       if (ImageTool::is_supported_mime_type(mime)) {
-        images.emplace_back(ImageContentPart{
-            std::move(result["data"].get_ref<std::string&>()), std::move(mime),
-            result.value("path", std::string())});
-        text += "; the image follows.";
+        const std::string& payload = result["data"].get_ref<const std::string&>();
+        // Hash rather than keep the base64: the set would otherwise hold
+        // megabytes that the lifted copy already owns. The mime is folded in
+        // so the same bytes under two types cannot collapse into one.
+        const uint64_t key = fnv1a64_cont(fnv1a64(mime), payload);
+        if (sent_payloads.insert(key).second) {
+          images.emplace_back(ImageContentPart{
+              std::move(result["data"].get_ref<std::string&>()), std::move(mime),
+              result.value("path", std::string())});
+          text += "; the image follows.";
+        } else {
+          // The model keeps the text result, so it still knows the file was
+          // read and that the pixels it is being asked about are above.
+          text += "; byte-identical to an image already sent in this "
+                  "conversation, so it is not repeated.";
+        }
       } else {
         // Written by an older image tool; providers reject this format.
         text += "; this format cannot be shown, convert it to png and load "
