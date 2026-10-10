@@ -81,6 +81,133 @@ uint32_t le24(const std::string_view d, std::size_t off) {
          (static_cast<uint32_t>(static_cast<unsigned char>(d[off + 2])) << 16);
 }
 
+
+// Animated gif: walk the block structure and count image descriptors. A
+// single-frame gif has exactly one. Providers decode frame 1 only, so an
+// animation is bytes nobody will see.
+bool gif_is_animated(std::string_view d) {
+  // header(6) + logical screen descriptor(7), then an optional global colour
+  // table, then a chain of blocks.
+  if (d.size() < 13) return false;
+  std::size_t i = 13;
+  const unsigned char packed = static_cast<unsigned char>(d[10]);
+  if (packed & 0x80) {  // global colour table present
+    i += 3u << ((packed & 0x07) + 1);  // 3 bytes per entry
+    if (i > d.size()) return false;
+  }
+  int frames = 0;
+  while (i < d.size()) {
+    // 0xFF is legal padding before a block introducer.
+    while (i < d.size() && static_cast<unsigned char>(d[i]) == 0xFF) ++i;
+    if (i >= d.size()) break;
+    const unsigned char introducer = static_cast<unsigned char>(d[i]);
+    if (introducer == 0x3B) break;  // trailer
+    if (introducer == 0x21) {       // extension: label + sub-blocks
+      if (i + 2 > d.size()) break;
+      i += 2;
+    } else if (introducer == 0x2C) {  // image descriptor
+      if (++frames > 1) return true;
+      // introducer(1) + descriptor(9). The descriptor's packed byte may
+      // announce a per-frame local colour table, which sits before the LZW
+      // minimum code size byte and the image data.
+      if (i + 10 > d.size()) break;
+      const unsigned char packed = static_cast<unsigned char>(d[i + 9]);
+      std::size_t next = i + 10;
+      if (packed & 0x80) next += 3u << ((packed & 0x07) + 1);
+      if (next + 1 > d.size()) break;
+      i = next + 1;  // skip the LZW minimum code size byte
+    } else {
+      return false;  // not a block chain we understand; assume not animated
+    }
+    // Sub-blocks: a length byte then that many bytes, until a zero length.
+    while (i < d.size()) {
+      const std::size_t len = static_cast<unsigned char>(d[i]);
+      if (len == 0) {
+        ++i;
+        break;
+      }
+      i += len + 1;
+      if (i > d.size()) return frames > 1;
+    }
+  }
+  return frames > 1;
+}
+
+// EXIF orientation from a jpeg APP1 segment. Phone photos are stored in the
+// sensor's orientation with a tag saying how to turn them upright; a provider
+// ignores that tag and sees the raw pixels, so a portrait shot arrives on its
+// side. 1 means upright; everything else is worth telling the model about.
+int jpeg_exif_orientation(std::string_view d) {
+  std::size_t i = 2;
+  while (i + 4 <= d.size()) {
+    if (static_cast<unsigned char>(d[i]) != 0xFF) {
+      ++i;
+      continue;
+    }
+    std::size_t m = i + 1;
+    while (m < d.size() && static_cast<unsigned char>(d[m]) == 0xFF) ++m;
+    if (m >= d.size()) return 1;
+    const unsigned marker = static_cast<unsigned char>(d[m]);
+    if (marker == 0xD9 || marker == 0xDA) return 1;  // no more metadata
+    if (marker == 0x01 || marker == 0xD8 ||
+        (marker >= 0xD0 && marker <= 0xD7)) {
+      i = m + 1;
+      continue;
+    }
+    if (m + 3 > d.size()) return 1;
+    const std::size_t seg_len = be16(d, m + 1);
+    if (seg_len < 2) return 1;
+    // APP1 "Exif\0\0" then a TIFF header.
+    // APP1 payload starts with the 6-byte identifier "Exif\0\0". Compared
+    // byte by byte: as a C literal that string is only 4 bytes long.
+    const bool is_exif = m + 17 <= d.size() && d[m + 3] == 'E' &&
+                         d[m + 4] == 'x' && d[m + 5] == 'i' && d[m + 6] == 'f' &&
+                         d[m + 7] == '\0' && d[m + 8] == '\0';
+    if (marker == 0xE1 && is_exif) {
+      const std::size_t tiff = m + 9;
+      const bool little = d[tiff] == 'I' && d[tiff + 1] == 'I';
+      const bool big = d[tiff] == 'M' && d[tiff + 1] == 'M';
+      if (!little && !big) return 1;
+      const auto u16 = [&](std::size_t off) {
+        return little ? le16(d, off) : (be16(d, off));
+      };
+      const auto u32 = [&](std::size_t off) {
+        return little ? (static_cast<uint32_t>(le16(d, off)) |
+                         (static_cast<uint32_t>(le16(d, off + 2)) << 16))
+                      : be32(d, off);
+      };
+      if (u16(tiff + 2) != 42) return 1;
+      const std::size_t ifd = tiff + u32(tiff + 4);
+      if (ifd + 2 > d.size()) return 1;
+      const std::size_t entries = u16(ifd);
+      for (std::size_t e = 0; e < entries; ++e) {
+        const std::size_t entry = ifd + 2 + e * 12;
+        if (entry + 12 > d.size()) return 1;
+        if (u16(entry) != 0x0112) continue;  // Orientation
+        const int value = static_cast<int>(u16(entry + 8));
+        return value >= 1 && value <= 8 ? value : 1;
+      }
+      return 1;
+    }
+    i = m + 1 + seg_len;
+  }
+  return 1;
+}
+
+// How the stored pixels must be turned to display upright.
+std::string_view orientation_note(int orientation) {
+  switch (orientation) {
+    case 2: return "mirrored left-right";
+    case 3: return "rotated 180 degrees";
+    case 4: return "mirrored top-bottom";
+    case 5: return "mirrored and rotated";
+    case 6: return "rotated 90 degrees";
+    case 7: return "mirrored and rotated";
+    case 8: return "rotated 270 degrees";
+    default: return {};
+  }
+}
+
 }  // namespace
 
 // Pixel size straight out of the container header: png IHDR, gif logical
@@ -195,6 +322,20 @@ std::string ImageTool::summary(const JsonValue& result) {
     out += ", " + std::to_string(width) + "x" + std::to_string(height);
   }
   out += ")";
+  // An animation is billed and uploaded in full but decoded as frame 1, and a
+  // jpeg's EXIF orientation tag is not applied by the provider, so say both
+  // rather than let the model draw a wrong conclusion from sideways pixels.
+  if (result.value("animated", false)) {
+    out +=
+        " [animated gif: only the first frame is visible, the rest of the "
+        "file is not shown]";
+  }
+  const int orientation = result.value("orientation", 1);
+  if (const std::string_view note = orientation_note(orientation);
+      !note.empty()) {
+    out += " [stored " + std::string(note) +
+           ": shown as saved, so it may look sideways]";
+  }
   return out;
 }
 
@@ -213,12 +354,27 @@ JsonValue ImageTool::execute(const JsonValue& args,
   }
 
   std::error_code ec;
-  if (!fs::is_regular_file(target, ec)) {
+  // A directory is not a missing file. Telling the model "File not found"
+  // sends it looking for a file that is already there, so name the real
+  // problem instead.
+  if (fs::is_directory(target, ec)) {
+    throw ToolError("Not an image file: " + path +
+                    " is a directory. Pass a png/jpeg/webp/gif file.");
+  }
+  if (!fs::exists(target, ec)) {
     throw ToolError("File not found: " + path);
   }
+  if (!fs::is_regular_file(target, ec)) {
+    throw ToolError("Not an image file: " + path +
+                    " is not a regular file (fifo, socket or device).");
+  }
   const auto size = fs::file_size(target, ec);
-  if (ec || size == 0) {
-    throw ToolError("Image file is empty or unreadable: " + path);
+  if (ec) {
+    throw ToolError("Could not read " + path +
+                    " (permission denied or it disappeared).");
+  }
+  if (size == 0) {
+    throw ToolError("Image file is empty: " + path);
   }
   if (size > kMaxBytes) {
     throw ToolError("Image is " + std::to_string(size) + " bytes; the limit is " +
@@ -264,8 +420,22 @@ JsonValue ImageTool::execute(const JsonValue& args,
     out["width"] = dim->width;
     out["height"] = dim->height;
   }
-  LOG_INFO("ImageTool: loaded '{}' mime={} bytes={} dims={}x{}", path, mime, size,
-           dim.has_value() ? dim->width : 0, dim.has_value() ? dim->height : 0);
+
+  // Caveats that are invisible in the pixels but change what the model
+  // concludes from them. Both are recorded so summary() can say so.
+  int orientation = 1;
+  if (mime == "image/gif" && gif_is_animated(bytes)) {
+    out["animated"] = true;
+  } else if (mime == "image/jpeg") {
+    orientation = jpeg_exif_orientation(bytes);
+    if (orientation != 1) out["orientation"] = orientation;
+  }
+
+  LOG_INFO("ImageTool: loaded '{}' mime={} bytes={} dims={}x{} animated={} "
+           "orientation={}",
+           path, mime, size, dim.has_value() ? dim->width : 0,
+           dim.has_value() ? dim->height : 0,
+           out.value("animated", false), orientation);
   return out;
 }
 
@@ -277,7 +447,8 @@ Tool ImageTool::definition() {
          {{"type", "string"},
           {"description",
            "Image file (png, jpeg, webp or gif), relative to the workspace "
-           "or absolute."}}}}},
+           "or absolute. The result reports the pixel size, and flags an "
+           "animated gif or a rotated jpeg."}}}}},
       {"required", JsonValue::array({"path"})}};
   Tool t("Load a local image (png, jpeg, webp, gif; max 3.75 MB) so you can "
          "see it.",

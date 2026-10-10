@@ -610,6 +610,181 @@ TEST(ImageToolTest, SummaryOmitsDimensionsForOlderStoredResults) {
   EXPECT_NE(ImageTool::summary(with_dims).find("1920x1080"), std::string::npos);
 }
 
+// ── Animated gif and EXIF orientation fixtures ────────────────────────────
+
+namespace {
+
+// A structurally valid gif with `frames` image descriptors. The colour table
+// flags are settable because skipping them is exactly what a naive walker
+// gets wrong: the global one lives in the screen descriptor, the local one
+// inside each frame, and both sit before the image data.
+std::string gif_with_frames(int frames, bool global_table, bool local_table) {
+  std::string out("GIF89a", 6);
+  out.push_back('\x01');
+  out.push_back('\0');  // width 1
+  out.push_back('\x01');
+  out.push_back('\0');  // height 1
+  out.push_back(static_cast<char>(global_table ? 0x80 : 0x00));
+  out.push_back('\0');  // background colour index
+  out.push_back('\0');  // pixel aspect ratio
+  if (global_table) out.append(6, '\x01');  // 2 entries x 3 bytes
+  for (int f = 0; f < frames; ++f) {
+    out += "\x21\xF9\x04";  // graphic control extension
+    out.append(4, '\0');
+    out.push_back('\0');  // extension terminator
+    out.push_back('\x2C');  // image descriptor
+    out.append(4, '\0');  // left, top
+    out.push_back('\x01');
+    out.push_back('\0');  // width
+    out.push_back('\x01');
+    out.push_back('\0');  // height
+    out.push_back(static_cast<char>(local_table ? 0x80 : 0x00));
+    if (local_table) out.append(6, '\x01');
+    out.push_back('\x02');   // LZW minimum code size
+    out.push_back('\x02');   // one sub-block of 2 bytes
+    out.append(2, '\x44');
+    out.push_back('\0');     // block terminator
+  }
+  out.push_back('\x3B');  // trailer
+  return out;
+}
+
+// APP0/JFIF, then an APP1 Exif block holding one IFD entry: Orientation.
+std::string jpeg_with_exif_orientation(int orientation, bool little_endian) {
+  std::string out("\xFF\xD8", 2);
+  out += "\xFF\xE0";
+  out.push_back('\0');
+  out.push_back('\x10');  // APP0 length 16
+  out += "JFIF";
+  out.append(10, '\0');
+
+  std::string tiff;
+  const auto u16 = [&tiff, little_endian](int v) {
+    if (little_endian) {
+      tiff.push_back(static_cast<char>(v & 0xFF));
+      tiff.push_back(static_cast<char>((v >> 8) & 0xFF));
+    } else {
+      tiff.push_back(static_cast<char>((v >> 8) & 0xFF));
+      tiff.push_back(static_cast<char>(v & 0xFF));
+    }
+  };
+  // Big-endian writes the high half first; sharing u16 would reverse it.
+  const auto u32 = [&tiff, little_endian](int v) {
+    const unsigned u = static_cast<unsigned>(v);
+    for (int i = 0; i < 4; ++i) {
+      const int shift = little_endian ? i * 8 : (3 - i) * 8;
+      tiff.push_back(static_cast<char>((u >> shift) & 0xFF));
+    }
+  };
+  tiff += little_endian ? "II" : "MM";
+  u16(42);
+  u32(8);  // IFD0 follows the 8-byte header
+  u16(1);  // one entry
+  u16(0x0112);  // Orientation
+  u16(3);       // SHORT
+  u32(1);       // count
+  u16(orientation);
+  u16(0);  // value padding
+  u32(0);  // no next IFD
+
+  out += "\xFF\xE1";
+  const int payload = static_cast<int>(tiff.size()) + 6;  // + "Exif\0\0"
+  const int segment = payload + 2;  // length field counts itself
+  out.push_back(static_cast<char>((segment >> 8) & 0xFF));
+  out.push_back(static_cast<char>(segment & 0xFF));
+  out += "Exif";
+  out.append(2, '\0');
+  out += tiff;
+  return out;
+}
+
+}  // namespace
+
+// Providers decode frame 1 only, so an animation is megabytes of bytes that
+// will never be seen. The model has to be told, or it will describe motion
+// it cannot see.
+TEST_F(ImageToolFileTest, AnimatedGifIsFlaggedStillGifIsNot) {
+  write("still.gif", gif_with_frames(1, false, false));
+  write("two.gif", gif_with_frames(2, false, false));
+  // Both colour-table placements, which a naive block walker skips.
+  write("gct.gif", gif_with_frames(3, true, false));
+  write("lct.gif", gif_with_frames(3, false, true));
+  write("both.gif", gif_with_frames(2, true, true));
+
+  const auto still = run("still.gif");
+  ASSERT_TRUE(still.is_success()) << still.error_message();
+  EXPECT_EQ(still.result.value("mime_type", std::string()), "image/gif");
+  EXPECT_FALSE(still.result.contains("animated"));
+  EXPECT_EQ(ImageTool::summary(still.result).find("first frame"),
+            std::string::npos);
+
+  for (const char* name : {"two.gif", "gct.gif", "lct.gif", "both.gif"}) {
+    const auto res = run(name);
+    ASSERT_TRUE(res.is_success()) << name << ": " << res.error_message();
+    EXPECT_TRUE(res.result.value("animated", false)) << name;
+    EXPECT_NE(ImageTool::summary(res.result).find("first frame"),
+              std::string::npos)
+        << name;
+  }
+}
+
+// A phone photo is stored sideways with an EXIF tag saying how to turn it.
+// The provider does not apply the tag, so the raw pixels are all it sees.
+TEST_F(ImageToolFileTest, ExifOrientationIsReported) {
+  for (int orientation = 1; orientation <= 8; ++orientation) {
+    for (const bool little : {true, false}) {
+      const std::string bytes =
+          jpeg_with_exif_orientation(orientation, little) +
+          std::string(64, '\0');
+      write("photo.jpg", bytes);
+      const auto res = run("photo.jpg");
+      ASSERT_TRUE(res.is_success()) << res.error_message();
+      ASSERT_EQ(res.result.value("mime_type", std::string()), "image/jpeg");
+      if (orientation == 1) {
+        EXPECT_FALSE(res.result.contains("orientation"))
+            << "upright jpeg should carry no orientation";
+        continue;
+      }
+      EXPECT_EQ(res.result.value("orientation", 0), orientation)
+          << "orientation " << orientation << " little=" << little;
+      EXPECT_NE(ImageTool::summary(res.result).find("sideways"), std::string::npos);
+    }
+  }
+  // A jpeg with no Exif block at all must not invent an orientation.
+  write("plain.jpg", jpeg_with_size(800, 600) + std::string(64, '\0'));
+  const auto plain = run("plain.jpg");
+  ASSERT_TRUE(plain.is_success()) << plain.error_message();
+  EXPECT_FALSE(plain.result.contains("orientation"));
+  EXPECT_EQ(ImageTool::summary(plain.result).find("sideways"), std::string::npos);
+}
+
+// ── Honest errors ─────────────────────────────────────────────────────────
+
+// "File not found" for a directory sends the model hunting for a file that is
+// already there. Name the actual problem.
+TEST_F(ImageToolFileTest, DirectoriesAndUnreadableFilesSayWhatIsWrong) {
+  std::filesystem::create_directories(dir_ / "shots");
+  write("empty.png", "");
+  const auto expect_error = [&](const std::string& path,
+                                const std::string& needle) {
+    const auto res = run(path);
+    EXPECT_FALSE(res.is_success()) << path;
+    EXPECT_NE(res.error_message().find(needle), std::string::npos)
+        << res.error_message();
+  };
+  expect_error("shots", "is a directory");
+  expect_error("empty.png", "is empty");
+
+  // Permission denied. Skipped as root, which reads anything.
+  if (::geteuid() != 0) {
+    const auto locked = dir_ / "locked.png";
+    write("locked.png", png_bytes());
+    std::filesystem::permissions(locked, std::filesystem::perms::none);
+    expect_error("locked.png", "Could not read");
+    std::filesystem::permissions(locked, std::filesystem::perms::owner_all);
+  }
+}
+
 // ── Duplicate images are uploaded once per request ─────────────────────────
 
 namespace {
