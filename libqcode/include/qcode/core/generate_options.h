@@ -39,6 +39,9 @@ struct GenerateOptions {
   std::optional<std::string> thinking_display;  // "summarized" | "omitted"
   // Picker variant behind reasoning_effort ("ultra" -> effort "max"); logs/stats.
   std::optional<std::string> reasoning_variant;
+  // Responses transport only: ask for a reasoning summary ("auto" by default
+  // for reasoning models) so the thinking text is actually returned.
+  std::optional<std::string> reasoning_summary;
 
   // Tool calling support
   ToolSet tools;

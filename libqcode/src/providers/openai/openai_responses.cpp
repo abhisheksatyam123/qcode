@@ -130,6 +130,12 @@ nlohmann::json to_responses_request(const nlohmann::json& request) {
   if (request.contains("reasoning_effort")) {
     responses["reasoning"] = {{"effort", request["reasoning_effort"]}};
   }
+  // The builder already assembled reasoning:{effort, summary} for this
+  // transport; prefer it so the summary survives the chat -> responses
+  // lowering.
+  if (request.contains("reasoning") && request["reasoning"].is_object()) {
+    responses["reasoning"] = request["reasoning"];
+  }
   if (request.contains("tools")) {
     responses["tools"] = nlohmann::json::array();
     for (const auto& tool : request["tools"]) {

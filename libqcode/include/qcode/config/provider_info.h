@@ -40,6 +40,11 @@ struct ModelInfo {
     std::string reasoning_default;
     // From opencode.json: reasoning_field (e.g. "reasoning").
     std::string reasoning_field;
+    // From opencode.json reasoning.summary: "auto" | "concise" | "detailed"
+    // | "none". The Responses API only returns readable thinking when a
+    // summary is asked for, so reasoning models default to "auto" (see
+    // turn_prefix.cpp). Empty in config = use that default.
+    std::string reasoning_summary;
     // From opencode.json "variants" object (ordered). Its ids are mirrored
     // into reasoning_efforts so every effort-list consumer sees them.
     std::vector<VariantInfo> variants;

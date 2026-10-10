@@ -1,6 +1,9 @@
 #include <qcode/core/generate_options.h>
+#include <qcode/core/stream_event.h>
 #include <qcode/core/message.h>
 #include "providers/openai/openai_request_builder.h"
+#include "providers/openai/openai_responses.h"
+#include "providers/openai/openai_stream.h"
 #include "providers/openai/openai_response_parser.h"
 
 #include <gtest/gtest.h>
@@ -369,5 +372,169 @@ TEST(OpenAIChatCompletionsTest, ReplaysReasoningContentAndNullContent) {
 }
 
 }  // namespace
+
+// ── Responses transport: reasoning must be visible ────────────────────────
+// The muse-spark regression: /responses reported input_tokens/output_tokens
+// only, so thinking tokens read as 0 even at effort=xhigh.
+TEST(OpenAIResponsesStreamUsageTest, CompletedEventReportsReasoningTokens) {
+  OpenAIStreamImpl impl;
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.output_text.delta","delta":"42"})");
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.completed","response":{"usage":{"input_tokens":16852,"output_tokens":189,"total_tokens":17041,"input_tokens_details":{"cached_tokens":4096},"output_tokens_details":{"reasoning_tokens":96}}}})");
+  impl.test_parse_sse_line("data: [DONE]");
+
+  std::optional<Usage> finish_usage;
+  while (impl.has_more_events()) {
+    const auto e = impl.get_next_event();
+    if (e.is_finish() && e.usage.has_value()) finish_usage = e.usage;
+  }
+  ASSERT_TRUE(finish_usage.has_value()) << "no usage-carrying finish event";
+  EXPECT_EQ(finish_usage->prompt_tokens, 16852);
+  EXPECT_EQ(finish_usage->completion_tokens, 189);
+  EXPECT_EQ(finish_usage->cached_prompt_tokens, 4096);
+  EXPECT_EQ(finish_usage->reasoning_completion_tokens, 96);
+}
+
+TEST(OpenAIResponsesStreamUsageTest, SummaryTextDeltaBecomesReasoning) {
+  OpenAIStreamImpl impl;
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.reasoning_summary_part.added","part":{"type":"summary_text","text":""}})");
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.reasoning_summary_text.delta","delta":"Checking "})");
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.reasoning_summary_text.delta","delta":"the parser."})");
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2}}})");
+  impl.test_parse_sse_line("data: [DONE]");
+
+  std::string reasoning;
+  while (impl.has_more_events()) {
+    const auto e = impl.get_next_event();
+    if (e.is_reasoning_delta()) reasoning += e.text_delta;
+  }
+  EXPECT_EQ(reasoning, "Checking the parser.");
+}
+
+TEST(OpenAIResponsesStreamUsageTest, FinishedReasoningItemIsNotDropped) {
+  // Providers that only return the summary on the finished item.
+  OpenAIStreamImpl impl;
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":[{"type":"summary_text","text":"Plan first."}]}})");
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2,"output_tokens_details":{"reasoning_tokens":40}}}})");
+  impl.test_parse_sse_line("data: [DONE]");
+
+  std::string reasoning;
+  int reasoning_tokens = 0;
+  while (impl.has_more_events()) {
+    const auto e = impl.get_next_event();
+    if (e.is_reasoning_delta()) reasoning += e.text_delta;
+    if (e.is_finish() && e.usage.has_value()) {
+      reasoning_tokens = e.usage->reasoning_completion_tokens;
+    }
+  }
+  EXPECT_EQ(reasoning, "Plan first.");
+  EXPECT_EQ(reasoning_tokens, 40);
+}
+
+TEST(OpenAIResponsesStreamUsageTest, StreamedSummaryIsNotRepeatedByTheItem) {
+  OpenAIStreamImpl impl;
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.reasoning_summary_text.delta","delta":"think"})");
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":[{"type":"summary_text","text":"think"}]}})");
+  impl.test_parse_sse_line(
+      R"(data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2}}})");
+  impl.test_parse_sse_line("data: [DONE]");
+
+  std::string reasoning;
+  while (impl.has_more_events()) {
+    const auto e = impl.get_next_event();
+    if (e.is_reasoning_delta()) reasoning += e.text_delta;
+  }
+  EXPECT_EQ(reasoning, "think");
+}
+
+// ── Non-streaming Responses body ──────────────────────────────────────────
+TEST(OpenAIResponsesBodyTest, ReasoningItemSummaryBecomesReasoningText) {
+  OpenAIResponseParser parser;
+  const nlohmann::json response{
+      {"id", "resp_1"},
+      {"model", "muse-spark-1.3-contributor-free"},
+      {"output",
+       nlohmann::json::array({
+           {{"type", "reasoning"},
+            {"id", "rs_1"},
+            {"summary", nlohmann::json::array(
+                            {{{"type", "summary_text"}, {"text", "Weigh 17*23."}}})}},
+           {{"type", "message"},
+            {"content",
+             nlohmann::json::array({{{"type", "output_text"}, {"text", "391"}}})}},
+       })},
+      {"usage",
+       {{"input_tokens", 120},
+        {"output_tokens", 64},
+        {"total_tokens", 184},
+        {"input_tokens_details", {{"cached_tokens", 96}}},
+        {"output_tokens_details", {{"reasoning_tokens", 48}}}}}};
+
+  const auto result = parser.parse_success_completion_response(response);
+  EXPECT_TRUE(result.is_success());
+  EXPECT_EQ(result.text, "391");
+  EXPECT_EQ(result.reasoning, "Weigh 17*23.");
+  EXPECT_EQ(result.usage.reasoning_completion_tokens, 48);
+  EXPECT_EQ(result.usage.cached_prompt_tokens, 96);
+  EXPECT_EQ(result.usage.prompt_tokens, 120);
+}
+
+// ── Request: ask for the summary that makes reasoning readable ────────────
+TEST(OpenAIResponsesRequestTest, AsksForAReasoningSummaryByDefault) {
+  OpenAIRequestBuilder builder(true);
+  GenerateOptions options("muse-spark-1.3-contributor-free", "hi");
+  options.reasoning_effort = "xhigh";
+  options.reasoning_summary = "auto";
+
+  // build_request_json already lowers to the Responses shape.
+  const auto responses = builder.build_request_json(options);
+  ASSERT_TRUE(responses.contains("reasoning"));
+  EXPECT_EQ(responses["reasoning"]["effort"], "xhigh");
+  EXPECT_EQ(responses["reasoning"]["summary"], "auto");
+}
+
+TEST(OpenAIResponsesRequestTest, SummaryNoneIsNotSent) {
+  OpenAIRequestBuilder builder(true);
+  GenerateOptions options("muse-spark-1.3-contributor-free", "hi");
+  options.reasoning_effort = "high";
+  options.reasoning_summary = "none";
+
+  const auto responses = builder.build_request_json(options);
+  EXPECT_EQ(responses["reasoning"]["effort"], "high");
+  EXPECT_FALSE(responses["reasoning"].contains("summary"));
+}
+
+TEST(OpenAIResponsesRequestTest, UnknownSummaryValueIsDropped) {
+  OpenAIRequestBuilder builder(true);
+  GenerateOptions options("muse-spark-1.3-contributor-free", "hi");
+  options.reasoning_effort = "high";
+  options.reasoning_summary = "verbose-please";
+
+  const auto responses = builder.build_request_json(options);
+  EXPECT_EQ(responses["reasoning"]["effort"], "high");
+  EXPECT_FALSE(responses["reasoning"].contains("summary"));
+}
+
+TEST(OpenAIResponsesRequestTest, ChatTransportIsUnchanged) {
+  OpenAIRequestBuilder builder(false);
+  GenerateOptions options("gpt-5", "hi");
+  options.reasoning_effort = "high";
+  options.reasoning_summary = "auto";
+
+  const auto chat = builder.build_request_json(options);
+  EXPECT_EQ(chat["reasoning_effort"], "high");
+  // summary is a Responses-only field; chat completions must not grow one.
+  EXPECT_FALSE(chat.contains("reasoning"));
+}
+
 }  // namespace openai
 }  // namespace qcode

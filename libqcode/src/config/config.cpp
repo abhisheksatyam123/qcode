@@ -739,6 +739,9 @@ std::vector<ProviderInfo> load_providers_from_config() {
                                     json_string(reasoning, "default", where + ".reasoning");
                                 model.reasoning_field =
                                     json_string(reasoning, "field", where + ".reasoning");
+                                model.reasoning_summary =
+                                    json_string(reasoning, "summary",
+                                                where + ".reasoning");
                             }
                         }
                         auto append_efforts = [&model](const ordered_json& value) {

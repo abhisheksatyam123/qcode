@@ -108,6 +108,15 @@ capped by `limit.output`), `budget_tokens` (budget-form models), `prompt`,
 `label`, `description`, `disabled`. A plain `"reasoning_efforts": [...]` list
 still works for models without a `variants` object.
 
+Thinking tokens and text: every provider's reasoning tokens are counted and
+shown in the Stats tab, the header and the logs. Models on the Responses
+transport (`"protocol": "responses"`) only return *readable* thinking when a
+summary is asked for, so qcode sends `reasoning.summary` automatically for any
+model with `"reasoning": true`. Override it per model (or per
+`model_defaults`) with `"reasoning": { "summary": "auto" | "concise" |
+"detailed" | "none" }`; `"none"` sends no summary and leaves you with the
+token count only.
+
 Sampling: a model's `"temperature"` (a number, or `false` to send none) and
 `"top_p"` (also accepted under its `"options"`) override the built-in model
 family defaults, which apply only when the config is silent.

@@ -62,6 +62,15 @@ void apply_variant_options(GenerateOptions& opts, const ModelInfo* model,
     }
     if (!model->thinking_type.empty()) opts.thinking_type = model->thinking_type;
     if (!model->thinking_display.empty()) opts.thinking_display = model->thinking_display;
+    // A reasoning model that returns no thinking text is indistinguishable
+    // from one that never thought. The Responses API only emits readable
+    // reasoning when a summary is requested, so ask for one unless the
+    // config says otherwise ("none" opts out).
+    if (model->reasoning) {
+      opts.reasoning_summary = model->reasoning_summary.empty()
+                                   ? std::string("auto")
+                                   : model->reasoning_summary;
+    }
   } else if (requested != "off") {
     variant_id = requested;
   }

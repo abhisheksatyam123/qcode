@@ -69,6 +69,70 @@ std::string extract_openai_reasoning_text(const nlohmann::json& node) {
   return {};
 }
 
+Usage parse_openai_usage(const nlohmann::json& usage_json) {
+  Usage usage;
+  if (!usage_json.is_object()) return usage;
+
+  const auto int_of = [](const nlohmann::json& node, const char* key) -> int {
+    if (!node.is_object() || !node.contains(key)) return 0;
+    const auto& v = node[key];
+    if (v.is_number_integer()) return v.get<int>();
+    if (v.is_number()) return static_cast<int>(v.get<double>());
+    return 0;
+  };
+  const auto first_of = [&](std::initializer_list<const char*> keys) -> int {
+    for (const auto* key : keys) {
+      const int value = int_of(usage_json, key);
+      if (value != 0) return value;
+    }
+    return 0;
+  };
+  const auto detail_of = [&](const char* container, const char* key) -> int {
+    if (!usage_json.contains(container)) return 0;
+    const auto& node = usage_json[container];
+    if (!node.is_object()) return 0;
+    return int_of(node, key);
+  };
+
+  usage.prompt_tokens =
+      first_of({"prompt_tokens", "input_tokens", "promptTokenCount",
+                "prompt_token_count"});
+  usage.completion_tokens =
+      first_of({"completion_tokens", "output_tokens", "candidatesTokenCount"});
+  usage.total_tokens =
+      first_of({"total_tokens", "totalTokenCount"});
+  if (usage.total_tokens == 0) {
+    usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
+  }
+
+  // Prompt-cache reads: chat/responses/gemini name them differently, and
+  // Anthropic splits writes out.
+  usage.cached_prompt_tokens =
+      first_of({"cache_read_input_tokens", "cached_content_token_count",
+                // Gemini/Antigravity name it in camelCase.
+                "cachedContentTokenCount"});
+  if (usage.cached_prompt_tokens == 0) {
+    usage.cached_prompt_tokens = std::max(
+        detail_of("prompt_tokens_details", "cached_tokens"),
+        std::max(detail_of("input_tokens_details", "cached_tokens"),
+                 detail_of("promptTokenCountDetails", "cachedTokenCount")));
+  }
+  usage.cache_write_tokens =
+      first_of({"cache_creation_input_tokens", "cache_creation_tokens"});
+
+  // Thinking tokens: the whole point of this helper. Providers that bill
+  // thoughts inside the output count report them under a details object;
+  // some report a flat field; Gemini reports thoughtsTokenCount.
+  usage.reasoning_completion_tokens = std::max(
+      {detail_of("completion_tokens_details", "reasoning_tokens"),
+       detail_of("output_tokens_details", "reasoning_tokens"),
+       detail_of("completion_tokens_details", "thinking_tokens"),
+       detail_of("output_tokens_details", "thinking_tokens"),
+       first_of({"reasoning_tokens", "thinking_tokens", "thoughtsTokenCount",
+                 "reasoningTokenCount"})});
+  return usage;
+}
+
 namespace {
 
 nlohmann::json normalize_responses_api(const nlohmann::json& response) {
@@ -78,7 +142,26 @@ nlohmann::json normalize_responses_api(const nlohmann::json& response) {
   nlohmann::json message{{"role", "assistant"}, {"content", ""}};
   nlohmann::json tool_calls = nlohmann::json::array();
   std::string text;
+  std::string reasoning;
   for (const auto& item : response["output"]) {
+    // Reasoning items carry the thinking text under summary[] (what the
+    // API emits when a summary was requested) or content[].
+    if (item.value("type", "") == "reasoning") {
+      if (item.contains("summary") && item["summary"].is_array()) {
+        for (const auto& part : item["summary"]) {
+          reasoning += part.value("text", "");
+        }
+      }
+      if (reasoning.empty() && item.contains("content") &&
+          item["content"].is_array()) {
+        for (const auto& part : item["content"]) {
+          reasoning += part.value("text", "");
+        }
+      }
+      if (reasoning.empty()) {
+        reasoning += extract_openai_reasoning_text(item);
+      }
+    }
     if (item.value("type", "") == "message" && item.contains("content")) {
       for (const auto& part : item["content"]) {
         if (part.value("type", "") == "output_text") {
@@ -95,6 +178,7 @@ nlohmann::json normalize_responses_api(const nlohmann::json& response) {
     }
   }
   message["content"] = text;
+  if (!reasoning.empty()) message["reasoning"] = reasoning;
   if (!tool_calls.empty()) message["tool_calls"] = std::move(tool_calls);
   const auto finish_reason =
       !message.contains("tool_calls")
@@ -109,11 +193,21 @@ nlohmann::json normalize_responses_api(const nlohmann::json& response) {
          {"message", std::move(message)},
          {"finish_reason", finish_reason}}}}};
   if (response.contains("usage")) {
-    const auto& usage = response["usage"];
+    // Carry the Responses-shaped counters through the shared reader so the
+    // chat-shaped consumer below keeps reasoning + cache tokens.
+    const Usage parsed = parse_openai_usage(response["usage"]);
     normalized["usage"] = {
-        {"prompt_tokens", usage.value("input_tokens", 0)},
-        {"completion_tokens", usage.value("output_tokens", 0)},
-        {"total_tokens", usage.value("total_tokens", 0)}};
+        {"prompt_tokens", parsed.prompt_tokens},
+        {"completion_tokens", parsed.completion_tokens},
+        {"total_tokens", parsed.total_tokens}};
+    if (parsed.cached_prompt_tokens > 0) {
+      normalized["usage"]["prompt_tokens_details"] = {
+          {"cached_tokens", parsed.cached_prompt_tokens}};
+    }
+    if (parsed.reasoning_completion_tokens > 0) {
+      normalized["usage"]["completion_tokens_details"] = {
+          {"reasoning_tokens", parsed.reasoning_completion_tokens}};
+    }
   }
   return normalized;
 }
@@ -286,23 +380,11 @@ GenerateResult OpenAIResponseParser::parse_success_completion_response(
     result.finish_reason = kFinishReasonError;
   }
 
-  // Extract usage
+  // Extract usage (one reader for chat/responses/gemini shapes, so a
+  // reasoning model never reports 0 thinking tokens just because it speaks
+  // a different dialect).
   if (normalized_response.contains("usage")) {
-    auto& usage = normalized_response["usage"];
-    result.usage.prompt_tokens = usage.value("prompt_tokens", 0);
-    result.usage.completion_tokens = usage.value("completion_tokens", 0);
-    result.usage.total_tokens = usage.value("total_tokens", 0);
-    if (usage.contains("prompt_tokens_details") && usage["prompt_tokens_details"].is_object()) {
-      result.usage.cached_prompt_tokens = usage["prompt_tokens_details"].value("cached_tokens", 0);
-    }
-    if (usage.contains("completion_tokens_details") && usage["completion_tokens_details"].is_object()) {
-      result.usage.reasoning_completion_tokens =
-          usage["completion_tokens_details"].value("reasoning_tokens", 0);
-    }
-    if (result.usage.reasoning_completion_tokens == 0) {
-      result.usage.reasoning_completion_tokens =
-          usage.value("reasoning_tokens", 0);
-    }
+    result.usage = parse_openai_usage(normalized_response["usage"]);
     LOG_DEBUG("Token usage - prompt: {}, cached: {}, completion: {}, reasoning: {}, total: {}",
                           result.usage.prompt_tokens,
                           result.usage.cached_prompt_tokens,

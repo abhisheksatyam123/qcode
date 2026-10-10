@@ -98,6 +98,9 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   };
   std::vector<PendingToolCall> pending_tool_calls_;
   StreamProtocol protocol_;
+  // Responses reasoning: once deltas have streamed, the finished item's
+  // summary is not repeated (it would double the visible thinking text).
+  bool reasoning_seen_ = false;  // stream thread only
 };
 
 }  // namespace openai

@@ -7,6 +7,7 @@ add_executable(qcode_tests
     unit/task_notes_test.cpp
     unit/tool_timeout_test.cpp
     unit/openai_responses_test.cpp
+    unit/openai_usage_test.cpp
     unit/anthropic_client_test.cpp
     unit/anthropic_oauth_test.cpp
     unit/anthropic_request_builder_test.cpp

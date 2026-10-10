@@ -45,6 +45,25 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       auto json = nlohmann::json::parse(data);
 
       const auto event_type = json.value("type", "");
+      if (event_type == "response.output_item.done") {
+        // Providers that return the summary only on the finished item (no
+        // deltas) still surface their thinking this way.
+        const auto item = json.value("item", nlohmann::json::object());
+        if (item.value("type", "") == "reasoning" && !reasoning_seen_) {
+          std::string text;
+          if (item.contains("summary") && item["summary"].is_array()) {
+            for (const auto& part : item["summary"]) {
+              text += part.value("text", "");
+            }
+          }
+          if (text.empty()) text = extract_openai_reasoning_text(item);
+          if (!text.empty()) {
+            reasoning_seen_ = true;
+            push_event(StreamEvent::reasoning(text));
+          }
+        }
+        return;
+      }
       if (event_type == "response.output_item.added") {
         const auto item = json.value("item", nlohmann::json::object());
         if (item.value("type", "") == "function_call") {
@@ -73,8 +92,19 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         push_event(StreamEvent(json.value("delta", "")));
         return;
       }
-      if (event_type == "response.reasoning_text.delta") {
-        push_event(StreamEvent::reasoning(json.value("delta", "")));
+      // The Responses API streams thinking as a *summary*: these are the
+      // event names it actually emits. response.reasoning_text.delta is kept
+      // for providers that use it.
+      if (event_type == "response.reasoning_summary_text.delta" ||
+          event_type == "response.reasoning_text.delta") {
+        const auto delta = json.value("delta", "");
+        if (!delta.empty()) reasoning_seen_ = true;
+        push_event(StreamEvent::reasoning(delta));
+        return;
+      }
+      if (event_type == "response.reasoning_summary_part.added" ||
+          event_type == "response.reasoning_summary_part.done") {
+        // Boundary marker only; the text arrives as deltas.
         return;
       }
       if (event_type == "response.completed" ||
@@ -83,10 +113,9 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         Usage usage;
         const auto response = json.value("response", nlohmann::json::object());
         if (response.contains("usage") && response["usage"].is_object()) {
-          const auto& raw_usage = response["usage"];
-          usage.prompt_tokens = raw_usage.value("input_tokens", 0);
-          usage.completion_tokens = raw_usage.value("output_tokens", 0);
-          usage.total_tokens = raw_usage.value("total_tokens", 0);
+          // input_tokens / output_tokens_details.reasoning_tokens /
+          // input_tokens_details.cached_tokens all land here now.
+          usage = parse_usage(response["usage"]);
         }
         finish_event_pushed_ = true;
         push_event(StreamEvent(
@@ -364,26 +393,10 @@ FinishReason OpenAIStreamImpl::parse_finish_reason(
   return kFinishReasonStop;
 }
 
+// Thinking-token accounting lives in parse_openai_usage (shared with the
+// non-streaming parser) so chat, Responses and Gemini streams agree.
 Usage OpenAIStreamImpl::parse_usage(const nlohmann::json& usage_json) {
-  Usage usage;
-  usage.prompt_tokens = usage_json.value("prompt_tokens", usage_json.value("input_tokens", 0));
-  usage.completion_tokens = usage_json.value("completion_tokens", usage_json.value("output_tokens", 0));
-  usage.total_tokens = usage_json.value("total_tokens", usage.prompt_tokens + usage.completion_tokens);
-  if (usage_json.contains("prompt_tokens_details") && usage_json["prompt_tokens_details"].is_object()) {
-    usage.cached_prompt_tokens = usage_json["prompt_tokens_details"].value("cached_tokens", 0);
-  } else if (usage_json.contains("cache_read_input_tokens")) {
-    usage.cached_prompt_tokens = usage_json.value("cache_read_input_tokens", 0);
-  }
-  // Thinking-token accounting (upstream Usage.reasoningTokens).
-  if (usage_json.contains("completion_tokens_details") &&
-      usage_json["completion_tokens_details"].is_object()) {
-    usage.reasoning_completion_tokens =
-        usage_json["completion_tokens_details"].value("reasoning_tokens", 0);
-  }
-  if (usage.reasoning_completion_tokens == 0) {
-    usage.reasoning_completion_tokens = usage_json.value("reasoning_tokens", 0);
-  }
-  return usage;
+  return parse_openai_usage(usage_json);
 }
 
 }  // namespace openai

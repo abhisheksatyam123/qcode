@@ -229,6 +229,17 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     if (use_responses_) {
       request["reasoning_effort"] = *options.reasoning_effort;
       request["reasoning"] = {{"effort", *options.reasoning_effort}};
+      // Reasoning summary: without it the Responses API returns thinking
+      // tokens but no readable thought. Unknown values are dropped so a
+      // typo cannot turn into a 400.
+      if (options.reasoning_summary) {
+        const std::string& summary = *options.reasoning_summary;
+        if (summary == "auto" || summary == "concise" || summary == "detailed") {
+          request["reasoning"]["summary"] = summary;
+        } else if (summary != "none") {
+          LOG_WARN("Ignoring unknown reasoning summary '{}'", summary);
+        }
+      }
     } else {
       // Transport-specific placement: OpenRouter wants reasoning:{effort},
       // plain compatible endpoints want reasoning_effort (upstream lowering).
