@@ -19,6 +19,7 @@
 #include "generation/stream_step.h"
 
 #include <algorithm>
+#include <regex>
 #include <atomic>
 #include <random>
 #include <chrono>
@@ -153,6 +154,90 @@ ResolvedModelClient resolve_model_client(const ProviderInfo& provider,
     return out;
 }
 
+
+struct FallbackTarget {
+  const ProviderInfo* provider = nullptr;
+  const ModelInfo* model_info = nullptr;
+  std::string model_id;
+};
+
+static std::optional<FallbackTarget> select_fallback_candidate(
+    const std::vector<ProviderInfo>& providers,
+    const std::string& current_provider_id,
+    const std::string& current_model_id,
+    const std::set<std::string>& excluded_keys) {
+  const auto working = filter_working_providers(providers);
+  const auto& catalog = working.empty() ? providers : working;
+
+  const bool current_is_free = (current_provider_id == "opencode" ||
+                                current_model_id.find(":free") != std::string::npos ||
+                                current_model_id.find("-free") != std::string::npos ||
+                                current_provider_id == "antigravity");
+
+  struct ScoredCandidate {
+    const ProviderInfo* provider = nullptr;
+    const ModelInfo* model = nullptr;
+    double score = 0.0;
+  };
+  std::vector<ScoredCandidate> scored;
+
+  for (const auto& prov : catalog) {
+    if (!is_provider_authenticated(prov)) continue;
+    for (const auto& mod : prov.models) {
+      if (!is_model_working(prov, mod)) continue;
+      const std::string key = prov.id + ":" + mod.id;
+      if (excluded_keys.count(key) || (prov.id == current_provider_id && mod.id == current_model_id)) {
+        continue;
+      }
+      const bool m_is_free = (mod.input_cost == 0.0 && mod.output_cost == 0.0) ||
+                             prov.id == "opencode" ||
+                             mod.id.find(":free") != std::string::npos ||
+                             mod.id.find("-free") != std::string::npos ||
+                             prov.id == "antigravity";
+
+      // If current model is free, never silently bill the user with a paid model
+      double score = 100.0;
+      if (current_is_free) {
+        if (!m_is_free) continue;
+        score += 50.0;
+      } else {
+        if (!m_is_free) score += 30.0;
+      }
+
+      // Different provider bonus to escape vendor-wide outages/rate-limits
+      if (prov.id != current_provider_id) {
+        score += 20.0;
+      }
+
+      // Factor in historical runtime telemetry
+      const auto perf = qcode::session::get_model_performance_summary(mod.id, prov.id);
+      if (perf.total_turns > 0) {
+        score += (perf.success_rate() * 0.2);
+        if (perf.failed_turns > 0) {
+          score -= (perf.failed_turns * 5.0);
+        }
+      }
+
+      if (mod.reasoning) score += 5.0;
+
+      scored.push_back({&prov, &mod, score});
+    }
+  }
+
+  if (scored.empty()) return std::nullopt;
+
+  std::sort(scored.begin(), scored.end(),
+            [](const ScoredCandidate& a, const ScoredCandidate& b) {
+              return a.score > b.score;
+            });
+
+  FallbackTarget target;
+  target.provider = scored.front().provider;
+  target.model_info = scored.front().model;
+  target.model_id = scored.front().model->id;
+  return target;
+}
+
 // ──────────────────────────────────────────────────────────────
 //  Multi-agent: subagent turn
 // ──────────────────────────────────────────────────────────────
@@ -223,19 +308,37 @@ static JsonValue run_subagent_turn(const SubagentEnv& env,
   const std::string description = args.value("description", "");
   const std::string sub_session_id = args.value("session_id", "");
 
-  const SubagentTarget target = resolve_subagent_target(
+  SubagentTarget target = resolve_subagent_target(
       args.value("model", ""), *env.providers, env.provider_id, env.model_id);
+  if (!target.provider && !env.model_id.empty() && args.value("model", "") != env.model_id) {
+    LOG_WARN("run_subagent_turn: requested model '{}' not found, falling back to lead model '{}:{}'",
+             args.value("model", ""), env.provider_id, env.model_id);
+    target = resolve_subagent_target(
+        env.model_id, *env.providers, env.provider_id, env.model_id);
+  }
   if (!target.provider) {
     return JsonValue{{"error", target.error.empty() ? "No provider for the subagent"
                                                     : target.error}};
   }
   const ProviderInfo* target_provider = target.provider;
   const ModelInfo* target_model_info = target.model_info;
-  const std::string target_model_id = target.model_id;
+  std::string target_model_id = target.model_id;
 
   try {
     ResolvedModelClient resolved =
         resolve_model_client(*target_provider, target_model_info, target_model_id, "");
+    if (!resolved.ok() && !env.model_id.empty() && target_model_id != env.model_id) {
+      LOG_WARN("run_subagent_turn: client resolution failed for '{}' ({}), falling back to lead model '{}:{}'",
+               target_model_id, resolved.error, env.provider_id, env.model_id);
+      const SubagentTarget fallback_target = resolve_subagent_target(
+          env.model_id, *env.providers, env.provider_id, env.model_id);
+      if (fallback_target.provider) {
+        target_provider = fallback_target.provider;
+        target_model_info = fallback_target.model_info;
+        target_model_id = fallback_target.model_id;
+        resolved = resolve_model_client(*target_provider, target_model_info, target_model_id, "");
+      }
+    }
     if (!resolved.ok()) return JsonValue{{"error", resolved.error}};
     qcode::Client subagent_client = std::move(resolved.client);
 
@@ -341,6 +444,69 @@ static JsonValue run_subagent_turn(const SubagentEnv& env,
 
     if (abort_flag->load()) return JsonValue{{"error", "Subagent cancelled due to abort flag"}};
     if (!res.is_success()) {
+      if (!env.model_id.empty() && target_model_id != env.model_id && !abort_flag->load()) {
+        LOG_WARN("run_subagent_turn: subagent failed on '{}' ({}), retrying on lead model '{}:{}'",
+                 target_model_id, res.error_message(), env.provider_id, env.model_id);
+        const SubagentTarget fallback_target = resolve_subagent_target(
+            env.model_id, *env.providers, env.provider_id, env.model_id);
+        if (fallback_target.provider) {
+          ResolvedModelClient fallback_res = resolve_model_client(
+              *fallback_target.provider, fallback_target.model_info, fallback_target.model_id, "");
+          if (fallback_res.ok()) {
+            qcode::Client lead_client = std::move(fallback_res.client);
+            auto lead_generate = [&lead_client](GenerateOptions step_opts) {
+              step_opts.max_steps = 1;
+              return lead_client.generate_text(step_opts);
+            };
+            res = MultiStepCoordinator::execute_multi_step(
+                sub_opts, lead_generate,
+                MultiStepCoordinator::AutoCompact{
+                    .threshold = compaction::auto_compact_threshold(fallback_target.model_info),
+                    .on_compacted =
+                        [&sub_session_id](const std::string& message) {
+                          if (!sub_session_id.empty()) {
+                            qcode::session::save_message(sub_session_id, "User", message);
+                          }
+                        }});
+            target_provider = fallback_target.provider;
+            target_model_id = fallback_target.model_id;
+          }
+        }
+      }
+
+      // If still not successful and env.providers is present, pick the best rated fallback candidate
+      if (!res.is_success() && env.providers && !abort_flag->load()) {
+        std::set<std::string> tried = {target_provider->id + ":" + target_model_id};
+        if (!env.model_id.empty()) tried.insert(env.provider_id + ":" + env.model_id);
+        if (auto fallback = select_fallback_candidate(*env.providers, target_provider->id, target_model_id, tried)) {
+          ResolvedModelClient fallback_res = resolve_model_client(
+              *fallback->provider, fallback->model_info, fallback->model_id, sub_session_id);
+          if (fallback_res.ok()) {
+            LOG_WARN("run_subagent_turn: subagent failed on '{}:{}' ({}), retrying on fallback model '{}:{}'",
+                     target_provider->id, target_model_id, res.error_message(),
+                     fallback->provider->id, fallback->model_id);
+            qcode::Client fallback_client = std::move(fallback_res.client);
+            auto fallback_generate = [&fallback_client](GenerateOptions step_opts) {
+              step_opts.max_steps = 1;
+              return fallback_client.generate_text(step_opts);
+            };
+            res = MultiStepCoordinator::execute_multi_step(
+                sub_opts, fallback_generate,
+                MultiStepCoordinator::AutoCompact{
+                    .threshold = compaction::auto_compact_threshold(fallback->model_info),
+                    .on_compacted =
+                        [&sub_session_id](const std::string& message) {
+                          if (!sub_session_id.empty()) {
+                            qcode::session::save_message(sub_session_id, "User", message);
+                          }
+                        }});
+            target_provider = fallback->provider;
+            target_model_id = fallback->model_id;
+          }
+        }
+      }
+    }
+    if (!res.is_success()) {
       return JsonValue{{"error", !res.error_message().empty() ? res.error_message()
                                                               : "subagent generation failed"}};
     }
@@ -377,12 +543,14 @@ static void run_tools_generation_bus(
     bus::BusPort& bus,
     GenerationContext& ctx,
     const std::function<bool(qcode::Client&)>& refresh_client = nullptr,
-    const std::string& provider_id = "",
-    const ModelInfo* model_info = nullptr) {
+    std::string provider_id = "",
+    const ModelInfo* model_info = nullptr,
+    const std::vector<ProviderInfo>* providers = nullptr) {
   // One request serves every step. A StreamOptions is a GenerateOptions, so
   // streamed steps pass it to stream_text() without copying the history.
   qcode::StreamOptions request(std::move(gen_options));
   qcode::GenerateOptions& options = request;
+  std::set<std::string> tried_models = {provider_id + ":" + options.model};
   // Steps stream (text shows as the model writes it) when the client can;
   // QCODE_TOOL_STREAMING=0 keeps one blocking generate_text() per step.
   const char* tool_streaming_env = std::getenv("QCODE_TOOL_STREAMING");
@@ -447,7 +615,7 @@ static void run_tools_generation_bus(
         });
       };
 
-  auto flush_inflight_tools = [&bus, &ctx, tool_starts, callback_mutex]() {
+  auto flush_inflight_tools = [&bus, &ctx, tool_starts, callback_mutex](const std::string& err_msg = "Tool execution aborted") {
     std::lock_guard<std::mutex> lock(*callback_mutex);
     for (const auto& [id, info] : *tool_starts) {
       const double duration_ms =
@@ -458,7 +626,7 @@ static void run_tools_generation_bus(
           .session_id = ctx.session_id,
           .tool_call_id = id,
           .tool_name = info.tool_name,
-          .result = {{"error", "Tool execution aborted"}},
+          .result = {{"error", err_msg}},
           .is_error = true,
           .duration_ms = duration_ms,
       });
@@ -483,6 +651,11 @@ static void run_tools_generation_bus(
   };
 
   // ── Multi-step generation loop ──
+  std::optional<qcode::logger::ScopedThreadSession> turn_log_bind;
+  if (!ctx.session_id.empty()) {
+    turn_log_bind.emplace(ctx.session_id);
+  }
+
   // Turn totals: usage, plus the error that ended the turn (if any).
   qcode::GenerateResult gen_result;
 
@@ -651,6 +824,8 @@ static void run_tools_generation_bus(
   bool stuck = false;
   bool auth_retried = false;
   int auto_continues = 0;
+  int step_turn_retries = 0;
+  constexpr int kMaxStepTurnRetries = 3;
   // Consecutive steps with the same tool calls AND the same results.
   // Same-args retries with changing output (re-read, poll) are allowed.
   int no_progress_repeat = 0;
@@ -697,7 +872,10 @@ static void run_tools_generation_bus(
           aborted = true;
           break;
         }
-        compact_threshold = 0;  // failed: do not retry every step this turn
+        LOG_WARN("run_tools_generation_bus: summarizer failed, applying fallback pruning at step={}", step);
+        options.messages = qcode::prune_context(std::move(options.messages), compact_threshold);
+        est_history_tokens.reset();
+        live_context = estimate_system_tokens(options.system) + estimate_tokens(options.messages);
       }
     }
 
@@ -775,6 +953,134 @@ static void run_tools_generation_bus(
                    step);
           continue;
         }
+        // Check context overflow / payload too large / HTTP 400/413
+        const bool is_overflow =
+            qcode::is_context_overflow_error(0, err) ||
+            err.find("context_length_exceeded") != std::string::npos ||
+            err.find("413") != std::string::npos ||
+            ((err.find("400") != std::string::npos || err.find("invalid_request_error") != std::string::npos) &&
+             (err.find("too large") != std::string::npos ||
+              err.find("context") != std::string::npos ||
+              err.find("maximum") != std::string::npos ||
+              err.find("invalid request") != std::string::npos ||
+              live_context >= (compact_threshold > 0 ? compact_threshold : 32000)));
+
+        if (!shown && is_overflow && options.messages.size() > 2) {
+          LOG_WARN("run_tools_generation_bus: context overflow at step={} ({}); forcing compaction/prune",
+                   step, err);
+          bus.publish<contract::ErrorOccurred>({
+              .session_id = ctx.session_id,
+              .message = "Context exceeded provider limit: auto-compacting and retrying...",
+              .severity = "info"
+          });
+          bool compacted = compact_in_loop(step);
+          if (!compacted) {
+            const size_t target_budget = compact_threshold > 0 ? (compact_threshold * 7) / 10 : 32000;
+            options.messages = qcode::prune_context(std::move(options.messages), target_budget);
+            est_history_tokens.reset();
+            live_context = estimate_system_tokens(options.system) + estimate_tokens(options.messages);
+            compacted = true;
+          }
+          if (compacted) {
+            continue;
+          }
+        }
+
+        // Check HTTP 402 / output token credit limit
+        const bool is_credit_or_tokens =
+            err.find("402") != std::string::npos ||
+            err.find("fewer max_tokens") != std::string::npos ||
+            err.find("requires more credits") != std::string::npos;
+
+        if (!shown && is_credit_or_tokens) {
+          int affordable = 0;
+          std::smatch m;
+          std::regex re(R"(can only afford (\d+))");
+          if (std::regex_search(err, m, re)) {
+            try { affordable = std::stoi(m[1].str()); } catch (...) {}
+          }
+          const int current_max = options.max_tokens.value_or(32000);
+          const int new_max = affordable > 0 ? std::max(1024, affordable - 100) : std::max(2048, current_max / 2);
+          if (new_max < current_max) {
+            options.max_tokens = new_max;
+            LOG_WARN("run_tools_generation_bus: 402 credit limit at step={}, reduced max_tokens to {}, retrying",
+                     step, new_max);
+            bus.publish<contract::ErrorOccurred>({
+                .session_id = ctx.session_id,
+                .message = "Adjusted output token budget to " + std::to_string(new_max) + " (credit limit); retrying...",
+                .severity = "info"
+            });
+            continue;
+          }
+        }
+
+        // Check transient model errors (5xx, 429, timeouts, Endpoint unavailable)
+        const bool is_transient =
+            qcode::is_error_message_retryable(err) ||
+            err.find("500") != std::string::npos ||
+            err.find("502") != std::string::npos ||
+            err.find("503") != std::string::npos ||
+            err.find("429") != std::string::npos ||
+            err.find("Endpoint is unavailable") != std::string::npos;
+
+        const bool is_lockout = err.find("Rate limit") != std::string::npos ||
+                                err.find("rate limit") != std::string::npos ||
+                                err.find("quota") != std::string::npos ||
+                                err.find("429") != std::string::npos ||
+                                err.find("exceeded") != std::string::npos ||
+                                err.find("credit balance") != std::string::npos;
+
+        // Automatic model failover on rate limit / lockout or exhausted retries
+        if (!shown && providers && (is_lockout || step_turn_retries >= kMaxStepTurnRetries)) {
+          if (auto fallback = select_fallback_candidate(*providers, provider_id, options.model, tried_models)) {
+            ResolvedModelClient fallback_res = resolve_model_client(
+                *fallback->provider, fallback->model_info, fallback->model_id, ctx.session_id);
+            if (fallback_res.ok()) {
+              LOG_WARN("run_tools_generation_bus: model '{}:{}' hit limit ({}); switching turn to '{}:{}'",
+                       provider_id, options.model, err, fallback->provider->id, fallback->model_id);
+              bus.publish<contract::ErrorOccurred>({
+                  .session_id = ctx.session_id,
+                  .message = "Rate limit reached on '" + options.model + "'. Automatically switching turn to '" +
+                             fallback->provider->id + ":" + fallback->model_id + "' and continuing...",
+                  .severity = "warn"
+              });
+              qcode::session::set_session_provider_model(ctx.session_id, fallback->provider->id, fallback->model_id);
+              client = std::move(fallback_res.client);
+              provider_id = fallback->provider->id;
+              model_info = fallback->model_info;
+              options.model = fallback->model_id;
+              request.model = fallback->model_id;
+              tried_models.insert(fallback->provider->id + ":" + fallback->model_id);
+              step_turn_retries = 0;
+              continue;
+            }
+          }
+        }
+
+        if (!shown && is_transient && step_turn_retries < kMaxStepTurnRetries) {
+          step_turn_retries++;
+          const int delay_sec = step_turn_retries * 3;
+          LOG_WARN("run_tools_generation_bus: transient model error at step={} ({}); retrying in {}s ({}/{})",
+                   step, err, delay_sec, step_turn_retries, kMaxStepTurnRetries);
+          bus.publish<contract::ErrorOccurred>({
+              .session_id = ctx.session_id,
+              .message = "Model error (" + format_user_facing_error(err, 60) + ") — retrying in " +
+                         std::to_string(delay_sec) + "s (" + std::to_string(step_turn_retries) + "/" +
+                         std::to_string(kMaxStepTurnRetries) + ")",
+              .severity = "info"
+          });
+          const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(delay_sec);
+          while (std::chrono::steady_clock::now() < until) {
+            if (ctx.abort_flag && ctx.abort_flag->load()) {
+              aborted = true;
+              break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          }
+          if (aborted) break;
+          continue;
+        }
+
         if (step_res.finish_reason == qcode::kFinishReasonContentFilter) {
           gen_result.error =
               "Provider blocked this turn (content filter). Rephrase the "
@@ -799,6 +1105,7 @@ static void run_tools_generation_bus(
         gen_result.provider_metadata = std::move(step_res.provider_metadata);
         break;
       }
+      step_turn_retries = 0;  // Reset retries on successful step
       if (ctx.abort_flag && ctx.abort_flag->load()) {
         LOG_INFO("run_tools_generation_bus: abort after generate_text step={}",
                  step);
@@ -1087,6 +1394,7 @@ static void run_tools_generation_bus(
 
   if (fatal_error) {
     const std::string raw = gen_result.error_message();
+    flush_inflight_tools("Turn interrupted by error: " + format_user_facing_error(raw, 60));
     if (gen_result.provider_metadata.has_value() &&
         !gen_result.provider_metadata->empty()) {
       LOG_ERROR("run_tools_generation_bus: error occurred: {} [Response] {}",
@@ -1159,12 +1467,10 @@ static void run_tools_generation_bus(
       .reasoning_tokens = gen_result.usage.reasoning_completion_tokens,
       .session_id = ctx.session_id,
   });
-  if (!fatal_error) {
-    bus.publish<SessionStatusChanged>({
-        .session_id = ctx.session_id,
-        .status = "idle"
-    });
-  }
+  bus.publish<SessionStatusChanged>({
+      .session_id = ctx.session_id,
+      .status = fatal_error ? "error" : "idle"
+  });
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1668,7 +1974,7 @@ void run_generation_with_bus(
         return true;
       };
       run_tools_generation_bus(client, std::move(base_opts), bus, ctx,
-                               refresh_client, provider_id, resolved_model);
+                               refresh_client, provider_id, resolved_model, &providers);
     } else {
       if (is_server_duplex_agent) {
         LOG_INFO("ChatBus: ServerSideDuplex native agent stream (session_id={})",

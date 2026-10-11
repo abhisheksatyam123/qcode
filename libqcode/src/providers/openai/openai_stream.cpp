@@ -58,7 +58,27 @@ void OpenAIStreamImpl::start_stream(const std::string& url,
   event_timeout_ = default_event_timeout();
   touch_activity();
 
-  LOG_INFO("Launching stream thread for OpenAI API");
+  {
+    std::lock_guard<std::mutex> lk(diag_mutex_);
+    diag_endpoint_ = url;
+    diag_model_ = request_body.value("model", "");
+    diag_request_bytes_ = request_body.dump().size();
+  }
+  diag_attempt_ = 1;
+  diag_max_attempts_ = 6;
+  diag_status_ = 0;
+  diag_in_backoff_ = false;
+  diag_backoff_ms_ = 0;
+  diag_backoff_until_ = 0;
+  diag_headers_received_ = false;
+  diag_chunks_ = 0;
+  diag_bytes_ = 0;
+  diag_first_chunk_time_ = 0;
+  diag_last_chunk_time_ = 0;
+  diag_send_start_time_ = 0;
+
+  LOG_INFO("Launching stream thread for OpenAI API (model: {}, body: {} bytes)",
+           request_body.value("model", ""), diag_request_bytes_);
 
   // Serialize here so the thread owns one string instead of a deep copy of
   // the request JSON.
@@ -221,16 +241,24 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
     // gets non-200 bodies (res.body stays empty), so the status is captured
     // first and an error payload is kept, capped, for the retry checks and
     // the error event instead of being parsed as SSE.
-    req.response_handler = [&status](const httplib::Response& r) {
+    req.response_handler = [this, &status](const httplib::Response& r) {
       status = r.status;
+      diag_status_ = r.status;
+      diag_headers_received_ = true;
       return true;
     };
     req.content_receiver = [this, &accumulated_data, &status, &error_body,
                             &streamed, &chunks, &bytes](
                                const char* data, size_t data_length,
                                uint64_t /*offset*/, uint64_t /*total_length*/) {
+      if (chunks == 0) {
+        diag_first_chunk_time_ = std::chrono::steady_clock::now().time_since_epoch().count();
+      }
       ++chunks;
       bytes += data_length;
+      diag_chunks_ = chunks;
+      diag_bytes_ = bytes;
+      diag_last_chunk_time_ = std::chrono::steady_clock::now().time_since_epoch().count();
       touch_activity();
       if (status != 200) {
         if (error_body.size() < kMaxErrorBodyBytes) {
@@ -302,6 +330,11 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
       error_body.clear();
       streamed = false;
       error = httplib::Error::Success;
+      diag_attempt_ = attempt;
+      diag_status_ = 0;
+      diag_headers_received_ = false;
+      diag_in_backoff_ = false;
+      diag_send_start_time_ = std::chrono::steady_clock::now().time_since_epoch().count();
       touch_activity();
 
       send_success = cli->send(req, res, error);
@@ -327,7 +360,25 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
         // exponential backoff with one-sided jitter capped at 30s.
         std::chrono::milliseconds delay_ms(2000);
         if (const auto hint = stream_retry_after_ms()) {
-          delay_ms = std::chrono::milliseconds(std::min(*hint, 2147483647LL));
+          // If the provider returned a Retry-After hint > 120,000 ms (2 minutes):
+          // (e.g. Zen sending 30,390,000 ms / ~8.4 hours when daily/hourly quota is exhausted)
+          // This is an EXTENDED RATE LIMIT / QUOTA LOCKOUT. Retrying 5 times every 30s is 100%
+          // guaranteed to fail, burns 2.5 minutes of user time, and hangs the session!
+          if (*hint > 120000LL) {
+            LOG_ERROR("OpenAI stream hit extended rate-limit lockout: Retry-After is {} ms ({:.1f} min). Aborting retries immediately to fail fast.",
+                      *hint, (*hint / 60000.0));
+            const std::string lockout_msg =
+                "Rate limit / quota lockout: upstream requested Retry-After of " +
+                std::to_string(*hint / 1000) + "s (" +
+                std::to_string(static_cast<int>(std::round(*hint / 60000.0))) + " minutes)";
+            push_event(create_error_event(lockout_msg));
+            break;
+          }
+          constexpr long long kMaxRetryAfterMs = 30000LL;
+          if (*hint > kMaxRetryAfterMs) {
+            LOG_WARN("Stream Retry-After hint {} ms exceeds 30s cap, clamping to 30s", *hint);
+          }
+          delay_ms = std::chrono::milliseconds(std::min(*hint, kMaxRetryAfterMs));
         } else {
           const double base =
               2000.0 * std::pow(2.0, attempt - 1);
@@ -343,6 +394,10 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
         LOG_WARN(
             "Stream initial connection failed ({}), retrying attempt {}/{} in {} ms...",
             err_desc, attempt + 1, kMaxStreamRetries + 1, delay_ms.count());
+        diag_status_ = is_network_error ? 0 : res.status;
+        diag_in_backoff_ = true;
+        diag_backoff_ms_ = delay_ms.count();
+        diag_backoff_until_ = (std::chrono::steady_clock::now() + delay_ms).time_since_epoch().count();
         // The backoff counts as activity for poll_event()'s watchdog, and
         // stop_stream() ends it early.
         last_activity_ = (std::chrono::steady_clock::now() + delay_ms)
@@ -350,6 +405,7 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
                              .count();
         std::unique_lock<std::mutex> lock(cancel_mutex_);
         cancel_cv_.wait_for(lock, delay_ms, [this] { return should_stop_.load(); });
+        diag_in_backoff_ = false;
         continue;
       }
 
@@ -440,6 +496,51 @@ void OpenAIStreamImpl::push_finish_event_if_needed() {
 void OpenAIStreamImpl::mark_complete() {
   is_complete_ = true;  // Atomic write
   notify_consumer();
+}
+
+StreamDiagnostics OpenAIStreamImpl::get_diagnostics() const {
+  StreamDiagnostics d;
+  {
+    std::lock_guard<std::mutex> lk(diag_mutex_);
+    d.endpoint = diag_endpoint_;
+    d.model = diag_model_;
+    d.request_bytes = diag_request_bytes_;
+  }
+  d.attempt = diag_attempt_.load();
+  d.max_attempts = diag_max_attempts_.load();
+  d.last_http_status = diag_status_.load();
+  d.in_backoff = diag_in_backoff_.load();
+  if (d.in_backoff) {
+    const auto now_ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto until = diag_backoff_until_.load();
+    if (until > now_ticks) {
+      d.backoff_remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::duration(until - now_ticks)).count();
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(cancel_mutex_));
+    d.connected = (active_client_ != nullptr);
+  }
+  d.headers_received = diag_headers_received_.load();
+  d.chunks_received = diag_chunks_.load();
+  d.bytes_received = diag_bytes_.load();
+  const auto first_t = diag_first_chunk_time_.load();
+  const auto send_t = diag_send_start_time_.load();
+  if (first_t > 0 && send_t > 0 && first_t >= send_t) {
+    d.ttft_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::duration(first_t - send_t)).count();
+  }
+  const auto last_t = diag_last_chunk_time_.load();
+  const auto now_ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+  if (last_t > 0) {
+    d.idle_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::duration(now_ticks - last_t)).count();
+  } else if (send_t > 0) {
+    d.idle_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::duration(now_ticks - send_t)).count();
+  }
+  return d;
 }
 
 }  // namespace openai

@@ -234,6 +234,12 @@ class SessionFileLogger final : public logger::Logger {
                      : 0;
     if (ec) sink.bytes = 0;
     sink.stream.open(path, std::ios::app);
+    if (!stem_.empty() && !session_id.empty()) {
+      const std::string alias = dir_ + "/" + session_id + ".log";
+      if (!std::filesystem::exists(alias, ec)) {
+        std::filesystem::create_symlink(std::filesystem::path(path).filename(), alias, ec);
+      }
+    }
     return sinks_.emplace(session_id, std::move(sink)).first->second;
   }
 

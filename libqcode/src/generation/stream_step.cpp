@@ -22,6 +22,50 @@ bool has_usage(const Usage& usage) {
 }
 }  // namespace
 
+std::string explain_stream_root_cause(
+    const StreamDiagnostics& diag,
+    double elapsed_sec,
+    double ttft_ms,
+    size_t reasoning_chars,
+    size_t text_chars,
+    size_t tool_call_count) {
+  if (diag.in_backoff) {
+    return "Upstream rate-limit or overload backoff: provider returned HTTP " +
+           std::to_string(diag.last_http_status) + ". Backoff in progress (" +
+           std::to_string(std::max(0LL, diag.backoff_remaining_ms / 1000)) + "s remaining, attempt " +
+           std::to_string(diag.attempt) + "/" + std::to_string(diag.max_attempts) + ").";
+  }
+  if (ttft_ms < 0.0) {
+    if (!diag.headers_received) {
+      return "Upstream prompt ingestion / queue delay: request payload (" +
+             std::to_string(diag.request_bytes) + " bytes) sent to " +
+             (diag.endpoint.empty() ? "provider" : diag.endpoint) +
+             ", but no response headers or tokens received after " +
+             std::to_string(static_cast<int>(elapsed_sec)) +
+             "s (TTFT not reached). Provider may be under high load or processing large context.";
+    }
+    return "Upstream generation delay: response headers received (HTTP " +
+           std::to_string(diag.last_http_status) +
+           "), but no stream content/tokens delivered after " +
+           std::to_string(static_cast<int>(elapsed_sec)) + "s.";
+  }
+  // TTFT has arrived
+  if (diag.idle_ms > 30000.0) {
+    return "Stream stalled mid-generation: no new SSE chunks received for " +
+           std::to_string(static_cast<int>(diag.idle_ms / 1000.0)) +
+           "s after initial tokens (TTFT was " +
+           std::to_string(static_cast<int>(ttft_ms)) +
+           "ms). Upstream model may be stuck in reasoning loop or network connection stalled.";
+  }
+  return "Long active generation: model is actively producing tokens (TTFT " +
+         std::to_string(static_cast<int>(ttft_ms)) + "ms, received " +
+         std::to_string(diag.chunks_received) + " chunks / " +
+         std::to_string(diag.bytes_received) + " bytes, reasoning=" +
+         std::to_string(reasoning_chars) + " chars, text=" +
+         std::to_string(text_chars) + " chars, tool_calls=" +
+         std::to_string(tool_call_count) + ").";
+}
+
 void StreamAccumulator::add(const StreamEvent& event) {
   if (event.is_text_delta()) {
     text_ += event.text_delta;
@@ -138,11 +182,43 @@ StreamResult stream;
 
   auto last_event = std::chrono::steady_clock::now();
   auto next_heartbeat = last_event + kHeartbeatInterval;
+  auto last_slow_log = start_time;
+  size_t accumulated_text_len = 0;
+  size_t accumulated_reasoning_len = 0;
+  size_t accumulated_tool_calls = 0;
+
   while (!stream.is_complete()) {
     // Wake in time for a pending flush; otherwise once per abort slice.
     const bool buffered = !text_buffer.empty() || !reasoning_buffer.empty();
     auto event = stream.poll(buffered ? kFlushInterval : kAbortSlice);
     const auto now = std::chrono::steady_clock::now();
+    const auto elapsed = std::chrono::duration<double>(now - start_time).count();
+
+    // Monitor for requests taking more than a minute (60s)
+    if (elapsed >= 60.0 && (now - last_slow_log >= std::chrono::seconds(30))) {
+      last_slow_log = now;
+      const auto diag = stream.get_diagnostics();
+      const std::string root_cause = explain_stream_root_cause(
+          diag, elapsed, ttft_ms,
+          accumulated_reasoning_len + reasoning_buffer.size(),
+          accumulated_text_len + text_buffer.size(),
+          accumulated_tool_calls);
+
+      LOG_WARN("[SLOW LLM REQUEST] Model '{}' request taking {:.1f}s (> 1 min). "
+               "Session: {}. Root cause: {}. Diagnostics: endpoint='{}', attempt={}/{}, "
+               "status={}, sent_bytes={}, chunks={}, recv_bytes={}, ttft={:.1f}ms, idle={:.1f}s",
+               options.model, elapsed, ctx.session_id, root_cause, diag.endpoint,
+               diag.attempt, diag.max_attempts, diag.last_http_status,
+               diag.request_bytes, diag.chunks_received, diag.bytes_received,
+               diag.ttft_ms, diag.idle_ms / 1000.0);
+
+      bus.publish<ErrorOccurred>({
+          .session_id = ctx.session_id,
+          .message = "Model '" + options.model + "' taking " +
+                     std::to_string(static_cast<int>(elapsed)) + "s: " + root_cause,
+          .severity = "warn",
+      });
+    }
 
     if (ctx.abort_flag && ctx.abort_flag->load()) {
       LOG_INFO("stream_step: abort requested");
@@ -176,15 +252,19 @@ StreamResult stream;
 
     step.add(*event);
     if (event->is_text_delta()) {
+      accumulated_text_len += event->text_delta.size();
       text_buffer += event->text_delta;
     } else if (event->is_reasoning_delta()) {
       // OpenRouter encrypts reasoning as [REDACTED]; the UI never shows it.
       if (event->text_delta.find("[REDACTED]") == std::string::npos) {
+        accumulated_reasoning_len += event->text_delta.size();
         reasoning_buffer += event->text_delta;
       }
       if (event->metadata && !event->metadata->empty()) {
         reasoning_signature = *event->metadata;
       }
+    } else if (event->is_tool_call()) {
+      accumulated_tool_calls++;
     } else if (event->is_error()) {
       break;
     }
@@ -195,6 +275,16 @@ StreamResult stream;
   flush();
   auto res = step.take();
   if (ttft_ms >= 0.0) res.ttft_ms = ttft_ms;
+
+  const auto total_duration_s =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
+  if (total_duration_s >= 60.0) {
+    LOG_INFO("[SLOW LLM REQUEST COMPLETED] Model '{}' finished after {:.1f}s (> 1 min). "
+             "Finish reason: {}. Total text: {} chars, reasoning: {} chars, tool calls: {}.",
+             options.model, total_duration_s, res.finishReasonToString(),
+             res.text.size(), res.reasoning.size(), res.tool_calls.size());
+  }
+
   return res;
 
 }

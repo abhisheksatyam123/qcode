@@ -709,5 +709,40 @@ TEST(ToolResultOrderTest, LiveInsertKeepsCallOrderWhateverFinishesFirst) {
   EXPECT_EQ(tool_result_insert_position(h, "other"), h.size());
 }
 
+
+TEST(StreamDiagnosticsTest, DiagnosticsCaptureStreamStateAndRootCauses) {
+  openai::OpenAIStreamImpl impl;
+  auto diag = impl.get_diagnostics();
+  EXPECT_EQ(diag.attempt, 1);
+  EXPECT_EQ(diag.chunks_received, 0u);
+  EXPECT_EQ(diag.bytes_received, 0u);
+  EXPECT_FALSE(diag.in_backoff);
+
+  // Test root-cause explanations across different states
+  StreamDiagnostics backoff_diag;
+  backoff_diag.in_backoff = true;
+  backoff_diag.last_http_status = 429;
+  backoff_diag.backoff_remaining_ms = 15000;
+  backoff_diag.attempt = 2;
+  backoff_diag.max_attempts = 6;
+  std::string root_backoff = explain_stream_root_cause(backoff_diag, 65.0, -1.0, 0, 0, 0);
+  EXPECT_NE(root_backoff.find("rate-limit"), std::string::npos);
+  EXPECT_NE(root_backoff.find("429"), std::string::npos);
+
+  StreamDiagnostics queue_diag;
+  queue_diag.endpoint = "https://opencode.ai/zen/v1/chat/completions";
+  queue_diag.request_bytes = 45000;
+  queue_diag.headers_received = false;
+  std::string root_queue = explain_stream_root_cause(queue_diag, 70.0, -1.0, 0, 0, 0);
+  EXPECT_NE(root_queue.find("prompt ingestion / queue delay"), std::string::npos);
+  EXPECT_NE(root_queue.find("45000 bytes"), std::string::npos);
+
+  StreamDiagnostics stall_diag;
+  stall_diag.chunks_received = 10;
+  stall_diag.idle_ms = 35000.0;
+  std::string root_stall = explain_stream_root_cause(stall_diag, 62.0, 5000.0, 200, 100, 0);
+  EXPECT_NE(root_stall.find("stalled mid-generation"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace qcode

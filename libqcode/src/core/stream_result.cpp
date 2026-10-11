@@ -96,4 +96,9 @@ void StreamResult::stop() {
   }
 }
 
+StreamDiagnostics StreamResult::get_diagnostics() const {
+  if (!stream_result_impl_) return {};
+  return stream_result_impl_->get_diagnostics();
+}
+
 }  // namespace qcode

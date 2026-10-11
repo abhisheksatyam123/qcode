@@ -12,6 +12,23 @@
 
 namespace qcode {
 
+struct StreamDiagnostics {
+  std::string endpoint;
+  std::string model;
+  size_t request_bytes = 0;
+  int attempt = 1;
+  int max_attempts = 1;
+  int last_http_status = 0;
+  bool in_backoff = false;
+  long long backoff_remaining_ms = 0;
+  bool connected = false;
+  bool headers_received = false;
+  size_t chunks_received = 0;
+  size_t bytes_received = 0;
+  double ttft_ms = -1.0;
+  double idle_ms = 0.0;
+};
+
 namespace internal {
 class StreamResultImpl {
  public:
@@ -27,6 +44,7 @@ class StreamResultImpl {
     if (!has_more_events()) return std::nullopt;
     return get_next_event();
   }
+  virtual StreamDiagnostics get_diagnostics() const { return {}; }
 };
 }  // namespace internal
 
@@ -88,6 +106,9 @@ class StreamResult {
 
   // Cooperative cancel for in-flight HTTP streams (Esc / abort).
   void stop();
+
+  // Diagnostics for in-flight stream (endpoint, attempt, backoff, chunks, idle time).
+  StreamDiagnostics get_diagnostics() const;
 
  private:
   std::unique_ptr<internal::StreamResultImpl> stream_result_impl_;

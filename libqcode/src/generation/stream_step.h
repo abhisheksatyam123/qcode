@@ -38,6 +38,15 @@ class StreamAccumulator {
 // flushed before returning) and returns the accumulated step. Checks
 // ctx.abort_flag every 250 ms and then returns "Aborted by user"; posts a
 // "Still waiting for the model" notice after each 15 s without events.
+// Diagnostic explainer for slow stream requests (>60s)
+std::string explain_stream_root_cause(
+    const StreamDiagnostics& diag,
+    double elapsed_sec,
+    double ttft_ms,
+    size_t reasoning_chars,
+    size_t text_chars,
+    size_t tool_call_count);
+
 GenerateResult stream_step(Client& client, const StreamOptions& options,
                            bus::BusPort& bus, const GenerationContext& ctx);
 

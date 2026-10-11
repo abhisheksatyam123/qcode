@@ -1,4 +1,5 @@
 #include <qcode/tools/task_tool.h>
+#include <qcode/core/logger.h>
 
 #include <qcode/session/session_store.h>
 #include <qcode/tools/task_target.h>
@@ -149,6 +150,8 @@ class Team {
       ++workers_;
     }
     std::thread([this, id, task, job = std::move(job)] {
+      qcode::logger::ScopedThreadSession bind(id);
+      qcode::logger::set_thread_name("subagent:" + id);
       JsonValue result;
       try {
         result = job();

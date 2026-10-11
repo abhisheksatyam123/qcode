@@ -244,6 +244,39 @@ TEST(RetryPolicyTest, ExhaustsFiveRetriesThenSurfacesFailure) {
 // A provider Retry-After hint is honored verbatim (upstream delay(): header
 // values bypass the exponential schedule and the no-header cap). Uses a small
 // hint above a tiny max_delay so the test stays fast.
+TEST(RetryPolicyTest, ClampsHugeRetryAfterHintTo30s) {
+  retry::RetryConfig config;
+  retry::RetryPolicy policy(config);
+  // 8500s (~2.36 hours) from Zen must be clamped to 30000ms (30s)
+  EXPECT_EQ(policy.next_wait(1, 8500000), std::chrono::milliseconds(30000));
+  // 1260s (~21 minutes) from Zen must be clamped to 30000ms (30s)
+  EXPECT_EQ(policy.next_wait(1, 1260000), std::chrono::milliseconds(30000));
+  // A modest 200ms hint is respected verbatim
+  EXPECT_EQ(policy.next_wait(1, 200), std::chrono::milliseconds(200));
+}
+
+TEST(RetryPolicyTest, ExtendedLockoutFailsFastWithoutRetrying) {
+  retry::RetryConfig config;
+  config.max_retries = 3;
+  retry::RetryPolicy policy(config);
+
+  int call_count = 0;
+  auto result =
+      policy.execute_with_retry<std::function<GenerateResult()>, GenerateResult>(
+          [&call_count]() -> GenerateResult {
+            call_count++;
+            GenerateResult r("HTTP 429 quota exhausted");
+            r.is_retryable = true;
+            r.retry_after_ms = 8500000;  // 8500s (~2.36h) lockout from upstream
+            return r;
+          },
+          [](const GenerateResult& r) { return r.is_retryable.value_or(false); });
+
+  // Must fail immediately on first attempt without burning retries or sleeping
+  EXPECT_EQ(call_count, 1);
+  EXPECT_FALSE(result.is_success());
+}
+
 TEST(RetryPolicyTest, HonorsRetryAfterHint) {
   retry::RetryConfig config;
   config.max_retries = 2;

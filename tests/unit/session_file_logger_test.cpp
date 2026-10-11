@@ -72,6 +72,13 @@ TEST_F(SessionFileLoggerTest, WritesToSeparateSessionFiles) {
   EXPECT_TRUE(std::filesystem::exists(server_path));
   EXPECT_TRUE(std::filesystem::exists(sess_a_path));
   EXPECT_TRUE(std::filesystem::exists(sess_b_path));
+  // Verify direct session_id.log symlink alias exists
+  const std::string sess_a_alias = test_dir_ + "/sess-aaa.log";
+  const std::string sess_b_alias = test_dir_ + "/sess-bbb.log";
+  EXPECT_TRUE(std::filesystem::exists(sess_a_alias));
+  EXPECT_TRUE(std::filesystem::is_symlink(sess_a_alias));
+  EXPECT_TRUE(std::filesystem::exists(sess_b_alias));
+  EXPECT_TRUE(std::filesystem::is_symlink(sess_b_alias));
 
   std::string server_content = read_file(server_path);
   std::string sess_a_content = read_file(sess_a_path);

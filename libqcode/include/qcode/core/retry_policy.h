@@ -42,6 +42,19 @@ class RetryPolicy {
 
   RetryConfig& config() { return config_; }
 
+  std::chrono::milliseconds next_wait(
+      int attempt_1based, std::optional<long long> retry_after_ms) const {
+    if (retry_after_ms.has_value() && *retry_after_ms > 0) {
+      // Sane 30s ceiling prevents multi-minute/hour hangs on upstream rate-limit headers (e.g. Zen 8500s).
+      constexpr long long kMaxRetryAfterMs = 30000LL;
+      return std::chrono::milliseconds(std::min(*retry_after_ms, kMaxRetryAfterMs));
+    }
+    const auto base = exponential(attempt_1based);
+    const auto jittered = apply_jitter(base);
+    if (jittered > config_.max_delay) return config_.max_delay;
+    return jittered;
+  }
+
   template <typename Func, typename Result>
   Result execute_with_retry(
       Func&& func,
@@ -65,7 +78,13 @@ class RetryPolicy {
         // remain. Otherwise surface the failed result directly rather than
         // throwing RetryError (callers prefer a failed Result).
         if (is_retryable(result) && attempt < config_.max_retries && !aborted()) {
-          const auto wait = next_wait(attempt + 1, extract_retry_after(result));
+          const auto retry_after = extract_retry_after(result);
+          if (retry_after.has_value() && *retry_after > 120000LL) {
+            LOG_ERROR("Request failed with extended rate-limit lockout (Retry-After {} ms / {:.1f} min). Aborting retries to fail fast.",
+                      *retry_after, (*retry_after / 60000.0));
+            return result;
+          }
+          const auto wait = next_wait(attempt + 1, retry_after);
           LOG_WARN(
               "Request failed (attempt {}/{}), retrying after {} ms delay...",
               attempt + 1, config_.max_retries + 1, wait.count());
@@ -134,20 +153,7 @@ class RetryPolicy {
     return std::chrono::milliseconds(static_cast<long long>(std::ceil(waited)));
   }
 
-  // Upstream SessionRetry.delay(): honor the provider's Retry-After hint when
-  // present (it may exceed the no-header cap); otherwise exponential backoff
-  // with jitter capped at max_delay.
-  std::chrono::milliseconds next_wait(
-      int attempt_1based, std::optional<long long> retry_after_ms) const {
-    if (retry_after_ms.has_value() && *retry_after_ms > 0) {
-      constexpr long long kMax32BitMs = 2147483647LL;  // setTimeout ceiling
-      return std::chrono::milliseconds(std::min(*retry_after_ms, kMax32BitMs));
-    }
-    const auto base = exponential(attempt_1based);
-    const auto jittered = apply_jitter(base);
-    if (jittered > config_.max_delay) return config_.max_delay;
-    return jittered;
-  }
+
 
   template <typename Result>
   std::optional<long long> extract_retry_after(const Result& result) const {

@@ -69,6 +69,25 @@ void AnthropicStreamImpl::start_stream(const std::string& url,
     reset_attempt_state();
     event_timeout_ = default_event_timeout();
     touch_activity();
+
+    {
+      std::lock_guard<std::mutex> lk(diag_mutex_);
+      diag_endpoint_ = url;
+      diag_model_ = request_body.value("model", "");
+      diag_request_bytes_ = request_body.dump().size();
+    }
+    diag_attempt_ = 1;
+    diag_max_attempts_ = max_retries_ + 1;
+    diag_status_ = 0;
+    diag_in_backoff_ = false;
+    diag_backoff_ms_ = 0;
+    diag_backoff_until_ = 0;
+    diag_headers_received_ = false;
+    diag_chunks_ = 0;
+    diag_bytes_ = 0;
+    diag_first_chunk_time_ = 0;
+    diag_last_chunk_time_ = 0;
+    diag_send_start_time_ = 0;
   }
 
   auto sid = qcode::logger::thread_session_id();
@@ -214,8 +233,17 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
       bool first_byte_received = false;
       auto attempt_start = std::chrono::steady_clock::now();
 
+      diag_attempt_ = attempt + 1;
+      diag_max_attempts_ = max_retries_ + 1;
+      diag_status_ = 0;
+      diag_headers_received_ = false;
+      diag_in_backoff_ = false;
+      diag_send_start_time_ = std::chrono::steady_clock::now().time_since_epoch().count();
+
       req.response_handler = [&](const httplib::Response& res) {
         status = res.status;
+        diag_status_ = res.status;
+        diag_headers_received_ = true;
         return true;
       };
       req.content_receiver = [&](const char* data, size_t len, uint64_t, uint64_t) {
@@ -224,12 +252,16 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
         
         if (!first_byte_received) {
             first_byte_received = true;
+            diag_first_chunk_time_ = std::chrono::steady_clock::now().time_since_epoch().count();
             ttfb_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - attempt_start).count();
         }
 
         ++chunks;
         bytes += len;
+        diag_chunks_ = chunks;
+        diag_bytes_ = bytes;
+        diag_last_chunk_time_ = std::chrono::steady_clock::now().time_since_epoch().count();
         total_chunks++;
         total_bytes += len;
         
@@ -292,6 +324,11 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
         if (sent && res.has_header("Retry-After")) {
            try {
              int secs = std::stoi(res.get_header_value("Retry-After"));
+             if (secs > 120) {
+               LOG_ERROR("[anthropic] stream hit extended rate-limit lockout: Retry-After is {}s. Aborting retries to fail fast.", secs);
+               push_event(create_error_event("Rate limit / quota lockout: upstream requested Retry-After of " + std::to_string(secs) + "s"));
+               break;
+             }
              if (secs > 0) delay_ms = std::min<std::chrono::milliseconds>(std::chrono::seconds(secs), std::chrono::seconds(30));
            } catch (...) {}
         } else {
@@ -310,9 +347,14 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
         LOG_WARN("[anthropic] stream attempt {}/{} failed ({}) after {} ms total; retrying in {} ms",
                  attempt + 1, max_retries_ + 1, err_desc, elapsed_ms, delay_ms.count());
 
+        diag_status_ = status;
+        diag_in_backoff_ = true;
+        diag_backoff_ms_ = delay_ms.count();
+        diag_backoff_until_ = (std::chrono::steady_clock::now() + delay_ms).time_since_epoch().count();
         last_activity_ = (std::chrono::steady_clock::now() + delay_ms).time_since_epoch().count();
         std::unique_lock<std::mutex> lock(cancel_mutex_);
         cancel_cv_.wait_for(lock, delay_ms, [this] { return stop_requested_.load(); });
+        diag_in_backoff_ = false;
         
         continue;
       }
@@ -526,6 +568,51 @@ void AnthropicStreamImpl::handle_stream_error(int status_code, const std::string
   StreamEvent error_event(kStreamEventTypeError,
       "Stream error (" + std::to_string(status_code) + "): " + error_body);
   push_event(error_event);
+}
+
+StreamDiagnostics AnthropicStreamImpl::get_diagnostics() const {
+  StreamDiagnostics d;
+  {
+    std::lock_guard<std::mutex> lk(diag_mutex_);
+    d.endpoint = diag_endpoint_;
+    d.model = diag_model_;
+    d.request_bytes = diag_request_bytes_;
+  }
+  d.attempt = diag_attempt_.load();
+  d.max_attempts = diag_max_attempts_.load();
+  d.last_http_status = diag_status_.load();
+  d.in_backoff = diag_in_backoff_.load();
+  if (d.in_backoff) {
+    const auto now_ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto until = diag_backoff_until_.load();
+    if (until > now_ticks) {
+      d.backoff_remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::duration(until - now_ticks)).count();
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(cancel_mutex_));
+    d.connected = (active_client_ != nullptr);
+  }
+  d.headers_received = diag_headers_received_.load();
+  d.chunks_received = diag_chunks_.load();
+  d.bytes_received = diag_bytes_.load();
+  const auto first_t = diag_first_chunk_time_.load();
+  const auto send_t = diag_send_start_time_.load();
+  if (first_t > 0 && send_t > 0 && first_t >= send_t) {
+    d.ttft_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::duration(first_t - send_t)).count();
+  }
+  const auto last_t = diag_last_chunk_time_.load();
+  const auto now_ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+  if (last_t > 0) {
+    d.idle_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::duration(now_ticks - last_t)).count();
+  } else if (send_t > 0) {
+    d.idle_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::duration(now_ticks - send_t)).count();
+  }
+  return d;
 }
 
 }  // namespace anthropic

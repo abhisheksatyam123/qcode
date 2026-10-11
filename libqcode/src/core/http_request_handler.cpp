@@ -34,20 +34,30 @@ httplib::Result post_abortable(httplib::ClientImpl& cli, const std::string& path
                                const std::string& body,
                                const std::string& content_type,
                                const std::shared_ptr<std::atomic<bool>>& abort_flag) {
-  if (!abort_flag) return cli.Post(path, headers, body, content_type);
   // Already stopped (e.g. Esc during a retry back-off): skip the round trip.
-  if (abort_flag->load()) return httplib::Result{nullptr, httplib::Error::Canceled};
+  if (abort_flag && abort_flag->load()) return httplib::Result{nullptr, httplib::Error::Canceled};
 
   std::mutex mu;
   std::condition_variable cv;
   bool done = false;
+  const auto post_start = std::chrono::steady_clock::now();
+  auto last_slow_log = post_start;
+
   std::thread watcher([&] {
     std::unique_lock<std::mutex> lock(mu);
     while (!cv.wait_for(lock, std::chrono::milliseconds(50), [&] { return done; })) {
-      if (abort_flag->load()) {
+      if (abort_flag && abort_flag->load()) {
         lock.unlock();
         cli.stop();
         lock.lock();
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (now - post_start >= std::chrono::seconds(60) && now - last_slow_log >= std::chrono::seconds(30)) {
+        last_slow_log = now;
+        const auto elapsed_sec = std::chrono::duration<double>(now - post_start).count();
+        LOG_WARN("[SLOW LLM REQUEST] Non-streaming HTTP POST to {}:{} in flight for {:.1f}s (> 1 min). "
+                 "Request payload: {} bytes. Root cause: Upstream provider queue delay / slow response generation.",
+                 cli.host(), path, elapsed_sec, body.size());
       }
     }
   });
@@ -62,6 +72,13 @@ httplib::Result post_abortable(httplib::ClientImpl& cli, const std::string& path
   try {
     auto res = cli.Post(path, headers, body, content_type);
     finish();
+    const auto total_sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - post_start).count();
+    if (total_sec >= 60.0) {
+      LOG_INFO("[SLOW LLM REQUEST COMPLETED] HTTP POST to {}:{} completed after {:.1f}s (> 1 min). "
+               "Status: {}, Response bytes: {}",
+               cli.host(), path, total_sec,
+               res ? res->status : 0, res ? res->body.size() : 0);
+    }
     return res;
   } catch (...) {
     finish();  // a joinable std::thread would std::terminate on unwind

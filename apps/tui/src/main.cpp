@@ -73,6 +73,12 @@ static void print_tui_usage(const char* argv0) {
 // Same resolution as qcode-server so both processes share one log directory.
 static std::string tui_log_dir() {
     if (const char* d = std::getenv("QCODE_LOG_DIR")) return d;
+    if (const char* home = std::getenv("HOME")) {
+        std::string p = std::string(home) + "/.qcode/logs";
+        std::error_code ec;
+        std::filesystem::create_directories(p, ec);
+        if (!ec) return p;
+    }
     return "/tmp/qcode-logs";
 }
 

@@ -11,6 +11,7 @@
 #include <qcode/tools/task_tool.h>
 #include <qcode/tools/tool_executor.h>
 #include <qcode/core/enums.h>
+#include <qcode/core/errors.h>
 #include <qcode/core/tool.h>
 
 namespace qcode {
@@ -122,6 +123,8 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
   size_t live_context = 0;
   size_t compact_threshold = auto_compact.threshold;
   int last_compact_step = -1;
+  int step_retries = 0;
+  constexpr int kMaxStepRetries = 3;
 
   for (int step = 0; step_cap < 0 || step < step_cap; ++step) {
     pending_tool_results = false;
@@ -178,9 +181,14 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
         live_context = estimate_tokens(step_messages);
         if (auto_compact.on_compacted) auto_compact.on_compacted(body);
       } else {
-        LOG_WARN("MultiStepCoordinator: auto-compaction failed ({}); continuing",
+        LOG_WARN("MultiStepCoordinator: auto-compaction failed ({}); applying fallback prune",
                  summary.error_message());
-        compact_threshold = 0;
+        step_messages = qcode::prune_context(
+            std::move(step_messages), compact_threshold > 0 ? compact_threshold : 64000);
+        initial_count = step_messages.size();
+        response_messages.clear();
+        step_options.messages = step_messages;
+        live_context = estimate_tokens(step_messages);
       }
     }
 
@@ -196,6 +204,86 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
         static_cast<int>(step_result.finish_reason));
 
     if (!step_result.is_success()) {
+      const std::string err = step_result.error_message();
+      if (initial_options.abort_flag && initial_options.abort_flag->load()) {
+        final_result.finish_reason = kFinishReasonError;
+        final_result.error = "Aborted by user";
+        pending_tool_results = false;
+        break;
+      }
+
+      // Check context overflow / payload too large / HTTP 400/413
+      const bool is_overflow =
+          qcode::is_context_overflow_error(0, err) ||
+          err.find("context_length_exceeded") != std::string::npos ||
+          err.find("413") != std::string::npos ||
+          ((err.find("400") != std::string::npos || err.find("invalid_request_error") != std::string::npos) &&
+           (err.find("too large") != std::string::npos ||
+            err.find("context") != std::string::npos ||
+            err.find("invalid request") != std::string::npos ||
+            live_context >= (compact_threshold > 0 ? compact_threshold : 32000)));
+
+      if (is_overflow && step_messages.size() > 2) {
+        LOG_WARN("MultiStepCoordinator: context overflow at step {} ({}); compacting/pruning and retrying",
+                 step + 1, err);
+        GenerateResult summary =
+            generate_func(compaction::build_in_loop_request(step_options));
+        if (summary.is_success() &&
+            summary.text.find_first_not_of(" \t\r\n") != std::string::npos) {
+          const std::string handoff =
+              initial_options.session_id.empty()
+                  ? std::string()
+                  : compaction::write_handoff(initial_options.session_id, summary.text);
+          const std::string body = compaction::continuation_message(
+              summary.text, handoff, initial_options.workspace, /*mid_turn=*/true);
+          step_messages.clear();
+          step_messages.push_back(Message::user(body));
+          initial_count = 1;
+          response_messages.clear();
+          step_options.messages = step_messages;
+          live_context = estimate_tokens(step_messages);
+          if (auto_compact.on_compacted) auto_compact.on_compacted(body);
+        } else {
+          step_messages = qcode::prune_context(
+              std::move(step_messages), compact_threshold > 0 ? (compact_threshold * 7) / 10 : 32000);
+          initial_count = step_messages.size();
+          response_messages.clear();
+          step_options.messages = step_messages;
+          live_context = estimate_tokens(step_messages);
+        }
+        --step;  // Retry step
+        continue;
+      }
+
+      // Check transient error (5xx, 429, timeout, network failure, Endpoint unavailable)
+      const bool is_transient =
+          qcode::is_error_message_retryable(err) ||
+          err.find("500") != std::string::npos ||
+          err.find("502") != std::string::npos ||
+          err.find("503") != std::string::npos ||
+          err.find("429") != std::string::npos ||
+          err.find("Endpoint is unavailable") != std::string::npos;
+
+      if (is_transient && step_retries < kMaxStepRetries) {
+        step_retries++;
+        const int delay_sec = step_retries * 2;
+        LOG_WARN("MultiStepCoordinator: transient error at step {} ({}); retrying in {}s ({}/{})",
+                 step + 1, err, delay_sec, step_retries, kMaxStepRetries);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(delay_sec);
+        while (std::chrono::steady_clock::now() < until) {
+          if (initial_options.abort_flag && initial_options.abort_flag->load()) break;
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (initial_options.abort_flag && initial_options.abort_flag->load()) {
+          final_result.finish_reason = kFinishReasonError;
+          final_result.error = "Aborted by user";
+          pending_tool_results = false;
+          break;
+        }
+        --step;  // Retry step
+        continue;
+      }
+
       final_result.finish_reason = step_result.finish_reason;
       final_result.error = step_result.error;
       pending_tool_results = false;
@@ -204,6 +292,7 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
       }
       break;
     }
+    step_retries = 0;
 
     // Execute tool calls if the model requested tools and they haven't been executed yet
     if (step_result.has_tool_calls() && step_result.tool_results.empty() && initial_options.has_tools()) {

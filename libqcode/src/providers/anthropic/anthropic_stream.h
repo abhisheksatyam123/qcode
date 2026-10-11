@@ -36,6 +36,7 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
   bool has_more_events() const override;
   void stop_stream() override;
   std::optional<StreamEvent> poll_event(std::chrono::milliseconds timeout) override;
+  StreamDiagnostics get_diagnostics() const override;
 
 
   // Override the idle stream timeout (defaults to 120s; env
@@ -103,6 +104,24 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
   std::mutex thread_mutex_;  // serializes start_stream / double-start guard
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> stream_complete_{false};
+
+  // Diagnostic state
+  mutable std::mutex diag_mutex_;
+  std::string diag_endpoint_;
+  std::string diag_model_;
+  size_t diag_request_bytes_ = 0;
+  std::atomic<int> diag_attempt_{1};
+  std::atomic<int> diag_max_attempts_{5};
+  std::atomic<int> diag_status_{0};
+  std::atomic<bool> diag_in_backoff_{false};
+  std::atomic<long long> diag_backoff_ms_{0};
+  std::atomic<std::chrono::steady_clock::rep> diag_backoff_until_{0};
+  std::atomic<bool> diag_headers_received_{false};
+  std::atomic<size_t> diag_chunks_{0};
+  std::atomic<size_t> diag_bytes_{0};
+  std::atomic<std::chrono::steady_clock::rep> diag_first_chunk_time_{0};
+  std::atomic<std::chrono::steady_clock::rep> diag_last_chunk_time_{0};
+  std::atomic<std::chrono::steady_clock::rep> diag_send_start_time_{0};
 };
 
 }  // namespace anthropic
