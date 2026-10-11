@@ -406,3 +406,33 @@ test('WebUI Stats tab follows live model calls', () => {
   assert.match(appJs, /function scheduleStatsRefresh\(\) \{\s*if \(statsRefreshTimer\) return;/, 'Stats refresh should be debounced');
   assert.match(appJs, /loadStatsTab\(\{ quiet: true \}\)/, 'live refresh should be quiet (no skeleton)');
 });
+
+test('WebUI agent modes and model capability badges', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const utilsJs = fs.readFileSync(path.join(srcDir, 'utils.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // Interactive agent mode selector button
+  assert.match(indexHtml, /<button[^>]+id="agent-mode-btn"/, 'agent-mode-btn should be an interactive button');
+  assert.match(appJs, /showAgentModePicker/, 'app.js should provide showAgentModePicker');
+  assert.match(appJs, /selectAgentMode/, 'app.js should provide selectAgentMode');
+  assert.match(appJs, /formatAgentModeTitle/, 'app.js should format agent mode titles');
+
+  // Mode endpoint POST /session/:id/mode
+  assert.match(appJs, /\/session\/.*\/mode/, 'app.js should persist agent mode to /session/:id/mode');
+
+  // Slash commands
+  assert.match(utilsJs, /name:\s*['"]\/agent['"]/, 'utils.js should declare /agent slash command');
+  assert.match(utilsJs, /name:\s*['"]\/persona['"]/, 'utils.js should declare /persona slash command');
+  assert.match(appJs, /case 'agent':/, 'app.js should handle /agent command');
+  assert.match(appJs, /case 'persona':/, 'app.js should handle /persona command');
+
+  // Model capability badges & formatContextTokens
+  assert.match(utilsJs, /export function formatContextTokens/, 'utils.js should export formatContextTokens');
+  assert.match(utilsJs, /export function modelTypeBadges/, 'utils.js should export modelTypeBadges');
+  assert.match(appJs, /formatModelDropdownLabel/, 'app.js should format model dropdown with badges');
+  assert.match(styleCss, /\.item-badges/, 'style.css should style .item-badges');
+  assert.match(styleCss, /\.item-badge\.badge-reasoning/, 'style.css should style reasoning badge');
+  assert.match(styleCss, /\.agent-mode-btn\.autonomous/, 'style.css should style autonomous agent mode button');
+});

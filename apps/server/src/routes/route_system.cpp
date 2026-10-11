@@ -57,7 +57,21 @@ void register_system_routes(
             for (const auto& p : *providers_list) {
                 nlohmann::json models = nlohmann::json::array();
                 for (const auto& m : p.models) {
-                    models.push_back({{"id", m.id}, {"name", m.name}});
+                    const bool is_free = m.cost_configured && m.input_cost == 0.0 && m.output_cost == 0.0;
+                    models.push_back({
+                        {"id", m.id},
+                        {"name", m.name},
+                        {"context_window", m.context_window},
+                        {"reasoning", m.reasoning},
+                        {"tool_call", m.tool_call},
+                        {"vision", m.vision},
+                        {"input_cost", m.input_cost},
+                        {"output_cost", m.output_cost},
+                        {"cost_configured", m.cost_configured},
+                        {"is_free", is_free},
+                        {"reasoning_efforts", m.reasoning_efforts},
+                        {"reasoning_default", m.reasoning_default}
+                    });
                 }
                 j.push_back({{"id", p.id}, {"name", p.name}, {"models", models}});
             }

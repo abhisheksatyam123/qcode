@@ -1300,6 +1300,29 @@ static void run_tools_generation_bus(
               "stop (text_len={})",
               auto_continues, text_len);
           append_message(qcode::Message::user(std::string(kBuildContinueNudge)));
+        } else if (!is_child_turn && TaskTool::has_running_tasks(ctx.session_id)) {
+          LOG_INFO("run_tools_generation_bus: background task(s) active for lead {}; waiting for report/notice",
+                   ctx.session_id);
+          bus.publish<ErrorOccurred>({
+              .session_id = ctx.session_id,
+              .message = "Monitoring subagent execution in background...",
+              .severity = "info"
+          });
+          TaskTool::wait_for_notices_or_tasks(ctx.session_id, std::chrono::seconds(30), ctx.abort_flag);
+          if (ctx.abort_flag && ctx.abort_flag->load()) {
+            aborted = true;
+            break;
+          }
+        } else if (!is_child_turn && (ctx.agent_mode == "autonomous" || ctx.agent_mode == "monitor") &&
+                   auto_continues < 50) {
+          ++auto_continues;
+          LOG_INFO("run_tools_generation_bus: autonomous monitor cycle {} for session {}",
+                   auto_continues, ctx.session_id);
+          append_message(qcode::Message::user(
+              "[System Note: Autonomous monitor cycle. Check current task file status. "
+              "If tasks remain open, continue delegating with the task tool, executing, or verifying. "
+              "If all tasks in the plan are fully done and verified, summarize results and finish.]"
+          ));
         } else {
           LOG_DEBUG(
               "run_tools_generation_bus: step={} no tool calls, finishing",
@@ -1893,7 +1916,8 @@ void run_generation_with_bus(
                              (!ctx.session_id.empty() && qcode::session::is_child_session(ctx.session_id));
     // Prompt-cache prefix: single source of truth shared with compaction
     // (build_cache_replay_request) so both requests stay byte-identical.
-    base_opts.system = build_turn_system_prompt(system_prompt, is_subagent, providers);
+    base_opts.system = build_turn_system_prompt(system_prompt, is_subagent, providers,
+                                                provider_id, resolved_model_id, ctx.agent_mode);
     if (is_subagent) {
         LOG_INFO("ChatBus: agent_mode=subagent (focused worker, nested delegation disabled)");
     } else {

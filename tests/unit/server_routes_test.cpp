@@ -151,6 +151,12 @@ TEST_F(ServerRoutesTest, ProvidersAndTelemetryRoutes) {
     ASSERT_TRUE(j_prov.is_array());
     ASSERT_FALSE(j_prov.empty());
     EXPECT_EQ(j_prov[0].value("id", ""), "mock-provider");
+    ASSERT_TRUE(j_prov[0]["models"].is_array());
+    ASSERT_FALSE(j_prov[0]["models"].empty());
+    EXPECT_TRUE(j_prov[0]["models"][0].contains("reasoning"));
+    EXPECT_TRUE(j_prov[0]["models"][0].contains("vision"));
+    EXPECT_TRUE(j_prov[0]["models"][0].contains("context_window"));
+    EXPECT_TRUE(j_prov[0]["models"][0].contains("is_free"));
 
     auto res_tele = client_->Get("/api/models/performance");
     ASSERT_TRUE(res_tele != nullptr);
@@ -431,15 +437,15 @@ TEST_F(ServerRoutesTest, TasksAndSubagentSessionLookup) {
     std::string sid = nlohmann::json::parse(res_create->body).value("id", "");
     ASSERT_FALSE(sid.empty());
 
-    // Plan mode was removed: the mode-switch route no longer exists.
+    // Mode switch route updates agent_mode and reasoning_mode.
     auto res_mode = client_->Post(
         "/session/" + sid + "/mode",
-        nlohmann::json({{"agent_mode", "plan"}}).dump(),
+        nlohmann::json({{"agent_mode", "autonomous"}}).dump(),
         "application/json");
     ASSERT_TRUE(res_mode);
-    EXPECT_EQ(res_mode->status, 404);
+    EXPECT_EQ(res_mode->status, 200);
     auto after = nlohmann::json::parse(client_->Get("/session/" + sid)->body);
-    EXPECT_NE(after.value("agent_mode", ""), "plan");
+    EXPECT_EQ(after.value("agent_mode", ""), "autonomous");
     EXPECT_TRUE(after.contains("reasoning_mode"));
 }
 

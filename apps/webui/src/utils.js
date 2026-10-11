@@ -1,3 +1,20 @@
+export function formatContextTokens(tokens) {
+  if (!tokens || tokens <= 0) return '';
+  if (tokens >= 1000000) return (tokens / 1000000).toFixed(tokens % 1000000 === 0 ? 0 : 1) + 'M';
+  if (tokens >= 1000) return Math.round(tokens / 1000) + 'k';
+  return String(tokens);
+}
+
+export function modelTypeBadges(model) {
+  const badges = [];
+  if (!model) return badges;
+  if (model.reasoning) badges.push({ type: 'reasoning', text: '🧠 Reasoning' });
+  if (model.vision) badges.push({ type: 'vision', text: '👁 Vision' });
+  if (model.is_free) badges.push({ type: 'free', text: '🆓 Free' });
+  if (model.context_window > 0) badges.push({ type: 'ctx', text: formatContextTokens(model.context_window) + ' ctx' });
+  return badges;
+}
+
 // qcode-webui utils — pure functions, no DOM. Imported by app.js; unit-tested directly.
 
 export function fuzzyScore(query, text) {
@@ -22,7 +39,8 @@ export function fuzzyFilter(query, items) {
   if (!query) return items.slice();
   const out = [];
   for (const it of items) {
-    const hay = [it.label, it.sublabel || '', it.category || '', it.workspace || ''].join(' ');
+    const badgeText = it.badges ? it.badges.map(b => b.text).join(' ') : '';
+    const hay = [it.label, it.sublabel || '', it.category || '', it.workspace || '', badgeText].join(' ');
     const s = fuzzyScore(query, hay);
     if (s >= 0) out.push({ it, s });
   }
@@ -522,6 +540,8 @@ export function transformWikilinks(src) {
 export const SLASH_COMMANDS = [
   { name: '/help',        desc: 'Show help and keyboard shortcuts' },
   { name: '/model',       desc: 'Select a model from any provider' },
+  { name: '/agent',       desc: 'Select agent mode: Orchestrator, Autonomous Monitor, Plan' },
+  { name: '/persona',     desc: 'Select or set custom persona prompt' },
   { name: '/variant',     desc: 'Select thinking / reasoning effort' },
   { name: '/theme',       desc: 'Select a UI theme color' },
   { name: '/new',         desc: 'Start a new session' },
@@ -541,6 +561,8 @@ export const PALETTE_COMMANDS = [
   { id: 'session_compact',     label: 'Compact Context',          sublabel: '/compact',      category: 'Session' },
   { id: 'session_clear_queue', label: 'Clear Prompt Queue',       sublabel: '/clear-queue',  category: 'Session' },
   { id: 'session_retry',       label: 'Retry Last Prompt',        sublabel: '/retry',        category: 'Session' },
+  { id: 'agent_mode',          label: 'Agent Mode',               sublabel: '/agent',        category: 'Agent' },
+  { id: 'persona_select',      label: 'Select Persona',           sublabel: '/persona',      category: 'Agent' },
   { id: 'model_select',        label: 'Select Model',             sublabel: '/model',        category: 'Model' },
   { id: 'model_variant',       label: 'Select Reasoning Variant', sublabel: '/variant',      category: 'Model' },
   { id: 'thinking_toggle',     label: 'Toggle Thinking Trace',    sublabel: 'F2',            category: 'View' },

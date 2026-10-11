@@ -4310,3 +4310,50 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
   vertical-align: -0.1em;
 }
 .session-gen-indicator.spinner { padding-right: 0.8em; }
+
+
+.agent-mode-btn:hover {
+  background: var(--surface-active);
+  border-color: var(--border-focus);
+}
+.agent-mode-btn.autonomous {
+  color: #58a6ff;
+  border-color: rgba(88, 166, 255, 0.5);
+  background: rgba(56, 139, 253, 0.1);
+}
+.agent-mode-btn.plan {
+  color: #f0883e;
+  border-color: rgba(240, 136, 62, 0.5);
+  background: rgba(240, 136, 62, 0.1);
+}
+.item-badges {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+  align-items: center;
+}
+.item-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.item-badge.badge-reasoning {
+  color: #79c0ff;
+  border-color: rgba(56, 139, 253, 0.4);
+}
+.item-badge.badge-vision {
+  color: #d2a8ff;
+  border-color: rgba(163, 113, 247, 0.4);
+}
+.item-badge.badge-free {
+  color: #7ee787;
+  border-color: rgba(46, 160, 67, 0.4);
+}
+.item-badge.badge-ctx {
+  color: #e3b341;
+  border-color: rgba(227, 179, 65, 0.4);
+}

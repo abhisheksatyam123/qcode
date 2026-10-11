@@ -2,7 +2,9 @@
 
 #include <qcode/core/tool.h>
 
+#include <atomic>
 #include <chrono>
+#include <memory>
 #include <functional>
 #include <string>
 #include <vector>
@@ -46,6 +48,14 @@ class TaskTool {
   // [{task_id, sessionId, parent_session_id, description, agent, model, status}]}}.
   static JsonValue list_tasks(const std::string& lead_session_id = "");
   static bool is_session_running(const std::string& session_id);
+  // Checks if any background tasks are currently running for this lead session.
+  static bool has_running_tasks(const std::string& lead_session_id);
+  // Blocks until a background task finishes, a message/notice arrives,
+  // the timeout passes, or abort is set. Returns true if notices are available.
+  static bool wait_for_notices_or_tasks(
+      const std::string& session_id,
+      std::chrono::milliseconds timeout,
+      const std::shared_ptr<std::atomic<bool>>& abort = nullptr);
   // Stop running subagents that are, or belong to, `session_id`.
   static void delete_session_tasks(const std::string& session_id);
 

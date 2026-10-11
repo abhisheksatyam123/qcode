@@ -14,10 +14,17 @@ std::string build_turn_system_prompt(
     bool is_subagent,
     const std::vector<ProviderInfo>& providers,
     std::string_view current_provider_id,
-    std::string_view current_model_id) {
+    std::string_view current_model_id,
+    std::string_view agent_mode) {
   std::string out = system_prompt;
-  if (is_subagent) return out;
-  out += std::string(kOrchestratorReminder);
+  if (is_subagent || agent_mode == "subagent") return out;
+  if (agent_mode == "autonomous" || agent_mode == "monitor") {
+    out += std::string(kAutonomousMonitorReminder);
+  } else if (agent_mode == "plan") {
+    out += std::string(kPlanModeReminder);
+  } else {
+    out += std::string(kOrchestratorReminder);
+  }
   const std::string catalog_section = format_provider_catalog_for_prompt(
       providers, current_provider_id, current_model_id);
   if (!catalog_section.empty()) {

@@ -31,7 +31,8 @@ std::string build_turn_system_prompt(
     bool is_subagent,
     const std::vector<ProviderInfo>& providers,
     std::string_view current_provider_id = "",
-    std::string_view current_model_id = "");
+    std::string_view current_model_id = "",
+    std::string_view agent_mode = "orchestrator");
 
 // Tool definitions dispatched for a turn.
 //   enable_task_tool -> orchestrator tool set, else subagent tool set.

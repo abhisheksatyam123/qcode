@@ -89,7 +89,8 @@ GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
   // Byte-identical to ChatBus's system prompt for the same inputs.
   opts.system = build_turn_system_prompt(input.system_prompt, is_subagent,
                                          input.providers ? *input.providers
-                                                         : kNoProviders);
+                                                         : kNoProviders,
+                                         "", "", input.agent_mode);
   // Replay the history through the same normalization pass the live turn
   // uses, then append the directive as the trailing user message.
   const Model transform_model(wire_model, provider_id);

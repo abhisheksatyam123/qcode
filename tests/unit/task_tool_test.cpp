@@ -187,6 +187,7 @@ TEST(TaskToolTest, BackgroundTaskReturnsAtOnceAndReportsLater) {
   ASSERT_FALSE(id.empty());
   EXPECT_EQ(out["metadata"].value("status", ""), "running");
   EXPECT_TRUE(TaskTool::is_session_running(id));
+  EXPECT_TRUE(TaskTool::has_running_tasks(parent));
   EXPECT_FALSE(TaskTool::has_notices(parent));
   // The lead's turn ending (its abort flag) does not stop a background task.
   lead_abort->store(true);

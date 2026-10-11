@@ -248,6 +248,27 @@ inline constexpr std::string_view kBuildContinueNudge =
     "calls.\n"
     "</system-reminder>";
 
+inline constexpr std::string_view kAutonomousMonitorReminder =
+    "\n\n<system-reminder>\n"
+    "# Autonomous Monitor Agent - System Reminder\n\n"
+    "You are a Self-Running Autonomous Monitor Agent. Your job is to lead the project, "
+    "break down goals into tasks in the task file, delegate work to parallel subagents with the task tool, "
+    "and monitor their execution over long periods. "
+    "When subagents are working in the background, monitor their execution and consume incoming reports. "
+    "Keep the task file (Tasks / Systems / Log) updated continuously. "
+    "When context grows large, auto-compaction will automatically compress history; keep driving the task "
+    "forward until all goals are fully implemented, verified, and closed. Do not stop early while tasks remain open.\n"
+    "</system-reminder>";
+
+inline constexpr std::string_view kPlanModeReminder =
+    "\n\n<system-reminder>\n"
+    "# Plan Mode - System Reminder\n\n"
+    "You are in PLAN mode. Analyze the workspace, explore existing code and architecture, "
+    "and produce a comprehensive, structured implementation plan. "
+    "Do not execute mutating commands or edits to source files in plan mode. "
+    "Focus on system design, requirement breakdown, and risk assessment.\n"
+    "</system-reminder>";
+
 inline constexpr std::string_view kOrchestratorReminder =
     "\n\n<system-reminder>\n"
     "# Orchestrator Mode - System Reminder\n\n"

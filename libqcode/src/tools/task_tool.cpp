@@ -442,6 +442,22 @@ bool TaskTool::is_session_running(const std::string& session_id) {
   return !session_id.empty() && Team::instance().running(session_id).has_value();
 }
 
+bool TaskTool::has_running_tasks(const std::string& lead_session_id) {
+  const std::string lead = lead_of(lead_session_id);
+  for (const auto& [id, t] : Team::instance().running_of(lead)) {
+    if (t.background) return true;
+  }
+  return false;
+}
+
+bool TaskTool::wait_for_notices_or_tasks(
+    const std::string& session_id,
+    std::chrono::milliseconds timeout,
+    const std::shared_ptr<std::atomic<bool>>& abort) {
+  Team::instance().wait(session_id, "", timeout, abort);
+  return Team::instance().has(session_id);
+}
+
 void TaskTool::delete_session_tasks(const std::string& session_id) {
   if (!session_id.empty()) Team::instance().abort_related(session_id);
 }

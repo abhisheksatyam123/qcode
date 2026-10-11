@@ -744,9 +744,13 @@ svr.Post("/sessions", [default_workspace, providers_list](const httplib::Request
     const auto resolved = resolve_provider_model(*providers_list, provider, model, res);
     if (!resolved.provider || !resolved.model) return;
     std::string persona = body.value("persona", "");
+    std::string agent_mode = body.value("agent_mode", "");
     auto id = qcode::session::create_new_session(provider, model, workspace, custom_id);
     if (!persona.empty()) {
         qcode::session::set_session_persona(id, persona);
+    }
+    if (!agent_mode.empty()) {
+        qcode::session::set_session_modes(id, agent_mode, "");
     }
     std::string title = qcode::session::get_session_title(id);
     if (title.empty()) {
@@ -892,7 +896,37 @@ svr.Get("/session/([^/]+)", [](const httplib::Request& req, httplib::Response& r
     res.set_content(R"({"error":"session not found"})", "application/json");
 });
 
-// ── Set agent mode (plan <-> orchestrator), matching TUI toggle ──
+// ── Set agent mode (plan <-> orchestrator <-> autonomous/monitor), matching TUI/WebUI toggle ──
+svr.Post("/session/([^/]+)/mode", [](const httplib::Request& req, httplib::Response& res) {
+    std::string sid = url_decode(req.matches[1]);
+    if (sid.empty() || !qcode::session::is_valid_session_id(sid)) {
+        res.status = 400;
+        res.set_content(R"({"error":"invalid session_id"})", "application/json");
+        return;
+    }
+    nlohmann::json body;
+    try { body = nlohmann::json::parse(req.body); } catch (...) {
+        res.status = 400;
+        res.set_content(R"({"error":"invalid JSON"})", "application/json");
+        return;
+    }
+    std::string agent_mode = body.value("agent_mode", "");
+    std::string reasoning_mode = body.value("reasoning_mode", "");
+    auto stored = qcode::session::get_session_modes(sid);
+    if (agent_mode.empty()) {
+        agent_mode = stored.first.empty() ? "orchestrator" : stored.first;
+    }
+    if (reasoning_mode.empty()) {
+        reasoning_mode = stored.second.empty() ? "off" : stored.second;
+    }
+    qcode::session::set_session_modes(sid, agent_mode, reasoning_mode);
+    res.set_content(nlohmann::json({
+        {"ok", true},
+        {"id", sid},
+        {"agent_mode", agent_mode},
+        {"reasoning_mode", reasoning_mode}
+    }).dump(), "application/json");
+});
 
 // ── Set session persona ──
 svr.Post("/session/([^/]+)/persona", [](const httplib::Request& req, httplib::Response& res) {

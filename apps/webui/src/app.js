@@ -78,7 +78,7 @@ window.copyPlantUmlCode = function(diagramId, btn) {
   });
 };
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -330,6 +330,12 @@ const sessionsRefreshBtn = document.getElementById('sessions-refresh-btn');
 const parentBackBtn = document.getElementById('parent-back-btn');
 const subagentBadge = document.getElementById('subagent-badge');
 const agentModeBtn = document.getElementById('agent-mode-btn');
+if (agentModeBtn) {
+  agentModeBtn.addEventListener('click', () => {
+    if (state.agentMode === 'subagent') return;
+    showAgentModePicker();
+  });
+}
 const thinkingToggleBtn = document.getElementById('thinking-toggle-btn');
 
 // New DOM refs for tabs & layout toggle
@@ -1133,12 +1139,25 @@ async function loadProviders() {
   }
 }
 
+function formatModelDropdownLabel(m) {
+  let label = m.name;
+  const badges = [];
+  if (m.reasoning) badges.push('🧠');
+  if (m.vision) badges.push('👁');
+  if (m.is_free) badges.push('🆓');
+  if (m.context_window > 0) badges.push(formatContextTokens(m.context_window));
+  if (badges.length > 0) {
+    label += ' [' + badges.join(' ') + ']';
+  }
+  return label;
+}
+
 function onProviderChange(idx) {
   const p = state.providers[idx];
   if (!p) return;
   state.provider = p.id;
   modelSelect.innerHTML = p.models.map(m =>
-    `<option value="${m.id}">${m.name}</option>`
+    `<option value="${m.id}">${esc(formatModelDropdownLabel(m))}</option>`
   ).join('');
   if (p.models.length > 0) state.model = p.models[0].id;
 }
@@ -1513,8 +1532,11 @@ function updateStatusBar() {
   if (agentModeBtn) {
     agentModeBtn.classList.toggle('hidden', isSub);
     if (!isSub) {
-      agentModeBtn.textContent = 'Orchestrator';
+      agentModeBtn.textContent = formatAgentModeTitle(state.agentMode);
       agentModeBtn.classList.remove('subagent');
+      agentModeBtn.classList.toggle('autonomous', state.agentMode === 'autonomous' || state.agentMode === 'monitor');
+      agentModeBtn.classList.toggle('plan', state.agentMode === 'plan');
+      agentModeBtn.title = `Agent Mode: ${formatAgentModeTitle(state.agentMode)} (Click to switch)`;
     }
   }
   syncThinkingToggleBtn();
@@ -1729,6 +1751,9 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
       html += `<span class="item-label">${esc(it.label)}</span>`;
       if (it.sublabel) html += `<span class="item-id">${esc(it.sublabel)}</span>`;
       if (it.workspace) html += `<span class="item-id" title="${esc(it.workspace)}">📁 ${esc(shortPath(it.workspace))}</span>`;
+      if (it.badges && it.badges.length) {
+        html += `<span class="item-badges">` + it.badges.map(b => `<span class="item-badge badge-${esc(b.type)}">${esc(b.text)}</span>`).join('') + `</span>`;
+      }
       html += `</div>`;
     }
     body.innerHTML = html;
@@ -1881,6 +1906,134 @@ function addSystemMessage(text) {
   }
 }
 
+function formatAgentModeTitle(mode) {
+  if (mode === 'autonomous' || mode === 'monitor') return 'Autonomous Monitor';
+  if (mode === 'plan') return 'Plan Mode';
+  if (mode === 'subagent') return 'Subagent';
+  if (mode && mode !== 'orchestrator') return mode;
+  return 'Orchestrator';
+}
+
+async function showAgentModePicker() {
+  const currentMode = state.agentMode || 'orchestrator';
+  const modes = [
+    {
+      id: 'orchestrator',
+      label: '⚡ Lead Orchestrator',
+      sublabel: 'Default: plans, executes tools, delegates to parallel subagents',
+      isActive: currentMode === 'orchestrator',
+      badges: [{ type: 'reasoning', text: 'Lead' }]
+    },
+    {
+      id: 'autonomous',
+      label: '🔄 Autonomous Monitor Agent',
+      sublabel: 'Self-running: delegates to subagents, monitors long-running tasks, autocompacts',
+      isActive: currentMode === 'autonomous' || currentMode === 'monitor',
+      badges: [{ type: 'free', text: 'Self-Running' }]
+    },
+    {
+      id: 'plan',
+      label: '📐 Plan Mode',
+      sublabel: 'Read-only architecture analysis & implementation planning',
+      isActive: currentMode === 'plan',
+      badges: [{ type: 'ctx', text: 'Planning' }]
+    }
+  ];
+
+  try {
+    const res = await fetch('/personas');
+    if (res.ok) {
+      const personas = await res.json();
+      if (Array.isArray(personas) && personas.length > 0) {
+        for (const p of personas) {
+          const name = typeof p === 'string' ? p : (p.name || p.id);
+          modes.push({
+            id: 'persona:' + name,
+            label: '🎭 Persona: ' + name,
+            sublabel: (p.description || 'Custom agent persona instruction'),
+            category: 'Personas',
+            isActive: state.persona === name,
+            badges: [{ type: 'vision', text: 'Persona' }]
+          });
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore personas load error
+  }
+
+  showFuzzyPicker('Select Agent Mode / Role', modes, currentMode, async (chosen) => {
+    if (!chosen) return;
+    if (chosen.id.startsWith('persona:')) {
+      const personaName = chosen.id.replace('persona:', '');
+      await selectPersona(personaName);
+      return;
+    }
+    await selectAgentMode(chosen.id);
+  }, 'Choose an agent mode or persona…');
+}
+
+async function selectAgentMode(mode) {
+  state.agentMode = mode;
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (session) {
+    session.agentMode = mode;
+  }
+  syncMainHeader();
+  try {
+    if (state.sessionId) {
+      await fetch('/session/' + encodeURIComponent(state.sessionId) + '/mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_mode: mode })
+      });
+    }
+  } catch (e) {
+    console.error('Failed to persist agent mode:', e);
+  }
+  showToast('Switched to ' + formatAgentModeTitle(mode) + ' mode');
+}
+
+async function selectPersona(personaName) {
+  state.persona = personaName;
+  try {
+    if (state.sessionId) {
+      await fetch('/session/' + encodeURIComponent(state.sessionId) + '/persona', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ persona: personaName })
+      });
+    }
+    showToast(personaName ? ('Loaded persona: ' + personaName) : 'Cleared persona');
+  } catch (e) {
+    showToast('Failed to set persona: ' + e.message, 'error');
+  }
+}
+
+function handleAgentCommand(args) {
+  const clean = (args || '').trim().toLowerCase();
+  if (clean === 'orchestrator' || clean === 'lead') {
+    selectAgentMode('orchestrator');
+  } else if (clean === 'autonomous' || clean === 'monitor' || clean === 'self') {
+    selectAgentMode('autonomous');
+  } else if (clean === 'plan') {
+    selectAgentMode('plan');
+  } else {
+    showAgentModePicker();
+  }
+}
+
+function handlePersonaCommand(args) {
+  const clean = (args || '').trim();
+  if (!clean) {
+    showAgentModePicker();
+  } else if (clean === 'clear' || clean === 'off' || clean === 'none') {
+    selectPersona('');
+  } else {
+    selectPersona(clean);
+  }
+}
+
 // ── Slash command dispatch ──
 function handleSlashCommand(text) {
   const raw = text.slice(1).trim();
@@ -1890,6 +2043,8 @@ function handleSlashCommand(text) {
   switch (cmd) {
     case 'help': case '?': handleHelpCommand(); break;
     case 'model': case 'models': handleModelCommand(args); break;
+    case 'agent': case 'mode': handleAgentCommand(args); break;
+    case 'persona': case 'personas': handlePersonaCommand(args); break;
     case 'new': handleNewCommand(); break;
     case 'variant': handleVariantCommand(args); break;
     case 'tools': handleToolsCommand(args); break;
@@ -2085,6 +2240,8 @@ function executePaletteCommand(id) {
     case 'session_compact': handleCompactCommand(); break;
     case 'session_clear_queue': handleClearQueueCommand(); break;
     case 'session_retry': handleRetryCommand(); break;
+    case 'agent_mode': showAgentModePicker(); break;
+    case 'persona_select': handlePersonaCommand(''); break;
     case 'model_select': handleModelCommand(''); break;
     case 'model_variant': handleVariantCommand(''); break;
     case 'thinking_toggle': toggleThinking(); break;
@@ -2115,7 +2272,15 @@ function handleModelCommand(args) {
   const items = [];
   for (const p of state.providers) {
     for (const m of p.models) {
-      items.push({ id: p.id + '||' + m.id, label: m.name, sublabel: m.id !== m.name ? m.id : '', category: p.name, isActive: p.id === state.provider && m.id === state.model });
+      items.push({
+        id: p.id + '||' + m.id,
+        label: m.name,
+        sublabel: m.id !== m.name ? m.id : '',
+        category: p.name,
+        isActive: p.id === state.provider && m.id === state.model,
+        badges: modelTypeBadges(m),
+        modelData: m
+      });
     }
   }
   if (items.length === 0) { addSystemMessage('No models available.'); return; }
