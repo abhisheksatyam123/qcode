@@ -285,6 +285,27 @@ TEST(GeminiTransformTest, WrapEnvelopeDefaultsGemini38FlashToMediumSku) {
   EXPECT_EQ(env["model"].get<std::string>(), "gemini-3.8-flash-medium");
 }
 
+TEST(GeminiTransformTest, WrapEnvelopeMapsGemini4ArgonEffort) {
+  json gem = parsed(R"({
+    "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}}
+  })");
+  json env = wrap_antigravity_envelope(gem, "gemini-4-argon");
+  EXPECT_EQ(env["model"].get<std::string>(), "gemini-4-argon-low");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeMapsGemini4ArgonHighEffort) {
+  json gem = parsed(R"({
+    "generationConfig": {"thinkingConfig": {"thinkingLevel": "high"}}
+  })");
+  json env = wrap_antigravity_envelope(gem, "gemini4-argon");
+  EXPECT_EQ(env["model"].get<std::string>(), "gemini-4-argon-high");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeDefaultsGemini4ArgonToMediumSku) {
+  json env = wrap_antigravity_envelope(json::object(), "google/gemini-4-argon");
+  EXPECT_EQ(env["model"].get<std::string>(), "gemini-4-argon-medium");
+}
+
 // ---- unwrap ---------------------------------------------------------------
 
 TEST(GeminiTransformTest, UnwrapExtractsInnerResponse) {

@@ -164,15 +164,15 @@ std::string build_provider_config(const std::string& openrouter_key,
   json += R"cfg(
       },
       "models": {
-        "nvidia/nemotron-3-ultra-550b-a55b:free": { "name": "Nemotron 3 Ultra 550B (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1000000, "output": 65536 } },
-        "nvidia/nemotron-3.5-lightning:free": { "name": "Nemotron 3.5 Lightning (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1000000, "output": 65536 } },
-        "nvidia/nemotron-3-super-120b-a12b:free": { "name": "Nemotron 3 Super 120B (Free)", "tool_call": true, "limit": { "context": 262144, "output": 32768 } },
-        "nvidia/nemotron-3-nano-30b-a3b:free": { "name": "Nemotron 3 Nano 30B (Free)", "tool_call": true, "limit": { "context": 256000, "output": 32768 } },
-        "poolside/laguna-s-2.1:free": { "name": "Poolside Laguna S 2.1 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 32768 } },
-        "cohere/north-mini-code:free": { "name": "Cohere North Mini Code (Free)", "tool_call": true, "limit": { "context": 256000, "output": 32768 } },
-        "openai/gpt-oss-20b:free": { "name": "OpenAI gpt-oss-20b (Free)", "tool_call": true, "limit": { "context": 131072, "output": 32768 } },
-        "poolside/laguna-xs-2.1:free": { "name": "Poolside Laguna XS 2.1 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 32768 } },
-        "dots-studio/dots-3-note-preview:free": { "name": "Dots Studio 3 Note (Free)", "tool_call": true, "limit": { "context": 512000, "output": 32768 } }
+        "cohere/north-mini-code:free": { "name": "Cohere North Mini Code (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 256000, "output": 16384 } },
+        "nvidia/nemotron-3.5-lightning:free": { "name": "Nemotron 3.5 Lightning (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1000000, "output": 32768 } },
+        "nvidia/nemotron-3.5-super-vl:free": { "name": "Nemotron 3.5 Super VL (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1000000, "output": 32768 } },
+        "poolside/laguna-s-2.1:free": { "name": "Poolside Laguna S 2.1 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 16384 } },
+        "poolside/laguna-xs-2.1:free": { "name": "Poolside Laguna XS 2.1 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 16384 } },
+        "dots-studio/dots-3-note-preview:free": { "name": "Dots Studio 3 Note (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 512000, "output": 32768 } },
+        "liquid/lfm-2.5-2.6b:free": { "name": "LiquidAI LFM 2.5 2.6B (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 65536, "output": 8192 } },
+        "xingchen-agi/xing4.0-29b-a4b:free": { "name": "XingChen 4.0 29B A4B (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 16384 } },
+        "openrouter/free": { "name": "OpenRouter Free Models Router", "tool_call": true, "reasoning": true, "limit": { "context": 200000, "output": 16384 } }
       }
     })cfg";
 

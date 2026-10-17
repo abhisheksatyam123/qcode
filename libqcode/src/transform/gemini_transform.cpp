@@ -323,6 +323,14 @@ nlohmann::json wrap_antigravity_envelope_impl(nlohmann::json gemini_req,
   if (mapped_model.starts_with(antigravity_prefix)) {
     mapped_model.erase(0, antigravity_prefix.size());
   }
+  constexpr std::string_view google_prefix = "google/";
+  if (mapped_model.starts_with(google_prefix)) {
+    mapped_model.erase(0, google_prefix.size());
+  }
+  constexpr std::string_view models_prefix = "models/";
+  if (mapped_model.starts_with(models_prefix)) {
+    mapped_model.erase(0, models_prefix.size());
+  }
   const auto thinking_level = [&env]() -> std::string {
     const auto& request = env["request"];
     if (request.contains("generationConfig") &&
@@ -359,6 +367,12 @@ nlohmann::json wrap_antigravity_envelope_impl(nlohmann::json gemini_req,
              mapped_model == "gemini-3.7-flash-medium" ||
              mapped_model == "gemini-3.7-flash-high") {
     mapped_model = flash_effort_sku("gemini-3.7-flash");
+  } else if (mapped_model == "gemini-4-argon" ||
+             mapped_model == "gemini4-argon" ||
+             mapped_model == "gemini-4-argon-low" ||
+             mapped_model == "gemini-4-argon-medium" ||
+             mapped_model == "gemini-4-argon-high") {
+    mapped_model = flash_effort_sku("gemini-4-argon");
   } else if (mapped_model == "gemini-3.1-pro" || mapped_model == "gemini-3.1-pro-low" || mapped_model == "gemini-3-pro-high" || mapped_model == "gemini-3-pro-low" || mapped_model == "gemini-3-pro") {
     mapped_model = "gemini-3.1-pro-low";
   }
