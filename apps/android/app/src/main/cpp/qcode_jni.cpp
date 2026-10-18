@@ -133,7 +133,7 @@ std::string build_provider_config(const std::string& openrouter_key,
       "options": {
         "baseURL": "https://opencode.ai/zen/v1",
         "headers": {
-          "User-Agent": "opencode/1.18.18",
+          "User-Agent": "opencode/2.0.29",
           "x-opencode-client": "cli"
         })cfg";
   if (!opencode_key.empty()) {

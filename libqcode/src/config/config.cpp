@@ -88,7 +88,7 @@ static void fill_known_provider_defaults(ProviderInfo& provider) {
         if (provider.api_url.empty()) {
             provider.api_url = "https://opencode.ai/zen/v1";
         }
-        header_if_absent(provider.headers, "User-Agent", "opencode/1.18.18");
+        header_if_absent(provider.headers, "User-Agent", "opencode/2.0.29");
         header_if_absent(provider.headers, "x-opencode-client", "cli");
     } else if (provider.id == "openrouter") {
         if (provider.api_url.empty()) {

@@ -96,7 +96,7 @@ TEST(OpenAIRequestBuilderTest, ZenFreeModelsSendOpenCodeClientHeaders) {
   const auto headers = builder.build_headers(config);
   const auto user_agent = headers.find("User-Agent");
   ASSERT_NE(user_agent, headers.end());
-  EXPECT_EQ(user_agent->second, "opencode/1.18.18");
+  EXPECT_EQ(user_agent->second, "opencode/2.0.29");
   const auto client = headers.find("x-opencode-client");
   ASSERT_NE(client, headers.end());
   EXPECT_EQ(client->second, "cli");

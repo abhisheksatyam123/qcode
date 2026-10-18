@@ -439,7 +439,7 @@ httplib::Headers OpenAIRequestBuilder::build_headers(
 
   // OpenRouter specific headers
   if (config.base_url.find("openrouter.ai") != std::string::npos) {
-    headers.emplace("HTTP-Referer", "https://opencode.ai");
+    headers.emplace("HTTP-Referer", "https://opencode.ai/");
     headers.emplace("X-Title", "OpenCode");
   }
 

@@ -67,7 +67,7 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
     compatible.completions_path = options.completions_path;
     compatible.headers = options.headers;
     if (!compatible.headers.contains("User-Agent")) {
-      compatible.headers["User-Agent"] = "opencode/1.18.18";
+      compatible.headers["User-Agent"] = "opencode/2.0.29";
     }
     if (!compatible.headers.contains("x-opencode-client")) {
       compatible.headers["x-opencode-client"] = "cli";
@@ -77,7 +77,7 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
   }
   auto compatible = to_openai(options, base_url);
   if (!compatible.headers.contains("User-Agent")) {
-    compatible.headers["User-Agent"] = "opencode/1.18.18";
+    compatible.headers["User-Agent"] = "opencode/2.0.29";
   }
   if (!compatible.headers.contains("x-opencode-client")) {
     compatible.headers["x-opencode-client"] = "cli";

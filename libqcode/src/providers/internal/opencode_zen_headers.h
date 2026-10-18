@@ -15,7 +15,7 @@ namespace providers {
 // OpenCode Zen's Console free pool only admits this User-Agent. Other UAs
 // (including cpp-httplib's default) get 429 FreeUsageLimitError on -free
 // models. Matches packages/opencode/src/session/llm/request.ts.
-inline constexpr const char* kOpenCodeZenUserAgent = "opencode/1.18.18";
+inline constexpr const char* kOpenCodeZenUserAgent = "opencode/2.0.29";
 
 inline bool is_opencode_zen_url(const std::string& url_or_host) {
   return url_or_host.find("opencode.ai") != std::string::npos;
