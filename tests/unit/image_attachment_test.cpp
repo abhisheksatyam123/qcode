@@ -67,7 +67,7 @@ TEST(ImageAttachmentTest, OpenAIChatCompletionsEmitsImageDataUrl) {
 TEST(ImageAttachmentTest, OpenAIResponsesEmitsInputImage) {
   openai::OpenAIRequestBuilder builder(/*use_responses=*/true);
   GenerateOptions opts;
-  opts.model = "muse-spark-1.3-contributor-free";
+  opts.model = "muse-spark-1.3";
   opts.messages = {make_attachment_message()};
 
   const auto req = builder.build_request_json(opts);

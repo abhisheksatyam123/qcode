@@ -92,22 +92,30 @@ TEST(OpenAIRequestBuilderTest, ZenFreeModelsSendOpenCodeClientHeaders) {
   qcode::openai::OpenAIRequestBuilder builder;
   qcode::providers::ProviderConfig config;
   config.base_url = "https://opencode.ai/zen/v1";
+  config.auth_header_name = "Authorization";
+  config.auth_header_prefix = "Bearer ";
   config.api_key = "__EMPTY__";
   const auto headers = builder.build_headers(config);
   const auto user_agent = headers.find("User-Agent");
   ASSERT_NE(user_agent, headers.end());
-  EXPECT_EQ(user_agent->second, "opencode/2.0.29");
+  EXPECT_EQ(user_agent->second, "opencode/latest/2.1.0/cli");
   const auto client = headers.find("x-opencode-client");
   ASSERT_NE(client, headers.end());
   EXPECT_EQ(client->second, "cli");
   EXPECT_NE(headers.find("x-opencode-session"), headers.end());
-  EXPECT_NE(headers.find("x-opencode-request"), headers.end());
+  EXPECT_NE(headers.find("x-opencode-session-id"), headers.end());
+  EXPECT_NE(headers.find("x-session-affinity"), headers.end());
+  EXPECT_NE(headers.find("X-Session-Id"), headers.end());
+  // Upstream dropped the tracing-only request header in v2.
+  EXPECT_EQ(headers.find("x-opencode-request"), headers.end());
 }
 
-TEST(OpenAIRequestBuilderTest, ZenFreeModelsGeneratesValidSessionAndRequestId) {
+TEST(OpenAIRequestBuilderTest, ZenFreeModelsGenerateValidSessionId) {
   qcode::openai::OpenAIRequestBuilder builder;
   qcode::providers::ProviderConfig config;
   config.base_url = "https://opencode.ai/zen/v1";
+  config.auth_header_name = "Authorization";
+  config.auth_header_prefix = "Bearer ";
   config.api_key = "";
   const auto headers = builder.build_headers(config);
   const auto auth = headers.find("Authorization");
@@ -116,16 +124,70 @@ TEST(OpenAIRequestBuilderTest, ZenFreeModelsGeneratesValidSessionAndRequestId) {
   const auto session = headers.find("x-opencode-session");
   ASSERT_NE(session, headers.end());
   EXPECT_TRUE(session->second.starts_with("ses_"));
-  const auto request = headers.find("x-opencode-request");
-  ASSERT_NE(request, headers.end());
-  EXPECT_TRUE(request->second.starts_with("msg_"));
+  EXPECT_EQ(session->second.size(), 68u);
+  for (const char* name : {"x-opencode-session-id", "x-session-affinity",
+                           "X-Session-Id"}) {
+    const auto it = headers.find(name);
+    ASSERT_NE(it, headers.end()) << name;
+    EXPECT_EQ(it->second, session->second) << name;
+  }
+}
+
+TEST(OpenAIRequestBuilderTest, ZenChildSessionUsesParentAffinity) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  qcode::providers::ProviderConfig config;
+  config.base_url = "https://opencode.ai/zen/v1";
+  config.auth_header_name = "Authorization";
+  config.auth_header_prefix = "Bearer ";
+  config.api_key = "";
+  config.extra_headers.emplace("x-opencode-session-id", "child-uuid");
+  config.extra_headers.emplace("x-opencode-session", "parent-uuid");
+  config.extra_headers.emplace("x-session-affinity", "parent-uuid");
+  config.extra_headers.emplace("x-opencode-parent-session-id", "parent-uuid");
+  config.extra_headers.emplace("x-opencode-project", "proj");
+  const auto headers = builder.build_headers(config);
+
+  const auto session_id = headers.find("x-opencode-session-id");
+  const auto affinity = headers.find("x-opencode-session");
+  ASSERT_NE(session_id, headers.end());
+  ASSERT_NE(affinity, headers.end());
+  EXPECT_TRUE(session_id->second.starts_with("ses_"));
+  EXPECT_TRUE(affinity->second.starts_with("ses_"));
+  EXPECT_NE(session_id->second, affinity->second);
+
+  EXPECT_EQ(headers.find("x-session-affinity")->second, affinity->second);
+  EXPECT_EQ(headers.find("X-Session-Id")->second, affinity->second);
+  EXPECT_EQ(headers.find("x-opencode-parent-session-id")->second,
+            affinity->second);
+  EXPECT_EQ(headers.find("x-parent-session-id")->second, affinity->second);
+  EXPECT_EQ(headers.find("x-opencode-project")->second, "proj");
+}
+
+TEST(OpenAIRequestBuilderTest, ZenSessionAffinityIsStableAcrossRequests) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  qcode::providers::ProviderConfig config;
+  config.base_url = "https://opencode.ai/zen/v1";
+  config.auth_header_name = "Authorization";
+  config.auth_header_prefix = "Bearer ";
+  config.api_key = "";
+  config.extra_headers.emplace("x-opencode-session",
+                               "71a2fd43-9000-4000-8000-000000000000");
+  const auto first = builder.build_headers(config);
+  const auto second = builder.build_headers(config);
+  const auto a = first.find("x-opencode-session");
+  const auto b = second.find("x-opencode-session");
+  ASSERT_NE(a, first.end());
+  ASSERT_NE(b, second.end());
+  EXPECT_TRUE(a->second.starts_with("ses_"));
+  EXPECT_EQ(a->second.size(), 68u);
+  EXPECT_EQ(a->second, b->second);
 }
 
 TEST(OpenAIRequestBuilderTest, ZenRequestAutomaticallyInjectsBashAndReadTools) {
   qcode::openai::OpenAIRequestBuilder builder;
   builder.set_base_url("https://opencode.ai/zen/v1");
   qcode::GenerateOptions options;
-  options.model = "muse-spark-1.3-contributor-free";
+  options.model = "muse-spark-1.3";
   options.prompt = "hello";
   const auto req = builder.build_request_json(options);
   EXPECT_TRUE(req.contains("tools"));

@@ -208,7 +208,7 @@ TEST(TransformMatrixTest, ChatTransportKeepsSystemImageAndToolPairing) {
 TEST(TransformMatrixTest, ResponsesTransportShapesItems) {
   openai::OpenAIRequestBuilder responses(/*use_responses=*/true);
   GenerateOptions opts;
-  opts.model = "muse-spark-1.3-contributor-free";
+  opts.model = "muse-spark-1.3";
   opts.system = "BASE SYSTEM";
   opts.messages = rich_history();
 

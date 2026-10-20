@@ -5,6 +5,7 @@
 #include "anthropic_request_builder.h"
 #include "anthropic_oauth.h"
 #include "anthropic_response_parser.h"
+#include "providers/internal/opencode_zen_headers.h"
 
 #include "anthropic_stream.h"
 
@@ -39,7 +40,8 @@ bool detect_oauth(const std::string& api_key, const CompatibleOptions& options) 
 httplib::Headers extra_headers(
     const std::map<std::string, std::string>& headers,
     bool is_oauth,
-    const std::string& token) {
+    const std::string& token,
+    bool is_zen) {
   httplib::Headers extra{{"anthropic-version", "2023-06-01"}};
   if (is_oauth) {
     extra.emplace("anthropic-beta", kAnthropicBetaHeaders);
@@ -56,6 +58,10 @@ httplib::Headers extra_headers(
     }
     extra.emplace(name, value);
   }
+  // Zen's Messages endpoint expects the same client/session/project identity
+  // as the chat-completions path; without this, x-opencode-session would carry
+  // qcode's raw UUID instead of an OpenCode-format affinity id.
+  if (is_zen) providers::apply_opencode_zen_headers(extra);
   return extra;
 }
 
@@ -94,7 +100,9 @@ AnthropicClient::AnthropicClient(const std::string& api_key,
                     messages_path(options.base_url, options.completions_path),
                 .auth_header_name = bearer ? "Authorization" : "x-api-key",
                 .auth_header_prefix = bearer ? "Bearer " : "",
-                .extra_headers = extra_headers(options.headers, oauth, api_key),
+                .extra_headers = extra_headers(
+                    options.headers, oauth, api_key,
+                    providers::is_opencode_zen_url(options.base_url)),
                 .retry_config = options.retry_config};
           }(),
           std::make_unique<AnthropicRequestBuilder>(detect_oauth(api_key, options)),

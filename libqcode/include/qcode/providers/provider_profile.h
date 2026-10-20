@@ -27,11 +27,15 @@ struct ProviderCall {
 };
 
 /// One entry point for generation and compaction: remap the catalog id,
-/// stamp protocol/path, and add Zen session headers. Callers then resolve
-/// the client through ProviderRegistry.
+/// stamp protocol/path, and add Zen session headers. `parent_session_id`
+/// groups subagent cache affinity with its parent; `workspace` supplies the
+/// stable project id when the provider config doesn't specify one. Callers
+/// then resolve the client through ProviderRegistry.
 ProviderCall prepare_provider_call(providers::ProviderOptions& options,
                                    const std::string& provider_id,
                                    std::string model_id,
-                                   const std::string& session_id = {});
+                                   const std::string& session_id = {},
+                                   const std::string& parent_session_id = {},
+                                   const std::string& workspace = {});
 
 }  // namespace qcode

@@ -3,6 +3,7 @@
 // models (ox-alpha, deepseek-v4-flash): reasoning effort placement,
 // reasoning_content replay, usage accounting, and keyless Zen auth.
 
+#include <algorithm>
 #include <cctype>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -39,13 +40,42 @@ TEST(ProviderTransformTest, ZenApiProtocolMatchesOpenCodeDocs) {
   EXPECT_EQ(ProviderTransform::zen_completions_path("ox-alpha"),
             "/chat/completions");
   EXPECT_EQ(ProviderTransform::zen_api_protocol("muse-spark-1.2-contributor-free"),
+            "chat_completions");
+  EXPECT_EQ(ProviderTransform::zen_completions_path(
+                "muse-spark-1.2-contributor-free"),
+            "/chat/completions");
+  EXPECT_EQ(ProviderTransform::zen_api_protocol("muse-spark-1.3"),
             "responses");
-  EXPECT_EQ(ProviderTransform::zen_completions_path("muse-spark-1.2"),
+  EXPECT_EQ(ProviderTransform::zen_completions_path("muse-spark-1.3"),
             "/responses");
   EXPECT_EQ(ProviderTransform::zen_api_protocol("muse-spark-1.4-contributor"),
             "responses");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.4-contributor"),
-            "muse-spark-1.4-contributor");
+            "muse-spark-1.3");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("muse-spark-1.2-contributor-free"),
+            "big-pickle");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("space-bunny-free"),
+            "minimax-m3.1-flash-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("mimo-v2.5-free"),
+            "mimo-v2.6-flash-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("mimo-v2-flash-free"),
+            "mimo-v2.6-flash-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("minimax-m3-free"),
+            "minimax-m3.1-flash-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("glm-5-free"),
+            "glm-5.3-flash-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("deepseek-v4-flash-free"),
+            "deepseek-v4.1-flash-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("longcat-2.0-free"),
+            "longcat-2.5-preview-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("jev-1.13-free"),
+            "big-pickle");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("hy3-free"), "big-pickle");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("laguna-s-2.1-free"),
+            "big-pickle");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("nemotron-3-ultra-free"),
+            "nemotron-3-ultra-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("exo-free"), "exo-free");
   EXPECT_EQ(ProviderTransform::zen_api_protocol("gemini-3-pro"), "google");
   EXPECT_EQ(ProviderTransform::zen_completions_path("gemini-3.7-flash"),
             "/models/gemini-3.7-flash:generateContent");
@@ -79,14 +109,22 @@ TEST(ProviderProfileTest, PrepareZenAndOpenRouter) {
   EXPECT_EQ(zen.protocol, "chat_completions");
   EXPECT_EQ(zen.completions_path, "/chat/completions");
   EXPECT_EQ(zen.headers["x-opencode-session"], "sess-1");
+  EXPECT_EQ(zen.headers["x-opencode-session-id"], "sess-1");
+  EXPECT_EQ(zen.headers["x-session-affinity"], "sess-1");
   EXPECT_EQ(zen.headers["x-opencode-project"], "proj");
 
   providers::ProviderOptions muse;
   const auto muse_call =
-      prepare_provider_call(muse, "opencode", "muse-spark-1.2-contributor-free");
+      prepare_provider_call(muse, "opencode", "muse-spark-1.3");
   EXPECT_EQ(muse.protocol, "responses");
   EXPECT_EQ(muse.completions_path, "/responses");
-  EXPECT_EQ(muse_call.wire_model_id, "muse-spark-1.2-contributor-free");
+  EXPECT_EQ(muse_call.wire_model_id, "muse-spark-1.3");
+
+  providers::ProviderOptions retired_muse;
+  const auto retired_muse_call = prepare_provider_call(
+      retired_muse, "opencode", "muse-spark-1.2-contributor-free");
+  EXPECT_EQ(retired_muse.protocol, "chat_completions");
+  EXPECT_EQ(retired_muse_call.wire_model_id, "big-pickle");
 
   providers::ProviderOptions claude;
   const auto claude_call =
@@ -107,6 +145,45 @@ TEST(ProviderProfileTest, PrepareZenAndOpenRouter) {
   EXPECT_EQ(or_call.wire_model_id, "stealth/ox-alpha");
   EXPECT_EQ(openrouter.protocol, "chat_completions");
   EXPECT_TRUE(openrouter.completions_path.empty());
+}
+
+TEST(ProviderProfileTest, PrepareZenChildSharesParentAffinity) {
+  providers::ProviderOptions child;
+  child.base_url = "https://opencode.ai/zen/v1";
+  prepare_provider_call(child, "opencode", "big-pickle", "child-session",
+                        "parent-session", "/tmp/qcode-project");
+
+  EXPECT_EQ(child.headers["x-opencode-session-id"], "child-session");
+  EXPECT_EQ(child.headers["x-opencode-session"], "parent-session");
+  EXPECT_EQ(child.headers["x-session-affinity"], "parent-session");
+  EXPECT_EQ(child.headers["x-opencode-parent-session-id"], "parent-session");
+  EXPECT_EQ(child.headers["x-parent-session-id"], "parent-session");
+
+  const auto& project = child.headers["x-opencode-project"];
+  EXPECT_EQ(project.size(), 40u);
+  EXPECT_TRUE(std::all_of(project.begin(), project.end(),
+                          [](unsigned char c) { return std::isxdigit(c); }));
+
+  // Same workspace -> same opaque project id; a different one changes it.
+  providers::ProviderOptions same;
+  same.base_url = "https://opencode.ai/zen/v1";
+  prepare_provider_call(same, "opencode", "big-pickle", "other-child",
+                        "parent-session", "/tmp/qcode-project/");
+  EXPECT_EQ(same.headers["x-opencode-project"], project);
+
+  providers::ProviderOptions other;
+  other.base_url = "https://opencode.ai/zen/v1";
+  prepare_provider_call(other, "opencode", "big-pickle", "other-child",
+                        "parent-session", "/tmp/qcode-other-project");
+  EXPECT_NE(other.headers["x-opencode-project"], project);
+
+  // An explicit configured project id wins over the workspace fallback.
+  providers::ProviderOptions configured;
+  configured.base_url = "https://opencode.ai/zen/v1";
+  configured.project_id = "configured-project";
+  prepare_provider_call(configured, "opencode", "big-pickle", "child-session",
+                        "parent-session", "/tmp/qcode-project");
+  EXPECT_EQ(configured.headers["x-opencode-project"], "configured-project");
 }
 
 TEST(ProviderTransformTest, ChatTransportDetection) {
@@ -328,8 +405,11 @@ TEST(ProviderTransformTest, InterleavedReplayFieldMatchesOpenCode) {
                 ChatTransport::kOpenCodeZen, "x-preview-f-free"),
             "reasoning_content");
   EXPECT_EQ(ProviderTransform::interleaved_replay_field(
-                ChatTransport::kOpenCodeZen, "muse-spark-1.2-contributor-free"),
+                ChatTransport::kOpenCodeZen, "muse-spark-1.3"),
             "reasoning");
+  EXPECT_EQ(ProviderTransform::interleaved_replay_field(
+                ChatTransport::kOpenCodeZen, "muse-spark-1.2-contributor-free"),
+            "reasoning_content");
   EXPECT_TRUE(ProviderTransform::interleaved_replay_field(
                   ChatTransport::kOpenRouter, "stealth/ox-alpha")
                   .empty());
@@ -404,7 +484,7 @@ TEST_F(ZenWireFormatTest, MuseSparkReplaysAsReasoningField) {
   openai::OpenAIRequestBuilder builder(false);
   builder.set_base_url("https://opencode.ai/zen/v1");
   auto opts = conversation_with_reasoning();
-  opts.model = "muse-spark-1.2-contributor-free";
+  opts.model = "muse-spark-1.3";
   const auto body = builder.build_request_json(opts);
   bool saw_reasoning = false;
   for (const auto& msg : body["messages"]) {
@@ -415,6 +495,24 @@ TEST_F(ZenWireFormatTest, MuseSparkReplaysAsReasoningField) {
     EXPECT_FALSE(msg.contains("reasoning_content"));
   }
   EXPECT_TRUE(saw_reasoning);
+}
+
+TEST_F(ZenWireFormatTest, RetiredMuseSparkAliasReplaysAsReasoningContent) {
+  openai::OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  auto opts = conversation_with_reasoning();
+  opts.model = "muse-spark-1.2-contributor-free";
+  const auto body = builder.build_request_json(opts);
+  EXPECT_EQ(body.value("model", ""), "big-pickle");
+  bool saw_reasoning_content = false;
+  for (const auto& msg : body["messages"]) {
+    if (msg.value("role", "") != "assistant") continue;
+    saw_reasoning_content =
+        msg.contains("reasoning_content") &&
+        !msg["reasoning_content"].get<std::string>().empty();
+    EXPECT_FALSE(msg.contains("reasoning"));
+  }
+  EXPECT_TRUE(saw_reasoning_content);
 }
 
 TEST_F(ZenWireFormatTest, MaxTokensNotMaxCompletionTokens) {
@@ -453,7 +551,7 @@ TEST_F(ZenWireFormatTest, RemapsMuseSparkOpenRouterAlias) {
   builder.set_base_url("https://opencode.ai/zen/v1");
   auto opts = GenerateOptions("meta/muse-spark-1.2", "hello");
   const auto body = builder.build_request_json(opts);
-  EXPECT_EQ(body.value("model", ""), "muse-spark-1.2-contributor-free");
+  EXPECT_EQ(body.value("model", ""), "muse-spark-1.2");
 }
 
 TEST(OpenRouterWireFormatTest, RemapsZenOxAlphaAlias) {
@@ -499,7 +597,7 @@ TEST(ProviderTransformTest, NormalizeMessagesKeepsObjectToolResults) {
         false}}));
   history.push_back(Message::user("1 MOVE MODEL AND CONTEXT INFO ALL TO TOP HEADER"));
 
-  Model model("muse-spark-1.3-contributor-free", "opencode");
+  Model model("muse-spark-1.3", "opencode");
   Messages normalized;
   EXPECT_NO_THROW(normalized =
                       ProviderTransform::normalize_messages(history, model));
@@ -513,7 +611,7 @@ TEST(ProviderTransformTest, NormalizeMessagesKeepsObjectToolResults) {
   openai::OpenAIRequestBuilder builder(true);
   builder.set_base_url("https://opencode.ai/zen/v1");
   GenerateOptions options;
-  options.model = "muse-spark-1.3-contributor-free";
+  options.model = "muse-spark-1.3";
   options.messages = std::move(normalized);
   nlohmann::json body;
   EXPECT_NO_THROW(body = builder.build_request_json(options));
@@ -591,7 +689,7 @@ TEST(ProviderTransformTest, ClosesUnpairedToolCallsBeforeUserFollowUp) {
                              {"timeout", 240000}}}}));
   history.push_back(Message::user("I want you to keep working"));
 
-  Model model("muse-spark-1.3-contributor-free", "opencode");
+  Model model("muse-spark-1.3", "opencode");
   const auto normalized =
       ProviderTransform::normalize_messages(history, model);
   ASSERT_EQ(normalized.size(), 4u);
@@ -607,7 +705,7 @@ TEST(ProviderTransformTest, ClosesUnpairedToolCallsBeforeUserFollowUp) {
   openai::OpenAIRequestBuilder builder(true);
   builder.set_base_url("https://opencode.ai/zen/v1");
   GenerateOptions options;
-  options.model = "muse-spark-1.3-contributor-free";
+  options.model = "muse-spark-1.3";
   options.messages = normalized;
   const auto body = builder.build_request_json(options);
   ASSERT_TRUE(body.contains("input"));
@@ -682,7 +780,7 @@ TEST(ProviderTransformTest, NormalizeMessagesRewritesLongIdsAndKeepsPairing) {
       "", {ToolCallContentPart{long_id, "bash", nlohmann::json{{"cmd", "ls"}}}}));
   history.push_back(Message::tool_results(
       {{long_id, nlohmann::json{{"ok", true}}, false}}));
-  Model model("muse-spark-1.3-contributor-free", "opencode");
+  Model model("muse-spark-1.3", "opencode");
   const auto out = ProviderTransform::normalize_messages(history, model);
   std::string call_id;
   std::string result_id;
@@ -727,7 +825,7 @@ TEST(ProviderTransformSchemaTest, ZenAndOpenAIAlsoStripExclusiveMinimum) {
     }
   })");
   const Model models[] = {
-      Model("muse-spark-1.3-contributor-free", "opencode"),
+      Model("muse-spark-1.3", "opencode"),
       Model("grok-4.6", "openai"),
   };
   for (const auto& model : models) {
@@ -778,7 +876,7 @@ TEST(ProviderTransformTest, KeepsUnsignedReasoningForMuseSpark) {
   history.push_back(std::move(assistant));
 
   const auto muse = ProviderTransform::normalize_messages(
-      history, Model("muse-spark-1.3-contributor-free", "opencode"));
+      history, Model("muse-spark-1.3", "opencode"));
   ASSERT_EQ(muse.size(), 2u);
   EXPECT_EQ(muse[1].get_reasoning(), "thinking hard");
 }
@@ -792,7 +890,7 @@ TEST(ProviderTransformTest, DropsSignedGeminiReasoningOnMuseSpark) {
   history.push_back(std::move(assistant));
 
   const auto muse = ProviderTransform::normalize_messages(
-      history, Model("muse-spark-1.3-contributor-free", "opencode"));
+      history, Model("muse-spark-1.3", "opencode"));
   ASSERT_EQ(muse.size(), 2u);
   EXPECT_TRUE(muse[1].get_reasoning().empty());
 }

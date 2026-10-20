@@ -34,9 +34,9 @@ TEST(SessionTitleTest, CandidatesAreSmallModelThenTheSessionModel) {
   zen.api_url = "https://opencode.ai/zen/v1";
   zen.api_key = "public";
   ModelInfo big;
-  big.id = big.name = "nemotron-3-ultra-free";
+  big.id = big.name = "nemotron-3.5-super-vl-free";
   ModelInfo fast;
-  fast.id = fast.name = "ling-3.1-flash-free";
+  fast.id = fast.name = "nemotron-3.5-lightning-free";
   zen.models = {big, fast};
   ProviderInfo paid;
   paid.id = "anthropic";
@@ -52,14 +52,14 @@ TEST(SessionTitleTest, CandidatesAreSmallModelThenTheSessionModel) {
   EXPECT_TRUE(session_title::candidates(providers, "").empty());
 
   auto c = session_title::candidates(providers, "anthropic/claude-haiku-5-5",
-                                     "opencode:nemotron-3-ultra-free");
+                                     "opencode:nemotron-3.5-super-vl-free");
   ASSERT_EQ(c.size(), 2u);
   EXPECT_EQ(c[0].second->id, "claude-haiku-5-5");
-  EXPECT_EQ(c[1].second->id, "nemotron-3-ultra-free");
+  EXPECT_EQ(c[1].second->id, "nemotron-3.5-super-vl-free");
 
-  c = session_title::candidates(providers, "", "opencode:ling-3.1-flash-free");
+  c = session_title::candidates(providers, "", "opencode:nemotron-3.5-lightning-free");
   ASSERT_EQ(c.size(), 1u);
-  EXPECT_EQ(c[0].second->id, "ling-3.1-flash-free");
+  EXPECT_EQ(c[0].second->id, "nemotron-3.5-lightning-free");
 }
 
 }  // namespace

@@ -112,7 +112,7 @@ TEST_F(SessionStoreTest, RoundTripToolTurnKeepsTextAndThoughtSignature) {
 }
 
 TEST_F(SessionStoreTest, MergesParallelToolCallsIntoOneAssistantTurn) {
-    const std::string sid = create_new_session("opencode", "muse-spark", "/ws");
+    const std::string sid = create_new_session("opencode", "muse-spark-1.3", "/ws");
     qcode::Messages original;
     original.push_back(qcode::Message::user("do both"));
     original.push_back(qcode::Message::assistant_with_tools(
@@ -127,7 +127,7 @@ TEST_F(SessionStoreTest, MergesParallelToolCallsIntoOneAssistantTurn) {
 }
 
 TEST_F(SessionStoreTest, RoundTripAssistantReasoningPreserved) {
-    const std::string sid = create_new_session("opencode", "muse-spark", "/ws");
+    const std::string sid = create_new_session("opencode", "muse-spark-1.3", "/ws");
     qcode::Messages original;
     original.push_back(qcode::Message::user("solve this"));
     original.push_back(qcode::Message::assistant_with_reasoning(

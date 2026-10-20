@@ -6,6 +6,8 @@
 #include <qcode/providers/openai.h>
 #include <qcode/providers/provider_profile.h>
 
+#include "internal/opencode_zen_headers.h"
+
 #include <cstdlib>
 #include <string>
 
@@ -67,20 +69,20 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
     compatible.completions_path = options.completions_path;
     compatible.headers = options.headers;
     if (!compatible.headers.contains("User-Agent")) {
-      compatible.headers["User-Agent"] = "opencode/2.0.29";
+      compatible.headers["User-Agent"] = kOpenCodeZenUserAgent;
     }
     if (!compatible.headers.contains("x-opencode-client")) {
-      compatible.headers["x-opencode-client"] = "cli";
+      compatible.headers["x-opencode-client"] = kOpenCodeZenClient;
     }
     compatible.bearer_auth = true;
     return ClientResolution{anthropic::create_client(api_key, compatible)};
   }
   auto compatible = to_openai(options, base_url);
   if (!compatible.headers.contains("User-Agent")) {
-    compatible.headers["User-Agent"] = "opencode/2.0.29";
+    compatible.headers["User-Agent"] = kOpenCodeZenUserAgent;
   }
   if (!compatible.headers.contains("x-opencode-client")) {
-    compatible.headers["x-opencode-client"] = "cli";
+    compatible.headers["x-opencode-client"] = kOpenCodeZenClient;
   }
   return ClientResolution{openai::create_client(api_key, compatible)};
 }

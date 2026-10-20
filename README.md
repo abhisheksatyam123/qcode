@@ -132,8 +132,9 @@ Limits and request size:
   a model missing from the catalog uses the lead model's budget.
 
 Session titles: like opencode, a new session is named from its first prompt
-by a small model: `"small_model": "opencode/ling-3.1-flash-free"` at the top
-level of opencode.json (any `provider/model`), else the session's own model.
+by a small model: `"small_model": "opencode/nemotron-3.5-lightning-free"` at
+the top level of opencode.json (any `provider/model`), else the session's own
+model.
 `/rename` or a title given to `/new` is never replaced.
 
 Subagents: two kinds of agent, the orchestrator and its subagents, and one

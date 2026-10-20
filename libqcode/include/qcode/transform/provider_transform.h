@@ -181,19 +181,22 @@ enum class ChatTransport {
 /// slugs) onto the id that endpoint actually validates.
 std::string chat_wire_model_id(ChatTransport transport, std::string model_id);
 
-/// Wire id for OpenCode Zen chat/completions. Strips an `opencode/` prefix
-/// and remaps catalog/display aliases (ox-alpha, hy3-free) onto ids the
-/// current Zen `/v1/models` list accepts.
+/// Wire id for OpenCode Zen. Strips an `opencode/` prefix and remaps retired
+/// catalog/display aliases (ox-alpha, space-bunny-free, mimo-v2.5-free,
+/// hy3-free, muse-spark-*-contributor-free) onto ids the current Zen
+/// `/v1/models` list accepts. Dead free ids stay on the live free pool.
 std::string zen_wire_model_id(std::string model_id);
 
-/// Zen API flavor from OpenCode's zen.mdx endpoint table:
+/// Zen API flavor from OpenCode's zen.mdx endpoint table, after retired
+/// aliases are remapped to their live wire id:
 /// - responses: Muse Spark, GPT-5.x, Grok
 /// - messages: Claude, Qwen 3.x
 /// - google: Gemini (`/models/{id}:generateContent`)
 /// - chat_completions: Ox Alpha, DeepSeek, Kimi, GLM, MiniMax, free pool
 [[nodiscard]] std::string zen_api_protocol(std::string_view model_id);
 
-/// Path under `https://opencode.ai/zen/v1` for that model.
+/// Path under `https://opencode.ai/zen/v1` for that model, using the same
+/// wire-id remap as zen_api_protocol.
 [[nodiscard]] std::string zen_completions_path(std::string_view model_id);
 
 /// Wire id for OpenRouter. Maps Zen free-pool aliases onto stealth/ox-alpha

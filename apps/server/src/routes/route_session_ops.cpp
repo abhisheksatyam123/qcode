@@ -90,8 +90,14 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     // Wire model id, exactly as the generate route resolves it — a raw
     // config id can silently route elsewhere (and break the cache prefix).
     // Session id too: Zen keys its cache routing on x-opencode-session.
-    const auto call = qcode::prepare_provider_call(provider_options, sel.id,
-                                                   model_id, sid);
+    std::string parent_session_id;
+    std::string workspace;
+    if (const auto info = qcode::session::get_session_info(sid)) {
+      parent_session_id = info->parent_session_id;
+      workspace = info->workspace;
+    }
+    const auto call = qcode::prepare_provider_call(
+        provider_options, sel.id, model_id, sid, parent_session_id, workspace);
     const std::string wire_model = call.wire_model_id;
     auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
         sel.id, provider_options);

@@ -34,7 +34,7 @@ TEST(CxxModulesTest, ChatTransportFromImport) {
   using qcode::ProviderTransform::ChatTransport;
   EXPECT_EQ(qcode::ProviderTransform::chat_transport_for("https://openrouter.ai/api/v1"),
             ChatTransport::kOpenRouter);
-  EXPECT_EQ(qcode::ProviderTransform::zen_api_protocol("ox-alpha"),
+  EXPECT_EQ(qcode::ProviderTransform::zen_api_protocol("big-pickle"),
             "chat_completions");
 }
 

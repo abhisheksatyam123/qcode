@@ -77,6 +77,52 @@ TEST_F(AnthropicClientTest, ConstructorWithHttpUrl) {
   // EXPECT_FALSE(client.get_use_ssl());
 }
 
+namespace {
+
+class HeaderInspectingAnthropicClient
+    : public qcode::anthropic::AnthropicClient {
+ public:
+  using qcode::anthropic::AnthropicClient::AnthropicClient;
+  const qcode::providers::ProviderConfig& provider_config() const {
+    return config_;
+  }
+};
+
+}  // namespace
+
+TEST(AnthropicZenHeadersTest, MessagesTransportGetsOpenCodeIdentity) {
+  qcode::anthropic::CompatibleOptions options;
+  options.base_url = "https://opencode.ai/zen/v1";
+  options.headers = {
+      {"x-opencode-session-id", "child-uuid"},
+      {"x-opencode-session", "parent-uuid"},
+      {"x-session-affinity", "parent-uuid"},
+      {"x-opencode-parent-session-id", "parent-uuid"},
+      {"x-opencode-project", "proj"},
+  };
+  HeaderInspectingAnthropicClient client("__EMPTY__", options);
+  const auto& headers = client.provider_config().extra_headers;
+
+  const auto user_agent = headers.find("User-Agent");
+  ASSERT_NE(user_agent, headers.end());
+  EXPECT_EQ(user_agent->second, "opencode/latest/2.1.0/cli");
+  EXPECT_EQ(headers.find("x-opencode-client")->second, "cli");
+
+  const auto session_id = headers.find("x-opencode-session-id");
+  const auto affinity = headers.find("x-opencode-session");
+  ASSERT_NE(session_id, headers.end());
+  ASSERT_NE(affinity, headers.end());
+  EXPECT_TRUE(session_id->second.starts_with("ses_"));
+  EXPECT_TRUE(affinity->second.starts_with("ses_"));
+  EXPECT_NE(session_id->second, affinity->second);
+  EXPECT_EQ(headers.find("x-session-affinity")->second, affinity->second);
+  EXPECT_EQ(headers.find("X-Session-Id")->second, affinity->second);
+  EXPECT_EQ(headers.find("x-opencode-parent-session-id")->second,
+            affinity->second);
+  EXPECT_EQ(headers.find("x-parent-session-id")->second, affinity->second);
+  EXPECT_EQ(headers.find("x-opencode-project")->second, "proj");
+}
+
 // Model Support Tests
 TEST_F(AnthropicClientTest, SupportedModelsIsNotABuiltinCatalog) {
   EXPECT_TRUE(client_->supported_models().empty());

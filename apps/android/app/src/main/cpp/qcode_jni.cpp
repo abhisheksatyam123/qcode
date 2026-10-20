@@ -123,8 +123,8 @@ std::string build_provider_config(const std::string& openrouter_key,
                                   const std::string& anthropic_key,
                                   const std::string& groq_key,
                                   const std::string& ollama_host) {
-  // Use a custom raw-string delimiter: model names like "HY3 (Free)" contain )"
-  // which would terminate R"(...)".
+  // Use a custom raw-string delimiter: a model name could contain )" which
+  // would terminate R"(...)".
   std::string json = R"cfg({
   "provider": {
     "opencode": {
@@ -133,7 +133,7 @@ std::string build_provider_config(const std::string& openrouter_key,
       "options": {
         "baseURL": "https://opencode.ai/zen/v1",
         "headers": {
-          "User-Agent": "opencode/2.0.29",
+          "User-Agent": "opencode/latest/2.1.0/cli",
           "x-opencode-client": "cli"
         })cfg";
   if (!opencode_key.empty()) {
@@ -142,13 +142,17 @@ std::string build_provider_config(const std::string& openrouter_key,
   json += R"cfg(
       },
       "models": {
-        "x-preview-f-free": { "name": "X-Preview Frontier (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1000000, "output": 65536 } },
-        "big-pickle": { "name": "Big Pickle (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 200000, "output": 32000 } },
-        "mimo-v2.5-free": { "name": "MiMo V2.5 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 200000, "output": 32000 } },
-        "hy3-free": { "name": "HY3 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 64000 } },
-        "laguna-s-2.1-free": { "name": "Laguna S 2.1 (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 32768 } },
+        "minimax-m3.1-flash-free": { "name": "MiniMax M3.1 Flash (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1000000, "output": 512000 } },
+        "nemotron-3.5-super-vl-free": { "name": "Nemotron 3.5 Super VL (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1048576, "output": 131072 } },
+        "nemotron-3.5-lightning-free": { "name": "Nemotron 3.5 Lightning (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 262144 } },
         "nemotron-3-ultra-free": { "name": "Nemotron 3 Ultra (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1000000, "output": 128000 } },
-        "nemotron-3.5-lightning-free": { "name": "Nemotron 3.5 Lightning (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 65536 } }
+        "exo-free": { "name": "Exo (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1048576, "output": 131072 } },
+        "longcat-2.5-preview-free": { "name": "LongCat 2.5 Preview (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1000000, "output": 131072 } },
+        "mimo-v2.6-flash-free": { "name": "MiMo V2.6 Flash (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
+        "beam-free": { "name": "Beam (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1048576, "output": 131072 } },
+        "deepseek-v4.1-flash-free": { "name": "DeepSeek V4.1 Flash (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
+        "glm-5.3-flash-free": { "name": "GLM 5.3 Flash (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
+        "big-pickle": { "name": "Big Pickle (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 200000, "output": 32000 } }
       }
     },
     "openrouter": {

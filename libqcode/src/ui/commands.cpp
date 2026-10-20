@@ -711,8 +711,15 @@ void run_compaction(
                                        : selected_model.protocol;
         provider_options.project_id = sel.project_id;
         // Session id too: Zen keys its cache routing on x-opencode-session.
-        const auto call =
-            prepare_provider_call(provider_options, sel.id, model_id, sid);
+        std::string parent_session_id;
+        std::string workspace;
+        if (const auto info = qcode::session::get_session_info(sid)) {
+            parent_session_id = info->parent_session_id;
+            workspace = info->workspace;
+        }
+        const auto call = prepare_provider_call(
+            provider_options, sel.id, model_id, sid, parent_session_id,
+            workspace);
         const auto& wire_model = call.wire_model_id;
         auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
             sel.id, provider_options);

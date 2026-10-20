@@ -168,6 +168,9 @@ TEST(TuiConfigTest, DropsRetiredZenIds) {
           "name": "OpenCode Zen",
           "models": {
             "hy3-free": {"name": "HY3 retired"},
+            "space-bunny-free": {"name": "Space Bunny retired"},
+            "mimo-v2.5-free": {"name": "MiMo 2.5 retired"},
+            "jev-1.13-free": {"name": "Jev SystemOne"},
             "keep-me": {"name": "Keep"}
           }
         }
@@ -205,7 +208,7 @@ TEST(TuiConfigTest, NestedReasoningObjectSetsEffortsAndProtocol) {
       "provider": {
         "opencode": {
           "models": {
-            "muse-spark-1.3-contributor-free": {
+            "muse-spark-1.3": {
               "name": "Muse Spark",
               "tool_call": true,
               "protocol": "responses",
@@ -222,8 +225,7 @@ TEST(TuiConfigTest, NestedReasoningObjectSetsEffortsAndProtocol) {
 
   const auto providers = config.load();
   ASSERT_EQ(providers.size(), 1u);
-  const auto* model = FindModel(providers.front().models,
-                                "muse-spark-1.3-contributor-free");
+  const auto* model = FindModel(providers.front().models, "muse-spark-1.3");
   ASSERT_NE(model, nullptr);
   EXPECT_TRUE(model->reasoning);
   EXPECT_EQ(model->protocol, "responses");
@@ -620,12 +622,18 @@ TEST(TuiConfigTest, HomeConfigDrivesProvidersModelsAndEfforts) {
   const auto* zen = FindProvider(providers, "opencode");
   ASSERT_NE(zen, nullptr);
   EXPECT_EQ(FindModel(zen->models, "hy3-free"), nullptr);
-  const auto* muse = FindModel(zen->models, "muse-spark-1.3-contributor-free");
-  if (muse != nullptr) {
-    EXPECT_EQ(muse->protocol, "responses");
-    EXPECT_EQ(muse->reasoning_field, "reasoning");
-    EXPECT_EQ(ProviderTransform::default_variant(*muse), "medium");
-    EXPECT_FALSE(ProviderTransform::is_allowed_variant(*muse, "max"));
+  EXPECT_EQ(FindModel(zen->models, "space-bunny-free"), nullptr);
+  EXPECT_EQ(FindModel(zen->models, "jev-1.13-free"), nullptr);
+  EXPECT_NE(FindModel(zen->models, "exo-free"), nullptr);
+  EXPECT_NE(FindModel(zen->models, "nemotron-3-ultra-free"), nullptr);
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("exo-free"), "exo-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("nemotron-3-ultra-free"),
+            "nemotron-3-ultra-free");
+  const auto* minimax = FindModel(zen->models, "minimax-m3.1-flash-free");
+  if (minimax != nullptr) {
+    EXPECT_EQ(minimax->protocol, "chat_completions");
+    EXPECT_TRUE(minimax->reasoning);
+    EXPECT_EQ(minimax->reasoning_field, "reasoning_content");
   }
 
   const auto* antigravity = FindProvider(providers, "antigravity");

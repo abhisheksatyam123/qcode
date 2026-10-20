@@ -2,6 +2,7 @@
 #include <qcode/core/ssl_config.h>
 #include <qcode/transform/provider_transform.h>
 #include "providers/anthropic/anthropic_oauth.h"
+#include "providers/internal/opencode_zen_headers.h"
 
 #include <algorithm>
 #include <cctype>
@@ -68,12 +69,37 @@ static std::string resolve_config_value(const ordered_json& value) {
 
 static constexpr const char* kOpenRouterReferer = "https://opencode.ai/";
 
-// GET https://opencode.ai/zen/v1/models no longer accepts these; they 401
-// as ModelError. Drop from the picker even if an old opencode.json lists them.
+// GET https://opencode.ai/zen/v1/models no longer accepts these; they answer
+// 400 ModelError or 410 ModelDeprecated. Live ids on a non-chat API (Jev /
+// SystemOne) are excluded too. Drop from the picker even if an old
+// opencode.json lists them. Keep this in sync with the live chat free pool:
+// big-pickle, beam-free, exo-free, mimo-v2.6-flash-free,
+// nemotron-3-ultra-free, nemotron-3.5-super-vl-free,
+// nemotron-3.5-lightning-free, longcat-2.5-preview-free,
+// deepseek-v4.1-flash-free, glm-5.3-flash-free, minimax-m3.1-flash-free.
+// (jev-1.13-free is live but speaks the separate SystemOne API, not chat.)
 static bool zen_id_is_retired(const std::string& id) {
-    return id == "hy3-free" || id == "hy3-preview-free" ||
-           id == "x-preview-f-free" || id == "north-mini-code-free" ||
-           id == "kimi-k2.5-free";
+    static const std::unordered_set<std::string> kRetired{
+        // Former headline free-pool ids.
+        "space-bunny-free", "x-preview-f-free", "ox-alpha", "ox alpha",
+        "hy3-free", "hy3-preview-free", "laguna-s-2.1-free",
+        "nemotron-3-super-free",
+        "mimo-v2.5-free", "mimo-v2-flash-free", "mimo-v2-omni-free",
+        "minimax-m2.1-free", "minimax-m2.5-free", "minimax-m3-free",
+        "kimi-k2.5-free", "north-mini-code-free", "glm-4.7-free",
+        "glm-5-free", "qwen3.6-plus-free",
+        // Deprecated preview/free experiments.
+        "fledge-alpha-free", "ll-alpha-free", "cat-jam-free",
+        "ring-2.6-1t-free", "step-5-preview-free",
+        "longcat-2.0-free", "deepseek-v4-flash-free",
+        "ling-2.6-flash-free", "ling-3.0-flash-free",
+        "ling-3.0-flash-fin-free", "ling-3.0-tiny-free",
+        "ling-3.1-flash-free", "trinity-large-preview-free",
+        "muse-spark-1.2-contributor-free",
+        "muse-spark-1.3-contributor-free",
+        // Live, but SystemOne structured-decision models rather than chat.
+        "jev-1.13", "jev-1.13-free"};
+    return kRetired.contains(id);
 }
 
 static void header_if_absent(std::map<std::string, std::string>& headers,
@@ -88,8 +114,10 @@ static void fill_known_provider_defaults(ProviderInfo& provider) {
         if (provider.api_url.empty()) {
             provider.api_url = "https://opencode.ai/zen/v1";
         }
-        header_if_absent(provider.headers, "User-Agent", "opencode/2.0.29");
-        header_if_absent(provider.headers, "x-opencode-client", "cli");
+        header_if_absent(provider.headers, "User-Agent",
+                         providers::kOpenCodeZenUserAgent);
+        header_if_absent(provider.headers, "x-opencode-client",
+                         providers::kOpenCodeZenClient);
     } else if (provider.id == "openrouter") {
         if (provider.api_url.empty()) {
             provider.api_url = "https://openrouter.ai/api/v1";

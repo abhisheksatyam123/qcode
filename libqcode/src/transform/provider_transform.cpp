@@ -40,11 +40,13 @@ static bool contains(std::string_view s, std::string_view sub) {
 
 bool is_reasoning_model_id(std::string_view model_id) {
   const auto id = to_lower(model_id);
-  static constexpr std::array<std::string_view, 14> kNeedles{
-      "muse-spark", "ox-alpha",     "x-preview-f-free", "deepseek-v4",
-      "gpt-5",      "grok",         "gemini-3",         "gemini-2.5",
-      "thinking",   "kimi-k",       "claude",           "composer",
-      "nemotron",   "fable",
+  static constexpr std::array<std::string_view, 21> kNeedles{
+      "muse-spark", "ox-alpha", "x-preview-f-free", "deepseek-v4",
+      "gpt-5",      "grok",     "gemini-3",         "gemini-2.5",
+      "thinking",   "kimi-k",   "claude",           "composer",
+      "nemotron",   "fable",    "minimax",          "glm-5",
+      "mimo",       "longcat",  "beam",             "exo",
+      "big-pickle",
   };
   return std::ranges::any_of(
       kNeedles, [&](std::string_view needle) { return id.find(needle) != std::string::npos; });
@@ -214,44 +216,87 @@ std::string zen_wire_model_id(std::string model_id) {
   }
 
   const std::string id = to_lower(model_id);
-  // Retired Zen free-pool ids 401 as ModelError. Snap them onto a live
-  // keyless model so old sessions / configs keep working.
+  // Retired Zen ids answer 400 ModelError / 410 ModelDeprecated. Snap them
+  // onto ids the current free pool accepts so old sessions and configs keep
+  // working. Live chat free pool:
+  //   big-pickle, beam-free, exo-free, mimo-v2.6-flash-free,
+  //   nemotron-3-ultra-free, nemotron-3.5-super-vl-free,
+  //   nemotron-3.5-lightning-free, longcat-2.5-preview-free,
+  //   deepseek-v4.1-flash-free, glm-5.3-flash-free,
+  //   minimax-m3.1-flash-free.
+  // (jev-1.13-free uses the separate SystemOne API and is not chat.)
   if (contains(id, "ox-alpha") || contains(id, "ox alpha") ||
       contains(id, "x-preview-f-free") || contains(id, "x-preview-f")) {
     return "big-pickle";
   }
-  if (contains(id, "hy3-free") || contains(id, "hy3-preview-free") ||
-      id == "hy3") {
-    return "laguna-s-2.1-free";
+  // Zen's own 410 says space-bunny-free -> minimax-m3.1-flash-free and
+  // mimo-v2.5-free -> mimo-v2.6-flash-free. Keep the replacement family.
+  if (contains(id, "space-bunny")) return "minimax-m3.1-flash-free";
+  if (contains(id, "mimo-v2.5") || contains(id, "mimo-v2-5") ||
+      contains(id, "mimo-v2-flash-free") ||
+      contains(id, "mimo-v2-omni-free")) {
+    return "mimo-v2.6-flash-free";
   }
-  // Paid Zen slugs (muse-spark-1.2) and free-pool slugs
-  // (muse-spark-1.2-contributor-free, muse-spark-1.3-contributor-free) are
-  // already wire ids — keep them. OpenRouter / display aliases (meta/...)
-  // map onto the current free pool so a cross-provider pick does not 401.
+  if (contains(id, "minimax-m2.1-free") ||
+      contains(id, "minimax-m2.5-free") ||
+      contains(id, "minimax-m3-free")) {
+    return "minimax-m3.1-flash-free";
+  }
+  if (contains(id, "glm-4.7-free") || contains(id, "glm-5-free")) {
+    return "glm-5.3-flash-free";
+  }
+  if (contains(id, "deepseek-v4-flash-free")) {
+    return "deepseek-v4.1-flash-free";
+  }
+  if (contains(id, "longcat-2.0")) return "longcat-2.5-preview-free";
+  if (contains(id, "nemotron-3-super")) {
+    return "nemotron-3.5-lightning-free";
+  }
+  // Jev is live but speaks the SystemOne structured-decision API, which
+  // qcode's chat path cannot drive; keep old sessions on a chat model.
+  if (contains(id, "jev-1.13")) return "big-pickle";
+  // Former free models with no free successor: keep the caller in the free
+  // pool rather than let the retired id 400.
+  if (contains(id, "hy3") || contains(id, "laguna") ||
+      contains(id, "fledge") ||
+      contains(id, "ling-") || contains(id, "step-5") ||
+      contains(id, "north-mini-code") || contains(id, "kimi-k2.5-free") ||
+      contains(id, "cat-jam") || contains(id, "ring-2.6") ||
+      contains(id, "qwen3.6-plus-free")) {
+    return "big-pickle";
+  }
+  // Paid Zen slugs (muse-spark-1.2/1.3) are already wire ids. Contributor and
+  // other free-pool slugs were retired: map them onto the live paid SKU when
+  // the alias names one, otherwise keep the caller free.
   if (contains(id, "muse-spark")) {
-    if (contains(id, "meta/") || contains(id, "openrouter/")) {
-      if (contains(id, "1.4")) return "muse-spark-1.4-contributor";
-      if (contains(id, "1.3")) return "muse-spark-1.3-contributor-free";
-      return "muse-spark-1.2-contributor-free";
+    // No free Muse Spark remains; never silently bill a free caller.
+    if (contains(id, "contributor-free") || id.ends_with("-free")) {
+      return "big-pickle";
     }
-    if (id == "muse-spark-1.4-contributor" || id == "muse-spark-1.4") {
-      return "muse-spark-1.4-contributor";
+    if (id == "muse-spark-1.3" || id == "muse-spark-1.3-contributor") {
+      return "muse-spark-1.3";
     }
-    if (id == "muse-spark-1.3") return "muse-spark-1.3";
-    if (id == "muse-spark-1.2") return "muse-spark-1.2";
-    if (contains(id, "1.4")) return "muse-spark-1.4-contributor";
-    if (contains(id, "1.3")) return "muse-spark-1.3-contributor-free";
-    return model_id;
+    if (id == "muse-spark-1.2" || id == "muse-spark-1.2-contributor") {
+      return "muse-spark-1.2";
+    }
+    if (id == "muse-spark-1.4" || id == "muse-spark-1.4-contributor") {
+      return "muse-spark-1.3";
+    }
+    if (contains(id, "1.4")) return "muse-spark-1.3";
+    if (contains(id, "1.3")) return "muse-spark-1.3";
+    if (contains(id, "1.2")) return "muse-spark-1.2";
+    return "big-pickle";
   }
   return model_id;
 }
 
 std::string zen_api_protocol(std::string_view model_id) {
-  return wire_protocol_id(zen_model_route(std::string{model_id}).protocol);
+  return wire_protocol_id(
+      zen_model_route(zen_wire_model_id(std::string{model_id})).protocol);
 }
 
 std::string zen_completions_path(std::string_view model_id) {
-  return zen_model_route(std::string{model_id}).path;
+  return zen_model_route(zen_wire_model_id(std::string{model_id})).path;
 }
 
 std::string openrouter_wire_model_id(std::string model_id) {
@@ -391,7 +436,13 @@ std::string interleaved_replay_field(ChatTransport transport,
   // OpenCode only injects interleaved.field for openai-compatible, and
   // explicitly skips @openrouter/ai-sdk-provider.
   if (transport == ChatTransport::kOpenRouter) return {};
-  if (contains(model_id, "muse-spark")) return "reasoning";
+  std::string wire_id{model_id};
+  if (transport == ChatTransport::kOpenCodeZen) {
+    // Match the field to the model the retry actually lands on, not the
+    // retired alias the session was created with.
+    wire_id = zen_wire_model_id(std::move(wire_id));
+  }
+  if (contains(wire_id, "muse-spark")) return "reasoning";
   return "reasoning_content";
 }
 

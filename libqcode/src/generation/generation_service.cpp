@@ -91,6 +91,23 @@ static size_t tool_step_fingerprint(const std::vector<qcode::ToolCall>& calls,
 }
 
 
+// Parent + workspace for a session, used to stamp the Zen cache-affinity and
+// project headers the same way the lead turn does.
+struct SessionContext {
+  std::string parent_session_id;
+  std::string workspace;
+};
+
+SessionContext session_context(const std::string& session_id) {
+  SessionContext out;
+  if (session_id.empty()) return out;
+  if (const auto info = qcode::session::get_session_info(session_id)) {
+    out.parent_session_id = info->parent_session_id;
+    out.workspace = info->workspace;
+  }
+  return out;
+}
+
 // Client + wire model id for one catalog model, with the provider's
 // credentials (OAuth tokens, env keys) filled in like a lead turn.
 ResolvedModelClient resolve_model_client(const ProviderInfo& provider,
@@ -140,7 +157,10 @@ ResolvedModelClient resolve_model_client(const ProviderInfo& provider,
       }
     }
 
-    const auto call = prepare_provider_call(prov_opts, target_provider->id, target_model_id, session_id);
+    const auto session_ctx = session_context(session_id);
+    const auto call = prepare_provider_call(
+        prov_opts, target_provider->id, target_model_id, session_id,
+        session_ctx.parent_session_id, session_ctx.workspace);
     out.wire_model = call.wire_model_id.empty() ? target_model_id : call.wire_model_id;
 
     auto resolution = qcode::providers::ProviderRegistry::instance().resolve(
@@ -1855,8 +1875,17 @@ void run_generation_with_bus(
       }
     }
 
+    std::string parent_session_id;
+    std::string workspace = ctx.workspace;
+    if (!ctx.session_id.empty()) {
+      parent_session_id = qcode::session::get_parent_session_id(ctx.session_id);
+      if (workspace.empty()) {
+        workspace = qcode::session::get_session_workspace(ctx.session_id);
+      }
+    }
     const auto call = prepare_provider_call(
-        provider_options, provider_id, resolved_model_id, ctx.session_id);
+        provider_options, provider_id, resolved_model_id, ctx.session_id,
+        parent_session_id, workspace);
     resolved_model_id = call.wire_model_id;
 
     LOG_INFO("generation_service: provider={} model={} protocol={} path={} api={}",

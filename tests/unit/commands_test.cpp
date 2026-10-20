@@ -50,8 +50,8 @@ TEST(CommandsTest, ResolveProviderModelIndicesMatchesCleanly) {
     p2.id = "opencode";
     p2.name = "OpenCode Zen";
     ModelInfo m2_1;
-    m2_1.id = "muse-spark-1.3-contributor-free";
-    m2_1.name = "Muse Spark 1.3 Free";
+    m2_1.id = "muse-spark-1.3";
+    m2_1.name = "Muse Spark 1.3";
     p2.models.push_back(m2_1);
 
     std::vector<ProviderInfo> providers{p1, p2};
@@ -63,13 +63,13 @@ TEST(CommandsTest, ResolveProviderModelIndicesMatchesCleanly) {
     EXPECT_EQ(res1->second, 0);
 
     // 2. Case-insensitive id match
-    auto res2 = tui::resolve_provider_model_indices(providers, "OPENCODE", "muse-spark-1.3-contributor-free");
+    auto res2 = tui::resolve_provider_model_indices(providers, "OPENCODE", "muse-spark-1.3");
     ASSERT_TRUE(res2.has_value());
     EXPECT_EQ(res2->first, 1);
     EXPECT_EQ(res2->second, 0);
 
     // 3. Empty provider with provider:model combo
-    auto res3 = tui::resolve_provider_model_indices(providers, "", "opencode:muse-spark-1.3-contributor-free");
+    auto res3 = tui::resolve_provider_model_indices(providers, "", "opencode:muse-spark-1.3");
     ASSERT_TRUE(res3.has_value());
     EXPECT_EQ(res3->first, 1);
     EXPECT_EQ(res3->second, 0);
@@ -98,8 +98,8 @@ TEST(CommandsTest, ModelSlashCommandSwitchesModel) {
     p2.id = "opencode";
     p2.name = "OpenCode Zen";
     ModelInfo m2_1;
-    m2_1.id = "muse-spark-1.3-free";
-    m2_1.name = "Muse Spark 1.3 Free";
+    m2_1.id = "muse-spark-1.3";
+    m2_1.name = "Muse Spark 1.3";
     p2.models.push_back(m2_1);
 
     std::vector<ProviderInfo> providers{p1, p2};
@@ -127,7 +127,7 @@ TEST(CommandsTest, ModelSlashCommandSwitchesModel) {
     EXPECT_EQ(selected_provider, 1);
     EXPECT_EQ(selected_model, 0);
     EXPECT_THAT(state.messages_history->back().get_text(),
-                testing::HasSubstr("Model switched to: Muse Spark 1.3 Free"));
+                testing::HasSubstr("Model switched to: Muse Spark 1.3"));
 
     // Test /model gemini switches back to first model
     handle_slash_command("/model gemini", prompt_input, providers, selected_provider,

@@ -36,7 +36,7 @@ TEST(OpenAIResponsesTest, MuseSparkToolSchemaDropsExclusiveMinimum) {
   OpenAIRequestBuilder builder(true);
   builder.set_base_url("https://opencode.ai/zen/v1");
   GenerateOptions options;
-  options.model = "muse-spark-1.3-contributor-free";
+  options.model = "muse-spark-1.3";
   options.prompt = "hi";
   options.tools.emplace(
       "task",
@@ -64,7 +64,7 @@ TEST(OpenAIResponsesTest, ClampsLongCallIdsForMuseSpark) {
   OpenAIRequestBuilder builder(true);
   builder.set_base_url("https://opencode.ai/zen/v1");
   GenerateOptions options;
-  options.model = "muse-spark-1.3-contributor-free";
+  options.model = "muse-spark-1.3";
   const std::string long_id(80, 'c');
   options.messages = {
       Message::user("hi"),
@@ -95,7 +95,7 @@ TEST(OpenAIResponsesTest, ClampsLongCallIdsForMuseSpark) {
 TEST(OpenAIResponsesTest, LowersToolTurnsWithoutNullAssistantContent) {
   OpenAIRequestBuilder builder(true);
   GenerateOptions options;
-  options.model = "muse-spark-1.3-contributor-free";
+  options.model = "muse-spark-1.3";
   options.system = "be brief";
   options.messages = {
       Message::user("What is the weather?"),
@@ -234,7 +234,7 @@ TEST(OpenAIChatCompletionsTest, ZenNonClaudeSkipsMessageCacheBreakpoints) {
   OpenAIRequestBuilder builder(false);
   builder.set_base_url("https://opencode.ai/zen/v1");
   GenerateOptions options;
-  options.model = "x-preview-f-free";
+  options.model = "minimax-m3.1-flash-free";
   options.messages = {Message::user("hi")};
 
   const auto request = builder.build_request_json(options);
@@ -355,7 +355,7 @@ TEST(OpenAIChatCompletionsTest, ReplaysReasoningContentAndNullContent) {
   builder.set_base_url("https://opencode.ai/zen/v1");
 
   GenerateOptions options;
-  options.model = "x-preview-f-free";
+  options.model = "minimax-m3.1-flash-free";
   Message assistant =
       Message::assistant_with_tools("", {ToolCallContentPart(
                                             "call_1", "read_file",
@@ -461,7 +461,7 @@ TEST(OpenAIResponsesBodyTest, ReasoningItemSummaryBecomesReasoningText) {
   OpenAIResponseParser parser;
   const nlohmann::json response{
       {"id", "resp_1"},
-      {"model", "muse-spark-1.3-contributor-free"},
+      {"model", "muse-spark-1.3"},
       {"output",
        nlohmann::json::array({
            {{"type", "reasoning"},
@@ -491,7 +491,7 @@ TEST(OpenAIResponsesBodyTest, ReasoningItemSummaryBecomesReasoningText) {
 // ── Request: ask for the summary that makes reasoning readable ────────────
 TEST(OpenAIResponsesRequestTest, AsksForAReasoningSummaryByDefault) {
   OpenAIRequestBuilder builder(true);
-  GenerateOptions options("muse-spark-1.3-contributor-free", "hi");
+  GenerateOptions options("muse-spark-1.3", "hi");
   options.reasoning_effort = "xhigh";
   options.reasoning_summary = "auto";
 
@@ -504,7 +504,7 @@ TEST(OpenAIResponsesRequestTest, AsksForAReasoningSummaryByDefault) {
 
 TEST(OpenAIResponsesRequestTest, SummaryNoneIsNotSent) {
   OpenAIRequestBuilder builder(true);
-  GenerateOptions options("muse-spark-1.3-contributor-free", "hi");
+  GenerateOptions options("muse-spark-1.3", "hi");
   options.reasoning_effort = "high";
   options.reasoning_summary = "none";
 
@@ -515,7 +515,7 @@ TEST(OpenAIResponsesRequestTest, SummaryNoneIsNotSent) {
 
 TEST(OpenAIResponsesRequestTest, UnknownSummaryValueIsDropped) {
   OpenAIRequestBuilder builder(true);
-  GenerateOptions options("muse-spark-1.3-contributor-free", "hi");
+  GenerateOptions options("muse-spark-1.3", "hi");
   options.reasoning_effort = "high";
   options.reasoning_summary = "verbose-please";
 
