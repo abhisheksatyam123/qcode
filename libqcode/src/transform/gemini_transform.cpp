@@ -373,8 +373,24 @@ nlohmann::json wrap_antigravity_envelope_impl(nlohmann::json gemini_req,
              mapped_model == "gemini-4-argon-medium" ||
              mapped_model == "gemini-4-argon-high") {
     mapped_model = flash_effort_sku("gemini-4-argon");
-  } else if (mapped_model == "gemini-3.1-pro" || mapped_model == "gemini-3.1-pro-low" || mapped_model == "gemini-3-pro-high" || mapped_model == "gemini-3-pro-low" || mapped_model == "gemini-3-pro") {
-    mapped_model = "gemini-3.1-pro-low";
+  } else if (mapped_model == "gemini-pro-agent" ||
+             mapped_model == "gemini-3.1-pro" ||
+             mapped_model == "gemini-3.1-pro-low" ||
+             mapped_model == "gemini-3-pro-high" ||
+             mapped_model == "gemini-3-pro-low" ||
+             mapped_model == "gemini-3-pro" ||
+             mapped_model.find("pro-agent") != std::string::npos ||
+             mapped_model.find("3.1-pro") != std::string::npos ||
+             mapped_model.find("3-pro") != std::string::npos) {
+    mapped_model = flash_effort_sku("gemini-3.8-flash");
+  } else if (mapped_model == "claude-sonnet-5-5" ||
+             mapped_model == "claude-3-7-sonnet" ||
+             mapped_model == "claude-sonnet-4-6") {
+    mapped_model = "claude-sonnet-4-6";
+  } else if (mapped_model == "claude-opus-5-5-thinking" ||
+             mapped_model == "claude-opus-5-5" ||
+             mapped_model == "claude-opus-4-6-thinking") {
+    mapped_model = "claude-opus-4-6-thinking";
   }
   env["model"] = mapped_model;
   env["userAgent"] = "antigravity";

@@ -175,20 +175,13 @@ ResolvedModelClient resolve_model_client(const ProviderInfo& provider,
 }
 
 
-struct FallbackTarget {
-  const ProviderInfo* provider = nullptr;
-  const ModelInfo* model_info = nullptr;
-  std::string model_id;
-};
 
-static std::optional<FallbackTarget> select_fallback_candidate(
+
+std::optional<FallbackTarget> select_fallback_candidate(
     const std::vector<ProviderInfo>& providers,
     const std::string& current_provider_id,
     const std::string& current_model_id,
     const std::set<std::string>& excluded_keys) {
-  const auto working = filter_working_providers(providers);
-  const auto& catalog = working.empty() ? providers : working;
-
   const bool current_is_free = (current_provider_id == "opencode" ||
                                 current_model_id.find(":free") != std::string::npos ||
                                 current_model_id.find("-free") != std::string::npos ||
@@ -201,47 +194,55 @@ static std::optional<FallbackTarget> select_fallback_candidate(
   };
   std::vector<ScoredCandidate> scored;
 
-  for (const auto& prov : catalog) {
-    if (!is_provider_authenticated(prov)) continue;
-    for (const auto& mod : prov.models) {
-      if (!is_model_working(prov, mod)) continue;
-      const std::string key = prov.id + ":" + mod.id;
-      if (excluded_keys.count(key) || (prov.id == current_provider_id && mod.id == current_model_id)) {
-        continue;
-      }
-      const bool m_is_free = (mod.input_cost == 0.0 && mod.output_cost == 0.0) ||
-                             prov.id == "opencode" ||
-                             mod.id.find(":free") != std::string::npos ||
-                             mod.id.find("-free") != std::string::npos ||
-                             prov.id == "antigravity";
-
-      // If current model is free, never silently bill the user with a paid model
-      double score = 100.0;
-      if (current_is_free) {
-        if (!m_is_free) continue;
-        score += 50.0;
-      } else {
-        if (!m_is_free) score += 30.0;
-      }
-
-      // Different provider bonus to escape vendor-wide outages/rate-limits
-      if (prov.id != current_provider_id) {
-        score += 20.0;
-      }
-
-      // Factor in historical runtime telemetry
-      const auto perf = qcode::session::get_model_performance_summary(mod.id, prov.id);
-      if (perf.total_turns > 0) {
-        score += (perf.success_rate() * 0.2);
-        if (perf.failed_turns > 0) {
-          score -= (perf.failed_turns * 5.0);
+  auto evaluate_catalog = [&](bool require_working) {
+    scored.clear();
+    for (const auto& prov : providers) {
+      if (!is_provider_authenticated(prov)) continue;
+      for (const auto& mod : prov.models) {
+        if (require_working && !is_model_working(prov, mod)) continue;
+        const std::string key = prov.id + ":" + mod.id;
+        if (excluded_keys.count(key) || (prov.id == current_provider_id && mod.id == current_model_id)) {
+          continue;
         }
+        const bool m_is_free = (mod.input_cost == 0.0 && mod.output_cost == 0.0) ||
+                               prov.id == "opencode" ||
+                               mod.id.find(":free") != std::string::npos ||
+                               mod.id.find("-free") != std::string::npos ||
+                               prov.id == "antigravity";
+
+        // If current model is free, never silently bill the user with a paid model
+        double score = 100.0;
+        if (current_is_free) {
+          if (!m_is_free) continue;
+          score += 50.0;
+        } else {
+          if (!m_is_free) score += 30.0;
+        }
+
+        // Different provider bonus to escape vendor-wide outages/rate-limits
+        if (prov.id != current_provider_id) {
+          score += 20.0;
+        }
+
+        // Factor in historical runtime telemetry
+        const auto perf = qcode::session::get_model_performance_summary(mod.id, prov.id);
+        if (perf.total_turns > 0) {
+          score += (perf.success_rate() * 0.2);
+          if (perf.failed_turns > 0) {
+            score -= (perf.failed_turns * 5.0);
+          }
+        }
+
+        if (mod.reasoning) score += 5.0;
+
+        scored.push_back({&prov, &mod, score});
       }
-
-      if (mod.reasoning) score += 5.0;
-
-      scored.push_back({&prov, &mod, score});
     }
+  };
+
+  evaluate_catalog(true);
+  if (scored.empty()) {
+    evaluate_catalog(false);
   }
 
   if (scored.empty()) return std::nullopt;

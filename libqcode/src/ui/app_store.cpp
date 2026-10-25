@@ -751,6 +751,12 @@ void AppStore::wire() {
             return;
         }
         const std::string msg = format_user_facing_error(p.message);
+        if (p.severity == "warn") {
+            LOG_WARN("Store: diagnostic warning={}", msg);
+            add_toast(msg, "warning", 6000);
+            notify();
+            return;
+        }
         if (p.severity == "warning") {
             LOG_WARN("Store: warning message={}", msg);
             set_generating(false);

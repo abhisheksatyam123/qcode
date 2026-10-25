@@ -3271,7 +3271,8 @@ function handleEvent(evt, msg, session) {
         // Heartbeat or status notice — do not flag generation as an error
         break;
       }
-      if (evt.severity === 'warning') {
+      if (evt.severity === 'warning' || evt.severity === 'warn') {
+        // Warning diagnostic (e.g. slow request TTFT wait) — show transient toast, do not abort/flag stream as error
         showToast(evt.message);
         break;
       }
@@ -4148,26 +4149,29 @@ function copyStatsSummary() {
     return;
   }
   const d = lastStatsData;
-  const promptTok = d.prompt_tokens || 0;
-  const compTok = d.completion_tokens || 0;
-  const totTok = d.total_tokens || 0;
-  const toolCalls = d.tool_calls || 0;
-  const toolTime = d.total_tool_time_ms || 0;
+  const usage = d.usage || {};
+  const promptTok = Number(d.prompt_tokens) || Number(usage.input_tokens) || 0;
+  const compTok = Number(d.completion_tokens) || Number(usage.output_tokens) || 0;
+  const totTok = Number(d.total_tokens) || (promptTok + compTok);
+  const toolCalls = Number(d.tool_calls) || 0;
+  const toolTime = Number(d.total_tool_time_ms) || 0;
   const avgToolMs = toolCalls > 0 ? (toolTime / toolCalls).toFixed(0) + ' ms' : '0 ms';
   const md = [
     `# Session Stats: ${d.title || d.id || 'Active Session'}`,
     `- **Session ID:** \`${d.id || state.sessionId || '—'}\``,
     `- **Provider / Model:** ${d.provider || '—'} / \`${d.model || '—'}\``,
     `- **Workspace:** \`${d.workspace || '—'}\``,
-    `- **Messages:** ${d.message_count || 0} (${d.user_messages || 0} user, ${d.assistant_messages || 0} assistant)`,
+    `- **Messages:** ${d.message_count || 0}`,
     `- **Tokens:** ${formatNumber(totTok)} total (${formatNumber(promptTok)} prompt, ${formatNumber(compTok)} completion)`,
     `- **Tool Invocations:** ${toolCalls} calls across ${formatMs(toolTime)} (avg ${avgToolMs}/call)`,
   ];
-  const usage = d.usage || {};
   if (Number(usage.model_calls) > 0) {
     const cost = usageCostSummary(usage);
     md.push(`- **Model Calls:** ${usage.model_calls} (avg ${formatMs(usage.avg_call_ms)}, ${(Number(usage.output_tok_per_s) || 0).toFixed(1)} tok/s)`);
     md.push(`- **Billed Input:** ${formatNumber(usage.input_tokens)} (${(Number(usage.cache_hit_pct) || 0).toFixed(0)}% cache hit), output ${formatNumber(usage.output_tokens)}`);
+    if (Number(usage.reasoning_tokens) > 0) {
+      md.push(`- **Thinking:** ${formatNumber(usage.reasoning_tokens)} tokens`);
+    }
     if (cost.available) md.push(`- **Cost:** ${formatUsd(cost.total)}${cost.estimated ? ' (estimate)' : ''}`);
   }
   const mdText = md.join('\n');
@@ -4225,22 +4229,32 @@ async function loadStatsTab(opts) {
 }
 
 function renderStatsTab(data) {
-  const promptTokens = Number(data.prompt_tokens) || 0;
-  const completionTokens = Number(data.completion_tokens) || 0;
-  const totalTokens = Number(data.total_tokens) || (promptTokens + completionTokens);
+  const usage = data.usage || {};
+  const promptTokens = (Number(data.prompt_tokens) > 0)
+    ? Number(data.prompt_tokens)
+    : (Number(usage.input_tokens) || 0);
+  const completionTokens = (Number(data.completion_tokens) > 0)
+    ? Number(data.completion_tokens)
+    : (Number(usage.output_tokens) || 0);
+  const totalTokens = (Number(data.total_tokens) > 0)
+    ? Number(data.total_tokens)
+    : (promptTokens + completionTokens);
+  const thinkingTokens = Number(usage.reasoning_tokens) || 0;
   const toolCalls = Number(data.tool_calls) || 0;
   const totalToolTimeMs = Number(data.total_tool_time_ms) || 0;
-  const msgCount = Number(data.message_count) || 0;
-  const userMsgs = Number(data.user_messages) || 0;
-  const assistantMsgs = Number(data.assistant_messages) || 0;
   const avgToolTime = toolCalls > 0 ? (totalToolTimeMs / toolCalls) : 0;
+  const calls = Number(usage.model_calls) || 0;
+  const hit = Number(usage.cache_hit_pct) || 0;
+  const cacheRead = Number(usage.cache_read_tokens) || 0;
+  const input = Number(usage.input_tokens) || promptTokens;
+  const tokPerS = Number(usage.output_tok_per_s) || 0;
+  const ctx = data.context || {};
+  const ctxWindow = Number(ctx.window) || 0;
+  const used = Number(ctx.used) || 0;
 
-  // Percentage calculations
-  const promptPct = totalTokens > 0 ? Math.round((promptTokens / totalTokens) * 100) : 0;
-  const compPct = totalTokens > 0 ? Math.max(0, 100 - promptPct) : 0;
-  const totalDialogue = (userMsgs + assistantMsgs);
-  const userPct = totalDialogue > 0 ? Math.round((userMsgs / totalDialogue) * 100) : 50;
-  const asstPct = totalDialogue > 0 ? Math.max(0, 100 - userPct) : 50;
+  const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, (part / whole) * 100)) : 0);
+  const pctLabel = (v) => (v > 0 && v < 10 ? v.toFixed(1) : v.toFixed(0)) + '%';
+  const ctxPct = pct(used, ctxWindow);
 
   let createdFormatted = '—';
   let createdRelative = '';
@@ -4254,7 +4268,7 @@ function renderStatsTab(data) {
     } catch (_) {}
   }
 
-  const usageHtml = renderUsageSections(data);
+  const usageHtml = renderUsageSections(data, { hideKpis: true });
 
   const sid = data.id || state.sessionId || '';
   const title = data.title || 'Untitled Session';
@@ -4305,9 +4319,24 @@ function renderStatsTab(data) {
             <code class="stats-ws-path">${esc(workspace)}</code>
           </div>
         ` : ''}
+
+        <!-- Context Window Usage Meter -->
+        <div class="stats-hero-context-meter">
+          <div class="stats-context-label-row">
+            <span class="stats-context-label">📐 Context Window Usage</span>
+            <span class="stats-context-val">
+              ${ctxWindow > 0 ? `${esc(formatNumber(used))} / ${esc(formatNumber(ctxWindow))} tokens (${esc(pctLabel(ctxPct))})` : (used > 0 ? `${esc(formatNumber(used))} tokens in use` : 'Idle · context window unknown')}
+            </span>
+          </div>
+          ${ctxWindow > 0 ? `
+            <div class="stats-context-track" role="progressbar" aria-valuenow="${ctxPct}" aria-valuemin="0" aria-valuemax="100">
+              <div class="stats-context-bar ${ctxPct > 85 ? 'danger' : ctxPct > 60 ? 'warning' : 'ok'}" style="width: ${ctxPct}%"></div>
+            </div>
+          ` : ''}
+        </div>
       </div>
 
-      <!-- KPI Summary Cards Grid -->
+      <!-- Unified KPI HUD Grid -->
       <div class="stat-grid stats-kpi-grid">
         <div class="stat-card kpi-card tokens">
           <div class="stat-card-header">
@@ -4315,129 +4344,38 @@ function renderStatsTab(data) {
             <span class="stat-label">Total Tokens</span>
           </div>
           <div class="stat-value accent">${esc(formatNumber(totalTokens))}</div>
-          <div class="stat-subtext">${esc(formatNumber(promptTokens))} in / ${esc(formatNumber(completionTokens))} out</div>
+          <div class="stat-subtext">${esc(formatNumber(promptTokens))} in / ${esc(formatNumber(completionTokens))} out${thinkingTokens > 0 ? ' · ' + esc(formatNumber(thinkingTokens)) + ' think' : ''}</div>
         </div>
 
-        <div class="stat-card kpi-card messages">
+        <div class="stat-card kpi-card cache">
           <div class="stat-card-header">
-            <span class="stat-card-icon messages">💬</span>
-            <span class="stat-label">Messages</span>
+            <span class="stat-card-icon">🗄️</span>
+            <span class="stat-label">Prompt Cache</span>
           </div>
-          <div class="stat-value">${esc(formatNumber(msgCount))}</div>
-          <div class="stat-subtext">${esc(formatNumber(userMsgs))} user • ${esc(formatNumber(assistantMsgs))} assistant</div>
+          <div class="stat-value">${input > 0 ? esc(hit.toFixed(0)) + '%' : '—'}</div>
+          <div class="stat-subtext">${input > 0 ? esc(formatNumber(cacheRead)) + ' of ' + esc(formatNumber(input)) + ' in cached' : 'No cache activity'}</div>
+        </div>
+
+        <div class="stat-card kpi-card calls">
+          <div class="stat-card-header">
+            <span class="stat-card-icon">⚡</span>
+            <span class="stat-label">Model Inference</span>
+          </div>
+          <div class="stat-value">${esc(formatNumber(calls))}</div>
+          <div class="stat-subtext">${calls > 0 ? 'avg ' + esc(formatMs(usage.avg_call_ms)) + ' · ' + esc(tokPerS.toFixed(1)) + ' tok/s' : 'No model calls'}</div>
         </div>
 
         <div class="stat-card kpi-card tools">
           <div class="stat-card-header">
             <span class="stat-card-icon tools">🛠️</span>
-            <span class="stat-label">Tool Calls</span>
-          </div>
-          <div class="stat-value">${esc(formatNumber(toolCalls))}</div>
-          <div class="stat-subtext">${toolCalls > 0 ? (toolCalls / Math.max(1, userMsgs)).toFixed(1) + ' calls/prompt' : 'No tools run'}</div>
-        </div>
-
-        <div class="stat-card kpi-card duration">
-          <div class="stat-card-header">
-            <span class="stat-card-icon duration">⏱️</span>
             <span class="stat-label">Tool Execution</span>
           </div>
-          <div class="stat-value">${esc(formatMs(totalToolTimeMs))}</div>
-          <div class="stat-subtext">${toolCalls > 0 ? 'avg ' + esc(formatMs(avgToolTime)) + '/call' : '0 ms latency'}</div>
+          <div class="stat-value">${esc(formatNumber(toolCalls))}</div>
+          <div class="stat-subtext">${toolCalls > 0 ? esc(formatMs(totalToolTimeMs)) + ' total · avg ' + esc(formatMs(avgToolTime)) : 'No tools executed'}</div>
         </div>
       </div>
 
       ${usageHtml}
-
-      <!-- Token Distribution Breakdown Card -->
-      <div class="stat-card section-card">
-        <div class="stat-section-header">
-          <div class="stat-section-title-wrap">
-            <span class="stat-section-icon">📈</span>
-            <span class="stat-section-title">Token Economy Breakdown</span>
-          </div>
-          <span class="stat-section-badge">${totalTokens > 0 ? 'Active' : 'Idle'}</span>
-        </div>
-
-        <div class="stat-progress-container">
-          <div class="stat-progress-bar" role="progressbar" aria-valuenow="${promptPct}" aria-valuemin="0" aria-valuemax="100">
-            <div class="stat-progress-segment prompt" style="width: ${promptPct}%" title="Prompt Tokens: ${promptPct}%"></div>
-            <div class="stat-progress-segment completion" style="width: ${compPct}%" title="Completion Tokens: ${compPct}%"></div>
-          </div>
-          <div class="stat-progress-legend">
-            <div class="stat-legend-item">
-              <span class="legend-dot prompt"></span>
-              <span class="legend-label">Prompt Tokens:</span>
-              <strong class="legend-val">${esc(formatNumber(promptTokens))}</strong>
-              <span class="legend-pct">(${promptPct}%)</span>
-            </div>
-            <div class="stat-legend-item">
-              <span class="legend-dot completion"></span>
-              <span class="legend-label">Completion Tokens:</span>
-              <strong class="legend-val">${esc(formatNumber(completionTokens))}</strong>
-              <span class="legend-pct">(${compPct}%)</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Dialogue & Tool Activity Breakdown Cards -->
-      <div class="stats-two-col-grid">
-        <!-- Dialogue Balance -->
-        <div class="stat-card section-card">
-          <div class="stat-section-header">
-            <div class="stat-section-title-wrap">
-              <span class="stat-section-icon">🗣️</span>
-              <span class="stat-section-title">Conversation Balance</span>
-            </div>
-          </div>
-          <div class="stat-progress-container">
-            <div class="stat-progress-bar small">
-              <div class="stat-progress-segment user-segment" style="width: ${userPct}%" title="User msgs: ${userPct}%"></div>
-              <div class="stat-progress-segment asst-segment" style="width: ${asstPct}%" title="Assistant msgs: ${asstPct}%"></div>
-            </div>
-            <div class="stat-progress-legend">
-              <div class="stat-legend-item">
-                <span class="legend-dot user-segment"></span>
-                <span class="legend-label">User:</span>
-                <strong class="legend-val">${esc(formatNumber(userMsgs))}</strong>
-              </div>
-              <div class="stat-legend-item">
-                <span class="legend-dot asst-segment"></span>
-                <span class="legend-label">Assistant:</span>
-                <strong class="legend-val">${esc(formatNumber(assistantMsgs))}</strong>
-              </div>
-            </div>
-          </div>
-          <div class="stat-detail-item">
-            <span class="detail-label">Avg Tokens / Message:</span>
-            <span class="detail-val">${msgCount > 0 ? esc(formatNumber(Math.round(totalTokens / msgCount))) : 0} tok</span>
-          </div>
-        </div>
-
-        <!-- Tool Performance Details -->
-        <div class="stat-card section-card">
-          <div class="stat-section-header">
-            <div class="stat-section-title-wrap">
-              <span class="stat-section-icon">⚙️</span>
-              <span class="stat-section-title">Tool Execution Stats</span>
-            </div>
-          </div>
-          <div class="stat-details-list">
-            <div class="stat-detail-item">
-              <span class="detail-label">Total Invocations:</span>
-              <span class="detail-val">${esc(formatNumber(toolCalls))}</span>
-            </div>
-            <div class="stat-detail-item">
-              <span class="detail-label">Accumulated Runtime:</span>
-              <span class="detail-val">${esc(formatMs(totalToolTimeMs))}</span>
-            </div>
-            <div class="stat-detail-item">
-              <span class="detail-label">Mean Latency per Tool:</span>
-              <span class="detail-val">${esc(formatMs(avgToolTime))}</span>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   `;
 
@@ -4453,8 +4391,6 @@ function renderStatsTab(data) {
     });
   }
 }
-
-
 
 function renderMessages() {
   messagesEl.innerHTML = '';

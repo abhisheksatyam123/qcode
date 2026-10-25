@@ -1369,7 +1369,7 @@ SessionStats get_session_stats(const std::string& session_id,
             "COALESCE(provider, ''), COALESCE(model, ''), "
             "COALESCE(created_at, 0), "
             "COALESCE(prompt_tokens, 0), COALESCE(completion_tokens, 0), "
-            "COALESCE(total_tokens, 0) FROM sessions WHERE id = ?;";
+            "COALESCE(total_tokens, 0), COALESCE(usage_stats, '') FROM sessions WHERE id = ?;";
         sqlite3_stmt* stmt = nullptr;
         if (prepare_stmt(db, sql, &stmt)) {
             sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
@@ -1390,6 +1390,21 @@ SessionStats get_session_stats(const std::string& session_id,
                 stats.prompt_tokens = sqlite3_column_int(stmt, 5);
                 stats.completion_tokens = sqlite3_column_int(stmt, 6);
                 stats.total_tokens = sqlite3_column_int(stmt, 7);
+
+                // Reconcile with per-call usage stats if session tokens row missed tool turns
+                const unsigned char* raw_u = sqlite3_column_text(stmt, 8);
+                const std::string u_text = raw_u ? reinterpret_cast<const char*>(raw_u) : "";
+                if (!u_text.empty()) {
+                    SessionUsageStats u = SessionUsageStats::from_json(
+                        nlohmann::json::parse(u_text, nullptr, /*allow_exceptions=*/false));
+                    if (u.input_tokens > stats.prompt_tokens) {
+                        stats.prompt_tokens = static_cast<int>(u.input_tokens);
+                    }
+                    if (u.output_tokens > stats.completion_tokens) {
+                        stats.completion_tokens = static_cast<int>(u.output_tokens);
+                    }
+                    stats.total_tokens = std::max(stats.total_tokens, stats.prompt_tokens + stats.completion_tokens);
+                }
             }
             sqlite3_finalize(stmt);
         }

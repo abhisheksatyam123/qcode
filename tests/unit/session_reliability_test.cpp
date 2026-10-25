@@ -1,3 +1,4 @@
+#include <qcode/generation/generation_service.h>
 // Coverage for reliability work: per-session agent/reasoning mode
 // persistence (migration v7) and FileLogger size-cap rotation.
 
@@ -142,6 +143,48 @@ TEST_F(FileLoggerRotationTest, ReplacesPreviousRotatedFile) {
                               std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("SECOND"), std::string::npos);
     EXPECT_EQ(content.find("FIRST"), std::string::npos);
+}
+
+
+TEST(SessionReliabilityTest, FallbackTargetPointsToPassedProviders) {
+    std::vector<ProviderInfo> providers;
+    ProviderInfo p1;
+    p1.id = "opencode";
+    p1.name = "OpenCode";
+    p1.api_key = "dummy-key";
+    ModelInfo m1;
+    m1.id = "deepseek-v4.1-flash-free";
+    m1.name = "DeepSeek V4.1 Flash Free";
+    m1.input_cost = 0.0;
+    m1.output_cost = 0.0;
+    p1.models.push_back(m1);
+
+    ProviderInfo p2;
+    p2.id = "antigravity";
+    p2.name = "Antigravity";
+    p2.api_key = "dummy-ag-token";
+    ModelInfo m2;
+    m2.id = "gemini-pro-agent";
+    m2.name = "Gemini Pro Agent";
+    m2.input_cost = 0.0;
+    m2.output_cost = 0.0;
+    p2.models.push_back(m2);
+
+    providers.push_back(p1);
+    providers.push_back(p2);
+
+    // Request fallback when current model (deepseek-v4.1-flash-free) fails
+    auto target = select_fallback_candidate(providers, "opencode", "deepseek-v4.1-flash-free");
+    ASSERT_TRUE(target.has_value());
+    EXPECT_EQ(target->model_id, "gemini-pro-agent");
+    ASSERT_NE(target->provider, nullptr);
+    ASSERT_NE(target->model_info, nullptr);
+
+    // Verify pointer stability: points directly into `providers` vector elements, not temporary stack memory
+    EXPECT_EQ(target->provider, &providers[1]);
+    EXPECT_EQ(target->model_info, &providers[1].models[0]);
+    EXPECT_EQ(target->provider->id, "antigravity");
+    EXPECT_EQ(target->model_info->id, "gemini-pro-agent");
 }
 
 }  // namespace

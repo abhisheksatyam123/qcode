@@ -2131,6 +2131,60 @@ kbd {
   white-space: nowrap;
 }
 
+.stats-hero-context-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.stats-context-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.stats-context-label {
+  color: var(--muted);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stats-context-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+}
+
+.stats-context-track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.stats-context-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.stats-context-bar.ok {
+  background: linear-gradient(90deg, #3ecf8e, #10b981);
+}
+
+.stats-context-bar.warning {
+  background: linear-gradient(90deg, #fbbf24, #f59e0b);
+}
+
+.stats-context-bar.danger {
+  background: linear-gradient(90deg, #f43f5e, #e11d48);
+}
+
 /* KPI Cards Grid */
 .stats-kpi-grid {
   display: grid;

@@ -511,6 +511,25 @@ TEST(GeminiTransformTest, ConvertKeepsSignedReasoningThoughts) {
 }
 
 
+
+TEST(GeminiTransformTest, WrapEnvelopeMapsGeminiProAgentToGemini38Flash) {
+  json gem = parsed(R"({
+    "generationConfig": {"thinkingConfig": {"thinkingLevel": "high"}}
+  })");
+  json env = wrap_antigravity_envelope(gem, "gemini-pro-agent");
+  EXPECT_EQ(env["model"].get<std::string>(), "gemini-3.8-flash-high");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeMapsClaudeSonnet55ToSonnet46) {
+  json env = wrap_antigravity_envelope(json::object(), "claude-sonnet-5-5");
+  EXPECT_EQ(env["model"].get<std::string>(), "claude-sonnet-4-6");
+}
+
+TEST(GeminiTransformTest, WrapEnvelopeMapsClaudeOpus55ThinkingToOpus46Thinking) {
+  json env = wrap_antigravity_envelope(json::object(), "claude-opus-5-5-thinking");
+  EXPECT_EQ(env["model"].get<std::string>(), "claude-opus-4-6-thinking");
+}
+
 }  // namespace
 }  // namespace gemini
 }  // namespace qcode

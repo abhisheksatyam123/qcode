@@ -1,3 +1,5 @@
+#include <optional>
+#include <set>
 #pragma once
 #include <atomic>
 #include <functional>
@@ -10,6 +12,19 @@
 #include <vector>
 
 namespace qcode {
+
+struct FallbackTarget {
+    const ProviderInfo* provider = nullptr;
+    const ModelInfo* model_info = nullptr;
+    std::string model_id;
+};
+
+std::optional<FallbackTarget> select_fallback_candidate(
+    const std::vector<ProviderInfo>& providers,
+    const std::string& current_provider_id,
+    const std::string& current_model_id,
+    const std::set<std::string>& excluded_keys = {});
+
 
 // ── Bus-aware generation entry points ────────────────────────────────
 // Callers pass a BusPort& (not ChatState) and receive typed events.

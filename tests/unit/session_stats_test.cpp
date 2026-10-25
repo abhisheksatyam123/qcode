@@ -82,6 +82,21 @@ TEST_F(SessionStatsTest, LiveTokensAddedOnTopOfStoredNoDoubleCount) {
     EXPECT_EQ(st2.total_tokens, 126);
 }
 
+TEST_F(SessionStatsTest, ReconcilesWithUsageStatsWhenRowTokensMissing) {
+    const std::string sid = create_new_session("prov", "model", "ws", "ReconcileTest");
+
+    // Simulate model calls recorded in usage_stats
+    ModelCallUsage call;
+    call.input_tokens = 500;
+    call.output_tokens = 50;
+    call.cache_read_tokens = 200;
+    record_session_model_call(sid, call);
+
+    SessionStats st = get_session_stats(sid);
+    EXPECT_EQ(st.prompt_tokens, 500);
+    EXPECT_EQ(st.completion_tokens, 50);
+    EXPECT_EQ(st.total_tokens, 550);
+}
+
 }  // namespace
 }  // namespace qcode
-

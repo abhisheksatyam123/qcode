@@ -140,7 +140,7 @@ export function usageModelRows(usage) {
 // Per-call usage from /session/<id>/stats: cost (each call at its own
 // model's opencode.json prices), billed input with the prompt-cache split,
 // context in use, latency, and the model's configured limits/prices.
-export function renderUsageSections(data) {
+export function renderUsageSections(data, opts = {}) {
   const u = data.usage || {};
   const calls = Number(u.model_calls) || 0;
   const mi = data.model_info || null;
@@ -213,7 +213,7 @@ export function renderUsageSections(data) {
       </div>`;
 
   if (calls === 0) {
-    return kpis + `
+    return (opts.hideKpis ? "" : kpis) + `
       <div class="stat-card section-card">
         <div class="stats-note">Per-call input, cache and cost figures start with this session's next model call.</div>
       </div>`;
@@ -334,7 +334,7 @@ export function renderUsageSections(data) {
         </div>`;
   }
 
-  return kpis + `
+  return (opts.hideKpis ? "" : kpis) + `
       <div class="stats-two-col-grid">${tokens}${costCard}</div>
       <div class="stats-two-col-grid">${latency}${config}</div>`;
 }

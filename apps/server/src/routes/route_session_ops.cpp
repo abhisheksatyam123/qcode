@@ -170,6 +170,16 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
 
     const auto started = std::chrono::steady_clock::now();
     qcode::GenerateResult gen_res = qcode::compaction::run_summarizer(client, opts);
+    if (!gen_res.is_success() || (gen_res.error && !gen_res.error->empty())) {
+        std::string err = gen_res.error && !gen_res.error->empty() ? *gen_res.error : gen_res.error_message();
+        LOG_WARN("Compaction summarizer for session {} model {} failed ({}), attempting fallback...",
+                 sid, opts.model, err);
+        // Fallback for antigravity or provider model error: try with gemini-3.8-flash
+        if (sel.id == "antigravity" && opts.model != "gemini-3.8-flash") {
+            opts.model = "gemini-3.8-flash";
+            gen_res = qcode::compaction::run_summarizer(client, opts);
+        }
+    }
     const double model_ms = std::chrono::duration<double, std::milli>(
                                 std::chrono::steady_clock::now() - started)
                                 .count();
@@ -289,14 +299,25 @@ svr.Get("/session/([^/]+)/stats", [providers_list](const httplib::Request& req, 
     const qcode::ModelInfo* model = nullptr;
     if (providers_list) {
         for (const auto& p : *providers_list) {
-            if (p.id != st.provider && p.name != st.provider) continue;
+            if (!st.provider.empty() && p.id != st.provider && p.name != st.provider) continue;
             for (const auto& m : p.models) {
                 if (m.id == st.model || m.name == st.model) {
                     model = &m;
                     break;
                 }
             }
-            break;
+            if (model != nullptr) break;
+        }
+        if (!model) {
+            for (const auto& p : *providers_list) {
+                for (const auto& m : p.models) {
+                    if (m.id == st.model || m.name == st.model) {
+                        model = &m;
+                        break;
+                    }
+                }
+                if (model != nullptr) break;
+            }
         }
     }
     const auto usage = qcode::session::get_session_usage_stats(sid);
@@ -326,7 +347,8 @@ svr.Get("/session/([^/]+)/stats", [providers_list](const httplib::Request& req, 
     }
     // Context in use = the prompt of the latest call; the window comes only
     // from opencode.json limit.context (0 = unknown).
-    j["context"] = {{"used", usage.last_input_tokens},
+    const int used_context = usage.last_input_tokens > 0 ? usage.last_input_tokens : st.prompt_tokens;
+    j["context"] = {{"used", used_context},
                     {"window", model != nullptr ? model->context_window : 0}};
     // Delegated work is billed in the child sessions; roll it up here.
     const auto subagents = qcode::session::get_subagent_usage(sid);

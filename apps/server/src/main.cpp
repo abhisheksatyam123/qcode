@@ -38,7 +38,8 @@ std::string log_dir() {
     return "/tmp/qcode-logs";
 }
 
-void handle_signal(int) {
+void handle_signal(int sig) {
+    LOG_INFO("Caught signal {}, requesting server shutdown...", sig);
     g_shutdown_requested = true;
 }
 
