@@ -252,6 +252,12 @@ std::string zen_wire_model_id(std::string model_id) {
   if (contains(id, "nemotron-3-super")) {
     return "nemotron-3.5-lightning-free";
   }
+  if (contains(id, "nemotron-3-ultra")) {
+    return "nemotron-3.5-super-vl-free";
+  }
+  if (contains(id, "exo")) {
+    return "nemotron-3.5-super-vl-free";
+  }
   // Jev is live but speaks the SystemOne structured-decision API, which
   // qcode's chat path cannot drive; keep old sessions on a chat model.
   if (contains(id, "jev-1.13")) return "big-pickle";

@@ -285,25 +285,11 @@ TEST(GeminiTransformTest, WrapEnvelopeDefaultsGemini38FlashToMediumSku) {
   EXPECT_EQ(env["model"].get<std::string>(), "gemini-3.8-flash-medium");
 }
 
-TEST(GeminiTransformTest, WrapEnvelopeMapsGemini4ArgonEffort) {
-  json gem = parsed(R"({
-    "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}}
-  })");
-  json env = wrap_antigravity_envelope(gem, "gemini-4-argon");
-  EXPECT_EQ(env["model"].get<std::string>(), "gemini-4-argon-low");
-}
-
-TEST(GeminiTransformTest, WrapEnvelopeMapsGemini4ArgonHighEffort) {
-  json gem = parsed(R"({
-    "generationConfig": {"thinkingConfig": {"thinkingLevel": "high"}}
-  })");
-  json env = wrap_antigravity_envelope(gem, "gemini4-argon");
-  EXPECT_EQ(env["model"].get<std::string>(), "gemini-4-argon-high");
-}
-
-TEST(GeminiTransformTest, WrapEnvelopeDefaultsGemini4ArgonToMediumSku) {
-  json env = wrap_antigravity_envelope(json::object(), "google/gemini-4-argon");
-  EXPECT_EQ(env["model"].get<std::string>(), "gemini-4-argon-medium");
+TEST(GeminiTransformTest, WrapEnvelopePreservesGptOss120bMedium) {
+  json env = wrap_antigravity_envelope(json::object(), "gpt-oss-120b");
+  EXPECT_EQ(env["model"].get<std::string>(), "gpt-oss-120b-medium");
+  json env2 = wrap_antigravity_envelope(json::object(), "gpt-oss-120b-medium");
+  EXPECT_EQ(env2["model"].get<std::string>(), "gpt-oss-120b-medium");
 }
 
 // ---- unwrap ---------------------------------------------------------------
@@ -512,21 +498,13 @@ TEST(GeminiTransformTest, ConvertKeepsSignedReasoningThoughts) {
 
 
 
-TEST(GeminiTransformTest, WrapEnvelopeMapsGeminiProAgentToGemini38Flash) {
-  json gem = parsed(R"({
-    "generationConfig": {"thinkingConfig": {"thinkingLevel": "high"}}
-  })");
-  json env = wrap_antigravity_envelope(gem, "gemini-pro-agent");
-  EXPECT_EQ(env["model"].get<std::string>(), "gemini-3.8-flash-high");
-}
-
-TEST(GeminiTransformTest, WrapEnvelopeMapsClaudeSonnet55ToSonnet46) {
-  json env = wrap_antigravity_envelope(json::object(), "claude-sonnet-5-5");
+TEST(GeminiTransformTest, WrapEnvelopePreservesClaudeSonnet46) {
+  json env = wrap_antigravity_envelope(json::object(), "claude-sonnet-4-6");
   EXPECT_EQ(env["model"].get<std::string>(), "claude-sonnet-4-6");
 }
 
-TEST(GeminiTransformTest, WrapEnvelopeMapsClaudeOpus55ThinkingToOpus46Thinking) {
-  json env = wrap_antigravity_envelope(json::object(), "claude-opus-5-5-thinking");
+TEST(GeminiTransformTest, WrapEnvelopePreservesClaudeOpus46Thinking) {
+  json env = wrap_antigravity_envelope(json::object(), "claude-opus-4-6-thinking");
   EXPECT_EQ(env["model"].get<std::string>(), "claude-opus-4-6-thinking");
 }
 

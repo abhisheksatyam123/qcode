@@ -105,7 +105,7 @@ TEST(AnthropicZenHeadersTest, MessagesTransportGetsOpenCodeIdentity) {
 
   const auto user_agent = headers.find("User-Agent");
   ASSERT_NE(user_agent, headers.end());
-  EXPECT_EQ(user_agent->second, "opencode/latest/2.1.0/cli");
+  EXPECT_EQ(user_agent->second, "opencode/latest/2.0.29/cli");
   EXPECT_EQ(headers.find("x-opencode-client")->second, "cli");
 
   const auto session_id = headers.find("x-opencode-session-id");

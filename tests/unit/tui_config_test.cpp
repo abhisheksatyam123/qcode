@@ -626,9 +626,10 @@ TEST(TuiConfigTest, HomeConfigDrivesProvidersModelsAndEfforts) {
   EXPECT_EQ(FindModel(zen->models, "jev-1.13-free"), nullptr);
   EXPECT_NE(FindModel(zen->models, "exo-free"), nullptr);
   EXPECT_NE(FindModel(zen->models, "nemotron-3-ultra-free"), nullptr);
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("exo-free"), "exo-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("exo-free"),
+            "nemotron-3.5-super-vl-free");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("nemotron-3-ultra-free"),
-            "nemotron-3-ultra-free");
+            "nemotron-3.5-super-vl-free");
   const auto* minimax = FindModel(zen->models, "minimax-m3.1-flash-free");
   if (minimax != nullptr) {
     EXPECT_EQ(minimax->protocol, "chat_completions");

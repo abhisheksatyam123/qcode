@@ -55,6 +55,38 @@ static std::string normalize_api_url(std::string url) {
     return url;
 }
 
+std::string get_openrouter_api_key() {
+    if (const char* key = std::getenv("OPENROUTER_API_KEY");
+        key != nullptr && *key != '\0') {
+        return key;
+    }
+    const char* home = std::getenv("HOME");
+    std::vector<std::filesystem::path> candidates;
+    if (home) {
+        candidates.push_back(std::filesystem::path(home) / ".bashrc");
+        candidates.push_back(std::filesystem::path(home) / ".profile");
+        candidates.push_back(std::filesystem::path(home) / ".env");
+    }
+    candidates.push_back(".env");
+    for (const auto& path : candidates) {
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) continue;
+        std::ifstream file(path);
+        if (!file.is_open()) continue;
+        std::string line;
+        while (std::getline(file, line)) {
+            auto pos = line.find("OPENROUTER_API_KEY=");
+            if (pos != std::string::npos) {
+                std::string val = line.substr(pos + 19);
+                while (!val.empty() && (val.front() == '"' || val.front() == '\'')) val.erase(val.begin());
+                while (!val.empty() && (val.back() == '"' || val.back() == '\'' || val.back() == '\r' || val.back() == ' ')) val.pop_back();
+                if (!val.empty()) return val;
+            }
+        }
+    }
+    return "";
+}
+
 static std::string resolve_config_value(const ordered_json& value) {
     if (!value.is_string()) return "";
     const auto text = value.get<std::string>();
@@ -62,6 +94,7 @@ static std::string resolve_config_value(const ordered_json& value) {
     if (text.starts_with(prefix) && text.ends_with('}')) {
         const auto name = text.substr(prefix.size(), text.size() - prefix.size() - 1);
         if (const char* env = std::getenv(name.c_str())) return env;
+        if (name == "OPENROUTER_API_KEY") return get_openrouter_api_key();
         return "";
     }
     return text;
@@ -476,8 +509,8 @@ static void apply_provider_runtime_defaults(ProviderInfo& provider) {
         remap_cursor_picker_ids(provider);
     }
     if (provider.id == "openrouter" && provider.api_key.empty()) {
-        if (const char* key = std::getenv("OPENROUTER_API_KEY");
-            key != nullptr && *key != '\0') {
+        const auto key = get_openrouter_api_key();
+        if (!key.empty()) {
             provider.api_key = key;
         }
     }
@@ -876,8 +909,8 @@ bool is_provider_authenticated(const ProviderInfo& provider) {
     if (!provider.api_key.empty()) return true;
     if (provider.id == "opencode" || provider.name == "OpenCode Zen") return true;
     if (provider.id == "openrouter" || provider.name == "OpenRouter") {
-        const char* key = std::getenv("OPENROUTER_API_KEY");
-        if (key && *key != '\0') return true;
+        if (!provider.api_key.empty()) return true;
+        if (!get_openrouter_api_key().empty()) return true;
     }
     if (provider.id == "antigravity" || provider.name == "Antigravity") {
         if (!get_antigravity_token().empty()) return true;

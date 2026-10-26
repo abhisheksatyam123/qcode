@@ -352,12 +352,24 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     apply_opencode_message_caching(request["messages"]);
   }
 
-  // OpenCode options(): promptCacheKey = sessionID for Zen gpt-5 (not
-  // gpt-5-chat). Do not send OpenRouter prompt_cache_key (undocumented).
+  // OpenCode promptCacheKey and prompt_cache_key derived from session ID:
+  // /^ses_[0-9a-f]{64}$/.test(id) ? id.slice(4) : id
   if (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen &&
-      is_opencode_gpt5_cache_model(model_id) && !options.session_id.empty()) {
-    request["promptCacheKey"] = options.session_id;
-    request["prompt_cache_key"] = options.session_id;
+      !options.session_id.empty()) {
+    std::string key = options.session_id;
+    if (key.starts_with("ses_") && key.length() == 68) {
+      bool all_hex = true;
+      for (size_t i = 4; i < 68; ++i) {
+        char c = key[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+          all_hex = false;
+          break;
+        }
+      }
+      if (all_hex) key = key.substr(4);
+    }
+    request["promptCacheKey"] = key;
+    request["prompt_cache_key"] = key;
   }
 
   // OpenRouter only reports usage accounting (cached-token details) when

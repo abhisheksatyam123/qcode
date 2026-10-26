@@ -158,6 +158,12 @@ nlohmann::json to_responses_request(const nlohmann::json& request) {
   if (request.contains("tool_choice")) {
     responses["tool_choice"] = request["tool_choice"];
   }
+  if (request.contains("promptCacheKey")) {
+    responses["promptCacheKey"] = request["promptCacheKey"];
+  }
+  if (request.contains("prompt_cache_key")) {
+    responses["prompt_cache_key"] = request["prompt_cache_key"];
+  }
   return responses;
 }
 

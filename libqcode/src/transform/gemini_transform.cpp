@@ -350,13 +350,13 @@ nlohmann::json wrap_antigravity_envelope_impl(nlohmann::json gemini_req,
     return base + "-medium";
   };
 
-  if (mapped_model == "gemini-3-flash") {
-    mapped_model = "gemini-3-flash-agent";
-  } else if (mapped_model == "gemini-3.8-flash" ||
+  if (mapped_model == "gemini-3.8-flash" ||
              mapped_model == "gemini-3.8-flash-low" ||
              mapped_model == "gemini-3.8-flash-medium" ||
              mapped_model == "gemini-3.8-flash-high") {
     mapped_model = flash_effort_sku("gemini-3.8-flash");
+  } else if (mapped_model == "gemini-3-flash") {
+    mapped_model = "gemini-3-flash-agent";
   } else if (mapped_model == "gemini-3.6-flash" ||
              mapped_model == "gemini-3.6-flash-low" ||
              mapped_model == "gemini-3.6-flash-medium" ||
@@ -367,29 +367,12 @@ nlohmann::json wrap_antigravity_envelope_impl(nlohmann::json gemini_req,
              mapped_model == "gemini-3.7-flash-medium" ||
              mapped_model == "gemini-3.7-flash-high") {
     mapped_model = flash_effort_sku("gemini-3.7-flash");
-  } else if (mapped_model == "gemini-4-argon" ||
-             mapped_model == "gemini4-argon" ||
-             mapped_model == "gemini-4-argon-low" ||
-             mapped_model == "gemini-4-argon-medium" ||
-             mapped_model == "gemini-4-argon-high") {
-    mapped_model = flash_effort_sku("gemini-4-argon");
-  } else if (mapped_model == "gemini-pro-agent" ||
-             mapped_model == "gemini-3.1-pro" ||
-             mapped_model == "gemini-3.1-pro-low" ||
-             mapped_model == "gemini-3-pro-high" ||
-             mapped_model == "gemini-3-pro-low" ||
-             mapped_model == "gemini-3-pro" ||
-             mapped_model.find("pro-agent") != std::string::npos ||
-             mapped_model.find("3.1-pro") != std::string::npos ||
-             mapped_model.find("3-pro") != std::string::npos) {
-    mapped_model = flash_effort_sku("gemini-3.8-flash");
-  } else if (mapped_model == "claude-sonnet-5-5" ||
-             mapped_model == "claude-3-7-sonnet" ||
-             mapped_model == "claude-sonnet-4-6") {
+  } else if (mapped_model == "gpt-oss-120b" ||
+             mapped_model == "gpt-oss-120b-medium") {
+    mapped_model = "gpt-oss-120b-medium";
+  } else if (mapped_model == "claude-sonnet-4-6") {
     mapped_model = "claude-sonnet-4-6";
-  } else if (mapped_model == "claude-opus-5-5-thinking" ||
-             mapped_model == "claude-opus-5-5" ||
-             mapped_model == "claude-opus-4-6-thinking") {
+  } else if (mapped_model == "claude-opus-4-6-thinking") {
     mapped_model = "claude-opus-4-6-thinking";
   }
   env["model"] = mapped_model;

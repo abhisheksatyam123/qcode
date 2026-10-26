@@ -74,8 +74,9 @@ TEST(ProviderTransformTest, ZenApiProtocolMatchesOpenCodeDocs) {
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("laguna-s-2.1-free"),
             "big-pickle");
   EXPECT_EQ(ProviderTransform::zen_wire_model_id("nemotron-3-ultra-free"),
-            "nemotron-3-ultra-free");
-  EXPECT_EQ(ProviderTransform::zen_wire_model_id("exo-free"), "exo-free");
+            "nemotron-3.5-super-vl-free");
+  EXPECT_EQ(ProviderTransform::zen_wire_model_id("exo-free"),
+            "nemotron-3.5-super-vl-free");
   EXPECT_EQ(ProviderTransform::zen_api_protocol("gemini-3-pro"), "google");
   EXPECT_EQ(ProviderTransform::zen_completions_path("gemini-3.7-flash"),
             "/models/gemini-3.7-flash:generateContent");

@@ -98,7 +98,7 @@ TEST(OpenAIRequestBuilderTest, ZenFreeModelsSendOpenCodeClientHeaders) {
   const auto headers = builder.build_headers(config);
   const auto user_agent = headers.find("User-Agent");
   ASSERT_NE(user_agent, headers.end());
-  EXPECT_EQ(user_agent->second, "opencode/latest/2.1.0/cli");
+  EXPECT_EQ(user_agent->second, "opencode/latest/2.0.29/cli");
   const auto client = headers.find("x-opencode-client");
   ASSERT_NE(client, headers.end());
   EXPECT_EQ(client->second, "cli");
@@ -124,7 +124,7 @@ TEST(OpenAIRequestBuilderTest, ZenFreeModelsGenerateValidSessionId) {
   const auto session = headers.find("x-opencode-session");
   ASSERT_NE(session, headers.end());
   EXPECT_TRUE(session->second.starts_with("ses_"));
-  EXPECT_EQ(session->second.size(), 68u);
+  EXPECT_EQ(session->second.size(), 30u);
   for (const char* name : {"x-opencode-session-id", "x-session-affinity",
                            "X-Session-Id"}) {
     const auto it = headers.find(name);
@@ -179,7 +179,7 @@ TEST(OpenAIRequestBuilderTest, ZenSessionAffinityIsStableAcrossRequests) {
   ASSERT_NE(a, first.end());
   ASSERT_NE(b, second.end());
   EXPECT_TRUE(a->second.starts_with("ses_"));
-  EXPECT_EQ(a->second.size(), 68u);
+  EXPECT_EQ(a->second.size(), 30u);
   EXPECT_EQ(a->second, b->second);
 }
 

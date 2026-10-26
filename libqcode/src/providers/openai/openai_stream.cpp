@@ -348,7 +348,9 @@ void OpenAIStreamImpl::run_stream(const std::string& url,
       const bool is_network_error = !send_success;
       const bool is_overflow = send_success &&
           qcode::is_context_overflow_error(res.status, error_body);
-      const bool is_retryable_status = send_success && !is_overflow &&
+      const bool is_permanent_404 = send_success &&
+          qcode::is_permanent_not_found(res.status, error_body);
+      const bool is_retryable_status = send_success && !is_overflow && !is_permanent_404 &&
           (qcode::is_status_code_retryable(res.status) ||
            qcode::is_error_message_retryable(error_body));
 

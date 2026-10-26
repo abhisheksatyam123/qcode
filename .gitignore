@@ -34,6 +34,11 @@ tests/cmake_test_discovery_*.json
 apps/webui/dist/
 apps/webui/node_modules/
 
+# Local secrets (never commit API keys)
+.env
+.env.*
+!.env.example
+
 # Personal working notes (task handoff notes, not source)
 scratchpad/
 

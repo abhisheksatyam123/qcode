@@ -10,6 +10,7 @@ namespace qcode {
 
 // Retrieve antigravity API token from env var or keyring.
 // When force_refresh is true, always attempt an OAuth refresh (used after 401).
+[[nodiscard]] std::string get_openrouter_api_key();
 [[nodiscard]] std::string get_antigravity_token(bool force_refresh = false);
 
 // True when the on-disk Antigravity access token is missing or past expiry.
