@@ -20,6 +20,8 @@ add_executable(qcode_tests
     unit/gemini_transform_test.cpp
     unit/provider_transform_test.cpp
     unit/antigravity_client_test.cpp
+    unit/mock_provider_test.cpp
+    unit/provider_factory_test.cpp
     unit/cursor_provider_test.cpp
     unit/bash_tool_test.cpp
     unit/image_tool_test.cpp

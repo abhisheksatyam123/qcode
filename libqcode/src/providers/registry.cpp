@@ -26,7 +26,8 @@ std::string first_key(const std::string& configured, const char* env_name) {
 
 bool allows_keyless_zen(const std::string& base_url) {
   return base_url.empty() ||
-         base_url.find("opencode.ai") != std::string::npos;
+         base_url.find("opencode.ai/zen") != std::string::npos ||
+         base_url.find("opencode.ai/inference") != std::string::npos;
 }
 
 openai::CompatibleOptions to_openai(const ProviderOptions& options,
