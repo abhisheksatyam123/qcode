@@ -145,7 +145,7 @@ static void header_if_absent(std::map<std::string, std::string>& headers,
 static void fill_known_provider_defaults(ProviderInfo& provider) {
     if (provider.id == "opencode") {
         if (provider.api_url.empty()) {
-            provider.api_url = "https://opencode.ai/zen/v1";
+            provider.api_url = "https://opencode.ai/inference/openai/v1";
         }
         header_if_absent(provider.headers, "User-Agent",
                          providers::kOpenCodeZenUserAgent);

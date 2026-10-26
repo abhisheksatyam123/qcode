@@ -131,7 +131,7 @@ std::string build_provider_config(const std::string& openrouter_key,
       "name": "OpenCode Zen",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://opencode.ai/zen/v1",
+        "baseURL": "https://opencode.ai/inference/openai/v1",
         "headers": {
           "User-Agent": "opencode/latest/2.1.0/cli",
           "x-opencode-client": "cli"

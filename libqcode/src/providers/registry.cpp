@@ -26,7 +26,7 @@ std::string first_key(const std::string& configured, const char* env_name) {
 
 bool allows_keyless_zen(const std::string& base_url) {
   return base_url.empty() ||
-         base_url.find("opencode.ai/zen") != std::string::npos;
+         base_url.find("opencode.ai") != std::string::npos;
 }
 
 openai::CompatibleOptions to_openai(const ProviderOptions& options,
@@ -60,7 +60,7 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
     }
     api_key = "__EMPTY__";
   }
-  const auto base_url = options.base_url.empty() ? "https://opencode.ai/zen/v1"
+  const auto base_url = options.base_url.empty() ? "https://opencode.ai/inference/openai/v1"
                                                  : options.base_url;
   const auto protocol = parse_wire_protocol(options.protocol);
   if (protocol == WireProtocol::kMessages) {

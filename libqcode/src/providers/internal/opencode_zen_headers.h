@@ -277,11 +277,35 @@ inline std::string stable_opencode_project_id(std::string_view directory) {
   return sha1_hex(std::string("directory:") + dir.string());
 }
 
+inline std::string generate_opencode_log_id() {
+  static std::random_device rd;
+  std::mt19937_64 gen(
+      (static_cast<uint64_t>(rd()) << 32) ^ rd() ^
+      static_cast<uint64_t>(
+          std::chrono::steady_clock::now().time_since_epoch().count()));
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string id;
+  id.reserve(36);
+  for (int i = 0; i < 8; ++i) id += kHex[gen() % 16];
+  id += '-';
+  for (int i = 0; i < 4; ++i) id += kHex[gen() % 16];
+  id += '-';
+  for (int i = 0; i < 4; ++i) id += kHex[gen() % 16];
+  id += '-';
+  for (int i = 0; i < 4; ++i) id += kHex[gen() % 16];
+  id += '-';
+  for (int i = 0; i < 12; ++i) id += kHex[gen() % 16];
+  return id;
+}
+
 inline void apply_opencode_zen_headers(httplib::Headers& headers) {
   headers.erase("User-Agent");
   headers.emplace("User-Agent", kOpenCodeZenUserAgent);
   headers.erase("x-opencode-client");
   headers.emplace("x-opencode-client", kOpenCodeZenClient);
+
+  headers.erase("x-opencode-log-id");
+  headers.emplace("x-opencode-log-id", generate_opencode_log_id());
 
   const auto value_of = [&headers](const char* name) {
     const auto it = headers.find(name);
