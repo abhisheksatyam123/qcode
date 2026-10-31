@@ -95,7 +95,6 @@ struct SessionInfo {
     std::string provider;
     std::string model;
     std::string parent_session_id;
-    std::string persona;
     long long last_active_at = 0;
     int message_count = 0;
 };
@@ -118,10 +117,6 @@ std::pair<std::string, std::string> get_session_modes(const std::string& session
 void set_session_modes(const std::string& session_id,
                        const std::string& agent_mode,
                        const std::string& reasoning_mode);
-
-// Persisted per-session persona (e.g. "logging", "advisor", "exercise", "athletics", "learning", "generic").
-std::string get_session_persona(const std::string& session_id);
-void set_session_persona(const std::string& session_id, const std::string& persona);
 
 // Aggregate statistics for a session (computed from messages + live counters).
 struct SessionStats {

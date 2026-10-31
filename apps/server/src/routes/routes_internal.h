@@ -10,9 +10,6 @@
 namespace qcode {
 namespace server {
 
-std::string load_persona_prompt(const std::string& persona, const std::string& workspace);
-nlohmann::json list_available_personas(const std::string& workspace);
-
 // A provider/model resolved against the configured providers.
 struct ResolvedModel {
     const qcode::ProviderInfo* provider = nullptr;

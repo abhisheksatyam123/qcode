@@ -424,9 +424,9 @@ test('WebUI agent modes and model capability badges', () => {
 
   // Slash commands
   assert.match(utilsJs, /name:\s*['"]\/agent['"]/, 'utils.js should declare /agent slash command');
-  assert.match(utilsJs, /name:\s*['"]\/persona['"]/, 'utils.js should declare /persona slash command');
+  assert.doesNotMatch(utilsJs, /persona/i, 'utils.js should not reference the removed persona feature');
   assert.match(appJs, /case 'agent':/, 'app.js should handle /agent command');
-  assert.match(appJs, /case 'persona':/, 'app.js should handle /persona command');
+  assert.doesNotMatch(appJs, /persona/i, 'app.js should not reference the removed persona feature');
 
   // Model capability badges & formatContextTokens
   assert.match(utilsJs, /export function formatContextTokens/, 'utils.js should export formatContextTokens');

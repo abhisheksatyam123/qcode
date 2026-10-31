@@ -1564,20 +1564,10 @@ async function updateConnectionStatus() {
 // ═══════════════════════════════════════════════════════════════════
 
 function showNewSessionModal() {
-  const defaultWs = state.sessionWorkspace || '/home/abhi/notes';
+  const defaultWs = state.sessionWorkspace || '';
   modalOverlay.innerHTML = `
     <div class="picker-modal">
       <div class="picker-header">New Session</div>
-      <div style="font-size:12px;color:var(--text-muted, #94a3b8);margin-bottom:4px;">Agent Persona</div>
-      <select class="rename-input" id="ns-persona" style="margin-bottom:10px;cursor:pointer;">
-        <option value="">Default (General Orchestrator)</option>
-        <option value="logging">Daily Logger (Timeline life.md)</option>
-        <option value="advisor">Life & Training Advisor</option>
-        <option value="exercise">Exercise & Strength Coach</option>
-        <option value="athletics">Athletics & Sprints Coach</option>
-        <option value="learning">Learning & Knowledge Distiller</option>
-        <option value="generic">General Task Orchestrator</option>
-      </select>
       <div style="font-size:12px;color:var(--text-muted, #94a3b8);margin-bottom:4px;">Session Title</div>
       <input class="rename-input" id="ns-title" type="text" placeholder="Session title (optional)" style="margin-bottom:10px;" />
       <div style="font-size:12px;color:var(--text-muted, #94a3b8);margin-bottom:4px;">Workspace Directory</div>
@@ -1589,34 +1579,8 @@ function showNewSessionModal() {
     </div>`;
   modalOverlay.classList.add('active');
 
-  const personaSel = document.getElementById('ns-persona');
   const titleInput = document.getElementById('ns-title');
   const wsInput = document.getElementById('ns-workspace');
-
-  personaSel.addEventListener('change', () => {
-    const v = personaSel.value;
-    if (v === 'logging') titleInput.value = 'Daily Logger';
-    else if (v === 'advisor') titleInput.value = 'Life Advisor';
-    else if (v === 'exercise') titleInput.value = 'Exercise Coach';
-    else if (v === 'athletics') titleInput.value = 'Athletics Coach';
-    else if (v === 'learning') titleInput.value = 'Learning Distiller';
-    else if (v === 'generic') titleInput.value = 'Task Orchestrator';
-    if (!wsInput.value) wsInput.value = '/home/abhi/notes';
-  });
-
-  fetch('/api/personas').then(r => r.json()).then(personas => {
-    if (Array.isArray(personas) && personas.length > 0) {
-      const known = new Set(['', 'logging', 'advisor', 'exercise', 'athletics', 'learning', 'generic']);
-      personas.forEach(p => {
-        if (!known.has(p.id)) {
-          const opt = document.createElement('option');
-          opt.value = p.id;
-          opt.textContent = (p.name || p.id) + ' (' + p.file + ')';
-          personaSel.appendChild(opt);
-        }
-      });
-    }
-  }).catch(() => {});
 
   titleInput.focus();
 
@@ -1630,8 +1594,7 @@ function showNewSessionModal() {
   async function doCreate() {
     const title = titleInput.value.trim();
     const workspace = wsInput.value.trim();
-    const persona = personaSel.value;
-    await createNewSession(title, workspace, persona);
+    await createNewSession(title, workspace);
     close();
   }
 
@@ -1940,37 +1903,10 @@ async function showAgentModePicker() {
     }
   ];
 
-  try {
-    const res = await fetch('/personas');
-    if (res.ok) {
-      const personas = await res.json();
-      if (Array.isArray(personas) && personas.length > 0) {
-        for (const p of personas) {
-          const name = typeof p === 'string' ? p : (p.name || p.id);
-          modes.push({
-            id: 'persona:' + name,
-            label: '🎭 Persona: ' + name,
-            sublabel: (p.description || 'Custom agent persona instruction'),
-            category: 'Personas',
-            isActive: state.persona === name,
-            badges: [{ type: 'vision', text: 'Persona' }]
-          });
-        }
-      }
-    }
-  } catch (e) {
-    // Ignore personas load error
-  }
-
-  showFuzzyPicker('Select Agent Mode / Role', modes, currentMode, async (chosen) => {
+  showFuzzyPicker('Select Agent Mode', modes, currentMode, async (chosen) => {
     if (!chosen) return;
-    if (chosen.id.startsWith('persona:')) {
-      const personaName = chosen.id.replace('persona:', '');
-      await selectPersona(personaName);
-      return;
-    }
     await selectAgentMode(chosen.id);
-  }, 'Choose an agent mode or persona…');
+  }, 'Choose an agent mode…');
 }
 
 async function selectAgentMode(mode) {
@@ -1994,22 +1930,6 @@ async function selectAgentMode(mode) {
   showToast('Switched to ' + formatAgentModeTitle(mode) + ' mode');
 }
 
-async function selectPersona(personaName) {
-  state.persona = personaName;
-  try {
-    if (state.sessionId) {
-      await fetch('/session/' + encodeURIComponent(state.sessionId) + '/persona', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ persona: personaName })
-      });
-    }
-    showToast(personaName ? ('Loaded persona: ' + personaName) : 'Cleared persona');
-  } catch (e) {
-    showToast('Failed to set persona: ' + e.message, 'error');
-  }
-}
-
 function handleAgentCommand(args) {
   const clean = (args || '').trim().toLowerCase();
   if (clean === 'orchestrator' || clean === 'lead') {
@@ -2023,17 +1943,6 @@ function handleAgentCommand(args) {
   }
 }
 
-function handlePersonaCommand(args) {
-  const clean = (args || '').trim();
-  if (!clean) {
-    showAgentModePicker();
-  } else if (clean === 'clear' || clean === 'off' || clean === 'none') {
-    selectPersona('');
-  } else {
-    selectPersona(clean);
-  }
-}
-
 // ── Slash command dispatch ──
 function handleSlashCommand(text) {
   const raw = text.slice(1).trim();
@@ -2044,7 +1953,6 @@ function handleSlashCommand(text) {
     case 'help': case '?': handleHelpCommand(); break;
     case 'model': case 'models': handleModelCommand(args); break;
     case 'agent': case 'mode': handleAgentCommand(args); break;
-    case 'persona': case 'personas': handlePersonaCommand(args); break;
     case 'new': handleNewCommand(); break;
     case 'variant': handleVariantCommand(args); break;
     case 'tools': handleToolsCommand(args); break;
@@ -2241,7 +2149,6 @@ function executePaletteCommand(id) {
     case 'session_clear_queue': handleClearQueueCommand(); break;
     case 'session_retry': handleRetryCommand(); break;
     case 'agent_mode': showAgentModePicker(); break;
-    case 'persona_select': handlePersonaCommand(''); break;
     case 'model_select': handleModelCommand(''); break;
     case 'model_variant': handleVariantCommand(''); break;
     case 'thinking_toggle': toggleThinking(); break;
@@ -2476,7 +2383,6 @@ async function loadSessionData(id) {
       session.agentMode = info.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
       session.reasoning = info.reasoning_mode || session.reasoning || state.reasoning || 'low';
       session.parentSessionId = info.parent_session_id || state.parentSessionId || '';
-      session.persona = info.persona || '';
       // Taken before /messages, so a write in between still reads as a change.
       session.serverRev = sessionRev(info);
     }
@@ -2514,7 +2420,6 @@ function makeSessionStub(row) {
     agentMode: agentMode,
     reasoning: row.reasoning_mode || '',
     parentSessionId: row.parent_session_id || '',
-    persona: row.persona || '',
     serverRev: null,
     stub: true
   };
@@ -5366,7 +5271,7 @@ function clearDraft() {
 //  MULTI-SESSION TABS HELPERS
 // ═══════════════════════════════════════════════════════════════════
 
-async function createNewSession(title = '', workspace = '', persona = '') {
+async function createNewSession(title = '', workspace = '') {
   try {
     const resolved = resolveProviderModel(state.provider, state.model);
     if (!resolved.ok) {
@@ -5384,8 +5289,7 @@ async function createNewSession(title = '', workspace = '', persona = '') {
         model: resolved.model,
         workspace,
         title,
-        custom_id: title,
-        persona
+        custom_id: title
       })
     });
     if (res.ok) {
@@ -5401,8 +5305,7 @@ async function createNewSession(title = '', workspace = '', persona = '') {
         generating: false,
         stream: null,
         provider: resolved.provider,
-        model: resolved.model,
-        persona: data.persona || persona || ''
+        model: resolved.model
       };
 
       state.openSessions.push(newSession);
@@ -5619,7 +5522,6 @@ function renderSessionTabs() {
           <div class="session-item-title-row">
             <span class="session-icon">${iconHtml}</span>
             <span class="session-title-text" title="${esc(title)}">${genIndicator}${esc(title)}</span>
-            ${session.persona ? `<span class="session-subagent-pill" style="background:rgba(56,189,248,0.18);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);margin-left:4px;" title="Persona: ${esc(session.persona)}">${esc(session.persona)}</span>` : ''}
             ${subPill}
           </div>
           ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">📁 ${esc(ws)}</div>` : ''}

@@ -115,22 +115,10 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     // as the final user message. See compaction_request.h (dsh rule).
     // Same default system prompt as the generate route (route_session.cpp),
     // so the replayed system prefix matches.
-    std::string persona_name = body.value("persona", "");
-    if (persona_name.empty()) {
-        persona_name = qcode::session::get_session_persona(sid);
-    }
-    std::string ws = qcode::session::get_session_workspace(sid);
-
     std::string system_prompt;
     if (body.contains("system_prompt") && body["system_prompt"].is_string() &&
         !body["system_prompt"].get<std::string>().empty()) {
         system_prompt = body["system_prompt"].get<std::string>();
-    } else if (!persona_name.empty()) {
-        std::string persona_prompt = load_persona_prompt(persona_name, ws);
-        if (!persona_prompt.empty()) {
-            bool vision_supported = (selected_model != nullptr && selected_model->vision);
-            system_prompt = qcode::SystemPrompt::build(persona_prompt, qcode::ToolConfig::orchestrator(vision_supported));
-        }
     }
     if (system_prompt.empty()) {
         system_prompt = qcode::SystemPrompt::build_default(

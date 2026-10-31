@@ -282,7 +282,7 @@
         let loggerId = '';
         if (sessRes.ok) {
           const list = await sessRes.json();
-          const found = list.find(s => s.persona === 'logging' || s.title === 'Daily Logger');
+          const found = list.find(s => s.title === 'Daily Logger');
           if (found) loggerId = found.id;
         }
 
@@ -294,8 +294,7 @@
               provider: 'openrouter',
               model: 'nvidia/nemotron-3-super-120b-a12b:free',
               workspace: '/home/abhi/notes',
-              title: 'Daily Logger',
-              persona: 'logging'
+              title: 'Daily Logger'
             })
           });
           if (createRes.ok) {
