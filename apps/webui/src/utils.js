@@ -179,7 +179,6 @@ export function renderUsageSections(data, opts = {}) {
       <div class="stat-grid stats-kpi-grid">
         <div class="stat-card kpi-card cost">
           <div class="stat-card-header">
-            <span class="stat-card-icon">💲</span>
             <span class="stat-label">Session Cost</span>
           </div>
           <div class="stat-value accent">${esc(costValue)}</div>
@@ -188,7 +187,6 @@ export function renderUsageSections(data, opts = {}) {
         </div>
         <div class="stat-card kpi-card calls">
           <div class="stat-card-header">
-            <span class="stat-card-icon">⚡</span>
             <span class="stat-label">Model Calls</span>
           </div>
           <div class="stat-value">${esc(formatNumber(calls))}</div>
@@ -196,7 +194,6 @@ export function renderUsageSections(data, opts = {}) {
         </div>
         <div class="stat-card kpi-card cache">
           <div class="stat-card-header">
-            <span class="stat-card-icon">🗄️</span>
             <span class="stat-label">Prompt Cache Hit</span>
           </div>
           <div class="stat-value">${input > 0 ? esc(hit.toFixed(0)) + '%' : '—'}</div>
@@ -204,7 +201,6 @@ export function renderUsageSections(data, opts = {}) {
         </div>
         <div class="stat-card kpi-card context">
           <div class="stat-card-header">
-            <span class="stat-card-icon">📐</span>
             <span class="stat-label">Context In Use</span>
           </div>
           <div class="stat-value">${ctxWindow > 0 ? esc(pctLabel(pct(used, ctxWindow))) : esc(formatNumber(used))}</div>
@@ -224,8 +220,7 @@ export function renderUsageSections(data, opts = {}) {
         <div class="stat-card section-card">
           <div class="stat-section-header">
             <div class="stat-section-title-wrap">
-              <span class="stat-section-icon">🧾</span>
-              <span class="stat-section-title">Billed Tokens &amp; Prompt Cache</span>
+              <span class="stat-section-title">Tokens &amp; prompt cache</span>
             </div>
           </div>
           <div class="stat-progress-container">
@@ -271,8 +266,7 @@ export function renderUsageSections(data, opts = {}) {
         <div class="stat-card section-card">
           <div class="stat-section-header">
             <div class="stat-section-title-wrap">
-              <span class="stat-section-icon">💲</span>
-              <span class="stat-section-title">Cost (each call at its model's price)</span>
+              <span class="stat-section-title">Cost</span>
             </div>
             <span class="stat-section-badge">${esc(costValue)}</span>
           </div>
@@ -288,8 +282,7 @@ export function renderUsageSections(data, opts = {}) {
         <div class="stat-card section-card">
           <div class="stat-section-header">
             <div class="stat-section-title-wrap">
-              <span class="stat-section-icon">⏱️</span>
-              <span class="stat-section-title">Model Latency</span>
+              <span class="stat-section-title">Latency</span>
             </div>
           </div>
           <div class="stat-details-list">
@@ -318,8 +311,7 @@ export function renderUsageSections(data, opts = {}) {
         <div class="stat-card section-card">
           <div class="stat-section-header">
             <div class="stat-section-title-wrap">
-              <span class="stat-section-icon">🧩</span>
-              <span class="stat-section-title">Model Configuration (opencode.json)</span>
+              <span class="stat-section-title">Model configuration</span>
             </div>
           </div>
           <div class="stat-details-list">

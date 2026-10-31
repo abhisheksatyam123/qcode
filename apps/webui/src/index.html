@@ -3,15 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#080b12">
+<meta name="theme-color" content="#0b0d12">
 <title>QCode Chat</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Patrick+Hand&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+<link rel="preload" href="/fonts/ui/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/ui/jetbrains-mono-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/vendor-katex.min.css">
 <link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="/vendor-hljs-github-dark.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@3.4.0/css/nerd-fonts-generated.min.css">
 </head>
 <body>
 <div id="app">
@@ -127,13 +124,13 @@
           <div class="input-wrapper">
             <textarea id="prompt-input" placeholder="Ask QCode anything…" rows="1" aria-label="Message QCode"></textarea>
             <div class="input-actions">
-              <span class="input-info"><kbd>Esc</kbd> pause &middot; <kbd>Ctrl</kbd>+<kbd>P</kbd> commands &middot; <kbd>Shift</kbd>+<kbd>Enter</kbd> newline</span>
+              <span class="input-info"><span><kbd>/</kbd> commands</span><span><kbd>Shift</kbd><kbd>Enter</kbd> newline</span><span><kbd>Esc</kbd> stop</span></span>
               <div class="composer-actions">
-                <button id="retry-btn" class="retry-btn" type="button" aria-label="Retry last prompt" title="Retry last prompt (/retry)">Retry</button>
+                <button id="retry-btn" class="retry-btn" type="button" aria-label="Retry last prompt" title="Retry last prompt (/retry)"><svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button>
                 <button id="pause-btn" class="pause-btn hidden" type="button" aria-label="Pause generation" title="Pause (Esc)">
-                  <span class="pause-icon"><svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span><span>Pause</span>
+                  <span class="pause-icon"><svg class="ui-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></span><span>Stop</span>
                 </button>
-                <button id="send-btn" aria-label="Send message"><span>Send</span><span class="send-icon"><svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></span></button>
+                <button id="send-btn" aria-label="Send message" title="Send (Enter)"><span class="send-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></span></button>
               </div>
             </div>
           </div>
@@ -141,7 +138,7 @@
       </main>
       <div id="files-panel" class="side-tab-panel hidden">
         <div class="side-tab-header">
-          <span><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Files</span>
+          <span class="side-tab-title"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Files</span>
           <div class="files-header-actions">
             <div class="files-subtabs" role="tablist">
               <button type="button" class="files-subtab active" id="files-subtab-explorer" data-subtab="explorer">Explorer</button>
@@ -177,7 +174,7 @@
                   <span>Files</span>
                 </button>
                 <div class="fs-file-info">
-                  <span class="fs-file-icon" id="fs-file-icon">📄</span>
+                  <span class="fs-file-icon nf" id="fs-file-icon">&#xf016;</span>
                   <span class="fs-editor-path" id="fs-editor-path">No file open</span>
                   <span class="fs-file-badge" id="fs-file-badge"></span>
                 </div>
@@ -229,7 +226,7 @@
 
                 <!-- Binary File View -->
                 <div id="fs-view-binary" class="fs-binary-container hidden">
-                  <div class="fs-binary-icon">📦</div>
+                  <div class="fs-binary-icon"><svg class="ui-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg></div>
                   <div class="fs-binary-text" id="fs-binary-text">Binary file cannot be displayed inline.</div>
                   <a id="fs-binary-download-link" class="fs-btn primary" target="_blank" rel="noopener">Download / View Raw</a>
                 </div>
@@ -249,23 +246,23 @@
       </div>
       <div id="stats-panel" class="side-tab-panel hidden">
         <div class="side-tab-header">
-          <span>📊 Session Stats</span>
+          <span class="side-tab-title"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Session stats</span>
           <div class="stats-header-actions">
             <button id="stats-copy-btn" class="stats-action-btn" type="button" title="Copy stats markdown summary">
               <svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               <span>Copy</span>
             </button>
-            <button id="stats-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+            <button id="stats-refresh-btn" class="side-tab-x" title="Refresh" aria-label="Refresh stats"><svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button>
           </div>
         </div>
         <div id="stats-content"></div>
       </div>
       <div id="sessions-panel" class="side-tab-panel hidden">
         <div class="side-tab-header">
-          <span>🤖 Subagents</span>
+          <span class="side-tab-title"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/></svg> Subagents</span>
           <div class="sessions-header-actions">
             <input type="text" id="sessions-filter-input" class="sessions-filter-input" placeholder="Filter subagents…" aria-label="Filter subagents">
-            <button id="sessions-refresh-btn" class="side-tab-x" title="Refresh">⟳</button>
+            <button id="sessions-refresh-btn" class="side-tab-x" title="Refresh" aria-label="Refresh subagents"><svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button>
           </div>
         </div>
         <div id="sessions-content"></div>
@@ -275,6 +272,7 @@
 
   <div id="modal-overlay" role="dialog" aria-modal="true" tabindex="-1"></div>
 </div>
+<div id="toast-region" class="toast-region" aria-live="polite"></div>
 <script src="/vendor-marked.min.js"></script>
 <script src="/vendor-jsyaml.min.js"></script>
 <script src="/vendor-hljs.min.js"></script>

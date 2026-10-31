@@ -18,7 +18,9 @@ test('WebUI static source files exist and are populated', () => {
     'vendor-marked.min.js',
     'vendor-jsyaml.min.js',
     'vendor-hljs.min.js',
-    'vendor-hljs-github-dark.min.css'
+    'fonts/ui/inter-latin-wght-normal.woff2',
+    'fonts/ui/jetbrains-mono-latin-wght-normal.woff2',
+    'fonts/ui/SymbolsNerdFontMono.woff2'
   ];
 
   for (const file of requiredFiles) {
@@ -28,6 +30,8 @@ test('WebUI static source files exist and are populated', () => {
     assert.ok(stats.size > 0, `File is empty: ${file}`);
   }
 });
+
+const styleCss = () => fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
 
 test('index.html references all required scripts and styles', () => {
   const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
@@ -40,7 +44,8 @@ test('index.html references all required scripts and styles', () => {
   assert.match(indexHtml, /src="\/vendor-jsyaml\.min\.js"/, 'Missing vendor-jsyaml.min.js');
   assert.match(indexHtml, /src="\/vendor-hljs\.min\.js"/, 'Missing vendor-hljs.min.js (T8.3)');
   assert.match(indexHtml, /src="\/app\.js"/, 'Missing app.js module');
-  assert.match(indexHtml, /href="\/vendor-hljs-github-dark\.min\.css"/, 'Missing vendored hljs css (T8.3)');
+  assert.doesNotMatch(indexHtml, /fonts\.googleapis|cdn\.jsdelivr/, 'UI fonts must be self-hosted (no CDN)');
+  assert.match(styleCss(), /font-family: 'Inter'/, 'style.css should declare the self-hosted Inter face');
 
   // Verify brand and status elements
   assert.match(indexHtml, /id="brand-sub"/, 'Missing #brand-sub element for version');
@@ -138,8 +143,8 @@ test('WebUI polish: fonts, help, sessions rows, retry state, CSS', () => {
   const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
   const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
 
-  const fontLinks = [...indexHtml.matchAll(/<link[^>]*nerd-fonts-generated\.min\.css[^>]*>/g)];
-  assert.equal(fontLinks.length, 1, 'duplicate nerd-fonts stylesheet link in index.html');
+  assert.doesNotMatch(indexHtml, /nerd-fonts-generated/, 'Nerd Font symbols are self-hosted, not loaded from a CDN');
+  assert.match(styleCss, /font-family: 'Symbols Nerd Font Mono'/, 'style.css should declare the Nerd Font symbols face');
 
   for (const row of ['/new', '/rename', '/clear-queue', '/tools']) {
     assert.ok(appJs.includes('<kbd>' + row + '</kbd>'), 'help modal missing ' + row);
@@ -150,8 +155,8 @@ test('WebUI polish: fonts, help, sessions rows, retry state, CSS', () => {
   assert.match(appJs, /retryBtn\.disabled/, 'retry button should disable while generating');
   assert.match(styleCss, /\.retry-btn:disabled/, 'missing retry disabled CSS');
 
-  const baseRows = [...styleCss.matchAll(/\.delegated-row \{/g)];
-  assert.equal(baseRows.length, 1, 'duplicate .delegated-row base rule in style.css');
+  const baseRows = [...styleCss.matchAll(/\.agent-card \{/g)];
+  assert.equal(baseRows.length, 1, 'duplicate .agent-card base rule in style.css');
 });
 
 test('WebUI theme propagation: warning/success vars and themed chrome', () => {
@@ -163,7 +168,7 @@ test('WebUI theme propagation: warning/success vars and themed chrome', () => {
   assert.match(appJs, /set\('--warning', t\.warning\)/, 'applyTheme must set --warning');
   assert.match(appJs, /set\('--success', t\.success\)/, 'applyTheme must set --success');
 
-  for (const sel of ['.delegated-row:hover', '.delegated-row .child-status.running', '.delegated-row .child-status.done', '.retry-btn', '.queued-block', '.side-tab-header', '.subagent-badge']) {
+  for (const sel of ['.agent-card:hover', '.status-chip.running', '.status-chip.completed', '.retry-btn', '.queued-block', '.side-tab-header', '.subagent-badge']) {
     const i = styleCss.indexOf(sel);
     assert.ok(i >= 0, 'missing themed rule ' + sel);
     const block = styleCss.slice(i, styleCss.indexOf('}', i) + 1);
@@ -192,8 +197,8 @@ test('WebUI child session view: merged delegated tab, durable parent navigation,
   assert.match(styleCss, /\.subagent-session-banner/, 'missing .subagent-session-banner in CSS');
 
   // Sidebar session tabs subagent pill
-  assert.match(appJs, /session-subagent-pill/, 'sidebar tabs should display subagent pill');
-  assert.match(styleCss, /\.session-subagent-pill/, 'missing .session-subagent-pill in CSS');
+  assert.match(appJs, /session-icon sub/, 'sidebar tabs should mark subagent sessions');
+  assert.match(styleCss, /\.session-icon\.sub/, 'missing .session-icon.sub in CSS');
 
   // Tool block child actions
   assert.match(appJs, /tool-child-action-row/, 'tool blocks should have child action row');
@@ -231,7 +236,7 @@ test('WebUI subagents tab: named Subagents, scoped to parent session, cascade de
 
   // Naming checks
   assert.match(indexHtml, /Subagents\s*<\/button>/, 'navigation tab button should be named Subagents');
-  assert.match(indexHtml, /<span>🤖 Subagents<\/span>/, 'panel header should display Subagents');
+  assert.match(indexHtml, /<\/svg> Subagents<\/span>/, 'panel header should display Subagents');
   assert.match(indexHtml, /placeholder="Filter subagents…"|placeholder="Filter subagents\.\.\."/, 'filter input placeholder should reference subagents');
 
   // Scoping checks
@@ -275,23 +280,18 @@ test('WebUI collapsible navigation, file tree and clean title', () => {
   assert.doesNotMatch(appJs, /state\.layoutMode\s*=\s*'split'/, 'app.js should not enter split mode');
 });
 
-test('WebUI tool calls use a single background color', () => {
+test('WebUI tool calls use one surface for header and one for output', () => {
   const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
-  const expected = '#0d131f';
-  const blocks = {};
-  for (const sel of ['.tool-block:hover', '.tool-header', '.tool-header:hover', '.tool-body']) {
+  const bg = (sel) => {
     const m = styleCss.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{[^}]*?background:\\s*([^;]+);'));
     assert.ok(m, sel + ' should declare a background');
-    blocks[sel] = m[1].trim();
-    assert.equal(blocks[sel], expected, sel + ' background should be ' + expected + ' (got ' + blocks[sel] + ')');
-  }
-  // Both desktop base and mobile/unified override of .tool-output must match.
-  const outBgs = [...styleCss.matchAll(/\.tool-output\s*\{[^}]*?background:\s*([^;]+);/g)].map(m => m[1].trim());
-  assert.ok(outBgs.length >= 2, 'expected desktop + unified .tool-output rules');
-  for (const bg of outBgs) assert.equal(bg, expected, '.tool-output background should be ' + expected + ' (got ' + bg + ')');
-  const errM = styleCss.match(/\.tool-output\.error\s*\{[^}]*?background:\s*([^;]+);/);
-  assert.ok(errM, '.tool-output.error should declare a background');
-  assert.equal(errM[1].trim(), expected, '.tool-output.error background should be ' + expected);
+    return m[1].trim();
+  };
+  // Tool rows sit on the group surface; the expanded body uses the code surface.
+  assert.equal(bg('.tool-events'), 'var(--surface)');
+  assert.equal(bg('.tool-body'), 'var(--code-bg)');
+  assert.doesNotMatch(styleCss, /\.tool-output\s*\{[^}]*background/, '.tool-output inherits the body background');
+  assert.doesNotMatch(styleCss, /\.tool-output\.error\s*\{[^}]*background/, 'errors are signalled by color, not a new surface');
 });
 
 test('WebUI session refresh heals stale lists without clobbering streams', () => {
@@ -344,7 +344,7 @@ test('WebUI thinking visibility: low default, open-param thought block, header t
   // 2. renderThoughtBlock supports {open:true} expanded param
   assert.match(appJs, /function renderThoughtBlock\(text,\s*opts\)/, 'renderThoughtBlock should accept opts param');
   assert.match(appJs, /opts && opts\.open/, 'renderThoughtBlock should check opts.open');
-  assert.match(appJs, /liveThoughtOpen/, 'renderMessage should auto-open latest thought while generating');
+  assert.match(appJs, /live && ti === lastThoughtIdx|isLive && ti === lastThoughtIdx/, 'renderMessage should auto-open latest thought while generating');
   assert.match(appJs, /lastThoughtIdx/, 'renderMessage should track last thought index');
 
   // 3. Visible thinking toggle pill in header, wired to toggleThinking
@@ -383,7 +383,7 @@ test('WebUI sidebar expand affordance: anchored toggle, aria state, collapsed hi
   assert.match(styleCss, /#main-area\.sidebar-collapsed #menu-toggle-btn/, 'style.css should highlight the toggle when collapsed');
 
   // 4. collapse geometry must match the effective desktop sidebar width (no sliver/gap)
-  assert.match(styleCss, /--sidebar-width:\s*276px/, 'collapse offset var should match themed sidebar width');
+  assert.match(styleCss, /--sidebar-width:\s*276px/, 'collapse offset var should match the sidebar width');
   assert.match(styleCss, /margin-left:\s*calc\(-1 \* var\(--sidebar-width/, 'collapsed margin should derive from --sidebar-width');
   assert.doesNotMatch(styleCss, /margin-left:\s*-276px/, 'stale hardcoded -276px offset should be gone');
 });

@@ -52,13 +52,24 @@ window.togglePlantUmlDiagramMode = function(diagramId) {
 
   const modeBtnLabel = container.querySelector('.plantuml-mode-label');
   if (modeBtnLabel) {
-    modeBtnLabel.innerText = newMode === 'dark' ? '☀️ Light' : '🌙 Dark';
+    modeBtnLabel.innerText = newMode === 'dark' ? 'Light' : 'Dark';
   }
 
   const link = container.querySelector('.plantuml-link');
   if (link) {
     link.href = newUrl;
   }
+};
+
+window.qcodeCopyCode = function(btn) {
+  const block = btn && btn.closest('.code-block-container');
+  const code = block && block.querySelector('code');
+  if (!code) return;
+  copyText(code.innerText, 'Code copied');
+  const label = btn.querySelector('span');
+  btn.classList.add('done');
+  if (label) label.textContent = 'Copied';
+  setTimeout(() => { btn.classList.remove('done'); if (label) label.textContent = 'Copy'; }, 1500);
 };
 
 window.copyPlantUmlCode = function(diagramId, btn) {
@@ -94,6 +105,38 @@ const SVG_ICONS = {
   tab: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>`,
   system: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`
 };
+
+// Compact line icons (24px grid, stroke = currentColor) for chat chrome.
+const ICON_PATHS = {
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  check: '<polyline points="20 6 9 17 4 12"/>',
+  x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  retry: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>',
+  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+  search: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  fileText: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><line x1="9" y1="14" x2="9" y2="14.01"/><line x1="15" y1="14" x2="15" y2="14.01"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 0 20a15.3 15.3 0 0 1 0-20z"/>',
+  wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/>',
+  chevron: '<polyline points="9 6 15 12 9 18"/>',
+  sparkle: '<path d="M12 3l1.9 5.6L19.5 10.5 13.9 12.4 12 18l-1.9-5.6L4.5 10.5l5.6-1.9z"/>',
+  brain: '<path d="M9.5 2A2.5 2.5 0 0 0 7 4.5v.1A3 3 0 0 0 4.6 9 3 3 0 0 0 5 14.8 3 3 0 0 0 9.5 19.5V22"/><path d="M14.5 2A2.5 2.5 0 0 1 17 4.5v.1A3 3 0 0 1 19.4 9a3 3 0 0 1-.4 5.8 3 3 0 0 1-4.5 4.7V22"/><path d="M12 4v16"/>',
+  alert: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+  arrowDown: '<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>',
+  external: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+  raw: '<path d="M4 7V4h16v3"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>'
+};
+function emptyState(iconName, title, desc) {
+  return '<div class="empty-state"><div class="empty-state-icon">' + icon(iconName, 22) + '</div>'
+    + '<div class="empty-state-title">' + esc(title) + '</div>'
+    + (desc ? '<div class="empty-state-desc">' + esc(desc) + '</div>' : '') + '</div>';
+}
+function icon(name, size = 14) {
+  return `<svg class="ui-icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] || ''}</svg>`;
+}
 
 
 function stripTags(html) {
@@ -172,8 +215,10 @@ function toggleSidebar() {
   }
 }
 
+// Dismiss the off-canvas drawer after navigating on narrow screens. On
+// desktop the sidebar is docked and must stay as the user left it.
 function closeMobileSidebar() {
-  closeSidebar();
+  if (isMobileLayout()) closeSidebar();
 }
 
 function handleSidebarResize() {}
@@ -355,16 +400,16 @@ let pickerCleanup = null;
 const THEMES = {
   "qcode": {
     "title": "QCode Web",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#6EE7D8",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
+    "bg": "#0B0D12",
+    "surface": "#11141B",
+    "raised": "#181C25",
+    "text": "#E6E9F0",
+    "muted": "#9AA2B2",
+    "accent": "#8EA2FF",
+    "accent2": "#6D84FB",
+    "danger": "#F87171",
     "warning": "#FBBF24",
-    "success": "#3ECF8E"
+    "success": "#4ADE80"
   },
   "opencode": {
     "title": "OpenCode",
@@ -1140,16 +1185,10 @@ async function loadProviders() {
 }
 
 function formatModelDropdownLabel(m) {
-  let label = m.name;
-  const badges = [];
-  if (m.reasoning) badges.push('🧠');
-  if (m.vision) badges.push('👁');
-  if (m.is_free) badges.push('🆓');
-  if (m.context_window > 0) badges.push(formatContextTokens(m.context_window));
-  if (badges.length > 0) {
-    label += ' [' + badges.join(' ') + ']';
-  }
-  return label;
+  const parts = [m.name];
+  if (m.context_window > 0) parts.push(formatContextTokens(m.context_window));
+  if (m.is_free) parts.push('free');
+  return parts.join(' · ');
 }
 
 function onProviderChange(idx) {
@@ -1685,7 +1724,7 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
       <input class="rename-input fuzzy-input" id="fuzzy-input" type="text"
              placeholder="${esc(placeholder || 'Type to filter...')}" value="${esc(query)}" autofocus />
       <div class="picker-body" id="fuzzy-body"></div>
-      <div class="picker-footer">Type to filter &middot; &uarr;&darr; navigate &middot; Enter select &middot; Esc cancel</div>
+      <div class="picker-footer"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>Enter</kbd> select</span><span><kbd>Esc</kbd> close</span></div>
     </div>`;
   modalOverlay.classList.add('active');
   const input = document.getElementById('fuzzy-input');
@@ -1708,12 +1747,12 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
         html += `<div class="picker-category">${esc(lastCat)}</div>`;
       }
       const cls = i === cursorIdx ? 'picker-item selected' : 'picker-item';
-      const marker = i === cursorIdx ? '▶' : (it.isActive ? '●' : '');
+      const marker = it.isActive ? '<span class="active-dot" title="Current"></span>' : '';
       html += `<div class="${cls}" data-idx="${i}">`;
       html += `<span class="marker">${marker}</span>`;
       html += `<span class="item-label">${esc(it.label)}</span>`;
       if (it.sublabel) html += `<span class="item-id">${esc(it.sublabel)}</span>`;
-      if (it.workspace) html += `<span class="item-id" title="${esc(it.workspace)}">📁 ${esc(shortPath(it.workspace))}</span>`;
+      if (it.workspace) html += `<span class="item-id" title="${esc(it.workspace)}">${esc(shortPath(it.workspace))}</span>`;
       if (it.badges && it.badges.length) {
         html += `<span class="item-badges">` + it.badges.map(b => `<span class="item-badge badge-${esc(b.type)}">${esc(b.text)}</span>`).join('') + `</span>`;
       }
@@ -1993,7 +2032,7 @@ function handleHelpCommand() {
         <div class="help-row"><kbd>/clear-queue</kbd><span>Clear all queued prompts</span></div>
         <div class="help-row"><kbd>/tools</kbd><span>Toggle tool use on|off</span></div>
       </div>
-      <div class="picker-footer">esc/enter close</div>
+      <div class="picker-footer"><span><kbd>Esc</kbd> close</span></div>
     </div>`;
   modalOverlay.classList.add('active');
   const close = (ev) => {
@@ -2020,7 +2059,7 @@ function applyTheme(name) {
   set('--surface-soft', t.surface);
   set('--text', t.text);
   set('--muted', t.muted);
-  set('--faint', t.muted);
+  set('--faint', `color-mix(in srgb, ${t.muted} 72%, ${t.bg})`);
   set('--accent', t.accent);
   set('--accent-strong', t.accent2);
   set('--blue', t.accent2);
@@ -2165,9 +2204,8 @@ function executePaletteCommand(id) {
 function renderQueuedBlock(queue) {
   const wrap = document.createElement('div');
   wrap.className = 'queued-block';
-  let html = '<div class="queued-head loading-spinner"><span>Queued <span class="queued-hint">· /clear-queue to cancel</span></span></div>';
-  queue.forEach((text, i) => {
-    if (i > 0) html += '<div class="queued-sep">---</div>';
+  let html = '<div class="queued-head"><span class="qcode-spinner"></span><span>Queued · ' + queue.length + '</span><span class="queued-hint">/clear-queue to cancel</span></div>';
+  queue.forEach((text) => {
     html += '<div class="queued-body">' + esc(text) + '</div>';
   });
   wrap.innerHTML = html;
@@ -2243,6 +2281,20 @@ function appendThoughtChunk(msg, text) {
   msg.timeline.push({ kind: 'thought', text });
 }
 
+// Assistant text is kept both as the full `content` (copy/raw) and as
+// timeline segments so prose renders between the tool calls it preceded.
+function appendTextChunk(msg, text) {
+  if (!text) return;
+  msg.content = (msg.content || '') + text;
+  if (!msg.timeline) msg.timeline = [];
+  const last = msg.timeline[msg.timeline.length - 1];
+  if (last && last.kind === 'text') {
+    last.text = (last.text || '') + text;
+    return;
+  }
+  msg.timeline.push({ kind: 'text', text });
+}
+
 function closeOpenThought(msg) {
   if (!msg.timeline) return;
   const last = msg.timeline[msg.timeline.length - 1];
@@ -2251,16 +2303,24 @@ function closeOpenThought(msg) {
 
 function renderThoughtBlock(text, opts) {
   const open = !!(opts && opts.open);
-  const rc = document.createElement('div'); rc.className = 'reasoning-block' + (open ? '' : ' collapsed');
-  const rl = document.createElement('div'); rl.className = 'reasoning-label';
+  const live = !!(opts && opts.live);
+  const rc = document.createElement('div');
+  rc.className = 'reasoning-block' + (open ? '' : ' collapsed') + (live ? ' live' : '');
+  const rl = document.createElement('button');
+  rl.type = 'button';
+  rl.className = 'reasoning-label';
+  rl.setAttribute('aria-expanded', String(open));
   const est = Math.max(1, Math.floor((text.length + 3) / 4));
-  const compact = est >= 1000 ? Math.round(est / 1000) + 'k' : String(est);
-  rl.innerHTML = (open ? '- Thought' : '+ Thought') + ' <span class="thought-tokens">· ' + compact + '</span>';
+  const compact = est >= 1000 ? (est / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(est);
+  rl.innerHTML = '<span class="reasoning-chevron">' + icon('chevron', 12) + '</span>'
+    + '<span class="reasoning-icon">' + icon('brain', 13) + '</span>'
+    + '<span class="reasoning-title">' + (live ? 'Thinking' : 'Thought') + '</span>'
+    + '<span class="thought-tokens">' + compact + ' tokens</span>';
   const rt = document.createElement('div'); rt.className = 'reasoning-text';
   rt.innerHTML = renderMarkdown(text); tagMarkdownLinks(rt);
   rl.addEventListener('click', () => {
     const collapsed = rc.classList.toggle('collapsed');
-    rl.innerHTML = (collapsed ? '+ Thought' : '- Thought') + ' <span class="thought-tokens">· ' + compact + '</span>';
+    rl.setAttribute('aria-expanded', String(!collapsed));
   });
   rc.appendChild(rl); rc.appendChild(rt);
   return rc;
@@ -2277,14 +2337,13 @@ function parseMessages(msgs, session) {
       if (!currentAssistantMsg) {
         currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
         session.messages.push(currentAssistantMsg);
-      } else if (currentAssistantMsg.content && currentAssistantMsg.toolEvents && currentAssistantMsg.toolEvents.length > 0) {
-        currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
-        session.messages.push(currentAssistantMsg);
       }
-      if (currentAssistantMsg.content) {
-        currentAssistantMsg.content += '\n\n' + m.content;
-      } else {
-        currentAssistantMsg.content = m.content;
+      if (m.content) {
+        const tl = currentAssistantMsg.timeline;
+        appendTextChunk(currentAssistantMsg, (currentAssistantMsg.content ? '\n\n' : '') + m.content);
+        // A separator belongs to `content` only; a fresh segment starts clean.
+        const seg = tl[tl.length - 1];
+        if (seg && seg.kind === 'text') seg.text = seg.text.replace(/^\n\n/, '');
       }
     } else if (m.role === 'ToolCall') {
       try {
@@ -2458,6 +2517,26 @@ function messageSignature(msgs) {
   return msgs.length + '|' + (last.role || '') + '|' + content.length + ':' + content + '|' + timelineLen + '|' + tools;
 }
 
+// A turn that failed before the server persisted it (provider down, 5xx)
+// exists only locally. Keep the user's prompt and the inline error across a
+// history refresh instead of silently dropping them; when the server did
+// persist the turn, carry the error onto its reply.
+function keepFailedTurn(local, fresh) {
+  const failed = local[local.length - 1];
+  if (!failed || failed.role !== 'assistant' || !failed.streamError) return;
+  const prompt = local[local.length - 2];
+  const freshLast = fresh[fresh.length - 1];
+  const freshLastUser = [...fresh].reverse().find(m => m.role === 'user');
+  if (prompt && prompt.role === 'user' && (!freshLastUser || freshLastUser.content !== prompt.content)) {
+    fresh.push(prompt, failed);
+  } else if (freshLast && freshLast.role === 'assistant' && !freshLast.streamError) {
+    freshLast.streamError = failed.streamError;
+    freshLast.stoppedEarly = failed.stoppedEarly;
+  } else if (freshLast && freshLast.role === 'user') {
+    fresh.push(failed);
+  }
+}
+
 function sessionRev(info) {
   return (info.message_count || 0) + ':' + (info.updated_at || 0);
 }
@@ -2471,6 +2550,7 @@ async function syncSessionMessages(session) {
   if (!Array.isArray(msgs) || session.stream) return false;
   const tmp = { messages: [] };
   parseMessages(msgs, tmp);
+  keepFailedTurn(session.messages, tmp.messages);
   if (messageSignature(tmp.messages) === messageSignature(session.messages)) return false;
   const stickToBottom = nearBottom();
   session.messages = tmp.messages;
@@ -2626,7 +2706,11 @@ async function handleCompactCommand() {
 // reattaches with {resume: true}: the server replays a snapshot (history
 // plus the turn's unsaved text) and continues with the turn's later events.
 
-const kMaxStreamRetries = 3;
+const kMaxStreamRetries = 5;
+// The server writes a heartbeat every 2.5 s while a turn is idle; this much
+// silence means the connection died without closing (sleep, proxy, network
+// switch), so drop it and resume from the server's event log.
+const kStreamStallMs = 15000;
 
 function isNetworkError(e) {
   return !!e && (e.name === 'AbortError' || e.name === 'TypeError'
@@ -2734,7 +2818,7 @@ function applySnapshot(session, stream, evt) {
     session.messages.push(msg);
   }
   if (evt.reasoning_text) appendThoughtChunk(msg, evt.reasoning_text);
-  if (evt.assistant_text) msg.content = (msg.content || '') + evt.assistant_text;
+  if (evt.assistant_text) appendTextChunk(msg, evt.assistant_text);
   stream.msg = msg;
   if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
 }
@@ -2816,10 +2900,21 @@ async function readTurnStream(session, stream, res) {
     }
     applyTurnEvent(session, stream, evt);
   };
+  const readOrStall = () => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error('Stream stalled: no data from the server');
+      err.name = 'AbortError';
+      reject(err);
+    }, kStreamStallMs);
+    reader.read().then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); });
+  });
   try {
     while (!stream.stopped && !stream.complete) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readOrStall();
       if (done) break;
+      stream.receivedData = true;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
@@ -2827,6 +2922,9 @@ async function readTurnStream(session, stream, res) {
     }
     buffer += decoder.decode();
     consume(buffer);
+  } catch (e) {
+    reader.cancel().catch(() => {});
+    throw e;
   } finally {
     stream.reader = null;
     if (stream.stopped || stream.complete) reader.cancel().catch(() => {});
@@ -2840,6 +2938,7 @@ async function followTurn(session, stream, res) {
   try {
     for (;;) {
       let error = null;
+      stream.receivedData = false;
       try {
         if (!res) res = await postResume(session);
         if (!res.ok) throw new Error(await responseError(res));
@@ -2854,12 +2953,15 @@ async function followTurn(session, stream, res) {
         failStream(stream, 'Generation interrupted: ' + (error.message || 'unknown error'));
         return;
       }
+      // A connection that delivered data before dropping was healthy: start
+      // the backoff over so long turns survive several unrelated drops.
+      if (stream.receivedData) retries = 0;
       if (retries >= kMaxStreamRetries) {
         failStream(stream, 'Connection lost — click Retry to continue');
         return;
       }
       retries++;
-      showToast(`Connection dropped — reconnecting (attempt ${retries}/${kMaxStreamRetries})…`);
+      if (retries > 1) showToast(`Connection dropped — reconnecting (attempt ${retries}/${kMaxStreamRetries})…`, 'warning');
       await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(1.5, retries - 1), 5000)));
       if (stream.stopped) return;
     }
@@ -3035,65 +3137,69 @@ function scheduleFullRender() {
   });
 }
 
+// Streaming renders are coalesced to one per frame, and spaced further apart
+// when re-rendering the reply gets expensive (long markdown), so typing,
+// scrolling and the caret stay smooth on large answers.
 let streamRenderPending = false;
+let streamRenderCost = 0;
 function scheduleStreamingRender(session, msg) {
   if (streamRenderPending) return;
   streamRenderPending = true;
-  requestAnimationFrame(() => {
+  const run = () => requestAnimationFrame(() => {
     streamRenderPending = false;
     if (session.id !== state.sessionId) return;
+    const t0 = performance.now();
     renderStreamingIncremental(msg);
+    streamRenderCost = performance.now() - t0;
   });
+  const delay = Math.min(240, streamRenderCost * 3);
+  if (delay > 16) setTimeout(run, delay); else run();
+}
+
+// Which blocks renderMessage() produces for `msg`; equal shapes mean the
+// streaming fast path can patch the last block in place.
+function messageShape(msg) {
+  const tl = Array.isArray(msg.timeline) ? msg.timeline : [];
+  let shape = '';
+  let segments = false;
+  for (const e of tl) {
+    if (e.kind === 'tool') shape += 'T';
+    else if (e.kind === 'thought' && e.text && state.showThinking) shape += 'R';
+    else if (e.kind === 'text' && e.text) { shape += 'X'; segments = true; }
+  }
+  if (!segments && msg.content) shape += 'C';
+  if (msg.streamError) shape += 'E';
+  if (msg.stoppedEarly) shape += 'S';
+  return shape;
 }
 
 function renderStreamingIncremental(msg) {
   // A queued-prompt block is always the last child; look past it for the message.
   let lastChild = messagesEl.lastElementChild;
   if (lastChild && lastChild.classList.contains('queued-block')) lastChild = lastChild.previousElementSibling;
-  // renderMessage() stamps _msgRef on every message element, so no post-render stamping is needed.
-  if (!lastChild || !lastChild.classList.contains('assistant') || lastChild._msgRef !== msg) {
+  if (!lastChild || !lastChild.classList.contains('assistant') || lastChild._msgRef !== msg
+      || lastChild._shape !== messageShape(msg)) {
     renderMessages();
+    scrollToBottom();
+    return;
+  }
+  // Fast path: only the trailing thought or text block grew.
+  const cacheEntry = renderCache.nodes[renderCache.nodes.length - 1];
+  const tl = Array.isArray(msg.timeline) ? msg.timeline : [];
+  const last = tl[tl.length - 1];
+  if (last && last.kind === 'thought' && state.showThinking) {
+    const blocks = lastChild.querySelectorAll('.reasoning-block .reasoning-text');
+    const el = blocks[blocks.length - 1];
+    if (el) { el.innerHTML = renderMarkdown(last.text || ''); tagMarkdownLinks(el); }
   } else {
-    // Fast path: in-place update of current streaming assistant message
-    if (msg.reasoning && state.showThinking) {
-      const thoughts = msg.timeline ? msg.timeline.filter(e => e.kind === 'thought' && e.text) : null;
-      const thoughtText = thoughts && thoughts.length ? thoughts[thoughts.length - 1].text : msg.reasoning;
-      const thoughtEls = lastChild.querySelectorAll('.reasoning-block');
-      const thoughtEl = thoughtEls[thoughtEls.length - 1];
-      // Fast path only when the DOM already has one block per thought entry; otherwise rebuild.
-      if (thoughts && thoughtEls.length !== thoughts.length) {
-        renderMessages();
-        scrollToBottom();
-        return;
-      }
-      if (!thoughtEl) {
-        const liveThought = renderThoughtBlock(thoughtText, { open: true });
-        const contentEl = lastChild.querySelector('.message-content');
-        if (contentEl) contentEl.prepend(liveThought);
-      } else {
-        const textEl = thoughtEl.querySelector('.reasoning-text');
-        if (textEl) {
-          textEl.innerHTML = renderMarkdown(thoughtText);
-          tagMarkdownLinks(textEl);
-        }
-      }
-    }
-    if (msg.content) {
-      const contentEl = lastChild.querySelector('.message-content');
-      let textEl = contentEl ? contentEl.querySelector('.md-content') : null;
-      if (!textEl && contentEl) {
-        textEl = document.createElement('div');
-        textEl.className = 'md-content streaming-cursor';
-        contentEl.appendChild(textEl);
-      }
-      if (textEl) {
-        textEl.innerHTML = renderMarkdown(msg.content);
-        tagMarkdownLinks(textEl);
-        if (!textEl.classList.contains('streaming-cursor')) {
-          textEl.classList.add('streaming-cursor');
-        }
-      }
-    }
+    const blocks = lastChild.querySelectorAll('.md-content');
+    const el = blocks[blocks.length - 1];
+    const text = (last && last.kind === 'text') ? last.text : msg.content;
+    if (el && text) renderMarkdownInto(el, text);
+  }
+  const session = state.openSessions.find(x => x.id === state.sessionId);
+  if (session && cacheEntry && cacheEntry.el === lastChild) {
+    cacheEntry.sig = renderSignature(session, msg, session.messages.length - 1);
   }
   scrollToBottom();
 }
@@ -3117,7 +3223,7 @@ function handleEvent(evt, msg, session) {
       // final empty-text delta with done=true, which would otherwise wipe
       // the accumulated assistant text (leaving only the token usage line).
       if (evt.text) {
-        msg.content = (msg.content || '') + evt.text;
+        appendTextChunk(msg, evt.text);
         msg.streamError = null;
       }
       if (session.id === state.sessionId) {
@@ -3242,7 +3348,7 @@ function renderGitChanges(data) {
   if (!filesGit) return;
   const ws = data.workspace || '';
   let html = '';
-  html += '<div class="files-workspace">📁 ' + esc(ws) + '</div>';
+  html += '<div class="files-workspace">' + SVG_ICONS.folder + '<span>' + esc(ws) + '</span></div>';
 
   if (!data.is_git_repo) {
     html += '<div class="files-empty">Not a git repository. Initialize one with <code>git init</code> to see working-tree diffs here.</div>';
@@ -3285,8 +3391,16 @@ function renderGitChanges(data) {
 
   const diff = data.diff || '';
   if (diff.trim().length > 0) {
-    html += '<div class="stat-section-title diff-toggle" tabindex="0">Unified Diff (click to toggle)</div>';
-    html += '<div class="diff-view diff-block"><pre>' + esc(diff) + '</pre></div>';
+    html += '<div class="stat-section-title diff-toggle" tabindex="0">Unified diff</div>';
+    const diffHtml = diff.split('\n').map((line) => {
+      let cls = '';
+      if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff --git')) cls = 'meta';
+      else if (line.startsWith('@@')) cls = 'hunk';
+      else if (line.startsWith('+')) cls = 'add';
+      else if (line.startsWith('-')) cls = 'del';
+      return '<span class="diff-line' + (cls ? ' ' + cls : '') + '">' + (esc(line) || ' ') + '</span>';
+    }).join('');
+    html += '<div class="diff-view diff-block"><pre>' + diffHtml + '</pre></div>';
   } else if (files.length === 0) {
     html += '<div class="files-empty">Working tree clean — no modified files.</div>';
   }
@@ -3309,32 +3423,50 @@ function renderGitChanges(data) {
 
 // ── Workspace filesystem browser + viewer/editor (GitHub Mobile Style) ──
 
+// Nerd Font (Symbols Nerd Font Mono) glyphs for file types; codepoints are
+// from the bundled font's cmap (fa-*, dev-*, seti-*, custom-*).
+const NF = {
+  folder: '', file: '', text: '', image: '', pdf: '', archive: '', code: '',
+  js: '', ts: '', py: '', cpp: '', c: '', md: '', html: '', css: '',
+  sh: '', rs: '', go: '', java: '', yml: '', config: '', swift: '',
+  kotlin: '', make: '', cmake: '', git: '', react: '', toml: '', db: '', up: ''
+};
 function getFsFileIcon(path, isDir) {
-  if (isDir) return '📁';
+  if (isDir) return NF.folder;
   const name = (path || '').split('/').pop() || '';
   const lower = name.toLowerCase();
-  if (lower === 'cmakelists.txt' || lower.endsWith('.cmake')) return '⚙️';
-  if (lower === 'dockerfile' || lower.startsWith('dockerfile.')) return '🐳';
-  if (lower === 'makefile' || lower === 'gnumakefile') return '🛠️';
-  if (lower.startsWith('.git')) return '🌱';
+  if (lower === 'cmakelists.txt' || lower.endsWith('.cmake')) return NF.cmake;
+  if (lower === 'makefile' || lower === 'gnumakefile') return NF.make;
+  if (lower.startsWith('.git')) return NF.git;
+  if (lower === 'dockerfile' || lower.startsWith('dockerfile.')) return NF.config;
 
   const dot = lower.lastIndexOf('.');
   const ext = dot >= 0 ? lower.slice(dot + 1) : '';
-
   switch (ext) {
-    case 'js': case 'mjs': case 'cjs': case 'jsx': return '⚡';
-    case 'ts': case 'tsx': case 'mts': case 'cts': return '📘';
-    case 'py': case 'pyw': return '🐍';
-    case 'cpp': case 'cxx': case 'cc': case 'c': case 'h': case 'hpp': case 'hh': case 'hxx': return '⚙️';
-    case 'html': case 'htm': case 'xml': case 'svg': return '🌐';
-    case 'css': case 'scss': case 'less': return '🎨';
-    case 'json': case 'jsonc': case 'yaml': case 'yml': case 'toml': case 'ini': return '📋';
-    case 'md': case 'markdown': return '📝';
-    case 'sh': case 'bash': case 'zsh': case 'fish': return '💻';
-    case 'png': case 'jpg': case 'jpeg': case 'gif': case 'webp': case 'ico': case 'bmp': return '🖼️';
-    case 'rs': case 'go': case 'java': case 'kt': case 'swift': return '📦';
-    case 'pdf': return '📕';
-    default: return '📄';
+    case 'js': case 'mjs': case 'cjs': return NF.js;
+    case 'jsx': case 'tsx': return NF.react;
+    case 'ts': case 'mts': case 'cts': return NF.ts;
+    case 'py': case 'pyw': return NF.py;
+    case 'cpp': case 'cxx': case 'cc': case 'hpp': case 'hh': case 'hxx': return NF.cpp;
+    case 'c': case 'h': return NF.c;
+    case 'html': case 'htm': case 'xml': case 'svg': return NF.html;
+    case 'css': case 'scss': case 'less': return NF.css;
+    case 'json': case 'jsonc': case 'ini': case 'conf': case 'cfg': return NF.config;
+    case 'yaml': case 'yml': return NF.yml;
+    case 'toml': return NF.toml;
+    case 'md': case 'markdown': return NF.md;
+    case 'sh': case 'bash': case 'zsh': case 'fish': return NF.sh;
+    case 'png': case 'jpg': case 'jpeg': case 'gif': case 'webp': case 'ico': case 'bmp': return NF.image;
+    case 'rs': return NF.rs;
+    case 'go': return NF.go;
+    case 'java': return NF.java;
+    case 'kt': case 'kts': return NF.kotlin;
+    case 'swift': return NF.swift;
+    case 'pdf': return NF.pdf;
+    case 'zip': case 'gz': case 'tgz': case 'xz': case 'zst': case 'tar': return NF.archive;
+    case 'db': case 'sqlite': case 'sql': return NF.db;
+    case 'txt': case 'log': return NF.text;
+    default: return NF.file;
   }
 }
 
@@ -3451,7 +3583,7 @@ function renderFsListingEntries() {
       ? state.fsDir.slice(0, state.fsDir.lastIndexOf('/'))
       : '';
     html += '<button type="button" class="fs-entry" data-type="dir" data-path="' + esc(parent) + '">'
-      + '<span class="fs-icon">⬆</span>'
+      + '<span class="fs-icon nf">' + NF.up + '</span>'
       + '<span class="fs-name">..</span>'
       + '</button>';
   }
@@ -3461,13 +3593,13 @@ function renderFsListingEntries() {
   } else {
     for (const e of entries) {
       const isDir = e.type === 'dir';
-      const icon = getFsFileIcon(e.path, isDir);
+      const icon = getFsFileIcon(e.path || e.name, isDir);
       const size = (!isDir && e.size != null) ? '<span class="fs-size">' + formatBytes(e.size) + '</span>' : '';
       const active = (!isDir && state.fsOpenPath === e.path) ? ' active' : '';
       const linkCls = (!isDir && state.sessionId) ? ' md-internal-link' : '';
       html += '<button type="button" class="fs-entry' + active + linkCls + '" data-type="' + (isDir ? 'dir' : 'file')
         + '" data-path="' + esc(e.path || '') + '">'
-        + '<span class="fs-icon">' + icon + '</span>'
+        + '<span class="fs-icon nf' + (isDir ? ' dir' : '') + '">' + icon + '</span>'
         + '<span class="fs-name">' + esc(e.name || '') + '</span>'
         + size
         + '</button>';
@@ -3920,10 +4052,12 @@ async function returnToParentSession() {
 async function loadDelegatedSessionsTab() {
   if (!sessionsContent) return;
   if (!state.sessionId) {
-    sessionsContent.innerHTML = '<div class="delegated-empty">No active session.<br>Select or create a parent session to view its subagents.</div>';
+    sessionsContent.innerHTML = emptyState('bot', 'No active session', 'Select or create a session to see its subagents.');
     return;
   }
-  sessionsContent.innerHTML = '<div class="delegated-empty">Loading subagents…</div>';
+  if (!sessionsContent.querySelector('.agent-list')) {
+    sessionsContent.innerHTML = '<div class="panel-loading"><span class="qcode-spinner"></span><span>Loading subagents…</span></div>';
+  }
   try {
     let tasks = [];
     try {
@@ -3990,39 +4124,42 @@ async function loadDelegatedSessionsTab() {
     }
 
     if (totalCount === 0) {
-      sessionsContent.innerHTML = '<div class="delegated-empty">No subagents run for this session.<br>The orchestrator starts them with the task tool.</div>';
+      sessionsContent.innerHTML = emptyState('bot', 'No subagents yet', 'The orchestrator starts subagents with the task tool. They will show up here.');
       return;
     }
 
     sessionsContent.innerHTML = '';
     const heading = document.createElement('div');
-    heading.className = 'delegated-empty';
-    heading.textContent = state.sessionsFilterText
-      ? `SUBAGENTS (${filtered.length} of ${totalCount}) — click to open in chat`
-      : `SUBAGENTS (${totalCount}) — click to open in chat`;
+    heading.className = 'panel-subhead';
+    heading.innerHTML = '<span>' + (state.sessionsFilterText ? `${filtered.length} of ${totalCount}` : String(totalCount))
+      + ' subagent' + (totalCount === 1 ? '' : 's') + '</span><span class="panel-subhead-hint">Click to open in chat</span>';
     sessionsContent.appendChild(heading);
 
     if (filtered.length === 0) {
-      const noMatch = document.createElement('div');
-      noMatch.className = 'delegated-empty';
-      noMatch.textContent = 'No subagents match your filter.';
-      sessionsContent.appendChild(noMatch);
+      sessionsContent.insertAdjacentHTML('beforeend', emptyState('search', 'No matches', 'No subagents match your filter.'));
       return;
     }
 
+    const list = document.createElement('div');
+    list.className = 'agent-list';
+    const statusLabel = { running: 'Running', completed: 'Done', done: 'Done', failed: 'Failed', error: 'Failed', cancelled: 'Cancelled', saved: 'Saved', queued: 'Queued' };
     for (const item of filtered) {
       const sid = item.sid;
       const row = document.createElement('div');
-      row.className = 'delegated-row';
+      row.className = 'agent-card';
       const isCurrent = sid && sid === state.sessionId;
       if (isCurrent) row.classList.add('current');
-      const model = item.model;
-      const status = item.status;
-      row.innerHTML = (isCurrent ? '<span class="child-marker">●</span>' : '')
-        + '<span class="child-status ' + esc(status) + '">[' + esc(status) + ']</span>'
-        + (model ? '<span class="child-model">{' + esc(model) + '}</span>' : '')
-        + '<span class="child-desc">' + esc(item.description) + '</span>'
-        + (isCurrent ? '<span class="child-open">[open]</span>' : '<span class="child-action">↗</span>');
+      const status = String(item.status || 'saved').toLowerCase();
+      row.innerHTML = '<span class="agent-card-icon">' + (status === 'running' ? '<span class="qcode-spinner"></span>' : icon('bot', 16)) + '</span>'
+        + '<span class="agent-card-main">'
+        +   '<span class="agent-card-title">' + esc(item.description || sid || 'Subagent') + '</span>'
+        +   '<span class="agent-card-meta">'
+        +     '<span class="status-chip ' + esc(status) + '">' + esc(statusLabel[status] || status) + '</span>'
+        +     (item.model ? '<span class="agent-card-model">' + esc(item.model) + '</span>' : '')
+        +     (sid ? '<code class="agent-card-id">' + esc(sid.length > 14 ? sid.slice(0, 14) + '…' : sid) + '</code>' : '')
+        +   '</span>'
+        + '</span>'
+        + '<span class="agent-card-go">' + (isCurrent ? '<span class="status-chip current">Open</span>' : icon('chevron', 14)) + '</span>';
 
       if (sid) {
         row.setAttribute('role', 'button');
@@ -4036,11 +4173,12 @@ async function loadDelegatedSessionsTab() {
         row.classList.add('no-open');
         row.title = 'No session id for this task';
       }
-      sessionsContent.appendChild(row);
+      list.appendChild(row);
     }
+    sessionsContent.appendChild(list);
   } catch (e) {
-    sessionsContent.innerHTML = '<div class="error-panel">Failed to load subagents: ' + esc(e.message)
-      + '<br><button type="button" class="msg-action-btn" data-retry="sessions">Retry</button></div>';
+    sessionsContent.innerHTML = '<div class="error-panel">' + icon('alert', 18) + '<div><strong>Could not load subagents</strong><span>' + esc(e.message)
+      + '</span></div><button type="button" class="btn" data-retry="sessions">Retry</button></div>';
     const rb = sessionsContent.querySelector('[data-retry="sessions"]');
     if (rb) rb.addEventListener('click', loadDelegatedSessionsTab);
   }
@@ -4097,12 +4235,7 @@ async function loadStatsTab(opts) {
   const quiet = !!(opts && opts.quiet) && lastStatsData != null;
   if (!state.sessionId) {
     lastStatsData = null;
-    statsContent.innerHTML = `
-      <div class="stats-empty-container">
-        <div class="stats-empty-icon">📊</div>
-        <div class="stats-empty-title">No Active Session</div>
-        <div class="stats-empty-desc">Open or create a session to view real-time token usage, message activity, and tool execution metrics.</div>
-      </div>`;
+    statsContent.innerHTML = emptyState('info', 'No active session', 'Open or create a session to see token usage, cost and tool metrics.');
     return;
   }
   if (!quiet) statsContent.innerHTML = `
@@ -4126,8 +4259,8 @@ async function loadStatsTab(opts) {
     renderStatsTab(data);
   } catch (e) {
     lastStatsData = null;
-    statsContent.innerHTML = '<div class="error-panel">Failed to load stats: ' + esc(e.message)
-      + '<br><button type="button" class="msg-action-btn" data-retry="stats">Retry</button></div>';
+    statsContent.innerHTML = '<div class="error-panel">' + icon('alert', 18) + '<div><strong>Could not load stats</strong><span>' + esc(e.message)
+      + '</span></div><button type="button" class="btn" data-retry="stats">Retry</button></div>';
     const b = statsContent.querySelector('[data-retry="stats"]');
     if (b) b.addEventListener('click', loadStatsTab);
   }
@@ -4181,103 +4314,46 @@ function renderStatsTab(data) {
   const model = data.model || '—';
   const workspace = data.workspace || '';
 
+  const kpi = (label, value, sub, cls = '') => `
+        <div class="stat-card kpi-card ${cls}">
+          <div class="stat-label">${esc(label)}</div>
+          <div class="stat-value">${esc(value)}</div>
+          <div class="stat-subtext">${esc(sub)}</div>
+        </div>`;
+  const ctxLabel = ctxWindow > 0
+    ? `${formatNumber(used)} / ${formatNumber(ctxWindow)} tokens`
+    : (used > 0 ? `${formatNumber(used)} tokens in use` : 'Context window unknown');
   const html = `
     <div class="stats-container">
-      <!-- Session Header & Identity Card -->
-      <div class="stats-session-hero">
+      <section class="stats-session-hero">
         <div class="stats-hero-top">
-          <div class="stats-hero-title-group">
-            <span class="stats-hero-badge">Active Session</span>
-            <h3 class="stats-hero-title" title="${esc(title)}">${esc(title)}</h3>
-          </div>
-          <div class="stats-hero-id-badge" title="Click to copy Session ID" data-copy-sid="${esc(sid)}">
-            <span class="stats-hero-id-label">ID:</span>
-            <code class="stats-hero-id-val">${esc(sid || '—')}</code>
-            <svg class="ui-icon stats-copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </div>
+          <h3 class="stats-hero-title" title="${esc(title)}">${esc(title)}</h3>
+          <button type="button" class="stats-hero-id-badge" title="Copy session ID" data-copy-sid="${esc(sid)}">
+            <code>${esc(sid ? (sid.length > 16 ? sid.slice(0, 16) + '…' : sid) : '—')}</code>${icon('copy', 12)}
+          </button>
         </div>
-
         <div class="stats-hero-meta-row">
-          <div class="stats-hero-pill" title="Inference Provider">
-            <span class="stats-pill-icon">⚡</span>
-            <span class="stats-pill-label">Provider:</span>
-            <strong class="stats-pill-value">${esc(provider)}</strong>
-          </div>
-          <div class="stats-hero-pill accent" title="Active Model">
-            <span class="stats-pill-icon">🧠</span>
-            <span class="stats-pill-label">Model:</span>
-            <strong class="stats-pill-value">${esc(model)}</strong>
-          </div>
-          ${createdFormatted !== '—' ? `
-            <div class="stats-hero-pill" title="Created on ${esc(createdFormatted)}">
-              <span class="stats-pill-icon">🕒</span>
-              <span class="stats-pill-label">Started:</span>
-              <strong class="stats-pill-value">${esc(createdRelative || createdFormatted)}</strong>
-            </div>
-          ` : ''}
+          <span class="meta-chip"><span>Provider</span><strong>${esc(provider)}</strong></span>
+          <span class="meta-chip"><span>Model</span><strong>${esc(model)}</strong></span>
+          ${createdFormatted !== '—' ? `<span class="meta-chip" title="${esc(createdFormatted)}"><span>Started</span><strong>${esc(createdRelative || createdFormatted)}</strong></span>` : ''}
+          ${workspace ? `<span class="meta-chip wide" title="${esc(workspace)}"><span>Workspace</span><code>${esc(shortPath(workspace))}</code></span>` : ''}
         </div>
-
-        ${workspace ? `
-          <div class="stats-hero-workspace-row" title="${esc(workspace)}">
-            <span class="stats-ws-icon"><svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
-            <span class="stats-ws-label">Workspace:</span>
-            <code class="stats-ws-path">${esc(workspace)}</code>
-          </div>
-        ` : ''}
-
-        <!-- Context Window Usage Meter -->
         <div class="stats-hero-context-meter">
           <div class="stats-context-label-row">
-            <span class="stats-context-label">📐 Context Window Usage</span>
-            <span class="stats-context-val">
-              ${ctxWindow > 0 ? `${esc(formatNumber(used))} / ${esc(formatNumber(ctxWindow))} tokens (${esc(pctLabel(ctxPct))})` : (used > 0 ? `${esc(formatNumber(used))} tokens in use` : 'Idle · context window unknown')}
-            </span>
+            <span class="stats-context-label">Context</span>
+            <span class="stats-context-val">${esc(ctxLabel)}${ctxWindow > 0 ? ` · <strong>${esc(pctLabel(ctxPct))}</strong>` : ''}</span>
           </div>
-          ${ctxWindow > 0 ? `
-            <div class="stats-context-track" role="progressbar" aria-valuenow="${ctxPct}" aria-valuemin="0" aria-valuemax="100">
-              <div class="stats-context-bar ${ctxPct > 85 ? 'danger' : ctxPct > 60 ? 'warning' : 'ok'}" style="width: ${ctxPct}%"></div>
-            </div>
-          ` : ''}
+          <div class="stats-context-track" role="progressbar" aria-valuenow="${ctxPct.toFixed(0)}" aria-valuemin="0" aria-valuemax="100">
+            <div class="stats-context-bar ${ctxPct > 85 ? 'danger' : ctxPct > 60 ? 'warning' : 'ok'}" style="width: ${ctxPct}%"></div>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <!-- Unified KPI HUD Grid -->
       <div class="stat-grid stats-kpi-grid">
-        <div class="stat-card kpi-card tokens">
-          <div class="stat-card-header">
-            <span class="stat-card-icon tokens">🪙</span>
-            <span class="stat-label">Total Tokens</span>
-          </div>
-          <div class="stat-value accent">${esc(formatNumber(totalTokens))}</div>
-          <div class="stat-subtext">${esc(formatNumber(promptTokens))} in / ${esc(formatNumber(completionTokens))} out${thinkingTokens > 0 ? ' · ' + esc(formatNumber(thinkingTokens)) + ' think' : ''}</div>
-        </div>
-
-        <div class="stat-card kpi-card cache">
-          <div class="stat-card-header">
-            <span class="stat-card-icon">🗄️</span>
-            <span class="stat-label">Prompt Cache</span>
-          </div>
-          <div class="stat-value">${input > 0 ? esc(hit.toFixed(0)) + '%' : '—'}</div>
-          <div class="stat-subtext">${input > 0 ? esc(formatNumber(cacheRead)) + ' of ' + esc(formatNumber(input)) + ' in cached' : 'No cache activity'}</div>
-        </div>
-
-        <div class="stat-card kpi-card calls">
-          <div class="stat-card-header">
-            <span class="stat-card-icon">⚡</span>
-            <span class="stat-label">Model Inference</span>
-          </div>
-          <div class="stat-value">${esc(formatNumber(calls))}</div>
-          <div class="stat-subtext">${calls > 0 ? 'avg ' + esc(formatMs(usage.avg_call_ms)) + ' · ' + esc(tokPerS.toFixed(1)) + ' tok/s' : 'No model calls'}</div>
-        </div>
-
-        <div class="stat-card kpi-card tools">
-          <div class="stat-card-header">
-            <span class="stat-card-icon tools">🛠️</span>
-            <span class="stat-label">Tool Execution</span>
-          </div>
-          <div class="stat-value">${esc(formatNumber(toolCalls))}</div>
-          <div class="stat-subtext">${toolCalls > 0 ? esc(formatMs(totalToolTimeMs)) + ' total · avg ' + esc(formatMs(avgToolTime)) : 'No tools executed'}</div>
-        </div>
+        ${kpi('Tokens', formatNumber(totalTokens), `${formatNumber(promptTokens)} in · ${formatNumber(completionTokens)} out${thinkingTokens > 0 ? ' · ' + formatNumber(thinkingTokens) + ' thinking' : ''}`, 'accent')}
+        ${kpi('Cache hit', input > 0 ? hit.toFixed(0) + '%' : '—', input > 0 ? `${formatNumber(cacheRead)} of ${formatNumber(input)} cached` : 'No cache activity')}
+        ${kpi('Model calls', formatNumber(calls), calls > 0 ? `avg ${formatMs(usage.avg_call_ms)} · ${tokPerS.toFixed(1)} tok/s` : 'No model calls')}
+        ${kpi('Tool calls', formatNumber(toolCalls), toolCalls > 0 ? `${formatMs(totalToolTimeMs)} total · avg ${formatMs(avgToolTime)}` : 'No tools run')}
       </div>
 
       ${usageHtml}
@@ -4297,6 +4373,18 @@ function renderStatsTab(data) {
   }
 }
 
+const renderCache = { sessionId: null, nodes: [] };
+
+function renderSignature(session, msg, index) {
+  const live = session.generating && index === session.messages.length - 1;
+  const tools = (msg.toolEvents || []).map(t => t.status + (t.result ? 'r' : '')).join(',');
+  const text = msg.content || '';
+  const thought = msg.reasoning || '';
+  return [msg.role, messageShape(msg), text.length, text.slice(-24), thought.length, tools,
+    msg.usage || '', msg.streamError || '', msg.stoppedEarly ? 1 : 0,
+    state.showThinking ? 1 : 0, live ? 1 : 0].join('|');
+}
+
 function renderMessages() {
   messagesEl.innerHTML = '';
   const session = state.openSessions.find(s => s.id === state.sessionId);
@@ -4309,12 +4397,12 @@ function renderMessages() {
     const modelLabel = session.model ? `${session.provider ? session.provider + ' / ' : ''}${session.model}` : '';
     banner.innerHTML = `
       <div class="subagent-banner-info">
-        <span class="subagent-banner-icon">🤖</span>
-        <span class="subagent-banner-title">Delegated Child Session</span>
+        <span class="subagent-banner-icon">${icon('bot', 16)}</span>
+        <span class="subagent-banner-title">Subagent session</span>
         <span class="subagent-banner-id">${esc(session.id)}</span>
         ${modelLabel ? `<span class="subagent-banner-model">${esc(modelLabel)}</span>` : ''}
       </div>
-      <button type="button" class="subagent-banner-back-btn" title="Return to parent session (Esc or b)">← Back to Parent</button>
+      <button type="button" class="subagent-banner-back-btn" title="Return to parent session (Esc or b)">Back to parent</button>
     `;
     const backBtn = banner.querySelector('.subagent-banner-back-btn');
     if (backBtn) backBtn.addEventListener('click', returnToParentSession);
@@ -4334,132 +4422,196 @@ function renderMessages() {
     empty.innerHTML = '<div class="empty-chat-mark">Q</div>'
       + '<h2>What are we building?</h2>'
       + '<p>Ask QCode to explore the workspace, write code, or run a command.</p>'
-      + '<div class="empty-chat-hint"><kbd>/</kbd> Commands <span>•</span> <kbd>Ctrl</kbd>+<kbd>P</kbd> Palette <span>•</span> <kbd>Enter</kbd> Send</div>';
+      + '<div class="empty-chat-hint"><span><kbd>/</kbd> commands</span><span><kbd>Ctrl</kbd> <kbd>P</kbd> palette</span><span><kbd>Enter</kbd> send</span></div>';
     messagesEl.appendChild(empty);
     return;
   }
-  for (const msg of session.messages) {
-    messagesEl.appendChild(renderMessage(msg));
-  }
+  // Reuse the DOM of messages that did not change since the last render so
+  // full re-renders (tool events, refreshes) neither flicker nor lose
+  // expanded tool/thought state; only messages new to this view animate in.
+  const sameView = renderCache.sessionId === session.id;
+  const prev = sameView ? renderCache.nodes : [];
+  const nodes = [];
+  session.messages.forEach((msg, i) => {
+    const sig = renderSignature(session, msg, i);
+    const cached = prev[i];
+    let el;
+    if (cached && cached.sig === sig && cached.msg === msg) {
+      el = cached.el;
+    } else {
+      el = renderMessage(msg);
+      if (sameView && i >= prev.length) el.classList.add('enter');
+    }
+    nodes.push({ sig, msg, el });
+    messagesEl.appendChild(el);
+  });
+  renderCache.sessionId = session.id;
+  renderCache.nodes = nodes;
   if (queue.length > 0) messagesEl.appendChild(renderQueuedBlock(queue));
+}
+
+function renderMarkdownInto(el, text) {
+  el.innerHTML = renderMarkdown(text);
+  tagMarkdownLinks(el);
+  decorateCodeBlocks(el);
+}
+
+// Fenced blocks from the marked renderer already carry a header with a copy
+// button; bare <pre><code> (e.g. raw HTML in markdown) gets a floating one.
+function decorateCodeBlocks(root) {
+  root.querySelectorAll('pre code').forEach((code) => {
+    const pre = code.parentElement;
+    if (!pre || pre.closest('.code-block-container') || pre.querySelector('.copy-code-btn')) return;
+    pre.classList.add('has-float-copy');
+    const cb = document.createElement('button');
+    cb.type = 'button'; cb.className = 'copy-code-btn floating';
+    cb.innerHTML = icon('copy', 13); cb.title = 'Copy code'; cb.setAttribute('aria-label', 'Copy code block');
+    cb.addEventListener('click', (e) => { e.stopPropagation(); copyText(code.innerText, 'Code copied'); });
+    pre.appendChild(cb);
+  });
 }
 
 function renderMessage(msg) {
   const div = document.createElement('div'); div.className = 'message ' + msg.role;
   div._msgRef = msg;
   const content = document.createElement('div'); content.className = 'message-content';
-  if (msg.role !== 'user') {
+  const liveSession = state.openSessions.find(s => s.id === state.sessionId);
+  const isLive = !!(liveSession && liveSession.generating
+    && liveSession.messages[liveSession.messages.length - 1] === msg);
+
+  if (msg.role === 'assistant' || msg.role === 'system') {
     const header = document.createElement('div'); header.className = 'message-header';
-    const icons = { user: SVG_ICONS.user, assistant: SVG_ICONS.assistant, system: SVG_ICONS.system, tool: SVG_ICONS.tool };
-    header.innerHTML = '<span class="role-icon">' + (icons[msg.role] || '') + '</span> ' + capitalize(msg.role);
+    const avatar = msg.role === 'assistant'
+      ? '<span class="role-avatar" aria-hidden="true">Q</span><span class="role-name">QCode</span>'
+      : '<span class="role-avatar system" aria-hidden="true">' + icon('info', 12) + '</span><span class="role-name">System</span>';
+    header.innerHTML = avatar;
+    if (isLive) {
+      const working = document.createElement('span'); working.className = 'msg-working';
+      working.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+      header.appendChild(working);
+    }
     if (msg.createdAt) {
       const ts = document.createElement('span'); ts.className = 'msg-ts'; ts.title = new Date(msg.createdAt).toLocaleString();
       ts.textContent = relTime(msg.createdAt); header.appendChild(ts);
     }
     div.appendChild(header);
   }
-  // Interleaved thinking/tool timeline: each thought renders adjacent to the
-  // tool call it preceded. Falls back to legacy order when no timeline exists.
-  // The latest thought in the actively generating message stays expanded so
-  // live thinking is visible; older thoughts stay collapsed.
-  const liveSession = state.openSessions.find(s => s.id === state.sessionId);
-  const liveThoughtOpen = !!(liveSession && liveSession.generating
-    && liveSession.messages[liveSession.messages.length - 1] === msg);
-  if (msg.timeline && msg.timeline.length > 0) {
+
+  // Interleaved timeline: thoughts, tool calls and text segments render in
+  // the order they streamed. Older messages without text segments fall back
+  // to tools/thought first and the full text last.
+  const timeline = Array.isArray(msg.timeline) ? msg.timeline : [];
+  const hasTextSegments = timeline.some(e => e.kind === 'text');
+  let lastThoughtIdx = -1;
+  for (let ti = 0; ti < timeline.length; ti++) {
+    if (timeline[ti].kind === 'thought' && timeline[ti].text) lastThoughtIdx = ti;
+  }
+  const lastEntry = timeline[timeline.length - 1];
+  const appendText = (text, streaming) => {
+    const textEl = document.createElement('div');
+    textEl.className = 'md-content' + (streaming ? ' streaming-cursor' : '');
+    renderMarkdownInto(textEl, text);
+    content.appendChild(textEl);
+  };
+  let toolGroup = null;
+  const appendTool = (t) => {
+    if (!toolGroup) {
+      toolGroup = document.createElement('div'); toolGroup.className = 'tool-events';
+      content.appendChild(toolGroup);
+    }
+    toolGroup.appendChild(renderToolBlock(t));
+  };
+  if (timeline.length > 0) {
     const byId = {};
     if (msg.toolEvents) for (const t of msg.toolEvents) byId[t.tool_call_id] = t;
-    let lastThoughtIdx = -1;
-    for (let ti = 0; ti < msg.timeline.length; ti++) {
-      if (msg.timeline[ti].kind === 'thought' && msg.timeline[ti].text) lastThoughtIdx = ti;
-    }
-    for (let ti = 0; ti < msg.timeline.length; ti++) {
-      const entry = msg.timeline[ti];
+    for (let ti = 0; ti < timeline.length; ti++) {
+      const entry = timeline[ti];
       if (entry.kind === 'tool') {
         const t = byId[entry.tool_call_id];
-        if (!t) continue;
-        const tc = document.createElement('div'); tc.className = 'tool-events';
-        tc.appendChild(renderToolBlock(t));
-        content.appendChild(tc);
-      } else if (entry.kind === 'thought' && entry.text && state.showThinking) {
-        const autoOpen = liveThoughtOpen && ti === lastThoughtIdx;
-        content.appendChild(renderThoughtBlock(entry.text, autoOpen ? { open: true } : undefined));
+        if (t) appendTool(t);
+        continue;
+      }
+      toolGroup = null;
+      if (entry.kind === 'thought' && entry.text && state.showThinking) {
+        const live = isLive && ti === lastThoughtIdx && entry === lastEntry;
+        content.appendChild(renderThoughtBlock(entry.text, live ? { open: true, live: true } : undefined));
+      } else if (entry.kind === 'text' && entry.text) {
+        appendText(entry.text, isLive && entry === lastEntry);
       }
     }
   } else {
-    if (msg.toolEvents && msg.toolEvents.length > 0) {
-      const tc = document.createElement('div'); tc.className = 'tool-events';
-      for (const t of msg.toolEvents) tc.appendChild(renderToolBlock(t));
-      content.appendChild(tc);
-    }
+    for (const t of (msg.toolEvents || [])) appendTool(t);
     if (msg.reasoning && state.showThinking) {
-      content.appendChild(renderThoughtBlock(msg.reasoning, liveThoughtOpen ? { open: true } : undefined));
+      content.appendChild(renderThoughtBlock(msg.reasoning, isLive ? { open: true, live: true } : undefined));
     }
   }
-  if (msg.usage) {
-    const uc = document.createElement('div'); uc.className = 'usage-block';
-    uc.textContent = msg.usage;
-    content.appendChild(uc);
+  if (msg.content && !hasTextSegments) appendText(msg.content, isLive);
+  if (isLive && !msg.content && timeline.length === 0) {
+    const pending = document.createElement('div'); pending.className = 'msg-pending';
+    pending.innerHTML = '<span class="qcode-spinner"></span><span>Working…</span>';
+    content.appendChild(pending);
   }
-  if (msg.content) {
-    const textEl = document.createElement('div'); textEl.className = 'md-content';
-    textEl.innerHTML = renderMarkdown(msg.content);
-    tagMarkdownLinks(textEl);
-    
-    const activeSession = state.openSessions.find(s => s.id === state.sessionId);
-    const isGenerating = activeSession && activeSession.generating;
-    const isLastMsg = activeSession && msg === activeSession.messages[activeSession.messages.length - 1];
-    
-    if (isGenerating && isLastMsg) textEl.className += ' streaming-cursor';
-    content.appendChild(textEl);
-  }
+
   if (msg.stoppedEarly && !msg.streamError) {
     const warn = document.createElement('div');
     warn.className = 'stopped-early';
-    warn.textContent = 'Stopped early — partial response kept. Retry to continue.';
+    warn.innerHTML = icon('info', 14) + '<span>Stopped early — partial response kept. Retry to continue.</span>';
     content.appendChild(warn);
   }
   if (msg.streamError) {
     const isInterrupted = /interrupted|stream ended|abort|cancel|network|fetch|connection|offline/i.test(msg.streamError);
-    const title = isInterrupted ? 'Response interrupted' : 'Generation error';
     const error = document.createElement('div');
     error.className = 'stream-error' + (isInterrupted ? ' interrupted' : '');
-    error.innerHTML = '<span>!</span><div><strong>' + title + '</strong><br>'
-      + esc(msg.streamError) + '</div>';
-    if (isInterrupted) {
-      const retryBtn = document.createElement('button');
-      retryBtn.type = 'button';
-      retryBtn.className = 'msg-action-btn error-retry-btn';
-      retryBtn.textContent = 'Retry';
-      retryBtn.title = 'Retry generation';
-      retryBtn.addEventListener('click', () => handleRetryCommand());
-      error.appendChild(retryBtn);
-    }
+    error.setAttribute('role', 'alert');
+    error.innerHTML = '<span class="stream-error-icon">' + icon(isInterrupted ? 'info' : 'alert', 16) + '</span>'
+      + '<div class="stream-error-body"><strong>' + (isInterrupted ? 'Response interrupted' : 'Generation failed') + '</strong>'
+      + '<span>' + esc(msg.streamError) + '</span></div>';
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'error-retry-btn';
+    retryBtn.innerHTML = icon('retry', 13) + '<span>Retry</span>';
+    retryBtn.addEventListener('click', () => handleRetryCommand());
+    error.appendChild(retryBtn);
     content.appendChild(error);
   }
-  const acts = document.createElement('div'); acts.className = 'msg-actions';
-  const mkBtn = (label, title, fn) => {
-    const b = document.createElement('button'); b.type = 'button'; b.className = 'msg-action-btn';
-    b.textContent = label; b.title = title; b.setAttribute('aria-label', title); b.addEventListener('click', fn); acts.appendChild(b); return b;
-  };
-  mkBtn('Copy', 'Copy message text', () => copyText(msg.content || '', 'Message copied'));
-  if (msg.role === 'assistant' && msg.content) {
-    mkBtn('Raw', 'Toggle raw markdown', () => {
-      const pre = div.querySelector('.md-content');
-      if (pre) { const showing = pre.dataset.raw === '1'; pre.dataset.raw = showing ? '0' : '1'; pre.textContent = showing ? '' : (msg.content || ''); if (showing) { pre.innerHTML = renderMarkdown(msg.content); tagMarkdownLinks(pre); } }
-    });
-    mkBtn('Rerun', 'Retry from this prompt', () => handleRetryCommand());
+
+  if (msg.role === 'user' || msg.role === 'assistant') {
+    const acts = document.createElement('div'); acts.className = 'msg-actions';
+    const mkBtn = (name, title, fn) => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'msg-action-btn';
+      b.innerHTML = icon(name, 14); b.title = title; b.setAttribute('aria-label', title);
+      b.addEventListener('click', (e) => { e.stopPropagation(); fn(b); });
+      acts.appendChild(b); return b;
+    };
+    const flashCopied = (b) => {
+      b.innerHTML = icon('check', 14); b.classList.add('done');
+      setTimeout(() => { b.innerHTML = icon('copy', 14); b.classList.remove('done'); }, 1400);
+    };
+    mkBtn('copy', 'Copy message', (b) => { copyText(msg.content || '', 'Message copied'); flashCopied(b); });
+    if (msg.role === 'assistant' && msg.content && !isLive) {
+      mkBtn('raw', 'Toggle raw markdown', (b) => {
+        const showing = div.classList.toggle('show-raw');
+        b.classList.toggle('active', showing);
+        let raw = content.querySelector('.raw-content');
+        if (showing && !raw) {
+          raw = document.createElement('pre'); raw.className = 'raw-content';
+          raw.textContent = msg.content || '';
+          content.insertBefore(raw, acts);
+        }
+      });
+      mkBtn('retry', 'Retry from this prompt', () => handleRetryCommand());
+    }
+    if (msg.usage && msg.role === 'assistant') {
+      const uc = document.createElement('span'); uc.className = 'usage-block';
+      uc.textContent = msg.usage.replace(/^Tokens — /, '');
+      uc.title = msg.usage;
+      acts.appendChild(uc);
+    }
+    content.appendChild(acts);
   }
-  content.appendChild(acts);
-  // T3.1 copy-code buttons
-  content.querySelectorAll('pre code').forEach((code) => {
-    const pre = code.parentElement;
-    if (!pre || pre.querySelector('.copy-code-btn')) return;
-    pre.style.position = 'relative';
-    const cb = document.createElement('button'); cb.type = 'button'; cb.className = 'copy-code-btn'; cb.textContent = 'Copy'; cb.setAttribute('aria-label', 'Copy code block');
-    cb.addEventListener('click', (e) => { e.stopPropagation(); copyText(code.innerText, 'Code copied'); });
-    pre.appendChild(cb);
-  });
-  div.appendChild(content); return div;
+  div.appendChild(content);
+  div._shape = messageShape(msg);
+  return div;
 }
 
 
@@ -4537,8 +4689,15 @@ function renderToolBlock(tc) {
     }
   }
 
-  const icons = { bash: '$', task: '🤖', read_file: '📄', write_file: '✏️', view_file: '📄', edit_file: '✏️', search: '🔍', grep: '🔍', ripgrep: '🔍' };
-  const icon = icons[toolName] || '⚙';
+  const toolIcons = {
+    bash: 'terminal', shell: 'terminal', run_command: 'terminal',
+    task: 'bot', dispatch_agent: 'bot',
+    read_file: 'fileText', view_file: 'fileText',
+    write_file: 'pencil', edit_file: 'pencil',
+    search: 'search', grep: 'search', ripgrep: 'search', glob: 'search',
+    webfetch: 'globe', web_fetch: 'globe', websearch: 'globe', web_search: 'globe'
+  };
+  const toolIcon = toolIcons[toolName] || 'wrench';
   const displayNames = { bash: 'Bash', task: 'Task', read_file: 'Read File', write_file: 'Write File', view_file: 'Read File', edit_file: 'Edit File', search: 'Search' };
   const displayName = displayNames[toolName] || capitalize(toolName);
 
@@ -4553,35 +4712,45 @@ function renderToolBlock(tc) {
   const header = document.createElement('div');
   header.className = 'tool-header';
   
+  header.setAttribute('role', 'button');
+  header.tabIndex = 0;
+
   const chevron = document.createElement('span');
   chevron.className = 'tool-chevron';
-  chevron.textContent = '▸';
-  
+  chevron.innerHTML = icon('chevron', 12);
+
+  const typeIcon = document.createElement('span');
+  typeIcon.className = 'tool-type-icon';
+  typeIcon.innerHTML = icon(toolIcon, 14);
+
   const heading = document.createElement('span');
   heading.className = 'tool-heading';
-  if (icon && icon !== '$') {
-    heading.innerHTML = `<span class="tool-type-icon" style="margin-right: 6px; opacity: 0.8;">${icon}</span># ${desc || displayName}`;
-  } else {
-    heading.textContent = `# ${desc || displayName}`;
-  }
-  
+  const title = desc || displayName;
+  let subtitle = command && command !== toolName ? command : '';
+  if (subtitle.startsWith(toolName + ' ')) subtitle = subtitle.slice(toolName.length + 1).trim();
+  if (subtitle === title) subtitle = '';
+  heading.innerHTML = `<span class="tool-title">${esc(title)}</span>`
+    + (subtitle ? `<span class="tool-subtitle">${esc(subtitle.split('\n')[0])}</span>` : '');
+
   const timing = document.createElement('span');
   timing.className = 'tool-duration';
-  timing.textContent = tc.duration_ms ? `${Math.round(tc.duration_ms)}ms` : '';
-  
+  const ms = tc.duration_ms ? Math.round(tc.duration_ms) : 0;
+  timing.textContent = ms ? (ms >= 1000 ? (ms / 1000).toFixed(ms >= 10000 ? 0 : 1) + 's' : ms + 'ms') : '';
+
   const statusEl = document.createElement('span');
   statusEl.className = 'tool-status-icon';
   if (tc.status === 'running') statusEl.innerHTML = '<span class="qcode-spinner"></span>';
-  else if (tc.status === 'error') statusEl.textContent = '✗';
-  else statusEl.textContent = '✓';
+  else if (tc.status === 'error') statusEl.innerHTML = icon('x', 13);
+  else statusEl.innerHTML = icon('check', 13);
 
   header.appendChild(chevron);
+  header.appendChild(typeIcon);
   header.appendChild(heading);
   if (childSid) {
     const openEl = document.createElement('button');
     openEl.type = 'button';
     openEl.className = 'task-open-child';
-    openEl.textContent = '↗ open child';
+    openEl.innerHTML = icon('external', 12) + '<span>Open</span>';
     openEl.title = 'Open delegated child session in chat (' + childSid + ')';
     openEl.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -4633,7 +4802,7 @@ function renderToolBlock(tc) {
     if (childSid) {
       const childActionRow = document.createElement('div');
       childActionRow.className = 'tool-child-action-row';
-      childActionRow.innerHTML = `<button type="button" class="tool-open-child-btn"><span>🤖 Open child session (${esc(childSid)})</span> <span>→</span></button>`;
+      childActionRow.innerHTML = `<button type="button" class="tool-open-child-btn">${icon('bot', 14)}<span>Open child session</span><code>${esc(childSid)}</code>${icon('chevron', 12)}</button>`;
       const openBtn = childActionRow.querySelector('.tool-open-child-btn');
       if (openBtn) {
         openBtn.addEventListener('click', (ev) => {
@@ -4650,15 +4819,19 @@ function renderToolBlock(tc) {
     const expanded = !!tc._open;
     if (expanded && !bodyFilled) fillBody();
     body.classList.toggle('collapsed', !expanded);
-    chevron.textContent = expanded ? '▾' : '▸';
+    block.classList.toggle('open', expanded);
+    header.setAttribute('aria-expanded', String(expanded));
   };
   header.addEventListener('click', (ev) => {
-    if (childSid && ev.target.classList && ev.target.classList.contains('task-open-child')) {
+    if (childSid && ev.target.closest && ev.target.closest('.task-open-child')) {
       openChildSession(childSid);
       return;
     }
     tc._open = !tc._open;
     applyExpanded();
+  });
+  header.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); header.click(); }
   });
   applyExpanded();
 
@@ -4955,7 +5128,7 @@ function getMarkedRenderer() {
           if (el) el.innerHTML = svg;
         }).catch((err) => {
           const el = document.getElementById(diagramId);
-          if (el) el.innerHTML = '<div style="color:#f87171;font-size:12px;padding:8px;">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
+          if (el) el.innerHTML = '<div class="diagram-error">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
         });
       }, 50);
       return `<div class="mermaid-diagram-container"><div id="${diagramId}" class="mermaid-target">${esc(cleanCode)}</div></div>`;
@@ -4969,13 +5142,13 @@ function getMarkedRenderer() {
       const encodedCode = encodeURIComponent(cleanCode);
       return `<div class="plantuml-diagram-container" id="${diagramId}" data-puml-code="${encodedCode}" data-puml-mode="${initialMode}">
         <div class="code-block-header">
-          <span class="code-block-lang">PlantUML Diagram</span>
+          <span class="code-block-lang">plantuml</span>
           <div style="display:flex;gap:6px;align-items:center;">
             <button type="button" class="copy-code-btn plantuml-mode-btn" onclick="togglePlantUmlDiagramMode('${diagramId}')" title="Toggle between Dark and Light mode">
-              <span class="plantuml-mode-label">${isDark ? '☀️ Light' : '🌙 Dark'}</span>
+              <span class="plantuml-mode-label">${isDark ? 'Light' : 'Dark'}</span>
             </button>
-            <button type="button" class="copy-code-btn" onclick="copyPlantUmlCode('${diagramId}', this)">Copy Code</button>
-            <a href="${pumlUrl}" target="_blank" rel="noopener noreferrer" class="copy-code-btn plantuml-link" style="text-decoration:none;display:inline-flex;align-items:center;">Open SVG ↗</a>
+            <button type="button" class="copy-code-btn" onclick="copyPlantUmlCode('${diagramId}', this)">Copy</button>
+            <a href="${pumlUrl}" target="_blank" rel="noopener noreferrer" class="copy-code-btn plantuml-link" style="text-decoration:none;display:inline-flex;align-items:center;">Open SVG</a>
           </div>
         </div>
         <div class="plantuml-image-wrapper ${isDark ? 'dark-mode' : 'light-mode'}">
@@ -4995,12 +5168,18 @@ function getMarkedRenderer() {
       }
     }
 
+    let highlighted = esc(cleanCode);
+    const hl = getHljs();
+    const hlLang = displayLang.toLowerCase();
+    if (hl && hlLang !== 'code' && hl.getLanguage && hl.getLanguage(hlLang) && cleanCode.length < 200000) {
+      try { highlighted = hl.highlight(cleanCode, { language: hlLang, ignoreIllegals: true }).value; } catch (_) {}
+    }
     return `<div class="code-block-container">
       <div class="code-block-header">
-        <span class="code-block-lang">${displayLang}</span>
-        <button class="copy-code-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').innerText).then(() => { this.innerText = 'Copied!'; setTimeout(() => this.innerText = 'Copy', 2000); })">Copy</button>
+        <span class="code-block-lang">${esc(displayLang)}</span>
+        <button type="button" class="copy-code-btn" onclick="qcodeCopyCode(this)" title="Copy code" aria-label="Copy code">${icon('copy', 13)}<span>Copy</span></button>
       </div>
-      <pre class="md-code"><code>${esc(cleanCode)}</code></pre>
+      <pre class="md-code"><code class="hljs">${highlighted}</code></pre>
     </div>`;
   };
   r.codespan = function (code) {
@@ -5190,7 +5369,11 @@ const MD_IMG_EXTS = /^(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i;
 function setGenerating(on) {
   sendBtn.disabled = false;
   promptInput.disabled = false;
-  sendBtn.innerHTML = on ? '<span>Queue</span><span class="send-icon">＋</span>' : '<span>Send</span><span class="send-icon">↑</span>';
+  sendBtn.innerHTML = on
+    ? '<span class="send-label">Queue</span><span class="send-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>'
+    : '<span class="send-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></span>';
+  sendBtn.classList.toggle('queue-mode', Boolean(on));
+  sendBtn.title = on ? 'Queue prompt (Enter)' : 'Send (Enter)';
   document.body.classList.toggle('is-generating', Boolean(on));
   sendBtn.setAttribute('aria-label', on ? 'Queue prompt' : 'Send message');
   if (pauseBtn) pauseBtn.classList.toggle('hidden', !on);
@@ -5216,14 +5399,78 @@ function updateJumpPill() {
   const show = (c.scrollHeight - c.scrollTop - c.clientHeight) > 300;
   if (show && !pill) {
     pill = document.createElement('button'); pill.id = 'jump-latest'; /* id="jump-latest" */ pill.className = 'jump-latest';
-    pill.textContent = '↓ Latest'; pill.type = 'button'; pill.setAttribute('aria-label', 'Jump to latest message');
+    pill.innerHTML = icon('arrowDown', 14) + '<span>Latest</span>'; pill.type = 'button'; pill.setAttribute('aria-label', 'Jump to latest message');
     pill.addEventListener('click', () => { c.scrollTop = c.scrollHeight; updateJumpPill(); });
-    document.getElementById('main-area').appendChild(pill);
+    (document.getElementById('input-area') || document.getElementById('main-area')).appendChild(pill);
   } else if (!show && pill) pill.remove();
 }
 
 
-function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 4000); }
+// ── Toasts ──
+// showToast(message, kind?) — kind is 'error' | 'warning' | 'success' | 'info';
+// when omitted it is inferred from the wording so existing call sites get the
+// right severity. Identical visible toasts are coalesced with a counter.
+const TOAST_MAX = 4;
+function inferToastKind(msg) {
+  if (/\b(fail(ed|ure)?|error|cannot|can't|could not|unable|invalid|unknown|denied|refused|offline|not found|no provider)\b/i.test(msg)) return 'error';
+  if (/\b(warn(ing)?|slow|interrupted|timeout|timed out|retrying|usage:)\b/i.test(msg)) return 'warning';
+  if (/^(no|nothing)\b/i.test(msg)) return 'info';
+  if (/\b(copied|created|saved|cleared|renamed|switched|deleted|removed|loaded|compacted|queued|done)\b/i.test(msg)) return 'success';
+  return 'info';
+}
+function toastRegion() {
+  let r = document.getElementById('toast-region');
+  if (!r) {
+    r = document.createElement('div');
+    r.id = 'toast-region';
+    r.className = 'toast-region';
+    r.setAttribute('aria-live', 'polite');
+    document.body.appendChild(r);
+  }
+  return r;
+}
+function dismissToast(t) {
+  if (!t || t._leaving) return;
+  t._leaving = true;
+  clearTimeout(t._timer);
+  t.classList.add('leaving');
+  setTimeout(() => t.remove(), 180);
+}
+function armToast(t) {
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => dismissToast(t), t._ttl);
+}
+function showToast(msg, kind) {
+  const text = String(msg == null ? '' : msg).trim();
+  if (!text) return;
+  const k = ['error', 'warning', 'success', 'info'].includes(kind) ? kind : inferToastKind(text);
+  const region = toastRegion();
+  for (const existing of region.children) {
+    if (existing._text === text && !existing._leaving) {
+      existing._count = (existing._count || 1) + 1;
+      const c = existing.querySelector('.toast-count');
+      if (c) { c.textContent = '×' + existing._count; c.hidden = false; }
+      armToast(existing);
+      return;
+    }
+  }
+  const t = document.createElement('div');
+  t.className = 'toast toast-' + k;
+  t.setAttribute('role', k === 'error' ? 'alert' : 'status');
+  t._text = text;
+  t._ttl = k === 'error' ? 8000 : k === 'warning' ? 6000 : 3200;
+  const iconName = { error: 'alert', warning: 'alert', success: 'check', info: 'info' }[k];
+  t.innerHTML = '<span class="toast-icon">' + icon(iconName, 15) + '</span>'
+    + '<span class="toast-msg"></span><span class="toast-count" hidden></span>'
+    + '<button type="button" class="toast-close" aria-label="Dismiss notification">' + icon('x', 13) + '</button>';
+  t.querySelector('.toast-msg').textContent = text;
+  t.querySelector('.toast-close').addEventListener('click', () => dismissToast(t));
+  t.addEventListener('mouseenter', () => clearTimeout(t._timer));
+  t.addEventListener('mouseleave', () => armToast(t));
+  region.appendChild(t);
+  while (region.children.length > TOAST_MAX) region.firstElementChild.remove();
+  armToast(t);
+}
 
 // ── T2 Persistence (qcode.* localStorage) ──
 const PERSIST_KEYS = ['provider','model','reasoning','theme','activeTab','showThinking','filesSubtab','sessionId'];
@@ -5496,42 +5743,45 @@ async function deleteSessionPermanently(id) {
 function renderSessionTabs() {
   if (!sessionTabsContainer) return;
 
-  state.pinned = state.pinned || [];
-  let list = [...state.openSessions];
-  const q = (state.sessionsFilterText || '').toLowerCase().trim();
-  if (q) list = list.filter(x => ((x.title||'') + ' ' + (x.workspace||'') + ' ' + x.id).toLowerCase().includes(q));
-  list.sort((a, b) => ((state.pinned.includes(b.id)?1:0) - (state.pinned.includes(a.id)?1:0)));
   try {
     const raw = localStorage.getItem('qcode-pinned');
     if (raw) state.pinned = JSON.parse(raw);
   } catch (_) {}
+  state.pinned = Array.isArray(state.pinned) ? state.pinned : [];
+  let list = [...state.openSessions];
+  const q = (state.sessionsFilterText || '').toLowerCase().trim();
+  if (q) list = list.filter(x => ((x.title||'') + ' ' + (x.workspace||'') + ' ' + x.id).toLowerCase().includes(q));
+  list.sort((a, b) => ((state.pinned.includes(b.id)?1:0) - (state.pinned.includes(a.id)?1:0)));
+  if (list.length === 0) {
+    sessionTabsContainer.innerHTML = '<div class="session-list-empty">No sessions yet</div>';
+    return;
+  }
+  const pinIcon = (on) => `<svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
   sessionTabsContainer.innerHTML = list.map(session => {
     const isActive = session.id === state.sessionId;
-    const pinned = (state.pinned||[]).includes(session.id) ? ' pinned' : '';
+    const isPinned = state.pinned.includes(session.id);
     const activeClass = isActive && state.activeTab === 'chat' ? 'active' : '';
     const title = session.title || 'Session';
-    const genIndicator = session.generating ? '<span class="session-gen-indicator" aria-label="generating"></span> ' : '';
     const ws = session.workspace ? shortPath(session.workspace) : '';
-    
     const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
-    const iconHtml = isSub ? '<span class="session-subagent-icon">🤖</span>' : SVG_ICONS.chat;
-    const subPill = isSub ? '<span class="session-subagent-pill">child</span>' : '';
+    const lead = session.generating
+      ? '<span class="session-gen-indicator" aria-label="generating"></span>'
+      : (isSub ? `<span class="session-icon sub">${icon('bot', 14)}</span>` : (isPinned ? `<span class="session-icon pin">${pinIcon(true)}</span>` : ''));
     return `
-      <div class="session-item-wrapper ${activeClass ? 'active' : ''} ${isSub ? 'is-subagent' : ''}${pinned}" data-id="${session.id}">
-        <div class="session-item-main" data-id="${session.id}">
+      <div class="session-item-wrapper ${activeClass} ${isSub ? 'is-subagent' : ''}${isPinned ? ' pinned' : ''}" data-id="${session.id}">
+        <div class="session-item-main" data-id="${session.id}" role="button" tabindex="0">
           <div class="session-item-title-row">
-            <span class="session-icon">${iconHtml}</span>
-            <span class="session-title-text" title="${esc(title)}">${genIndicator}${esc(title)}</span>
-            ${subPill}
+            ${lead}
+            <span class="session-title-text" title="${esc(title)}">${esc(title)}</span>
           </div>
-          ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">📁 ${esc(ws)}</div>` : ''}
+          ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">${esc(ws)}</div>` : ''}
         </div>
         <div class="session-item-actions">
-          <button class="session-action-btn pin-session-btn" data-id="${session.id}" title="Pin/unpin">${(state.pinned||[]).includes(session.id) ? '★' : '☆'}</button>
+          <button class="session-action-btn pin-session-btn${isPinned ? ' on' : ''}" data-id="${session.id}" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin session' : 'Pin session'}">${pinIcon(isPinned)}</button>
           ${isSub
-            ? `<button class="session-action-btn close-session-tab-btn" data-id="${session.id}" title="Close tab (keeps saved session)">&times;</button>`
-            : `<button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename">${SVG_ICONS.rename}</button>`}
-          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently">${SVG_ICONS.delete}</button>
+            ? `<button class="session-action-btn close-session-tab-btn" data-id="${session.id}" title="Close (keeps saved session)" aria-label="Close session">${icon('x', 13)}</button>`
+            : `<button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename" aria-label="Rename session">${SVG_ICONS.rename}</button>`}
+          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently" aria-label="Delete session">${SVG_ICONS.delete}</button>
         </div>
       </div>
     `;
@@ -5540,6 +5790,9 @@ function renderSessionTabs() {
   sessionTabsContainer.querySelectorAll('.session-item-main').forEach(el => {
     el.addEventListener('click', () => {
       switchSession(el.dataset.id);
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchSession(el.dataset.id); }
     });
   });
 
