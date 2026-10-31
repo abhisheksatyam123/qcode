@@ -17,10 +17,9 @@ This project follows a clean‑architecture inspired layout. The main layers are
    - **Session & UI** – `libqcode/include/qcode/session`, `libqcode/include/qcode/ui` and corresponding src.
 
 4. **Frameworks / Drivers** – concrete entry points (apps, servers, CLI).
+   - `apps/qcode` – unified `qcode` executable (`tui`, `serve`, `prompt` modes).
    - `apps/android` – Android UI driver.
-   - `apps/cli` – command‑line driver.
-   - `apps/server` – HTTP server driver.
-   - `apps/webui` – web UI driver.
+   - `apps/webui` – web UI served by `qcode serve`.
 
 ### Mapping Existing Structure
 

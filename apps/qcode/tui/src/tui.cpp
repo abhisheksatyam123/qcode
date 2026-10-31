@@ -20,6 +20,7 @@
 #include <vector>
 #include <climits>
 
+#include <qcode_app/frontends.h>
 #include <prompt_wrap.h>
 
 #include <qcode/core/perf.h>
@@ -59,18 +60,18 @@ using qcode::tui::matches_query;
 using qcode::tui::sync_session_title;
 using qcode::tui::index_of_session;
 
-static void print_tui_usage(const char* argv0) {
+static void print_tui_usage() {
     std::cout
-        << "Usage: " << argv0 << " [options]\n"
+        << "Usage: qcode [tui] [options]\n"
         << "Options:\n"
         << "  --help, -h        Show this help and exit\n"
         << "\n"
         << "Interactive terminal UI. Requires a TTY on stdin and stdout.\n"
-        << "For non-interactive prompts, use qcode-cli.\n";
+        << "For non-interactive prompts, use qcode prompt.\n";
 }
 
 // Directory for per-session TUI logs: $QCODE_LOG_DIR, else /tmp/qcode-logs.
-// Same resolution as qcode-server so both processes share one log directory.
+// Same resolution as server mode so both processes share one log directory.
 static std::string tui_log_dir() {
     if (const char* d = std::getenv("QCODE_LOG_DIR")) return d;
     if (const char* home = std::getenv("HOME")) {
@@ -82,7 +83,7 @@ static std::string tui_log_dir() {
     return "/tmp/qcode-logs";
 }
 
-int main(int argc, char* argv[]) {
+int qcode::app::run_tui(int argc, char* argv[]) {
     // A write to a socket/pipe whose peer already closed (Esc aborting an
     // in-flight HTTP stream or a subagent's tool child) raises SIGPIPE, whose
     // default action kills the whole TUI. Ignore it; the write returns EPIPE.
@@ -90,16 +91,16 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
-            print_tui_usage(argv[0]);
+            print_tui_usage();
             return 0;
         }
         std::cerr << "Unknown option: " << arg << "\n\n";
-        print_tui_usage(argv[0]);
+        print_tui_usage();
         return 2;
     }
     if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
-        std::cerr << "qcode-tui requires an interactive terminal (TTY).\n"
-                  << "Use --help for usage, or qcode-cli for non-interactive prompts.\n";
+        std::cerr << "qcode tui requires an interactive terminal (TTY).\n"
+                  << "Use --help for usage, or qcode prompt for non-interactive prompts.\n";
         return 1;
     }
 
@@ -1521,7 +1522,7 @@ int main(int argc, char* argv[]) {
         screen.Loop(renderer);
     } catch (const std::exception& e) {
         LOG_ERROR("Main: uncaught exception in screen.Loop: {}", e.what());
-        std::cerr << "\n[qcode-tui error] " << e.what() << "\n";
+        std::cerr << "\n[qcode tui error] " << e.what() << "\n";
     }
 
     // ═══════════════════════════════════════════════════════════

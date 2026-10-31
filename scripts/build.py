@@ -52,11 +52,12 @@ def build_env_for(platform: str) -> dict[str, str]:
     """
     env = dict(os.environ)
     if platform == "host":
-        cc, cxx = env.get("CC", ""), env.get("CXX", "")
-        if "conda" in cc or "aarch64" in cc or "arm64" in cc:
-            env.pop("CC", None)
-        if "conda" in cxx or "aarch64" in cxx or "arm64" in cxx:
-            env.pop("CXX", None)
+        # Conda's activation script exports a cross compiler plus optimized
+        # CFLAGS/CXXFLAGS/LDFLAGS. All of them leak into native debug builds.
+        for var in ("CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS"):
+            value = env.get(var, "").lower()
+            if any(token in value for token in ("conda", "aarch64", "arm64")):
+                env.pop(var, None)
     return env
 
 
@@ -166,7 +167,7 @@ def build_webui(project_root: Path, build_dir: Path):
             "[yellow]marked/js-yaml not in node_modules; using committed vendor bundles[/yellow]"
         )
 
-    # Copy to build directory + sync raw src (incl. vendor bundles) next to the server.
+    # Copy to build directory + sync raw src (incl. vendor bundles) next to the app.
     if (webui_src / "dist").exists():
         webui_dist.parent.mkdir(parents=True, exist_ok=True)
         if webui_dist.exists():
@@ -177,12 +178,12 @@ def build_webui(project_root: Path, build_dir: Path):
             vp = webui_src / "src" / v
             if vp.exists():
                 shutil.copy2(vp, webui_dist / v)
-        server_webui = build_dir / "apps" / "server" / "webui"
+        app_webui = build_dir / "apps" / "qcode" / "webui"
         if (webui_src / "src").exists():
-            server_webui.mkdir(parents=True, exist_ok=True)
+            app_webui.mkdir(parents=True, exist_ok=True)
             for item in (webui_src / "src").glob("*"):
                 if item.is_file():
-                    shutil.copy2(item, server_webui / item.name)
+                    shutil.copy2(item, app_webui / item.name)
         console.print(f"[green]✓[/green] WebUI built to {webui_dist}")
         return True
     return False
@@ -222,21 +223,6 @@ def build_webui(project_root: Path, build_dir: Path):
     help="Number of parallel build jobs (default: CPU count)"
 )
 @click.option(
-    "--no-tui",
-    is_flag=True,
-    help="Skip TUI build"
-)
-@click.option(
-    "--no-server",
-    is_flag=True,
-    help="Skip server build"
-)
-@click.option(
-    "--no-cli",
-    is_flag=True,
-    help="Skip CLI build"
-)
-@click.option(
     "--no-webui",
     is_flag=True,
     help="Skip WebUI build"
@@ -261,7 +247,7 @@ def build_webui(project_root: Path, build_dir: Path):
     help="Explicit CMake preset to use (overrides --platform/--arch/--mode mapping)"
 )
 def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_commands: bool,
-         jobs: Optional[int], no_tui: bool, no_server: bool, no_cli: bool, no_webui: bool,
+         jobs: Optional[int], no_webui: bool,
          platform: str, arch: Optional[str], preset_name: Optional[str]):
     """Build QCode with modern tooling."""
 
@@ -301,9 +287,11 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     config_table.add_row("Clean build", "✓" if clean else "✗")
     config_table.add_row("Export compile commands", "✓" if export_compile_commands else "✗")
     config_table.add_row("Parallel jobs", str(jobs or os.cpu_count() or 4))
-    config_table.add_row("Build TUI", "✗" if no_tui else "✓")
-    config_table.add_row("Build Server", "✗" if no_server else "✓")
-    config_table.add_row("Build CLI", "✗" if no_cli else "✓")
+    is_android = preset_name.startswith("android-")
+    config_table.add_row(
+        "Build app",
+        "✗ (Android JNI only)" if is_android else "✓ (qcode: tui | serve | prompt)",
+    )
     config_table.add_row("Build WebUI", "✗" if no_webui else "✓")
     
     console.print(config_table)
@@ -345,9 +333,7 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
         f"-DCMAKE_BUILD_TYPE={mode.capitalize()}",
         f"-DBUILD_TESTS={'ON' if tests else 'OFF'}",
         f"-DCMAKE_EXPORT_COMPILE_COMMANDS={'ON' if export_compile_commands else 'OFF'}",
-        f"-DQCODE_BUILD_TUI={'OFF' if no_tui else 'ON'}",
-        f"-DQCODE_BUILD_SERVER={'OFF' if no_server else 'ON'}",
-        f"-DQCODE_BUILD_CLI={'OFF' if no_cli else 'ON'}",
+        f"-DQCODE_BUILD_APP={'OFF' if preset_name.startswith('android-') else 'ON'}",
     ]
     if shutil.which("ninja"):
         cmake_args[1:1] = ["-G", "Ninja"]
@@ -360,9 +346,6 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
             f"-DANDROID_ABI={_abi}",
             "-DANDROID_PLATFORM=android-24",
             "-DANDROID_STL=c++_shared",
-            "-DQCODE_BUILD_TUI=OFF",
-            "-DQCODE_BUILD_SERVER=OFF",
-            "-DQCODE_BUILD_CLI=OFF",
         ]
     
     console.print("[bold blue]Configuring with CMake...[/bold blue]")
@@ -397,15 +380,14 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     
     # List built targets
     console.print("[bold]Built targets:[/bold]")
-    targets = ["qcode-tui", "qcode-server", "qcode-cli"]
-    for target in targets:
-        binary = build_dir / "apps" / target.replace("qcode-", "") / target
-        if not binary.exists():
-            binary = build_dir / "src" / target.replace("qcode-", "") / target
+    if preset_name.startswith("android-"):
+        console.print("  ✓ Android JNI libraries (host app disabled)")
+    else:
+        binary = build_dir / "apps" / "qcode" / "qcode"
         if binary.exists():
-            console.print(f"  ✓ {target} -> {binary}")
+            console.print(f"  ✓ qcode -> {binary}")
         else:
-            console.print(f"  ✗ {target} (not found)")
+            console.print("  ✗ qcode (not found)")
 
 
 if __name__ == "__main__":

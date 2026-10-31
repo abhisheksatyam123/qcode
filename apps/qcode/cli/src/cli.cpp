@@ -1,11 +1,14 @@
 /**
- * qcode-cli: Simple CLI client for the qcode-server.
+ * qcode prompt: one-shot HTTP client for `qcode serve`.
  *
  * Usage:
- *   qcode-cli --prompt "Hello" [--server http://localhost:9080] [--verbose]
+ *   qcode prompt "Hello" [--server http://localhost:9080] [--verbose]
+ *   qcode prompt --prompt "Hello"
  *
- * Streams assistant response to stdout. Tool info to stderr (with --verbose).
+ * Prints the assistant response to stdout. Tool info goes to stderr with
+ * --verbose. A server must already be running.
  */
+#include <qcode_app/frontends.h>
 #include <csignal>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -25,13 +28,14 @@ struct Config {
     bool verbose = false;
 };
 
-static void print_usage(const char* argv0) {
-    std::cerr << "Usage: " << argv0 << " --prompt <text> [options]\n"
+static void print_usage() {
+    std::cerr << "Usage: qcode prompt <text> [options]\n"
+              << "       qcode prompt --prompt <text> [options]\n"
               << "Options:\n"
               << "  --server <url>    Server URL (default: http://localhost:9080)\n"
               << "  --provider <id>   Provider ID\n"
               << "  --model <id>      Model ID\n"
-              << "  --reasoning <mode> Reasoning mode\n"
+              << "  --reasoning <mode>  Reasoning mode\n"
               << "  --session <id>    Continue existing session\n"
               << "  --workspace <dir> Workspace of a new session (default: current dir)\n"
               << "  --verbose, -v     Print tool calls to stderr\n"
@@ -50,17 +54,18 @@ static Config parse_args(int argc, char* argv[]) {
         else if (arg == "--session" && i + 1 < argc) cfg.session_id = argv[++i];
         else if (arg == "--workspace" && i + 1 < argc) cfg.workspace = argv[++i];
         else if (arg == "--verbose" || arg == "-v") cfg.verbose = true;
-        else if (arg == "--help" || arg == "-h") { print_usage(argv[0]); exit(0); }
+        else if (arg == "--help" || arg == "-h") { print_usage(); exit(0); }
+        else if (!arg.empty() && arg[0] != '-' && cfg.prompt.empty()) cfg.prompt = arg;
     }
     if (cfg.prompt.empty()) {
-        std::cerr << "Error: --prompt is required\n\n";
-        print_usage(argv[0]);
+        std::cerr << "Error: prompt text is required\n\n";
+        print_usage();
         exit(1);
     }
     return cfg;
 }
 
-int main(int argc, char* argv[]) {
+int qcode::app::run_cli(int argc, char* argv[]) {
     std::signal(SIGPIPE, SIG_IGN);  // closed peer -> EPIPE, not process death
     Config cfg = parse_args(argc, argv);
 

@@ -27,7 +27,7 @@ The Android host-side sysroot (OpenSSL/CURL unpack) lives at `build/android-deps
 Wraps CMake presets and automatically configures Ninja:
 
 ```bash
-# Debug build (libqcode, TUI, server, CLI) -> build/host-debug/
+# Debug build (libqcode + unified qcode app) -> build/host-debug/
 uv run scripts/build.py --mode debug
 
 # Release build with test suite -> build/host-release/
@@ -36,8 +36,8 @@ uv run scripts/build.py --mode release --tests
 # Clean rebuild with clangd compile commands export
 uv run scripts/build.py --mode debug --tests --clean --export-compile-commands
 
-# Target specific components
-uv run scripts/build.py --no-webui --no-cli
+# Skip WebUI asset bundling
+uv run scripts/build.py --no-webui
 ```
 
 ### 2. CMake Presets (Direct)
@@ -51,6 +51,16 @@ cmake --preset host-release
 cmake --build --preset host-release --parallel
 ```
 
+### Build performance
+
+Debug builds are forced to `-O0` even when the shell exports optimized
+`CFLAGS`/`CXXFLAGS` (common in Conda environments); set
+`-DQCODE_DEBUG_OPTIMIZE=ON` if you deliberately want those flags. The build
+uses precompiled headers for the engine, UI, frontends, and test suite, and
+prefers `mold` or `lld` on Linux for faster links when available. Set
+`-DQCODE_USE_FAST_LINKER=OFF` to use the system linker. The scripted build
+strips Conda/cross-compiler flags for native builds.
+
 ### 3. WebUI Build
 WebUI sources live in `apps/webui/src/`. The build bundles assets into `apps/webui/dist/` via Vite:
 ```bash
@@ -63,7 +73,7 @@ npm run build --prefix apps/webui
 # Development server with hot reload
 npm run dev --prefix apps/webui
 ```
-*Note*: When `qcode-server` builds, it automatically mirrors WebUI assets to `<TARGET_DIR>/webui/` for immediate hosting at `http://localhost:9080`.
+*Note*: When `qcode` builds, WebUI assets are copied to `build/<preset>/apps/qcode/webui/` for immediate hosting by `qcode serve` at `http://localhost:9080`.
 
 ### 4. Android Build
 Requires `ANDROID_NDK_HOME`:

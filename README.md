@@ -1,6 +1,6 @@
 # qcode
 
-C++20 toolkit for AI-powered coding agents. Shared engine library plus TUI, headless server, web UI, CLI, and Android JNI — providers come from `opencode.json` (OpenAI, Anthropic, Cursor, Antigravity, and others).
+C++20 toolkit for AI-powered coding agents. One `qcode` binary provides an interactive TUI, a headless HTTP/WebUI server, and a one-shot prompt client; Android JNI is a separate frontend. Providers come from `opencode.json` (OpenAI, Anthropic, Cursor, Antigravity, and others).
 
 ## Installation
 
@@ -24,7 +24,7 @@ cd qcode
 ### Build
 
 ```bash
-# Debug build (default) — libqcode, TUI, server, CLI → build/host-debug/
+# Debug build (default) — libqcode + unified qcode app → build/host-debug/
 uv run scripts/build.py
 
 # Release build → build/host-release/
@@ -35,31 +35,24 @@ Or with CMake presets:
 
 ```bash
 cmake --preset host-debug
-cmake --build --preset host-debug --parallel --target qcode-tui
+cmake --build --preset host-debug --parallel --target qcode
 ```
 
-Server and CLI are on by default (`QCODE_BUILD_SERVER` / `QCODE_BUILD_CLI`). Disable them if you only want the TUI:
+The application is one target. `-DQCODE_BUILD_APP=OFF` builds only the shared libraries for embedding.
 
-```bash
-cmake -B build/host-debug -G Ninja -DQCODE_BUILD_SERVER=OFF -DQCODE_BUILD_CLI=OFF
-cmake --build build/host-debug --parallel --target qcode-tui
-```
-
-Binaries (debug preset):
+Binary (debug preset):
 
 | Target | Path |
 |--------|------|
-| TUI | `build/host-debug/apps/tui/qcode-tui` |
-| Server | `build/host-debug/apps/server/qcode-server` |
-| CLI client | `build/host-debug/apps/cli/qcode-cli` |
+| `qcode` | `build/host-debug/apps/qcode/qcode` |
 
-`apps/webui` (Vite) is served by `qcode-server`. `apps/android` is a separate Gradle/JNI project; see [docs/building.md](docs/building.md).
+The binary has three modes: `qcode [tui]`, `qcode serve`, and `qcode prompt`. `apps/webui` (Vite) is served by `qcode serve`. `apps/android` is a separate Gradle/JNI project; see [docs/building.md](docs/building.md).
 
-Headless code should link `qcode::engine`. The TUI links `qcode::ui` (FTXUI).
+Headless code should link `qcode::engine`. The TUI mode links `qcode::ui` (FTXUI).
 
 ### Configuration
 
-TUI and server load providers from a single `opencode.json`:
+TUI and server modes load providers from a single `opencode.json`:
 
 - `$OPENCODE_CONFIG` if set
 - otherwise `~/.config/opencode/opencode.json` (`$XDG_CONFIG_HOME/opencode/opencode.json` when XDG is set)
@@ -219,7 +212,7 @@ The output budget (`max_tokens` / `limit.output`) is sent as
 
 Config changes: the TUI re-reads opencode.json with `/reload` (models, prices,
 variants, limits; a running turn keeps the config it started with). The server
-reads it at startup, so restart `qcode-server` to apply edits. Values of the
+reads it at startup, so restart `qcode serve` to apply edits. Values of the
 wrong type are ignored with a warning naming their path (TUI toast + log).
 
 Cost: each model call is priced when it runs, at the serving model's `cost`
@@ -233,30 +226,38 @@ model, whose calls count as $0.
 ### Start the TUI
 
 ```bash
-./build/host-debug/apps/tui/qcode-tui
+./build/host-debug/apps/qcode/qcode
+# or explicitly
+./build/host-debug/apps/qcode/qcode tui
 ```
 
-Logs go to `$QCODE_LOG_DIR/qcode-tui-<session>.log` (default `/tmp/qcode-logs/`); lines from the UI thread go to `qcode-tui.log`.
+The TUI runs generation in-process and does not need `qcode serve`. Logs go to
+`$QCODE_LOG_DIR/qcode-tui-<session>.log` (default `$HOME/.qcode/logs/`, falling
+back to `/tmp/qcode-logs/`); lines from the UI thread go to `qcode-tui.log`.
 
-### Start the server
+### Start server mode
 
 ```bash
 # Default port 9080
-./build/host-debug/apps/server/qcode-server
+./build/host-debug/apps/qcode/qcode serve
 
 # Custom port
-./build/host-debug/apps/server/qcode-server --port 9080
+./build/host-debug/apps/qcode/qcode serve --port 9080
 ```
 
-Then open `http://localhost:9080` for the Web UI, or use the CLI client:
+Then open `http://localhost:9080` for the Web UI, or use prompt mode from
+another terminal:
 
 ```bash
-./build/host-debug/apps/cli/qcode-cli --prompt "Hello"
+./build/host-debug/apps/qcode/qcode prompt "Hello"
 ```
 
-Without `--session <id>` the CLI creates a session (workspace: `--workspace <dir>`, default
-the current directory) and prints its id on stderr for follow-up prompts.
+`qcode prompt` is an HTTP client and requires a running `qcode serve` process.
+Without `--session <id>` it creates a session (workspace: `--workspace <dir>`,
+default the current directory) and prints its id on stderr for follow-up
+prompts. The older `--prompt "Hello"` flag is also accepted.
 
-Server logs go to `/tmp/qcode-server.log`.
+Server logs go to `$QCODE_LOG_DIR/qcode-server-<session>.log` (same default
+directory as the TUI).
 
 For presets, tests, Android, and compile commands, see [docs/building.md](docs/building.md). Layout of the tree is in [docs/architecture.md](docs/architecture.md).

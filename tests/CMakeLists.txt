@@ -51,16 +51,16 @@ add_executable(qcode_tests
     unit/session_title_test.cpp
     unit/image_attachment_test.cpp
     unit/transform_matrix_test.cpp
-    ${CMAKE_SOURCE_DIR}/apps/tui/src/prompt_wrap.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/bus_json_codec.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/workspace_fs.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/http_utils.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/server_routes.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_system.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_session.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_session_ops.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/session_runtime.cpp
-    ${CMAKE_SOURCE_DIR}/apps/server/src/routes/route_fs.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/prompt_wrap.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/bus_json_codec.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/workspace_fs.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/http_utils.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/server_routes.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_system.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_session.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_session_ops.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/session_runtime.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_fs.cpp
     unit/server_routes_test.cpp
     unit/app_store_latency_test.cpp
     unit/anthropic_sse_test.cpp
@@ -95,9 +95,9 @@ target_include_directories(qcode_tests
         ${CMAKE_SOURCE_DIR}/third_party/httplib-header-only
         ${CMAKE_SOURCE_DIR}/libqcode/src
         ${CMAKE_SOURCE_DIR}/libqcode/include
-        ${CMAKE_SOURCE_DIR}/apps/server/include
-        ${CMAKE_SOURCE_DIR}/apps/tui/include
-        ${CMAKE_SOURCE_DIR}/apps/server/src
+        ${CMAKE_SOURCE_DIR}/apps/qcode/server/include
+        ${CMAKE_SOURCE_DIR}/apps/qcode/tui/include
+        ${CMAKE_SOURCE_DIR}/apps/qcode/server/src
 )
 
 set_target_properties(qcode_tests PROPERTIES
@@ -114,6 +114,27 @@ if(MSVC)
     target_compile_options(qcode_tests PRIVATE /W3)
 else()
     target_compile_options(qcode_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+endif()
+
+if(NOT QCODE_CXX_MODULES)
+    target_precompile_headers(qcode_tests PRIVATE
+        <algorithm>
+        <chrono>
+        <filesystem>
+        <functional>
+        <memory>
+        <optional>
+        <string>
+        <string_view>
+        <thread>
+        <unordered_map>
+        <utility>
+        <vector>
+        <gtest/gtest.h>
+        <gmock/gmock.h>
+        <nlohmann/json.hpp>
+        <httplib.h>
+    )
 endif()
 
 target_compile_definitions(qcode_tests PRIVATE
@@ -147,20 +168,47 @@ if(BUILD_CLICKHOUSE_TESTS)
     )
 endif()
 
-# qcode-tui must not hang when invoked without a TTY (help / unknown / no args).
-if(TARGET qcode-tui)
-    add_test(NAME TuiHelpExits COMMAND qcode-tui --help)
-    set_tests_properties(TuiHelpExits PROPERTIES
+# Unified qcode dispatcher smoke tests: every mode must be reachable and exit
+# cleanly without hanging when no server/TTY is available.
+if(TARGET qcode)
+    add_test(NAME QcodeHelpExits COMMAND qcode --help)
+    set_tests_properties(QcodeHelpExits PROPERTIES
         TIMEOUT 5
-        PASS_REGULAR_EXPRESSION "Usage:"
+        PASS_REGULAR_EXPRESSION "Usage: qcode"
     )
-    add_test(NAME TuiUnknownArgExits COMMAND qcode-tui --not-a-flag)
-    set_tests_properties(TuiUnknownArgExits PROPERTIES
+
+    add_test(NAME QcodeVersionExits COMMAND qcode --version)
+    set_tests_properties(QcodeVersionExits PROPERTIES
+        TIMEOUT 5
+        PASS_REGULAR_EXPRESSION "qcode [0-9]+"
+    )
+
+    add_test(NAME QcodeTuiHelpExits COMMAND qcode tui --help)
+    set_tests_properties(QcodeTuiHelpExits PROPERTIES
+        TIMEOUT 5
+        PASS_REGULAR_EXPRESSION "Usage: qcode"
+    )
+
+    add_test(NAME QcodeServeHelpExits COMMAND qcode serve --help)
+    set_tests_properties(QcodeServeHelpExits PROPERTIES
+        TIMEOUT 5
+        PASS_REGULAR_EXPRESSION "Usage: qcode serve"
+    )
+
+    add_test(NAME QcodePromptHelpExits COMMAND qcode prompt --help)
+    set_tests_properties(QcodePromptHelpExits PROPERTIES
+        TIMEOUT 5
+        PASS_REGULAR_EXPRESSION "Usage: qcode prompt"
+    )
+
+    add_test(NAME QcodeUnknownModeExits COMMAND qcode --not-a-mode)
+    set_tests_properties(QcodeUnknownModeExits PROPERTIES
         TIMEOUT 5
         WILL_FAIL TRUE
     )
-    add_test(NAME TuiNoTtyExits COMMAND qcode-tui)
-    set_tests_properties(TuiNoTtyExits PROPERTIES
+
+    add_test(NAME QcodeNoTtyExits COMMAND qcode)
+    set_tests_properties(QcodeNoTtyExits PROPERTIES
         TIMEOUT 5
         WILL_FAIL TRUE
     )

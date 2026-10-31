@@ -1,5 +1,7 @@
 # Build trees / CMake
 build/
+build_local/
+build_test/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -41,6 +43,7 @@ apps/webui/node_modules/
 
 # Personal working notes (task handoff notes, not source)
 scratchpad/
+todo/
 
 # OS junk
 .DS_Store

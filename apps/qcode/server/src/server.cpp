@@ -1,3 +1,4 @@
+#include <qcode_app/frontends.h>
 #include <qcode/core/file_logger.h>
 #include <qcode/core/session_file_logger.h>
 #include <qcode/providers/authenticated_providers.h>
@@ -43,7 +44,7 @@ void handle_signal(int sig) {
     g_shutdown_requested = true;
 }
 
-int main(int argc, char* argv[]) {
+int qcode::app::run_server(int argc, char* argv[]) {
     int port = 9080;
     std::string custom_log_dir;
     for (int i = 1; i < argc; i++) {
@@ -52,7 +53,7 @@ int main(int argc, char* argv[]) {
         if (arg == "-p" && i + 1 < argc) port = std::stoi(argv[++i]);
         if (arg == "--log-dir" && i + 1 < argc) custom_log_dir = argv[++i];
         if (arg == "--help" || arg == "-h") {
-            std::cerr << "Usage: qcode-server [--port PORT] [--log-dir DIR]\n";
+            std::cerr << "Usage: qcode serve [--port PORT] [--log-dir DIR]\n";
             return 0;
         }
     }

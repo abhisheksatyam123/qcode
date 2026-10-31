@@ -19,11 +19,17 @@ Android NDK still uses headers (`#include <qcode/...>`) and the `qcode::compat::
   - `include/qcode/<module>/`: public headers
   - `src/<module>/`: matching implementations
 - `apps/`: front-end targets consuming `libqcode`.
-  - `apps/tui`: FTXUI terminal UI (`qcode-tui`) — root CMake when `QCODE_BUILD_TUI`
-  - `apps/server`: HTTP / WebSocket API (`qcode-server`) — `QCODE_BUILD_SERVER`
-  - `apps/cli`: lightweight CLI (`qcode-cli`) — `QCODE_BUILD_CLI`
-  - `apps/webui`: Vite / JavaScript client; not a CMake target; copied next to `qcode-server`
+  - `apps/qcode`: the single `qcode` executable and its three frontend modules
+    - `tui/`: FTXUI interactive mode (`qcode [tui]`)
+    - `server/`: HTTP API + WebUI mode (`qcode serve`)
+    - `cli/`: one-shot HTTP client mode (`qcode prompt`)
+    - `main.cpp`: mode dispatcher; global `--help` / `--version`
+  - `apps/webui`: Vite / JavaScript client; not a CMake target; served by `qcode serve`
   - `apps/android`: Gradle/JNI wrapper; not `add_subdirectory` from root CMake
+
+The TUI, server, and CLI are static frontend libraries linked into one target,
+controlled by `QCODE_BUILD_APP`. The TUI runs generation in-process; prompt mode
+talks to a running server over HTTP.
 - `docs/`: architecture, build guides, and [server HTTP API](server-api.md)
 - `tests/`: Google Test suite (`unit/`, `integration/`, `utils/`)
 - `third_party/`: vendored httplib, nlohmann_json, sqlite, googletest, zlib, brotli, … (FTXUI is fetched via CMake FetchContent, not this tree)

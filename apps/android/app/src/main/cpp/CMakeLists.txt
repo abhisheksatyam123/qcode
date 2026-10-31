@@ -9,9 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(QCODE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../../../.." CACHE PATH "qcode repository root")
 get_filename_component(QCODE_ROOT "${QCODE_ROOT}" ABSOLUTE)
 
-set(QCODE_BUILD_TUI OFF CACHE BOOL "" FORCE)
-set(QCODE_BUILD_SERVER OFF CACHE BOOL "" FORCE)
-set(QCODE_BUILD_CLI OFF CACHE BOOL "" FORCE)
+set(QCODE_BUILD_APP OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
 # Prefer the Android sysroot for OpenSSL/CURL when present
@@ -41,16 +39,15 @@ add_subdirectory("${QCODE_ROOT}" qcode_build)
 
 add_library(qcode_jni SHARED
     qcode_jni.cpp
-    "${QCODE_ROOT}/apps/server/src/server_routes.cpp"
-    "${QCODE_ROOT}/apps/server/src/bus_json_codec.cpp"
-    "${QCODE_ROOT}/apps/server/src/http_utils.cpp"
-    "${QCODE_ROOT}/apps/server/src/workspace_fs.cpp"
-    "${QCODE_ROOT}/apps/server/src/terminal_pty.cpp"
+    "${QCODE_ROOT}/apps/qcode/server/src/server_routes.cpp"
+    "${QCODE_ROOT}/apps/qcode/server/src/bus_json_codec.cpp"
+    "${QCODE_ROOT}/apps/qcode/server/src/http_utils.cpp"
+    "${QCODE_ROOT}/apps/qcode/server/src/workspace_fs.cpp"
 )
 
 target_include_directories(qcode_jni PRIVATE
-    "${QCODE_ROOT}/apps/server/include"
-    "${QCODE_ROOT}/apps/server/src"
+    "${QCODE_ROOT}/apps/qcode/server/include"
+    "${QCODE_ROOT}/apps/qcode/server/src"
 )
 
 target_compile_definitions(qcode_jni PRIVATE

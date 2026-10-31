@@ -187,6 +187,9 @@ set_source_files_properties(
 if(TARGET ssl)
   set(QCODE_BORINGSSL_SSL_LIB "$<TARGET_FILE:ssl>")
   set(QCODE_BORINGSSL_CRYPTO_LIB "$<TARGET_FILE:crypto>")
+  # TARGET_FILE generator expressions do not create build ordering. Ensure the
+  # bundled BoringSSL archives exist before the engine (and any final app link).
+  add_dependencies(qcode-engine ssl crypto)
 endif()
 
 target_link_libraries(qcode-engine PRIVATE
@@ -270,7 +273,10 @@ target_sources(qcode-ui PRIVATE
 
 set_source_files_properties(
     ${QCODE_REPO_ROOT}/third_party/md4c/md4c.c
-    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=c99"
+    PROPERTIES
+        LANGUAGE C
+        COMPILE_FLAGS "-std=c99"
+        SKIP_PRECOMPILE_HEADERS ON
 )
 
 target_link_libraries(qcode-ui PUBLIC
@@ -283,6 +289,16 @@ target_link_libraries(qcode-ui PUBLIC
 set_target_properties(qcode-ui PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
+)
+
+target_precompile_headers(qcode-ui PRIVATE
+    <functional>
+    <memory>
+    <string>
+    <vector>
+    <nlohmann/json.hpp>
+    <ftxui/component/component.hpp>
+    <ftxui/dom/elements.hpp>
 )
 
 # Backward-compatibility alias targets

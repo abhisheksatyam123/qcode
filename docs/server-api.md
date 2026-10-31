@@ -1,10 +1,10 @@
-# qcode-server HTTP API
+# `qcode serve` HTTP API
 
-Unversioned JSON API served by `qcode-server` (default port 9080). WebUI static files are mounted at `/` when present:
+Unversioned JSON API served by `qcode serve` (default port 9080). WebUI static files are mounted at `/` when present:
 `vendor-*` files are sent with `Cache-Control: public, max-age=86400` (one day; the names carry no version), all others
 (`index.html`, `app.js`, `style.css`, ...) with `Cache-Control: no-cache`.
 
-`GET /api/version` returns `{"name":"qcode-server","version":"<PROJECT_VERSION>"}`.
+`GET /api/version` returns `{"name":"qcode-server","version":"<PROJECT_VERSION>"}`. `qcode-server` remains the service/backend identifier even though it is started with `qcode serve`.
 
 ## System
 

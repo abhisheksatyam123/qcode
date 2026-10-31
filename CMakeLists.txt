@@ -36,9 +36,9 @@ endif()
 # Build options
 option(BUILD_TESTS "Build tests" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
-option(QCODE_BUILD_TUI "Build TUI application" ON)
-option(QCODE_BUILD_SERVER "Build headless server" ON)
-option(QCODE_BUILD_CLI "Build CLI client" ON)
+option(QCODE_BUILD_APP "Build the unified qcode application" ON)
+option(QCODE_USE_FAST_LINKER "Prefer mold/lld for faster host debug links" ON)
+option(QCODE_DEBUG_OPTIMIZE "Keep environment optimization flags in Debug builds" OFF)
 
 # Developer tooling options
 option(QCODE_ENABLE_WARNINGS "Enable strict compiler warnings" ON)
@@ -57,6 +57,13 @@ if(QCODE_ENABLE_SANITIZERS)
         add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
         add_link_options(-fsanitize=address,undefined)
     endif()
+endif()
+
+# Conda and distro shells often export CFLAGS/CXXFLAGS with -O2/-O3. Those leak
+# into Debug builds, making compiles and links several times slower. Debug is
+# unoptimized by default; opt in with QCODE_DEBUG_OPTIMIZE if needed.
+if(NOT MSVC AND NOT QCODE_DEBUG_OPTIMIZE)
+    add_compile_options("$<$<CONFIG:Debug>:-O0>")
 endif()
 
 # Release-style builds: -O2 + NDEBUG (CMake's default Release uses -O3).
@@ -84,6 +91,28 @@ else()
     message(STATUS "IPO/LTO unavailable: ${QCODE_IPO_MSG}")
 endif()
 
+# GCC's LTO plugin is not compatible with every alternative linker. Keep the
+# fast linker for non-LTO configurations, where it mainly speeds large links.
+set(QCODE_ACTIVE_LINKER "system")
+if(QCODE_USE_FAST_LINKER
+   AND NOT MSVC
+   AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
+   AND NOT CMAKE_BUILD_TYPE MATCHES "Release")
+    find_program(QCODE_MOLD_EXECUTABLE NAMES mold)
+    if(QCODE_MOLD_EXECUTABLE)
+        add_link_options(-fuse-ld=mold)
+        set(QCODE_ACTIVE_LINKER "mold")
+        message(STATUS "Fast linker: mold")
+    else()
+        find_program(QCODE_LLD_EXECUTABLE NAMES ld.lld lld)
+        if(QCODE_LLD_EXECUTABLE)
+            add_link_options(-fuse-ld=lld)
+            set(QCODE_ACTIVE_LINKER "lld")
+            message(STATUS "Fast linker: lld")
+        endif()
+    endif()
+endif()
+
 set(HTTPLIB_COMPILE_DEFS
     CPPHTTPLIB_OPENSSL_SUPPORT=1
     CPPHTTPLIB_ZLIB_SUPPORT=1
@@ -107,16 +136,8 @@ FetchContent_MakeAvailable(ftxui)
 
 add_subdirectory(libqcode)
 
-if(QCODE_BUILD_TUI)
-    add_subdirectory(apps/tui)
-endif()
-
-if(QCODE_BUILD_SERVER)
-    add_subdirectory(apps/server)
-endif()
-
-if(QCODE_BUILD_CLI)
-    add_subdirectory(apps/cli)
+if(QCODE_BUILD_APP)
+    add_subdirectory(apps/qcode)
 endif()
 
 if(BUILD_TESTS)
@@ -128,14 +149,8 @@ endif()
 include(GNUInstallDirs)
 
 set(QCODE_INSTALL_TARGETS qcode-engine qcode-ui)
-if(QCODE_BUILD_TUI)
-    list(APPEND QCODE_INSTALL_TARGETS qcode-tui)
-endif()
-if(QCODE_BUILD_SERVER)
-    list(APPEND QCODE_INSTALL_TARGETS qcode-server)
-endif()
-if(QCODE_BUILD_CLI)
-    list(APPEND QCODE_INSTALL_TARGETS qcode-cli)
+if(QCODE_BUILD_APP)
+    list(APPEND QCODE_INSTALL_TARGETS qcode)
 endif()
 
 if(QCODE_CXX_MODULES)
@@ -162,6 +177,12 @@ install(DIRECTORY libqcode/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
 )
+
+if(QCODE_BUILD_APP)
+    install(DIRECTORY apps/webui/src/
+        DESTINATION ${CMAKE_INSTALL_BINDIR}/webui
+    )
+endif()
 
 install(EXPORT qcode-targets
     FILE qcode-targets.cmake
@@ -195,10 +216,9 @@ message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  C++ named modules: ${QCODE_CXX_MODULES}")
 message(STATUS "  Build tests: ${BUILD_TESTS}")
-message(STATUS "  Build TUI: ${QCODE_BUILD_TUI}")
-message(STATUS "  Build Server: ${QCODE_BUILD_SERVER}")
-message(STATUS "  Build CLI: ${QCODE_BUILD_CLI}")
+message(STATUS "  Build app: ${QCODE_BUILD_APP} (qcode: tui | serve | prompt)")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  Strict warnings: ${QCODE_ENABLE_WARNINGS}")
 message(STATUS "  Sanitizers: ${QCODE_ENABLE_SANITIZERS}")
+message(STATUS "  Fast linker: ${QCODE_ACTIVE_LINKER}")
 message(STATUS "")
