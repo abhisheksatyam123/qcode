@@ -183,8 +183,11 @@ std::string resolve_session_variant(const ModelInfo& model,
 ChatTransport chat_transport_for(std::string_view base_url) {
   const std::string url = to_lower(base_url);
   if (url.find("openrouter.ai") != std::string::npos) return ChatTransport::kOpenRouter;
-  if (url.find("opencode.ai") != std::string::npos ||
-      url.find("opencode.ai/zen") != std::string::npos) {
+  if (url.find("opencode.ai") != std::string::npos) {
+    // Go lives under /zen/go/ (legacy) or /inference/go/ (current). It shares
+    // Zen's wire quirks but must never remap catalog ids: Go validates ids
+    // like hy3, longcat-2.0 and muse-spark-1.2-contributor verbatim.
+    if (url.find("/go/") != std::string::npos) return ChatTransport::kOpenCodeGo;
     return ChatTransport::kOpenCodeZen;
   }
   if (url.find("api.openai.com") != std::string::npos) return ChatTransport::kOpenAI;
@@ -296,6 +299,15 @@ std::string zen_wire_model_id(std::string model_id) {
   return model_id;
 }
 
+std::string opencode_go_wire_model_id(std::string model_id) {
+  model_id = trim_copy(std::move(model_id));
+  constexpr std::string_view kPrefix = "opencode-go/";
+  if (model_id.starts_with(kPrefix)) {
+    model_id.erase(0, kPrefix.size());
+  }
+  return model_id;
+}
+
 std::string zen_api_protocol(std::string_view model_id) {
   return wire_protocol_id(
       zen_model_route(zen_wire_model_id(std::string{model_id})).protocol);
@@ -303,6 +315,16 @@ std::string zen_api_protocol(std::string_view model_id) {
 
 std::string zen_completions_path(std::string_view model_id) {
   return zen_model_route(zen_wire_model_id(std::string{model_id})).path;
+}
+
+std::string opencode_go_api_protocol(std::string_view model_id) {
+  return wire_protocol_id(
+      zen_model_route(opencode_go_wire_model_id(std::string{model_id}))
+          .protocol);
+}
+
+std::string opencode_go_completions_path(std::string_view model_id) {
+  return zen_model_route(opencode_go_wire_model_id(std::string{model_id})).path;
 }
 
 std::string openrouter_wire_model_id(std::string model_id) {
@@ -324,6 +346,9 @@ std::string openrouter_wire_model_id(std::string model_id) {
 std::string chat_wire_model_id(ChatTransport transport, std::string model_id) {
   if (transport == ChatTransport::kOpenCodeZen) {
     return zen_wire_model_id(std::move(model_id));
+  }
+  if (transport == ChatTransport::kOpenCodeGo) {
+    return opencode_go_wire_model_id(std::move(model_id));
   }
   if (transport == ChatTransport::kOpenRouter) {
     return openrouter_wire_model_id(std::move(model_id));

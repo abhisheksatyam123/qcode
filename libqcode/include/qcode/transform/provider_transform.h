@@ -170,7 +170,8 @@ void apply_reasoning_defaults(ModelInfo& model);
 enum class ChatTransport {
   kOpenAI,        // api.openai.com — Responses-style chat quirks
   kOpenRouter,    // openrouter.ai — reasoning:{effort}, usage:{include:true}
-  kOpenCodeZen,   // opencode.ai/zen — plain openai-compatible
+  kOpenCodeZen,   // opencode.ai/zen — plain openai-compatible free pool
+  kOpenCodeGo,    // opencode.ai/inference/go — subscription pool, raw ids
   kCompatible,    // every other OpenAI-compatible endpoint
 };
 
@@ -187,6 +188,11 @@ std::string chat_wire_model_id(ChatTransport transport, std::string model_id);
 /// `/v1/models` list accepts. Dead free ids stay on the live free pool.
 std::string zen_wire_model_id(std::string model_id);
 
+/// Wire id for OpenCode Go. Go validates the catalog ids verbatim (including
+/// hy3, longcat-2.0 and muse-spark-1.2-contributor), so only the
+/// `opencode-go/` prefix is stripped; no retired-alias remap is applied.
+std::string opencode_go_wire_model_id(std::string model_id);
+
 /// Zen API flavor from OpenCode's zen.mdx endpoint table, after retired
 /// aliases are remapped to their live wire id:
 /// - responses: Muse Spark, GPT-5.x, Grok
@@ -198,6 +204,15 @@ std::string zen_wire_model_id(std::string model_id);
 /// Path under `https://opencode.ai/zen/v1` for that model, using the same
 /// wire-id remap as zen_api_protocol.
 [[nodiscard]] std::string zen_completions_path(std::string_view model_id);
+
+/// OpenCode Go API flavor from the Go endpoint table. Same wire families as
+/// Zen (responses: Muse Spark/GPT/Grok, messages: Claude/Qwen/MiniMax M3,
+/// google: Gemini, chat_completions: everything else), but the catalog id is
+/// used as-is instead of being remapped through zen_wire_model_id.
+[[nodiscard]] std::string opencode_go_api_protocol(std::string_view model_id);
+
+/// Path under `https://opencode.ai/inference/go/v1` for that model.
+[[nodiscard]] std::string opencode_go_completions_path(std::string_view model_id);
 
 /// Wire id for OpenRouter. Maps Zen free-pool aliases onto stealth/ox-alpha
 /// and meta/muse-spark-1.2.

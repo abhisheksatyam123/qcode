@@ -1,6 +1,7 @@
 #include "openai_request_builder.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -16,6 +17,62 @@
 namespace qcode {
 namespace openai {
 
+namespace {
+
+// Mirrors OpenCode's instruction ordering: the agent/instructions text comes
+// first, then the date and environment instructions are appended to the system
+// prompt. Title generation uses a standalone prompt and opts out.
+void ensure_opencode_env_block(nlohmann::json& messages,
+                               const std::string& workspace, bool enabled) {
+  if (!enabled) return;
+  const std::string env = providers::opencode_env_block(workspace);
+  std::size_t system_index = messages.size();
+  for (std::size_t i = 0; i < messages.size(); ++i) {
+    const auto& message = messages[i];
+    if (message.is_object() && message.contains("role") &&
+        message["role"].is_string() &&
+        message["role"].get<std::string>() == "system") {
+      system_index = i;
+      break;
+    }
+  }
+
+  if (system_index == messages.size()) {
+    nlohmann::json system_message = {{"role", "system"}, {"content", env}};
+    messages.insert(messages.begin(), system_message);
+    return;
+  }
+
+  auto& content = messages[system_index]["content"];
+  if (content.is_string()) {
+    const std::string text = content.get<std::string>();
+    if (text.find("<env>") == std::string::npos) {
+      content = text.empty() ? env : text + "\n\n" + env;
+    }
+    return;
+  }
+
+  // Multimodal system content is not used by qcode today, but keep the
+  // environment block as the final text part if a provider sends one.
+  if (content.is_array()) {
+    for (const auto& part : content) {
+      if (part.is_object() && part.value("type", "") == "text" &&
+          part.value("text", "").find("<env>") != std::string::npos) {
+        return;
+      }
+    }
+    content.push_back({{"type", "text"}, {"text", env}});
+    return;
+  }
+
+  nlohmann::json system_message = {{"role", "system"}, {"content", env}};
+  messages.insert(
+      messages.begin() + static_cast<std::ptrdiff_t>(system_index),
+      system_message);
+}
+
+}  // namespace
+
 nlohmann::json OpenAIRequestBuilder::build_request_json(
     const GenerateOptions& options) {
   std::string model_id =
@@ -24,7 +81,8 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
 
   if (wire_protocol_ == "google") {
     schema_provider = "google";
-  } else if (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen) {
+  } else if (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen ||
+             transport_ == ProviderTransform::ChatTransport::kOpenCodeGo) {
     schema_provider = "opencode";
   } else if (transport_ == ProviderTransform::ChatTransport::kOpenRouter) {
     schema_provider = "openrouter";
@@ -207,22 +265,18 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     request["temperature"] = *options.temperature;
   }
 
+  const bool uses_completion_token_field =
+      use_responses_ ||
+      transport_ == ProviderTransform::ChatTransport::kOpenAI ||
+      transport_ == ProviderTransform::ChatTransport::kOpenCodeZen ||
+      transport_ == ProviderTransform::ChatTransport::kOpenCodeGo;
   if (options.max_tokens) {
-    if (use_responses_) {
-      request["max_completion_tokens"] = *options.max_tokens;
-    } else if (transport_ == ProviderTransform::ChatTransport::kOpenAI) {
-      // Native OpenAI chat completions expects the completion-token budget.
-      request["max_completion_tokens"] = *options.max_tokens;
-    } else {
-      // OpenAI-compatible endpoints (OpenCode Zen, OpenRouter, ...) follow the
-      // upstream openai-chat lowering which uses max_tokens.
-      request["max_tokens"] = *options.max_tokens;
-    }
+    request[uses_completion_token_field ? "max_completion_tokens"
+                                        : "max_tokens"] = *options.max_tokens;
   } else if (options.reasoning_effort) {
     // o-series require a completion-token budget; provide a safe default.
-    request[use_responses_ || transport_ == ProviderTransform::ChatTransport::kOpenAI
-                ? "max_completion_tokens"
-                : "max_tokens"] = 8192;
+    request[uses_completion_token_field ? "max_completion_tokens"
+                                        : "max_tokens"] = 8192;
   }
 
   if (options.reasoning_effort && *options.reasoning_effort != "off" && !options.reasoning_effort->empty()) {
@@ -279,11 +333,17 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
         auto normalized_schema =
             ProviderTransform::normalize_schema(tool.parameters_schema, model_info);
 
+        nlohmann::json function = {{"name", tool_name},
+                                   {"description", tool.description},
+                                   {"parameters", std::move(normalized_schema)}};
+        // openai-chat lowerTool emits strict:false for providers whose strict
+        // mode is supported. Zen is in that set.
+        if (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen ||
+            transport_ == ProviderTransform::ChatTransport::kOpenCodeGo) {
+          function["strict"] = false;
+        }
         nlohmann::json tool_def = {{"type", "function"},
-                                   {"function",
-                                    {{"name", tool_name},
-                                     {"description", tool.description},
-                                     {"parameters", std::move(normalized_schema)}}}};
+                                   {"function", std::move(function)}};
 
         tools_array.push_back(std::move(tool_def));
       }
@@ -296,6 +356,7 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       // segment). Other transports rely on implicit prefix caching.
       const bool claude_on_hint_transport =
           (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen ||
+           transport_ == ProviderTransform::ChatTransport::kOpenCodeGo ||
            transport_ == ProviderTransform::ChatTransport::kOpenRouter) &&
           is_claude_cache_model(options.model);
       if (claude_on_hint_transport) {
@@ -303,10 +364,14 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
       }
       request["tools"] = std::move(tools_array);
 
-      // Add tool choice if specified
+      // Add tool choice if specified. OpenCode leaves toolChoice unset for
+      // normal agent turns; only explicit choices reach the wire.
       switch (options.tool_choice.type) {
         case ToolChoiceType::kAuto:
-          request["tool_choice"] = "auto";
+          if (transport_ != ProviderTransform::ChatTransport::kOpenCodeZen &&
+              transport_ != ProviderTransform::ChatTransport::kOpenCodeGo) {
+            request["tool_choice"] = "auto";
+          }
           break;
         case ToolChoiceType::kRequired:
           request["tool_choice"] = "required";
@@ -329,9 +394,10 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     }
   }
 
-  // OpenRouter / Anthropic-compatible Claude routes honor top-level
-  // cache_control. Pure OpenAI ignores unknown fields safely.
-  {
+  // OpenRouter's Claude routes accept top-level cache_control. Zen follows the
+  // openai-chat lowering, which only emits content-part markers when the model
+  // declares a cache format.
+  if (transport_ == ProviderTransform::ChatTransport::kOpenRouter) {
     const auto& model_id = options.model;
     const bool looks_claude =
         model_id.find("claude") != std::string::npos ||
@@ -339,38 +405,13 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
     if (looks_claude) {
       request["cache_control"] = {{"type", "ephemeral"}};
     }
-  }
-
-  const auto uses_opencode_cache_transport =
-      transport_ == ProviderTransform::ChatTransport::kOpenCodeZen ||
-      transport_ == ProviderTransform::ChatTransport::kOpenRouter;
-  // OpenCode ProviderTransform.applyCaching: first 2 system + last 2
-  // non-system, only for Claude/Anthropic. OpenRouter and Zen Claude honor
-  // content-part cache_control; other models use implicit prefix cache.
-  if (uses_opencode_cache_transport && is_claude_cache_model(model_id) &&
-      request.contains("messages")) {
-    apply_opencode_message_caching(request["messages"]);
-  }
-
-  // OpenCode promptCacheKey and prompt_cache_key derived from session ID:
-  // /^ses_[0-9a-f]{64}$/.test(id) ? id.slice(4) : id
-  if (transport_ == ProviderTransform::ChatTransport::kOpenCodeZen &&
-      !options.session_id.empty()) {
-    std::string key = options.session_id;
-    if (key.starts_with("ses_") && key.length() == 68) {
-      bool all_hex = true;
-      for (size_t i = 4; i < 68; ++i) {
-        char c = key[i];
-        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
-          all_hex = false;
-          break;
-        }
-      }
-      if (all_hex) key = key.substr(4);
+    if (is_claude_cache_model(model_id) && request.contains("messages")) {
+      apply_opencode_message_caching(request["messages"]);
     }
-    request["promptCacheKey"] = key;
-    request["prompt_cache_key"] = key;
   }
+
+  // Body-level prompt_cache_key is opt-in upstream
+  // (compatibility.supportsPromptCacheKey); the Zen provider does not set it.
 
   // OpenRouter only reports usage accounting (cached-token details) when
   // explicitly asked — mirrors upstream options(): usage.include = true.
@@ -379,44 +420,11 @@ nlohmann::json OpenAIRequestBuilder::build_request_json(
   }
 
   if (providers::is_opencode_zen_url(base_url_)) {
-    // OpenCode Zen free tier requires bash and read tool definitions to be
-    // declared in the wire request payload.
-    if (!request.contains("tools") || !request["tools"].is_array()) {
-      request["tools"] = nlohmann::json::array();
-    }
-    bool has_bash = false;
-    bool has_read = false;
-    for (const auto& t : request["tools"]) {
-      if (t.contains("function") && t["function"].contains("name")) {
-        const auto& name = t["function"]["name"];
-        if (name == "bash") has_bash = true;
-        if (name == "read") has_read = true;
-      }
-    }
-    if (!has_bash) {
-      request["tools"].push_back({
-          {"type", "function"},
-          {"function",
-           {{"name", "bash"},
-            {"description", "Run bash commands"},
-            {"parameters",
-             {{"type", "object"},
-              {"properties", {{"command", {{"type", "string"}}}}},
-              {"required", {"command"}}}}}}});
-    }
-    if (!has_read) {
-      request["tools"].push_back({
-          {"type", "function"},
-          {"function",
-           {{"name", "read"},
-            {"description", "Read file contents"},
-            {"parameters",
-             {{"type", "object"},
-              {"properties", {{"path", {{"type", "string"}}}}},
-              {"required", {"path"}}}}}}});
-    }
-    if (!request.contains("tool_choice")) {
-      request["tool_choice"] = "auto";
+    // Match OpenCode's built-in date/environment instructions. Normal agent
+    // turns append them after the agent prompt; title generation opts out.
+    if (request.contains("messages") && request["messages"].is_array()) {
+      ensure_opencode_env_block(request["messages"], options.workspace,
+                                options.include_opencode_env);
     }
     request["stream"] = true;
   }

@@ -188,6 +188,7 @@ void maybe_generate_async(
         GenerateOptions opts;
         opts.model = rc.wire_model;
         opts.system = kTitleSystem;
+        opts.include_opencode_env = false;
         opts.messages.push_back(Message::user(
             "Generate a title for this conversation:\n<message>\n" + prompt + "\n</message>"));
         opts.max_tokens = 4096;  // room for models that think first

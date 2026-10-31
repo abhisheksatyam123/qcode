@@ -7,6 +7,7 @@
 
 // Include the real Anthropic client implementation for testing
 #include "providers/anthropic/anthropic_client.h"
+#include "providers/anthropic/anthropic_request_builder.h"
 
 // Test utilities
 #include "../utils/test_fixtures.h"
@@ -101,7 +102,8 @@ TEST(AnthropicZenHeadersTest, MessagesTransportGetsOpenCodeIdentity) {
       {"x-opencode-project", "proj"},
   };
   HeaderInspectingAnthropicClient client("__EMPTY__", options);
-  const auto& headers = client.provider_config().extra_headers;
+  qcode::anthropic::AnthropicRequestBuilder builder;
+  const auto headers = builder.build_headers(client.provider_config());
 
   const auto user_agent = headers.find("User-Agent");
   ASSERT_NE(user_agent, headers.end());
@@ -121,6 +123,27 @@ TEST(AnthropicZenHeadersTest, MessagesTransportGetsOpenCodeIdentity) {
             affinity->second);
   EXPECT_EQ(headers.find("x-parent-session-id")->second, affinity->second);
   EXPECT_EQ(headers.find("x-opencode-project")->second, "proj");
+  // The keyless fallback must not duplicate the auth header.
+  EXPECT_EQ(headers.count("Authorization"), 1u);
+  EXPECT_EQ(headers.find("Authorization")->second, "Bearer public");
+}
+
+TEST(AnthropicZenHeadersTest, GoMessagesKeepsConfiguredKeyOverPublicFallback) {
+  qcode::anthropic::CompatibleOptions options;
+  options.base_url = "https://opencode.ai/inference/go/v1";
+  options.bearer_auth = true;  // resolve_opencode_client sets this for Go
+  options.headers = {{"x-opencode-session", "parent-uuid"}};
+  HeaderInspectingAnthropicClient client("oc_sk_go_test", options);
+  qcode::anthropic::AnthropicRequestBuilder builder;
+  const auto headers = builder.build_headers(client.provider_config());
+
+  // apply_opencode_zen_headers runs after auth now; a Go key must survive
+  // instead of being joined by a second "Bearer public" header (Cloudflare
+  // answers that with 400 Bad Request).
+  EXPECT_EQ(headers.count("Authorization"), 1u);
+  EXPECT_EQ(headers.find("Authorization")->second, "Bearer oc_sk_go_test");
+  EXPECT_EQ(headers.find("x-opencode-client")->second, "cli");
+  EXPECT_TRUE(headers.find("x-opencode-session")->second.starts_with("ses_"));
 }
 
 // Model Support Tests

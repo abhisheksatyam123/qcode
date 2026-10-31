@@ -8,13 +8,16 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
 #include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace qcode {
@@ -104,6 +107,38 @@ inline std::string generate_opencode_session_id() {
   return id;
 }
 
+// Zen's free-tier gate decodes the first 12 hex chars of a session id as the
+// descending timestamp ~(ms * 0x1000 + counter) and rejects ids that are not
+// close to the current time. Keep one timestamp-valid id per qcode session so
+// cache affinity remains stable across turns and concurrent title/chat calls.
+inline std::string mint_opencode_session_id(std::string_view seed) {
+  static std::mutex mutex;
+  static std::unordered_map<
+      std::string,
+      std::pair<std::string, std::chrono::steady_clock::time_point>>
+      cache;
+  static constexpr auto kRefresh = std::chrono::hours(1);
+  const std::string key(seed);
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(mutex);
+  const auto it = cache.find(key);
+  if (it != cache.end() && now - it->second.second < kRefresh) {
+    return it->second.first;
+  }
+  std::string id = generate_opencode_session_id();
+  if (cache.size() > 2048) {
+    for (auto i = cache.begin(); i != cache.end();) {
+      if (now - i->second.second >= kRefresh) {
+        i = cache.erase(i);
+      } else {
+        ++i;
+      }
+    }
+  }
+  cache[key] = {id, now};
+  return id;
+}
+
 inline std::string make_opencode_session_id(uint64_t state) {
   static constexpr char kHex[] = "0123456789abcdef";
   static constexpr char kBase62[] =
@@ -129,7 +164,7 @@ inline std::string stable_opencode_session_id(std::string_view seed) {
 inline std::string normalize_opencode_session_id(std::string value) {
   if (value.empty()) return generate_opencode_session_id();
   if (is_opencode_session_id(value)) return value;
-  return stable_opencode_session_id(value);
+  return mint_opencode_session_id(value);
 }
 
 inline std::string find_git_config(std::filesystem::path dir) {
@@ -256,6 +291,18 @@ inline std::string canonicalize_git_remote(std::string url) {
   return hostname + "/" + path;
 }
 
+inline std::string find_git_root(std::filesystem::path dir) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  while (!dir.empty()) {
+    if (fs::exists(dir / ".git", ec)) return dir.string();
+    auto parent = dir.parent_path();
+    if (parent == dir) break;
+    dir = parent;
+  }
+  return {};
+}
+
 inline std::string stable_opencode_project_id(std::string_view directory) {
   namespace fs = std::filesystem;
   std::error_code ec;
@@ -264,38 +311,93 @@ inline std::string stable_opencode_project_id(std::string_view directory) {
     auto canon = fs::canonical(dir, ec);
     if (!ec) dir = canon;
   }
-  std::string cfg = find_git_config(dir);
-  if (!cfg.empty()) {
-    std::string remote_url = extract_git_remote_url(cfg);
-    if (!remote_url.empty()) {
-      std::string canonical_remote = canonicalize_git_remote(remote_url);
-      if (!canonical_remote.empty()) {
-        return sha1_hex(std::string("git-remote:") + canonical_remote);
+  const std::string git_root = find_git_root(dir);
+  if (!git_root.empty()) {
+    std::string cfg = find_git_config(git_root);
+    if (!cfg.empty()) {
+      std::string remote_url = extract_git_remote_url(cfg);
+      if (!remote_url.empty()) {
+        std::string canonical_remote = canonicalize_git_remote(remote_url);
+        if (!canonical_remote.empty()) {
+          return sha1_hex(std::string("git-remote:") + canonical_remote);
+        }
       }
     }
+    // Upstream uses the first root commit or its cached project id here. The
+    // fallback for a repository without either is the shared global id.
+    return "global";
   }
   return sha1_hex(std::string("directory:") + dir.string());
 }
 
-inline std::string generate_opencode_log_id() {
-  static std::random_device rd;
-  std::mt19937_64 gen(
-      (static_cast<uint64_t>(rd()) << 32) ^ rd() ^
-      static_cast<uint64_t>(
-          std::chrono::steady_clock::now().time_since_epoch().count()));
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string id;
-  id.reserve(36);
-  for (int i = 0; i < 8; ++i) id += kHex[gen() % 16];
-  id += '-';
-  for (int i = 0; i < 4; ++i) id += kHex[gen() % 16];
-  id += '-';
-  for (int i = 0; i < 4; ++i) id += kHex[gen() % 16];
-  id += '-';
-  for (int i = 0; i < 4; ++i) id += kHex[gen() % 16];
-  id += '-';
-  for (int i = 0; i < 12; ++i) id += kHex[gen() % 16];
-  return id;
+inline std::string opencode_date_string() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local{};
+#if defined(_WIN32)
+  localtime_s(&local, &now);
+#else
+  localtime_r(&now, &local);
+#endif
+  static constexpr const char* kWeekdays[] = {"Sun", "Mon", "Tue", "Wed",
+                                              "Thu", "Fri", "Sat"};
+  static constexpr const char* kMonths[] = {"Jan", "Feb", "Mar", "Apr",
+                                            "May", "Jun", "Jul", "Aug",
+                                            "Sep", "Oct", "Nov", "Dec"};
+  std::ostringstream out;
+  out << kWeekdays[local.tm_wday % 7] << ' '
+      << kMonths[local.tm_mon % 12] << ' ' << std::setw(2)
+      << std::setfill('0') << local.tm_mday << ' '
+      << (local.tm_year + 1900);
+  return out.str();
+}
+
+// Mirrors packages/core/src/instructions/builtins.ts: the date instruction is
+// followed by the environment instruction, which is rendered from the actual
+// working tree and the OpenCode temp directory.
+inline std::string opencode_env_block(const std::string& workspace) {
+  std::string directory = workspace;
+  if (directory.empty()) {
+    std::error_code ec;
+    directory = std::filesystem::current_path(ec).string();
+  }
+  if (directory.empty()) directory = ".";
+
+  std::error_code ec;
+  auto canon = std::filesystem::canonical(directory, ec);
+  if (!ec) directory = canon.string();
+
+  const std::string git_root = find_git_root(directory);
+  const std::string project_root =
+      git_root.empty() ? directory : git_root;
+
+#if defined(_WIN32)
+  constexpr const char* platform = "win32";
+#elif defined(__APPLE__)
+  constexpr const char* platform = "darwin";
+#else
+  constexpr const char* platform = "linux";
+#endif
+
+  std::string temp_root;
+  auto temp = std::filesystem::temp_directory_path(ec);
+  if (!ec) temp_root = (temp / "opencode").string();
+  if (temp_root.empty()) temp_root = "/tmp/opencode";
+
+  std::ostringstream out;
+  out << "Today's date: " << opencode_date_string() << "\n\n"
+      << "Here is some useful information about the environment you are "
+         "running in:\n"
+      << "<env>\n"
+      << "  Working directory: " << directory << "\n"
+      << "  Workspace root folder: " << project_root << "\n"
+      << "  Is directory a git repo: " << (git_root.empty() ? "no" : "yes")
+      << "\n"
+      << "  Platform: " << platform << "\n"
+      << "  Prefer " << temp_root
+      << " over generic system temporary directories such as /tmp; it is "
+         "pre-created and approved for external access.\n"
+      << "</env>";
+  return out.str();
 }
 
 inline void apply_opencode_zen_headers(httplib::Headers& headers) {
@@ -303,9 +405,6 @@ inline void apply_opencode_zen_headers(httplib::Headers& headers) {
   headers.emplace("User-Agent", kOpenCodeZenUserAgent);
   headers.erase("x-opencode-client");
   headers.emplace("x-opencode-client", kOpenCodeZenClient);
-
-  headers.erase("x-opencode-log-id");
-  headers.emplace("x-opencode-log-id", generate_opencode_log_id());
 
   const auto value_of = [&headers](const char* name) {
     const auto it = headers.find(name);
@@ -361,6 +460,7 @@ inline void apply_opencode_zen_headers(httplib::Headers& headers) {
     headers.emplace("x-parent-session-id", parent);
   }
 
+  headers.erase("x-opencode-log-id");
   headers.erase("x-opencode-request");
 }
 

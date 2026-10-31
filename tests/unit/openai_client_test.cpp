@@ -1,11 +1,16 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <cstdint>
+#include <string>
+
 // Include the OpenAI client headers
 #include <qcode/core/generate_options.h>
 #include <qcode/core/stream_options.h>
 
 // Include the real OpenAI client implementation for testing
+#include "core/zen_bun_proxy.h"
 #include "providers/openai/openai_client.h"
 #include "providers/openai/openai_request_builder.h"
 
@@ -133,6 +138,38 @@ TEST(OpenAIRequestBuilderTest, ZenFreeModelsGenerateValidSessionId) {
   }
 }
 
+TEST(OpenAIRequestBuilderTest, ZenSessionIdCarriesCurrentDescendingTimestamp) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  qcode::providers::ProviderConfig config;
+  config.base_url = "https://opencode.ai/zen/v1";
+  config.auth_header_name = "Authorization";
+  config.auth_header_prefix = "Bearer ";
+  config.api_key = "";
+  config.extra_headers.emplace("x-opencode-session-id",
+                               "71a2fd43-9000-4000-8000-000000000000");
+  const auto headers = builder.build_headers(config);
+  const auto session = headers.find("x-opencode-session-id");
+  ASSERT_NE(session, headers.end());
+  ASSERT_EQ(session->second.size(), 30u);
+  ASSERT_TRUE(session->second.starts_with("ses_"));
+
+  uint64_t stored = 0;
+  for (int i = 0; i < 6; ++i) {
+    const auto hex = session->second.substr(4 + 2 * i, 2);
+    stored = (stored << 8) | std::stoul(hex, nullptr, 16);
+  }
+  const uint64_t decoded_ts36 = ((~stored) & 0xFFFFFFFFFFFFull) >> 12;
+  const auto now_ms = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  constexpr uint64_t kTimestampMask = (1ull << 36) - 1;
+  const uint64_t now_ts36 = now_ms & kTimestampMask;
+  const uint64_t age =
+      (decoded_ts36 + kTimestampMask + 1 - now_ts36) & kTimestampMask;
+  EXPECT_LE(age, 5000ull);
+}
+
 TEST(OpenAIRequestBuilderTest, ZenChildSessionUsesParentAffinity) {
   qcode::openai::OpenAIRequestBuilder builder;
   qcode::providers::ProviderConfig config;
@@ -183,26 +220,109 @@ TEST(OpenAIRequestBuilderTest, ZenSessionAffinityIsStableAcrossRequests) {
   EXPECT_EQ(a->second, b->second);
 }
 
-TEST(OpenAIRequestBuilderTest, ZenRequestAutomaticallyInjectsBashAndReadTools) {
+TEST(OpenAIRequestBuilderTest, ZenRequestDoesNotInventTools) {
   qcode::openai::OpenAIRequestBuilder builder;
   builder.set_base_url("https://opencode.ai/zen/v1");
   qcode::GenerateOptions options;
   options.model = "muse-spark-1.3";
   options.prompt = "hello";
   const auto req = builder.build_request_json(options);
-  EXPECT_TRUE(req.contains("tools"));
-  EXPECT_TRUE(req["tools"].is_array());
-  bool has_bash = false;
-  bool has_read = false;
-  for (const auto& t : req["tools"]) {
-    std::string name = t.contains("name") ? t["name"].get<std::string>() : t["function"]["name"].get<std::string>();
-    if (name == "bash") has_bash = true;
-    if (name == "read") has_read = true;
-  }
-  EXPECT_TRUE(has_bash);
-  EXPECT_TRUE(has_read);
+  EXPECT_FALSE(req.contains("tools"));
+  EXPECT_FALSE(req.contains("tool_choice"));
   EXPECT_TRUE(req.contains("stream"));
   EXPECT_TRUE(req["stream"].get<bool>());
+}
+
+TEST(OpenAIRequestBuilderTest, ZenToolsUseStrictFalseAndImplicitAutoChoice) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  qcode::GenerateOptions options;
+  options.model = "mimo-v2.6-flash-free";
+  options.prompt = "hello";
+  qcode::Tool tool("Read a file",
+                   {{"type", "object"},
+                    {"properties", {{"path", {{"type", "string"}}}}},
+                    {"required", {"path"}}});
+  options.tools.emplace("read", std::move(tool));
+  const auto req = builder.build_request_json(options);
+  ASSERT_TRUE(req.contains("tools"));
+  ASSERT_EQ(req["tools"].size(), 1u);
+  EXPECT_EQ(req["tools"][0]["function"]["strict"], false);
+  EXPECT_FALSE(req.contains("tool_choice"));
+}
+
+TEST(OpenAIRequestBuilderTest, ZenSystemPromptIncludesEnvironmentBlock) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  builder.set_base_url("https://opencode.ai/inference/openai/v1");
+  qcode::GenerateOptions options;
+  options.model = "deepseek-v4.1-flash-free";
+  options.system = "You are qcode.";
+  options.prompt = "hello";
+  options.workspace = "/tmp/qcode-workspace";
+
+  const auto req = builder.build_request_json(options);
+  ASSERT_TRUE(req.contains("messages"));
+  ASSERT_TRUE(req["messages"].is_array());
+  ASSERT_FALSE(req["messages"].empty());
+  ASSERT_EQ(req["messages"][0]["role"], "system");
+  const auto text = req["messages"][0]["content"].get<std::string>();
+  EXPECT_TRUE(text.starts_with("You are qcode."));
+  EXPECT_NE(text.find("Today's date: "), std::string::npos);
+  EXPECT_NE(text.find("Here is some useful information about the environment"),
+            std::string::npos);
+  EXPECT_NE(text.find("<env>"), std::string::npos);
+  EXPECT_NE(text.find("Working directory: /tmp/qcode-workspace"),
+            std::string::npos);
+  EXPECT_NE(text.find("Prefer /tmp/opencode over generic system temporary"),
+            std::string::npos);
+  EXPECT_TRUE(text.ends_with("</env>"));
+}
+
+TEST(OpenAIRequestBuilderTest, ZenTitlePromptOmitsEnvironmentBlock) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  qcode::GenerateOptions options;
+  options.model = "mimo-v2.6-flash-free";
+  options.system = "You are a title generator.";
+  options.prompt = "hello";
+  options.include_opencode_env = false;
+  const auto req = builder.build_request_json(options);
+  ASSERT_TRUE(req["messages"].is_array());
+  ASSERT_FALSE(req["messages"].empty());
+  EXPECT_EQ(req["messages"][0]["content"], "You are a title generator.");
+  EXPECT_EQ(req["messages"][0]["content"].get<std::string>().find("<env>"),
+            std::string::npos);
+}
+
+TEST(OpenAIRequestBuilderTest, ZenMessagesArrayGetsEnvironmentBlock) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  builder.set_base_url("https://opencode.ai/inference/openai/v1");
+  qcode::GenerateOptions options;
+  options.model = "deepseek-v4.1-flash-free";
+  Message user_message = Message::user("hello");
+  options.messages.push_back(user_message);
+  options.workspace = "/tmp/qcode-workspace";
+
+  const auto req = builder.build_request_json(options);
+  ASSERT_FALSE(req["messages"].empty());
+  ASSERT_EQ(req["messages"][0]["role"], "system");
+  const auto text = req["messages"][0]["content"].get<std::string>();
+  EXPECT_NE(text.find("<env>"), std::string::npos);
+  EXPECT_EQ(req["messages"][1]["role"], "user");
+}
+
+TEST(OpenAIRequestBuilderTest, ZenRequestOmitsPromptCacheKey) {
+  qcode::openai::OpenAIRequestBuilder builder;
+  builder.set_base_url("https://opencode.ai/zen/v1");
+  qcode::GenerateOptions options;
+  options.model = "beam-free";
+  options.prompt = "hello";
+  options.session_id = "ses_e7899c7f9ffedxWPon9YXOpHnq";
+  const auto req = builder.build_request_json(options);
+  // Zen does not advertise compatibility.supportsPromptCacheKey, so the
+  // openai-chat lowering leaves both spellings off the wire.
+  EXPECT_FALSE(req.contains("prompt_cache_key"));
+  EXPECT_FALSE(req.contains("promptCacheKey"));
 }
 
 TEST(OpenAIRequestBuilderTest, NonZenUrlsDoNotGetOpenCodeClientHeaders) {
@@ -327,6 +447,7 @@ TEST_F(OpenAIClientTest, TestFinishReasonParsing) {
   EXPECT_EQ(client_->parse_finish_reason("unknown"), kFinishReasonError);
 }
 */
+
 
 }  // namespace test
 }  // namespace qcode

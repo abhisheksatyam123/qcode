@@ -13,6 +13,9 @@
 #include <chrono>
 
 namespace qcode {
+namespace http {
+class HttpClient;
+}
 namespace openai {
 
 enum class StreamProtocol { kOpenAI, kGeminiEnvelope };
@@ -63,7 +66,7 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   void push_pending_tool_calls();
   void push_finish_event_if_needed();
   void mark_complete();
-  void set_active_client(httplib::ClientImpl* cli);
+  void set_active_client(qcode::http::HttpClient* cli);
   void touch_activity();
   // Wakes a consumer blocked in get_next_event(). Called after every enqueue,
   // on completion and on stop.
@@ -87,7 +90,7 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
   // cancel_mutex_, which also backs the abortable retry backoff wait.
   std::mutex cancel_mutex_;
   std::condition_variable cancel_cv_;
-  httplib::ClientImpl* active_client_ = nullptr;
+  qcode::http::HttpClient* active_client_ = nullptr;
   // When the stream last received bytes or started an attempt (steady_clock
   // ticks). poll_event() times out against it.
   std::atomic<std::chrono::steady_clock::rep> last_activity_{0};

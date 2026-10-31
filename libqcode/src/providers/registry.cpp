@@ -51,18 +51,11 @@ ClientResolution resolve_openrouter(const ProviderOptions& options) {
       api_key, to_openai(options, "https://openrouter.ai/api"))};
 }
 
-ClientResolution resolve_opencode(const ProviderOptions& options) {
-  auto api_key = first_key(options.api_key, "OPENCODE_API_KEY");
-  if (api_key.empty()) {
-    if (!allows_keyless_zen(options.base_url)) {
-      return ClientResolution::fail(
-          "OpenCode Zen API key not configured (set options.apiKey or "
-          "OPENCODE_API_KEY).");
-    }
-    api_key = "__EMPTY__";
-  }
-  const auto base_url = options.base_url.empty() ? "https://opencode.ai/inference/openai/v1"
-                                                 : options.base_url;
+ClientResolution resolve_opencode_client(const ProviderOptions& options,
+                                         const std::string& api_key,
+                                         const std::string& default_base) {
+  const auto base_url =
+      options.base_url.empty() ? default_base : options.base_url;
   const auto protocol = parse_wire_protocol(options.protocol);
   if (protocol == WireProtocol::kMessages) {
     anthropic::CompatibleOptions compatible;
@@ -75,6 +68,7 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
     if (!compatible.headers.contains("x-opencode-client")) {
       compatible.headers["x-opencode-client"] = kOpenCodeZenClient;
     }
+    // Zen/Go Messages endpoints authenticate with Bearer, not x-api-key.
     compatible.bearer_auth = true;
     return ClientResolution{anthropic::create_client(api_key, compatible)};
   }
@@ -86,6 +80,35 @@ ClientResolution resolve_opencode(const ProviderOptions& options) {
     compatible.headers["x-opencode-client"] = kOpenCodeZenClient;
   }
   return ClientResolution{openai::create_client(api_key, compatible)};
+}
+
+ClientResolution resolve_opencode(const ProviderOptions& options) {
+  auto api_key = first_key(options.api_key, "OPENCODE_API_KEY");
+  if (api_key.empty()) {
+    if (!allows_keyless_zen(options.base_url)) {
+      return ClientResolution::fail(
+          "OpenCode Zen API key not configured (set options.apiKey or "
+          "OPENCODE_API_KEY).");
+    }
+    api_key = "__EMPTY__";
+  }
+  return resolve_opencode_client(options, api_key,
+                                 "https://opencode.ai/zen/v1");
+}
+
+ClientResolution resolve_opencode_go(const ProviderOptions& options) {
+  auto api_key = first_key(options.api_key, "OPENCODE_GO_API_KEY");
+  if (api_key.empty()) api_key = env_value("OPENCODE_API_KEY");
+  if (api_key.empty()) {
+    return ClientResolution::fail(
+        "OpenCode Go API key not configured (set options.apiKey, "
+        "OPENCODE_GO_API_KEY, or OPENCODE_API_KEY).");
+  }
+  // The unified gateway serves every wire protocol. The legacy /zen/go/v1
+  // base only handles chat/responses; prefer /inference/go/v1 so Claude,
+  // Qwen and Gemini models work too.
+  return resolve_opencode_client(options, api_key,
+                                 "https://opencode.ai/inference/go/v1");
 }
 
 ClientResolution resolve_anthropic(const ProviderOptions& options) {
@@ -162,7 +185,8 @@ ClientResolution ProviderRegistry::resolve(
   }
   return ClientResolution::fail(
       "Unsupported provider: " + id +
-      ". Supported providers are: cursor, opencode, openrouter, antigravity, anthropic, openai.");
+      ". Supported providers are: cursor, opencode, opencode-go, openrouter, "
+      "antigravity, anthropic, openai.");
 }
 
 ClientResolution ProviderRegistry::resolve(const std::string& id,
@@ -175,6 +199,8 @@ ClientResolution ProviderRegistry::resolve(const std::string& id,
 void register_core_providers() {
   auto& reg = ProviderRegistry::instance();
   reg.register_provider("opencode", resolve_opencode);
+  reg.register_provider("opencode-go", resolve_opencode_go);
+  reg.register_provider("opencode_go", resolve_opencode_go);
   reg.register_provider("openrouter", resolve_openrouter);
   reg.register_provider("anthropic", resolve_anthropic);
   reg.register_provider("openai", resolve_openai);

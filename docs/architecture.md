@@ -41,7 +41,7 @@ libqcode/
   include/qcode/          src/
     core/                   core/          # message, bus_port, http, uuid, ssl
     config/                 config/        # opencode.json, ProviderInfo, ModelInfo
-    providers/              providers/     # openai/anthropic/cursor/antigravity/zen/registry
+    providers/              providers/     # openai/anthropic/cursor/antigravity/zen/go/registry
     transform/              transform/     # wire transforms + reasoning variants
     generation/             generation/    # generation_service / controller / continue
     session/                session/       # session_store, system_prompt, git_workspace

@@ -1,5 +1,4 @@
 #include <qcode/providers/zen_route.h>
-#include <qcode/transform/provider_transform.h>
 
 #include <cctype>
 #include <string>
@@ -59,15 +58,16 @@ ModelRoute zen_model_route(const std::string& model_id) {
     return route;
   }
   if (contains(id, "claude") || bare.rfind("qwen3.", 0) == 0 ||
-      bare.rfind("qwen3-", 0) == 0) {
+      bare.rfind("qwen3-", 0) == 0 || bare == "minimax-m3") {
     route.protocol = WireProtocol::kMessages;
     route.path = "/messages";
     return route;
   }
   if (contains(id, "gemini")) {
     route.protocol = WireProtocol::kGoogle;
-    route.path = "/models/" + ProviderTransform::zen_wire_model_id(model_id) +
-                 ":generateContent";
+    // Callers pass the wire id (prepare_provider_call remaps Zen aliases
+    // before routing); do not remap again here or Go ids get rewritten.
+    route.path = "/models/" + model_id + ":generateContent";
     return route;
   }
   route.protocol = WireProtocol::kChatCompletions;

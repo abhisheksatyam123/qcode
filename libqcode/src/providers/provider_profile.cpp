@@ -34,11 +34,17 @@ ProviderKind provider_kind(std::string_view provider_id,
                            std::string_view base_url) {
   const auto id = to_lower(provider_id);
   if (id == "cursor") return ProviderKind::kCursor;
+  if (id == "opencode-go" || id == "opencode_go") {
+    return ProviderKind::kOpenCodeGo;
+  }
   if (id == "opencode" || id == "zen") return ProviderKind::kOpenCodeZen;
   if (id == "openrouter") return ProviderKind::kOpenRouter;
   if (id == "antigravity") return ProviderKind::kAntigravity;
 
   const auto transport = ProviderTransform::chat_transport_for(std::string{base_url});
+  if (transport == ProviderTransform::ChatTransport::kOpenCodeGo) {
+    return ProviderKind::kOpenCodeGo;
+  }
   if (transport == ProviderTransform::ChatTransport::kOpenCodeZen) {
     return ProviderKind::kOpenCodeZen;
   }
@@ -59,9 +65,14 @@ ProviderCall prepare_provider_call(providers::ProviderOptions& options,
   call.wire_model_id = std::move(model_id);
 
   switch (call.kind) {
-    case ProviderKind::kOpenCodeZen: {
+    case ProviderKind::kOpenCodeZen:
+    case ProviderKind::kOpenCodeGo: {
+      // Zen's free pool renames retired aliases; Go validates catalog ids
+      // verbatim (hy3, longcat-2.0, muse-spark-1.2-contributor, ...).
       call.wire_model_id =
-          ProviderTransform::zen_wire_model_id(call.wire_model_id);
+          call.kind == ProviderKind::kOpenCodeGo
+              ? ProviderTransform::opencode_go_wire_model_id(call.wire_model_id)
+              : ProviderTransform::zen_wire_model_id(call.wire_model_id);
       apply_zen_route(options, call.wire_model_id);
       // Replace any session identity left on reused options; the caller's
       // current session (and parent, when it is a subagent) is authoritative.

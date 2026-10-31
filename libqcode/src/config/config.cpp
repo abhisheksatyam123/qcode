@@ -143,9 +143,21 @@ static void header_if_absent(std::map<std::string, std::string>& headers,
 
 // Well-known endpoints/headers only when opencode.json omitted them.
 static void fill_known_provider_defaults(ProviderInfo& provider) {
-    if (provider.id == "opencode") {
+    if (provider.id == "opencode-go" || provider.id == "opencode_go") {
+        // Go's unified gateway serves chat-completions, responses, messages
+        // and Google generateContent under one base URL. Go needs its own
+        // provider id: /zen/v1 is the pay-as-you-go Zen pool and rejects a Go
+        // subscription key with "Insufficient account funds".
         if (provider.api_url.empty()) {
-            provider.api_url = "https://opencode.ai/inference/openai/v1";
+            provider.api_url = "https://opencode.ai/inference/go/v1";
+        }
+        header_if_absent(provider.headers, "User-Agent",
+                         providers::kOpenCodeZenUserAgent);
+        header_if_absent(provider.headers, "x-opencode-client",
+                         providers::kOpenCodeZenClient);
+    } else if (provider.id == "opencode") {
+        if (provider.api_url.empty()) {
+            provider.api_url = "https://opencode.ai/zen/v1";
         }
         header_if_absent(provider.headers, "User-Agent",
                          providers::kOpenCodeZenUserAgent);
@@ -189,7 +201,10 @@ static void finalize_configured_models(const ProviderInfo& provider,
     for (auto& model : models) {
         ProviderTransform::apply_reasoning_defaults(model);
         if (!model.protocol.empty()) continue;
-        if (provider.id == "opencode") {
+        if (provider.id == "opencode-go" || provider.id == "opencode_go") {
+            model.protocol =
+                ProviderTransform::opencode_go_api_protocol(model.id);
+        } else if (provider.id == "opencode") {
             model.protocol = ProviderTransform::zen_api_protocol(model.id);
         } else if (provider.id == "anthropic") {
             model.protocol = "messages";
@@ -507,6 +522,19 @@ static void apply_provider_runtime_defaults(ProviderInfo& provider) {
         });
     } else if (provider.id == "cursor") {
         remap_cursor_picker_ids(provider);
+    }
+    if ((provider.id == "opencode-go" || provider.id == "opencode_go") &&
+        provider.api_key.empty()) {
+        // Prefer the Go-specific variable so a Go key is never attached to
+        // the keyless Zen free pool. OPENCODE_API_KEY is the documented
+        // fallback (official Codex/Hermes setup uses it for Go).
+        if (const char* key = std::getenv("OPENCODE_GO_API_KEY");
+            key && *key != '\0') {
+            provider.api_key = key;
+        } else if (const char* key = std::getenv("OPENCODE_API_KEY");
+                   key && *key != '\0') {
+            provider.api_key = key;
+        }
     }
     if (provider.id == "openrouter" && provider.api_key.empty()) {
         const auto key = get_openrouter_api_key();
@@ -907,6 +935,12 @@ std::vector<ProviderInfo> load_providers_from_config() {
 
 bool is_provider_authenticated(const ProviderInfo& provider) {
     if (!provider.api_key.empty()) return true;
+    if (provider.id == "opencode-go" || provider.id == "opencode_go") {
+        const char* key = std::getenv("OPENCODE_GO_API_KEY");
+        if (key && *key != '\0') return true;
+        key = std::getenv("OPENCODE_API_KEY");
+        return key && *key != '\0';
+    }
     if (provider.id == "opencode" || provider.name == "OpenCode Zen") return true;
     if (provider.id == "openrouter" || provider.name == "OpenRouter") {
         if (!provider.api_key.empty()) return true;

@@ -178,17 +178,16 @@ TEST(OpenAIChatCompletionsTest, ParsesMuseSparkReasoningAndUsage) {
   EXPECT_EQ(result.usage.reasoning_completion_tokens, 32);
 }
 
-TEST(OpenAIChatCompletionsTest, AddsCacheControlForClaudeModelIds) {
+TEST(OpenAIChatCompletionsTest, AddsCacheControlForOpenRouterClaudeModelIds) {
   OpenAIRequestBuilder builder(false);
+  builder.set_base_url("https://openrouter.ai/api/v1");
   GenerateOptions options;
   options.model = "anthropic/claude-sonnet-4";
   options.messages = {Message::user("hi")};
-  options.reasoning_effort = "medium";
 
   const auto request = builder.build_request_json(options);
   ASSERT_TRUE(request.contains("cache_control"));
-  EXPECT_EQ(request["cache_control"]["type"], "ephemeral");
-  EXPECT_EQ(request["reasoning_effort"], "medium");
+  EXPECT_EQ(request["cache_control"]["type"].get<std::string>(), "ephemeral");
 }
 
 TEST(OpenAIChatCompletionsTest, SkipsCacheControlForNonClaudeModels) {
@@ -242,7 +241,7 @@ TEST(OpenAIChatCompletionsTest, ZenNonClaudeSkipsMessageCacheBreakpoints) {
   EXPECT_FALSE(request.contains("prompt_cache_key"));
 }
 
-TEST(OpenAIChatCompletionsTest, ZenGpt5SetsPromptCacheKeyFromSession) {
+TEST(OpenAIChatCompletionsTest, ZenGpt5OmitsPromptCacheKey) {
   OpenAIRequestBuilder builder(false);
   builder.set_base_url("https://opencode.ai/zen/v1");
   GenerateOptions options;
@@ -251,8 +250,8 @@ TEST(OpenAIChatCompletionsTest, ZenGpt5SetsPromptCacheKeyFromSession) {
   options.messages = {Message::user("hi")};
 
   const auto request = builder.build_request_json(options);
-  EXPECT_EQ(request.value("promptCacheKey", ""), "sess-cache-1");
-  EXPECT_EQ(request.value("prompt_cache_key", ""), "sess-cache-1");
+  EXPECT_FALSE(request.contains("promptCacheKey"));
+  EXPECT_FALSE(request.contains("prompt_cache_key"));
 }
 
 TEST(OpenAIResponsesTest, ParsesTextAndFunctionCalls) {
@@ -364,11 +363,18 @@ TEST(OpenAIChatCompletionsTest, ReplaysReasoningContentAndNullContent) {
   options.messages = {Message::user("hi"), std::move(assistant)};
 
   const auto body = builder.build_request_json(options);
-  const auto& replayed = body["messages"].at(1);
-  EXPECT_EQ(replayed.value("role", ""), "assistant");
-  EXPECT_TRUE(replayed.contains("content"));
-  EXPECT_TRUE(replayed["content"].is_null());
-  EXPECT_EQ(replayed.value("reasoning_content", ""), "prior thoughts");
+  const nlohmann::json* replayed = nullptr;
+  for (const auto& message : body["messages"]) {
+    if (message.value("role", "") == "assistant") {
+      replayed = &message;
+      break;
+    }
+  }
+  ASSERT_NE(replayed, nullptr);
+  EXPECT_EQ((*replayed).value("role", ""), "assistant");
+  EXPECT_TRUE((*replayed).contains("content"));
+  EXPECT_TRUE((*replayed)["content"].is_null());
+  EXPECT_EQ((*replayed).value("reasoning_content", ""), "prior thoughts");
 }
 
 }  // namespace

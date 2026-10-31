@@ -46,6 +46,9 @@ struct GenerateOptions {
   // Tool calling support
   ToolSet tools;
   std::string workspace;
+  // OpenCode Zen adds the harness date/environment block to normal agent
+  // turns. Title generation uses a standalone system prompt and must not.
+  bool include_opencode_env = true;
   // Stable conversation key for providers that reuse a conversation id
   // across turns (e.g. Cursor). Usually the TUI/server session UUID.
   std::string session_id;

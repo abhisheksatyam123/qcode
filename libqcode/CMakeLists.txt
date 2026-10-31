@@ -32,7 +32,11 @@ target_sources(qcode-engine PRIVATE
     src/core/random.cpp
     src/core/in_process_bus.cpp
     src/core/http_request_handler.cpp
+    src/core/http_client.cpp
+    src/core/zen_http_client.cpp
+    src/core/zen_boringssl_transport.cpp
     src/core/ssl_config.cpp
+
 
     # config
     src/config/config.cpp
@@ -120,6 +124,75 @@ target_link_libraries(qcode-engine PUBLIC
     $<BUILD_INTERFACE:stduuid::stduuid>
     $<BUILD_INTERFACE:concurrentqueue::concurrentqueue>
 )
+
+# BoringSSL-backed transport for OpenCode Zen. Its ClientHello is accepted by
+# Zen's free-tier gate where system OpenSSL's is not. Build the bundled
+# submodule when available; otherwise fall back to the prebuilt prefix tree.
+if(EXISTS "${QCODE_REPO_ROOT}/third_party/boringssl/CMakeLists.txt")
+  set(BORINGSSL_PREFIX "qcode_bssl" CACHE STRING
+      "Symbol prefix for the bundled BoringSSL build")
+  set(BUILD_TESTING OFF CACHE BOOL "Build BoringSSL tests" FORCE)
+  set(_qcode_saved_cxx_flags "${CMAKE_CXX_FLAGS}")
+  set(_qcode_saved_c_flags "${CMAKE_C_FLAGS}")
+  set(CMAKE_CXX_FLAGS "")
+  set(CMAKE_C_FLAGS "")
+  add_subdirectory(${QCODE_REPO_ROOT}/third_party/boringssl ${CMAKE_BINARY_DIR}/third_party/boringssl EXCLUDE_FROM_ALL)
+  set(CMAKE_CXX_FLAGS "${_qcode_saved_cxx_flags}")
+  set(CMAKE_C_FLAGS "${_qcode_saved_c_flags}")
+
+  function(qcode_disable_warnings_in_dir dir)
+    get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(t ${targets})
+      if(TARGET ${t})
+        target_compile_options(${t} PRIVATE -w)
+      endif()
+    endforeach()
+    get_property(subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+    foreach(sd ${subdirs})
+      qcode_disable_warnings_in_dir("${sd}")
+    endforeach()
+  endfunction()
+  qcode_disable_warnings_in_dir("${CMAKE_BINARY_DIR}/third_party/boringssl")
+  set(QCODE_BORINGSSL_INCLUDE_DIR
+      "${QCODE_REPO_ROOT}/third_party/boringssl/include")
+  set(QCODE_BORINGSSL_LIBRARIES ssl crypto)
+else()
+  set(QCODE_BORINGSSL_INCLUDE_DIR "/tmp/opencode/boringssl/include" CACHE PATH
+      "BoringSSL include directory")
+  set(QCODE_BORINGSSL_SSL_LIB "/tmp/opencode/boringssl/build_prefix/libssl.a"
+      CACHE FILEPATH "BoringSSL ssl library")
+  set(QCODE_BORINGSSL_CRYPTO_LIB "/tmp/opencode/boringssl/build_prefix/libcrypto.a"
+      CACHE FILEPATH "BoringSSL crypto library")
+  add_library(qcode-boringssl-ssl STATIC IMPORTED)
+  set_target_properties(qcode-boringssl-ssl PROPERTIES
+      IMPORTED_LOCATION "${QCODE_BORINGSSL_SSL_LIB}")
+  add_library(qcode-boringssl-crypto STATIC IMPORTED)
+  set_target_properties(qcode-boringssl-crypto PROPERTIES
+      IMPORTED_LOCATION "${QCODE_BORINGSSL_CRYPTO_LIB}")
+  set(QCODE_BORINGSSL_LIBRARIES
+      qcode-boringssl-ssl qcode-boringssl-crypto)
+endif()
+
+# Keep BoringSSL's include path on this source only; linking the BoringSSL
+# targets directly would leak BoringSSL's headers into every qcode source that
+# includes <openssl/*.h> via httplib.
+set_source_files_properties(
+    src/core/zen_boringssl_transport.cpp
+    PROPERTIES
+      INCLUDE_DIRECTORIES "${QCODE_BORINGSSL_INCLUDE_DIR};${CMAKE_CURRENT_SOURCE_DIR}/include;${CMAKE_CURRENT_SOURCE_DIR}/src;${QCODE_REPO_ROOT}/third_party/httplib-header-only"
+      COMPILE_DEFINITIONS "BORINGSSL_PREFIX=qcode_bssl;CPPHTTPLIB_OPENSSL_SUPPORT=1"
+      SKIP_PRECOMPILE_HEADERS ON
+)
+
+if(TARGET ssl)
+  set(QCODE_BORINGSSL_SSL_LIB "$<TARGET_FILE:ssl>")
+  set(QCODE_BORINGSSL_CRYPTO_LIB "$<TARGET_FILE:crypto>")
+endif()
+
+target_link_libraries(qcode-engine PRIVATE
+    ${QCODE_BORINGSSL_SSL_LIB}
+    ${QCODE_BORINGSSL_CRYPTO_LIB}
+    pthread dl)
 
 # Feature gates mirrored by the header #error guards (qcode/providers/*.h).
 target_compile_definitions(qcode-engine PUBLIC

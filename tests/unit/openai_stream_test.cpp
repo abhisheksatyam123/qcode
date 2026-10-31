@@ -470,6 +470,33 @@ TEST(OpenAIChatStreamTest, ToolCallSplitAcrossChunksThenUsageOnlyChunk) {
   EXPECT_EQ(finishes[1].usage->reasoning_completion_tokens, 7);
 }
 
+TEST(OpenAIChatStreamTest,
+     DuplicateIndexWithDistinctToolIdsCreatesSeparateCalls) {
+  qcode::openai::OpenAIStreamImpl impl;
+  const char* chunks[] = {
+      R"({"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo A\"}"}}]}}]})",
+      R"({"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call_b","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo B\"}"}}]}}]})",
+      R"({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]})",
+  };
+  for (const char* chunk : chunks) {
+    impl.test_parse_sse_line(std::string("data: ") + chunk);
+  }
+  impl.test_parse_sse_line("data: [DONE]");
+
+  std::vector<qcode::StreamEvent> calls;
+  for (auto& event : drain_events(impl)) {
+    ASSERT_FALSE(event.is_error()) << event.error.value_or("");
+    if (event.is_tool_call()) calls.push_back(event);
+  }
+  ASSERT_EQ(calls.size(), 2u);
+  EXPECT_EQ(calls[0].tool_call_id, "call_a");
+  EXPECT_EQ(calls[1].tool_call_id, "call_b");
+  EXPECT_EQ(nlohmann::json::parse(calls[0].tool_payload),
+            nlohmann::json({{"command", "echo A"}}));
+  EXPECT_EQ(nlohmann::json::parse(calls[1].tool_payload),
+            nlohmann::json({{"command", "echo B"}}));
+}
+
 TEST(OpenAIChatStreamTest, UsageOnTheFinishChunkIsReportedOnce) {
   qcode::openai::OpenAIStreamImpl impl;
   impl.test_parse_sse_line(

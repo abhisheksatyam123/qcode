@@ -5,6 +5,7 @@
 #include <qcode/core/logger.h>
 #include <qcode/core/retry_policy.h>
 #include "providers/internal/opencode_zen_headers.h"
+#include "core/http_client.h"
 #include "core/response_utils.h"
 
 #include <algorithm>
@@ -29,7 +30,7 @@ namespace {
 // because a call that lands before the socket connects is a no-op. The flag
 // is polled (its owners store() without notifying); the cv only ends the
 // watcher the moment the POST returns.
-httplib::Result post_abortable(httplib::ClientImpl& cli, const std::string& path,
+httplib::Result post_abortable(HttpClient& cli, const std::string& path,
                                const httplib::Headers& headers,
                                const std::string& body,
                                const std::string& content_type,
@@ -87,25 +88,18 @@ httplib::Result post_abortable(httplib::ClientImpl& cli, const std::string& path
 }
 
 // Builds a fresh client (TCP+TLS not yet connected; httplib connects lazily).
-std::unique_ptr<httplib::ClientImpl> new_client(bool use_ssl,
-                                                const std::string& host,
-                                                int port, bool verify_ssl_cert,
-                                                int connection_timeout_sec,
-                                                int read_timeout_sec) {
-  std::unique_ptr<httplib::ClientImpl> cli;
-  if (use_ssl) {
-    auto ssl = std::make_unique<httplib::SSLClient>(
-        host, port != 0 ? port : 443);
-    configure_client_tls(*ssl, verify_ssl_cert);
-    cli = std::move(ssl);
-  } else {
-    cli = std::make_unique<httplib::ClientImpl>(host, port != 0 ? port : 80);
+std::unique_ptr<HttpClient> new_client(bool use_ssl, const std::string& host,
+                                       int port, bool verify_ssl_cert,
+                                       int connection_timeout_sec,
+                                       int read_timeout_sec) {
+  if (use_ssl && qcode::providers::is_opencode_zen_url(host)) {
+    // Zen's free-tier gate fingerprints the TLS stack. BoringSSL's
+    // ClientHello is accepted where OpenSSL's is not.
+    return make_zen_http_client(host, port, verify_ssl_cert,
+                                connection_timeout_sec, read_timeout_sec);
   }
-  cli->set_connection_timeout(connection_timeout_sec, 0);
-  cli->set_read_timeout(read_timeout_sec, 0);
-  // httplib checks a parked socket is still alive before reusing it.
-  cli->set_keep_alive(true);
-  return cli;
+  return make_httplib_http_client(use_ssl, host, port, verify_ssl_cert,
+                                  connection_timeout_sec, read_timeout_sec);
 }
 
 // Keep-alive pools: idle clients keyed by "scheme://host:port". They are
@@ -115,7 +109,7 @@ std::unique_ptr<httplib::ClientImpl> new_client(bool use_ssl,
 // a socket, and an abort watcher's stop() only cancels its own request.
 class IdlePool {
  public:
-  std::unique_ptr<httplib::ClientImpl> take(const std::string& key) {
+  std::unique_ptr<HttpClient> take(const std::string& key) {
     std::lock_guard<std::mutex> lock(mu_);
     // Newest first: the most recently used socket is the likeliest alive.
     for (std::size_t i = idle_.size(); i-- > 0;) {
@@ -127,7 +121,7 @@ class IdlePool {
     return nullptr;
   }
 
-  void put(const std::string& key, std::unique_ptr<httplib::ClientImpl> cli) {
+  void put(const std::string& key, std::unique_ptr<HttpClient> cli) {
     std::lock_guard<std::mutex> lock(mu_);
     const auto same_key = std::count_if(
         idle_.begin(), idle_.end(), [&](const Idle& e) { return e.key == key; });
@@ -139,7 +133,7 @@ class IdlePool {
   static constexpr std::ptrdiff_t kMaxIdlePerKey = 4;
   struct Idle {
     std::string key;
-    std::unique_ptr<httplib::ClientImpl> cli;
+    std::unique_ptr<HttpClient> cli;
   };
   std::mutex mu_;
   std::vector<Idle> idle_;
@@ -206,7 +200,7 @@ HttpRequestHandler::HttpRequestHandler(const HttpConfig& config)
       config_.use_ssl);
 }
 
-std::unique_ptr<httplib::ClientImpl> HttpRequestHandler::acquire_client() {
+std::unique_ptr<HttpClient> HttpRequestHandler::acquire_client() {
   auto cli = g_post_pool.take(post_pool_key(config_));
   PERF_LOG("http connection={} host={}", cli ? "reused" : "new", config_.host);
   if (cli) {
@@ -224,7 +218,7 @@ std::unique_ptr<httplib::ClientImpl> HttpRequestHandler::acquire_client() {
   return cli;
 }
 
-void HttpRequestHandler::release_client(std::unique_ptr<httplib::ClientImpl> cli) {
+void HttpRequestHandler::release_client(std::unique_ptr<HttpClient> cli) {
   g_post_pool.put(post_pool_key(config_), std::move(cli));
 }
 
@@ -478,7 +472,7 @@ GenerateResult HttpRequestHandler::make_request(const std::string& path,
   }
 }
 
-std::unique_ptr<httplib::ClientImpl> acquire_stream_client(
+std::unique_ptr<HttpClient> acquire_stream_client(
     const std::string& scheme_host, int connection_timeout_sec,
     int read_timeout_sec) {
   const StreamTarget target = parse_stream_target(scheme_host);
@@ -494,7 +488,7 @@ std::unique_ptr<httplib::ClientImpl> acquire_stream_client(
 }
 
 void release_stream_client(const std::string& scheme_host,
-                           std::unique_ptr<httplib::ClientImpl> cli) {
+                           std::unique_ptr<HttpClient> cli) {
   if (!cli) return;
   g_stream_pool.put(parse_stream_target(scheme_host).key, std::move(cli));
 }

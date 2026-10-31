@@ -182,7 +182,11 @@ std::optional<FallbackTarget> select_fallback_candidate(
     const std::string& current_provider_id,
     const std::string& current_model_id,
     const std::set<std::string>& excluded_keys) {
+  // opencode-go is a prepaid subscription: calls have no marginal cost, so a
+  // failover must not silently switch to a metered provider.
   const bool current_is_free = (current_provider_id == "opencode" ||
+                                current_provider_id == "opencode-go" ||
+                                current_provider_id == "opencode_go" ||
                                 current_model_id.find(":free") != std::string::npos ||
                                 current_model_id.find("-free") != std::string::npos ||
                                 current_provider_id == "antigravity");
@@ -206,6 +210,8 @@ std::optional<FallbackTarget> select_fallback_candidate(
         }
         const bool m_is_free = (mod.input_cost == 0.0 && mod.output_cost == 0.0) ||
                                prov.id == "opencode" ||
+                               prov.id == "opencode-go" ||
+                               prov.id == "opencode_go" ||
                                mod.id.find(":free") != std::string::npos ||
                                mod.id.find("-free") != std::string::npos ||
                                prov.id == "antigravity";

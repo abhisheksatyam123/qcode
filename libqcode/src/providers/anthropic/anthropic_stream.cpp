@@ -47,7 +47,7 @@ void AnthropicStreamImpl::reset_attempt_state() {
   held_sse_error_.reset();
 }
 
-void AnthropicStreamImpl::set_active_client(httplib::ClientImpl* cli) {
+void AnthropicStreamImpl::set_active_client(qcode::http::HttpClient* cli) {
   std::lock_guard<std::mutex> lock(cancel_mutex_);
   active_client_ = cli;
 }

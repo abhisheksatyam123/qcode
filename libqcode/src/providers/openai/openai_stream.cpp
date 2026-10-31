@@ -461,7 +461,7 @@ void OpenAIStreamImpl::notify_consumer() {
 }
 
 
-void OpenAIStreamImpl::set_active_client(httplib::ClientImpl* cli) {
+void OpenAIStreamImpl::set_active_client(qcode::http::HttpClient* cli) {
   std::lock_guard<std::mutex> lock(cancel_mutex_);
   active_client_ = cli;
 }

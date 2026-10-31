@@ -9,10 +9,11 @@
 namespace qcode {
 
 /// Supported backends the TUI and engine can resolve:
-/// cursor, opencode, openrouter, antigravity.
+/// cursor, opencode (Zen), opencode-go, openrouter, antigravity.
 enum class ProviderKind {
   kCursor,
   kOpenCodeZen,
+  kOpenCodeGo,
   kOpenRouter,
   kAntigravity,
   kCompatible,

@@ -86,6 +86,8 @@ TEST(ProviderTransformTest, ZenApiProtocolMatchesOpenCodeDocs) {
 
 TEST(ProviderProfileTest, KindFromIdAndUrl) {
   EXPECT_EQ(provider_kind("opencode", ""), ProviderKind::kOpenCodeZen);
+  EXPECT_EQ(provider_kind("opencode-go", ""), ProviderKind::kOpenCodeGo);
+  EXPECT_EQ(provider_kind("opencode_go", ""), ProviderKind::kOpenCodeGo);
   EXPECT_EQ(provider_kind("openrouter", ""), ProviderKind::kOpenRouter);
   EXPECT_EQ(provider_kind("cursor", ""), ProviderKind::kCursor);
   EXPECT_EQ(provider_kind("antigravity", ""), ProviderKind::kAntigravity);
@@ -95,8 +97,93 @@ TEST(ProviderProfileTest, KindFromIdAndUrl) {
   EXPECT_EQ(provider_kind("qgenie", ""), ProviderKind::kCompatible);
   EXPECT_EQ(provider_kind("custom", "https://opencode.ai/zen/v1"),
             ProviderKind::kOpenCodeZen);
+  EXPECT_EQ(provider_kind("custom", "https://opencode.ai/inference/go/v1"),
+            ProviderKind::kOpenCodeGo);
+  EXPECT_EQ(provider_kind("custom", "https://opencode.ai/zen/go/v1"),
+            ProviderKind::kOpenCodeGo);
   EXPECT_EQ(provider_kind("custom", "https://openrouter.ai/api/v1"),
             ProviderKind::kOpenRouter);
+}
+
+TEST(ProviderTransformTest, OpenCodeGoUsesRawCatalogIdsAndWireRoutes) {
+  // Go ids that the Zen free-pool remapper rewrites must reach the wire
+  // unchanged (they are live Go SKUs, not retired Zen aliases).
+  EXPECT_EQ(ProviderTransform::opencode_go_wire_model_id("hy3"), "hy3");
+  EXPECT_EQ(ProviderTransform::opencode_go_wire_model_id("longcat-2.0"),
+            "longcat-2.0");
+  EXPECT_EQ(ProviderTransform::opencode_go_wire_model_id(
+                "muse-spark-1.2-contributor"),
+            "muse-spark-1.2-contributor");
+  EXPECT_EQ(ProviderTransform::opencode_go_wire_model_id(
+                "opencode-go/kimi-k3"),
+            "kimi-k3");
+  EXPECT_EQ(ProviderTransform::opencode_go_wire_model_id("  glm-5.3  "),
+            "glm-5.3");
+
+  EXPECT_EQ(ProviderTransform::opencode_go_api_protocol("glm-5.3-flash"),
+            "chat_completions");
+  EXPECT_EQ(ProviderTransform::opencode_go_completions_path("glm-5.3-flash"),
+            "/chat/completions");
+  EXPECT_EQ(ProviderTransform::opencode_go_api_protocol("claude-haiku-5-5"),
+            "messages");
+  EXPECT_EQ(ProviderTransform::opencode_go_completions_path("claude-haiku-5-5"),
+            "/messages");
+  EXPECT_EQ(ProviderTransform::opencode_go_api_protocol("grok-4.7"),
+            "responses");
+  EXPECT_EQ(ProviderTransform::opencode_go_completions_path("grok-4.7"),
+            "/responses");
+  EXPECT_EQ(ProviderTransform::opencode_go_api_protocol("gemini-4-argon"),
+            "google");
+  EXPECT_EQ(ProviderTransform::opencode_go_completions_path("gemini-4-argon"),
+            "/models/gemini-4-argon:generateContent");
+  EXPECT_EQ(ProviderTransform::opencode_go_api_protocol("minimax-m3"),
+            "messages");
+  EXPECT_EQ(ProviderTransform::opencode_go_api_protocol("minimax-m3.1-flash"),
+            "chat_completions");
+  EXPECT_EQ(ProviderTransform::opencode_go_api_protocol("qwen3.8-max"),
+            "messages");
+  EXPECT_EQ(ProviderTransform::opencode_go_api_protocol("hy3"),
+            "chat_completions");
+
+  EXPECT_EQ(ProviderTransform::chat_transport_for(
+                "https://opencode.ai/inference/go/v1"),
+            ChatTransport::kOpenCodeGo);
+  EXPECT_EQ(ProviderTransform::chat_transport_for(
+                "https://opencode.ai/zen/go/v1"),
+            ChatTransport::kOpenCodeGo);
+  EXPECT_EQ(ProviderTransform::chat_transport_for(
+                "https://opencode.ai/zen/v1"),
+            ChatTransport::kOpenCodeZen);
+}
+
+TEST(ProviderProfileTest, PrepareOpenCodeGoKeepsCatalogIdAndStampsSession) {
+  providers::ProviderOptions go;
+  go.base_url = "https://opencode.ai/inference/go/v1";
+  const auto call =
+      prepare_provider_call(go, "opencode-go", "muse-spark-1.2-contributor",
+                            "sess-go", "", "/tmp/qcode-project");
+  EXPECT_EQ(call.kind, ProviderKind::kOpenCodeGo);
+  EXPECT_EQ(call.wire_model_id, "muse-spark-1.2-contributor");
+  EXPECT_EQ(go.protocol, "responses");
+  EXPECT_EQ(go.completions_path, "/responses");
+  EXPECT_EQ(go.headers["x-opencode-session-id"], "sess-go");
+  EXPECT_EQ(go.headers["x-opencode-session"], "sess-go");
+  EXPECT_FALSE(go.headers["x-opencode-project"].empty());
+
+  providers::ProviderOptions claude;
+  const auto claude_call =
+      prepare_provider_call(claude, "opencode-go", "claude-haiku-5-5");
+  EXPECT_EQ(claude_call.wire_model_id, "claude-haiku-5-5");
+  EXPECT_EQ(claude.protocol, "messages");
+  EXPECT_EQ(claude.completions_path, "/messages");
+
+  providers::ProviderOptions gemini;
+  const auto gemini_call =
+      prepare_provider_call(gemini, "opencode-go", "gemini-4-argon");
+  EXPECT_EQ(gemini_call.wire_model_id, "gemini-4-argon");
+  EXPECT_EQ(gemini.protocol, "google");
+  EXPECT_EQ(gemini.completions_path,
+            "/models/gemini-4-argon:generateContent");
 }
 
 TEST(ProviderProfileTest, PrepareZenAndOpenRouter) {
@@ -516,14 +603,14 @@ TEST_F(ZenWireFormatTest, RetiredMuseSparkAliasReplaysAsReasoningContent) {
   EXPECT_TRUE(saw_reasoning_content);
 }
 
-TEST_F(ZenWireFormatTest, MaxTokensNotMaxCompletionTokens) {
+TEST_F(ZenWireFormatTest, UsesMaxCompletionTokens) {
   openai::OpenAIRequestBuilder builder(false);
   builder.set_base_url("https://opencode.ai/zen/v1");
   auto opts = GenerateOptions("x-preview-f-free", "hello");
   opts.max_tokens = 1024;
   const auto body = builder.build_request_json(opts);
-  EXPECT_EQ(body.value("max_tokens", 0), 1024);
-  EXPECT_FALSE(body.contains("max_completion_tokens"));
+  EXPECT_EQ(body.value("max_completion_tokens", 0), 1024);
+  EXPECT_FALSE(body.contains("max_tokens"));
 }
 
 TEST_F(ZenWireFormatTest, RemapsOxAlphaAliasInRequestBody) {
@@ -543,8 +630,8 @@ TEST_F(ZenWireFormatTest, EffortLandsOnReasoningEffortField) {
   EXPECT_EQ(body.value("reasoning_effort", ""), "max");
   EXPECT_FALSE(body.contains("include_reasoning"));
   EXPECT_FALSE(body.contains("reasoning"));
-  // Reasoning-capable requests carry a token budget via max_tokens here.
-  EXPECT_GT(body.value("max_tokens", 0), 0);
+  // Reasoning-capable requests carry a completion-token budget on Zen.
+  EXPECT_GT(body.value("max_completion_tokens", 0), 0);
 }
 
 TEST_F(ZenWireFormatTest, RemapsMuseSparkOpenRouterAlias) {

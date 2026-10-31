@@ -257,11 +257,25 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
         if (delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
           for (const auto& tc : delta["tool_calls"]) {
             size_t idx = tc.value("index", 0);
+            const std::string call_id =
+                tc.contains("id") && tc["id"].is_string()
+                    ? tc["id"].get<std::string>()
+                    : std::string();
+            // Some OpenAI-compatible models (notably big-pickle) emit each
+            // complete tool call with a fresh id but reuse index 0. Treat a
+            // new id at an occupied index as a separate call instead of
+            // concatenating both argument objects into invalid JSON.
+            if (!call_id.empty() && pending_tool_calls_.size() > idx &&
+                !pending_tool_calls_[idx].id.empty() &&
+                pending_tool_calls_[idx].id != call_id) {
+              pending_tool_calls_.push_back(PendingToolCall{});
+              idx = pending_tool_calls_.size() - 1;
+            }
             if (pending_tool_calls_.size() <= idx) {
               pending_tool_calls_.resize(idx + 1);
             }
-            if (tc.contains("id") && tc["id"].is_string()) {
-              pending_tool_calls_[idx].id = tc["id"].get<std::string>();
+            if (!call_id.empty()) {
+              pending_tool_calls_[idx].id = call_id;
             }
             if (tc.contains("thought_signature") &&
                 tc["thought_signature"].is_string()) {

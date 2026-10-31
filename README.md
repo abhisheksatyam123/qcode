@@ -66,6 +66,52 @@ TUI and server load providers from a single `opencode.json`:
 
 Set provider API keys via environment variables (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or in that file’s provider options.
 
+OpenCode Zen free models use a native BoringSSL transport: the upstream
+free-tier gate rejects OpenSSL's TLS fingerprint, so `opencode.ai` requests use
+a small BoringSSL-backed client compiled into qcode. The bundled
+`third_party/boringssl` submodule is built automatically when present.
+
+OpenCode Go is a separate provider id, `opencode-go`, backed by
+`https://opencode.ai/inference/go/v1`. Keep the Go subscription key in
+`opencode.json` under the provider's `options.apiKey` (an
+`OPENCODE_GO_API_KEY` environment variable is also honored as a fallback). Go
+ids are sent verbatim (`hy3`, `longcat-2.0`,
+`muse-spark-1.2-contributor`, ...) and each model is routed to its native wire
+API (`chat/completions`, `responses`, `messages`, or Google
+`generateContent`). Keep Go keys out of the keyless `opencode`/`/zen/v1` free
+pool: `/zen/v1` is the pay-as-you-go pool and answers a Go key with
+"Insufficient account funds", while attaching a Go key to the free pool makes
+the free models return 429 `FreeUsageLimitError` and triggers a needless
+failover.
+
+```jsonc
+{
+  "provider": {
+    "opencode-go": {
+      "name": "OpenCode Go",
+      "options": {
+        "baseURL": "https://opencode.ai/inference/go/v1",
+        "apiKey": "oc_sk_your_go_key"
+      },
+      "models": {
+        "glm-5.3-flash": {
+          "tool_call": true,
+          "reasoning": true,
+          "reasoning_efforts": ["low", "high", "max"],
+          "limit": { "context": 1000000, "output": 131072 }
+        },
+        "claude-haiku-5-5": {
+          "tool_call": true,
+          "reasoning": true,
+          "thinking": { "type": "adaptive", "display": "summarized", "allow_off": false },
+          "limit": { "context": 1000000, "output": 128000 }
+        }
+      }
+    }
+  }
+}
+```
+
 Model behaviour lives in the same file, not in code. Per model, or once under
 `model_defaults` at the top level (every provider) or per provider. Defaults
 merge into each model with JSON merge-patch rules: top level, then provider,

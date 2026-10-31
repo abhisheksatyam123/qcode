@@ -1,6 +1,7 @@
 #include "anthropic_request_builder.h"
 #include "anthropic_oauth.h"
 #include "anthropic_thinking.h"
+#include "providers/internal/opencode_zen_headers.h"
 
 #include <qcode/core/logger.h>
 #include <qcode/transform/provider_transform.h>
@@ -390,6 +391,15 @@ httplib::Headers AnthropicRequestBuilder::build_headers(
   // Add any extra headers
   for (const auto& [key, value] : config.extra_headers) {
     headers.emplace(key, value);
+  }
+
+  // Apply after auth so a configured key is never replaced by the keyless
+  // "Bearer public" fallback. Zen's Messages endpoint needs the same client/
+  // session/project identity as the chat-completions path; without this,
+  // x-opencode-session would carry qcode's raw UUID instead of an
+  // OpenCode-format affinity id.
+  if (providers::is_opencode_zen_url(config.base_url)) {
+    providers::apply_opencode_zen_headers(headers);
   }
 
   // Note: Content-Type is passed separately to httplib::Post() as content_type

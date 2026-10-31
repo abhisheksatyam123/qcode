@@ -129,6 +129,49 @@ TEST(TuiConfigTest, LoadsProviderOptionsFromJson) {
   EXPECT_EQ(model.reasoning_default, "high");
 }
 
+TEST(TuiConfigTest, OpenCodeGoDefaultsAndWireProtocols) {
+  ScopedEnv key("OPENCODE_GO_API_KEY", "go-env-secret");
+  ScopedConfig config(R"({
+      "provider": {
+        "opencode-go": {
+          "name": "OpenCode Go",
+          "options": {
+            "apiKey": "go-config-secret"
+          },
+          "models": {
+            "hy3": {"name": "Hy3", "tool_call": true},
+            "claude-haiku-5-5": {"name": "Claude Haiku", "tool_call": true},
+            "grok-4.7": {"name": "Grok", "tool_call": true},
+            "gemini-4-argon": {"name": "Gemini", "tool_call": true}
+          }
+        }
+      }
+    })");
+
+  const auto providers = config.load();
+  ASSERT_EQ(providers.size(), 1u);
+  const auto& provider = providers.front();
+  EXPECT_EQ(provider.id, "opencode-go");
+  EXPECT_EQ(provider.api_url, "https://opencode.ai/inference/go/v1");
+  // The key in opencode.json wins over the environment fallback.
+  EXPECT_EQ(provider.api_key, "go-config-secret");
+  EXPECT_EQ(provider.headers.at("User-Agent"), "opencode/latest/2.0.29/cli");
+  EXPECT_EQ(provider.headers.at("x-opencode-client"), "cli");
+
+  // Go validates these ids verbatim; hy3 must not be dropped as a retired
+  // Zen alias.
+  const auto* hy3 = FindModel(provider.models, "hy3");
+  ASSERT_NE(hy3, nullptr);
+  EXPECT_EQ(hy3->protocol, "chat_completions");
+  ASSERT_NE(FindModel(provider.models, "claude-haiku-5-5"), nullptr);
+  EXPECT_EQ(FindModel(provider.models, "claude-haiku-5-5")->protocol,
+            "messages");
+  ASSERT_NE(FindModel(provider.models, "grok-4.7"), nullptr);
+  EXPECT_EQ(FindModel(provider.models, "grok-4.7")->protocol, "responses");
+  ASSERT_NE(FindModel(provider.models, "gemini-4-argon"), nullptr);
+  EXPECT_EQ(FindModel(provider.models, "gemini-4-argon")->protocol, "google");
+}
+
 TEST(TuiConfigTest, ConfiguredModelsAreThePicker) {
   ScopedConfig config(R"({
       "provider": {

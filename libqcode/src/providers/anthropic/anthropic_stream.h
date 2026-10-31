@@ -15,6 +15,9 @@
 #include <chrono>
 
 namespace qcode {
+namespace http {
+class HttpClient;
+}
 namespace anthropic {
 
 class AnthropicStreamImpl : public internal::StreamResultImpl {
@@ -86,8 +89,8 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
   // Retry backoff and cancellation
   std::mutex cancel_mutex_;
   std::condition_variable cancel_cv_;
-  httplib::ClientImpl* active_client_ = nullptr;
-  void set_active_client(httplib::ClientImpl* cli);
+  qcode::http::HttpClient* active_client_ = nullptr;
+  void set_active_client(qcode::http::HttpClient* cli);
 
   // When the stream last received bytes or started an attempt
   std::atomic<std::chrono::steady_clock::rep> last_activity_{0};

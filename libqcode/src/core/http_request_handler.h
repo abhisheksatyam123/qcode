@@ -10,7 +10,7 @@
 #include <mutex>
 #include <string>
 
-#include <nlohmann/json.hpp>
+#include "core/http_client.h"
 
 namespace qcode {
 namespace http {
@@ -59,8 +59,8 @@ class HttpRequestHandler {
   // steps, later turns and subagents) skips TCP/TLS setup. A request owns its
   // client exclusively while in flight, so concurrent posts never share a
   // socket and the abort watcher's stop() only ever cancels its own request.
-  std::unique_ptr<httplib::ClientImpl> acquire_client();
-  void release_client(std::unique_ptr<httplib::ClientImpl> cli);
+  std::unique_ptr<HttpClient> acquire_client();
+  void release_client(std::unique_ptr<HttpClient> cli);
 
   // Handler for processing HTTP responses (may move the response body out).
   using ResponseHandler =
@@ -86,11 +86,11 @@ class HttpRequestHandler {
 // ONLY after a complete, successful response; on error or abort, let the
 // unique_ptr destruct instead (its socket may hold cancelled or unread data).
 // Streams always verify TLS.
-std::unique_ptr<httplib::ClientImpl> acquire_stream_client(
+std::unique_ptr<HttpClient> acquire_stream_client(
     const std::string& scheme_host, int connection_timeout_sec,
     int read_timeout_sec);
 void release_stream_client(const std::string& scheme_host,
-                           std::unique_ptr<httplib::ClientImpl> cli);
+                           std::unique_ptr<HttpClient> cli);
 
 }  // namespace http
 }  // namespace qcode

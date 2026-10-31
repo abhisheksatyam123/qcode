@@ -141,12 +141,16 @@ nlohmann::json to_responses_request(const nlohmann::json& request) {
     for (const auto& tool : request["tools"]) {
       if (tool.contains("function")) {
         const auto& function = tool["function"];
-        responses["tools"].push_back(
-            {{"type", "function"},
-             {"name", function.value("name", "")},
-             {"description", function.value("description", "")},
-             {"parameters",
-              function.value("parameters", nlohmann::json::object())}});
+        nlohmann::json tool = {
+            {"type", "function"},
+            {"name", function.value("name", "")},
+            {"description", function.value("description", "")},
+            {"parameters",
+             function.value("parameters", nlohmann::json::object())}};
+        if (function.contains("strict")) {
+          tool["strict"] = function["strict"];
+        }
+        responses["tools"].push_back(std::move(tool));
       } else {
         responses["tools"].push_back(tool);
       }
