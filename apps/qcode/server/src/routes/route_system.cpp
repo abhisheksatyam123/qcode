@@ -4,12 +4,90 @@
 #include <qcode/session/session_store.h>
 
 #include <filesystem>
+#include <fstream>
+#include <memory>
 #include <nlohmann/json.hpp>
+#include <string_view>
 
 namespace fs = std::filesystem;
 
 namespace qcode {
 namespace server {
+
+namespace {
+
+// Content-Type for the pre-compressed WebUI files (see
+// cmake/compress_webui.cmake). Only extensions that get a .gz are listed.
+std::string_view webui_content_type(const std::string& path) {
+    auto ends = [&](std::string_view ext) {
+        return path.size() >= ext.size() &&
+               path.compare(path.size() - ext.size(), ext.size(), ext) == 0;
+    };
+    if (ends(".js")) return "application/javascript";
+    if (ends(".css")) return "text/css";
+    if (ends(".html")) return "text/html";
+    if (ends(".svg")) return "image/svg+xml";
+    if (ends(".json")) return "application/json";
+    if (ends(".ttf")) return "font/ttf";
+    return "application/octet-stream";
+}
+
+// Serves <webui>/<path>.gz with Content-Encoding: gzip when the client accepts
+// gzip and the pre-compressed copy exists. The file is streamed from disk, so
+// no per-request compression or full-file buffering happens. Anything else is
+// left to the normal mount-point handler.
+httplib::Server::HandlerResponse serve_precompressed(
+    const std::string& webui_dir, const httplib::Request& req,
+    httplib::Response& res) {
+    if (req.method != "GET" && req.method != "HEAD") {
+        return httplib::Server::HandlerResponse::Unhandled;
+    }
+    if (req.get_header_value("Accept-Encoding").find("gzip") == std::string::npos) {
+        return httplib::Server::HandlerResponse::Unhandled;
+    }
+    std::string rel = req.path == "/" ? "/index.html" : req.path;
+    if (rel.rfind("/api/", 0) == 0 || rel == "/health") {
+        return httplib::Server::HandlerResponse::Unhandled;
+    }
+    if (rel.find("..") != std::string::npos || rel.find('\\') != std::string::npos) {
+        return httplib::Server::HandlerResponse::Unhandled;
+    }
+    const std::string gz_path = webui_dir + rel + ".gz";
+    std::error_code ec;
+    if (!fs::is_regular_file(gz_path, ec)) {
+        return httplib::Server::HandlerResponse::Unhandled;
+    }
+    const auto size = fs::file_size(gz_path, ec);
+    if (ec) return httplib::Server::HandlerResponse::Unhandled;
+
+    res.set_header("Content-Encoding", "gzip");
+    res.set_header("Vary", "Accept-Encoding");
+    const std::string name = rel.substr(rel.find_last_of('/') + 1);
+    res.set_header("Cache-Control", name.rfind("vendor-", 0) == 0
+                                        ? "public, max-age=86400"
+                                        : "no-cache");
+    if (req.method == "HEAD") {
+        res.set_header("Content-Type", std::string(webui_content_type(rel)));
+        res.set_header("Content-Length", std::to_string(size));
+        return httplib::Server::HandlerResponse::Handled;
+    }
+    auto file = std::make_shared<std::ifstream>(gz_path, std::ios::binary);
+    if (!*file) return httplib::Server::HandlerResponse::Unhandled;
+    res.set_content_provider(
+        static_cast<size_t>(size), std::string(webui_content_type(rel)),
+        [file](size_t offset, size_t length, httplib::DataSink& sink) {
+            std::vector<char> buf(length);
+            file->clear();
+            file->seekg(static_cast<std::streamoff>(offset));
+            file->read(buf.data(), static_cast<std::streamsize>(length));
+            const auto got = file->gcount();
+            if (got <= 0) return false;
+            return sink.write(buf.data(), static_cast<size_t>(got));
+        });
+    return httplib::Server::HandlerResponse::Handled;
+}
+
+}  // namespace
 
 void register_system_routes(
     httplib::Server& svr,
@@ -28,6 +106,11 @@ void register_system_routes(
                                                     ? "public, max-age=86400"
                                                     : "no-cache");
             });
+            svr.set_pre_routing_handler(
+                [webui = options.webui_dir](const httplib::Request& req,
+                                            httplib::Response& res) {
+                    return serve_precompressed(webui, req, res);
+                });
         } else {
             LOG_WARN("Web UI directory not found at {}", options.webui_dir);
         }
