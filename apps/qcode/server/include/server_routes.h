@@ -18,8 +18,12 @@ namespace server {
 struct SecurityPolicy {
   bool loopback_bind = true;
   // When non-empty, every request except the health probes must carry
-  // "Authorization: Bearer <token>". Required when binding beyond loopback.
+  // "Authorization: Bearer <token>", or the session cookie. Required when binding
+  // beyond loopback.
   std::string token;
+  // Value of the session cookie that the token is exchanged for. Random per
+  // start, so the token itself never sits in a browser cookie.
+  std::string cookie_value;
 };
 
 struct ServerSetupOptions {
