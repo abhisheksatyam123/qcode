@@ -176,11 +176,22 @@ the top level of opencode.json (any `provider/model`), else the session's own
 model.
 `/rename` or a title given to `/new` is never replaced.
 
-Subagents: two kinds of agent, the orchestrator and its subagents, and one
-`task` tool for both. The orchestrator sees every opencode.json model in its
-prompt and picks one per task (omit `model` for its own). Subagents can list
-the team, message the lead or a sister, and start sisters; messages and
-background reports are delivered before the recipient's next step.
+Agent modes: exactly two, switched with `/mode [normal|orchestrator]` or
+Shift+Tab in the TUI (the mode picker / `/mode` in the Web UI, `agent_mode` on
+the server routes). The mode is stored per session; new sessions start in
+`normal`.
+
+- `normal`: one agent does the work itself with bash (and image). No `task`
+  tool and no model catalog in the prompt, so every request is smaller.
+- `orchestrator`: the lead manages subagent sessions. It sees every
+  opencode.json model in its prompt, splits the request into jobs, starts one
+  subagent per job with the `task` tool (in parallel, or in the background),
+  answers their messages and merges their reports.
+
+Subagents are child sessions, not a mode. They can list the team, message the
+lead or a sister, and start sisters; messages and background reports are
+delivered before the recipient's next step. Sessions saved with the retired
+`autonomous`/`monitor` modes open as `orchestrator`, and `plan` as `normal`.
 
 Automatic compaction: like Claude Code, a session compacts itself during the
 tool loop once the next request would carry `compaction.threshold_tokens` of
