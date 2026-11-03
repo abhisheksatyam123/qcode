@@ -23,6 +23,13 @@ namespace qcode {
 namespace {
 
 constexpr const char* kLead = "lead";
+// Pending messages kept per inbox. An inbox nobody drains (a finished lead, a
+// subagent that ended) must not grow without bound; the oldest notice is
+// dropped, and a dropped background report stays available from its session.
+constexpr std::size_t kMaxInboxItems = 256;
+// A subagent that fails on a transient provider error is resumed (same session,
+// same history) up to this many times, after a short backoff.
+constexpr int kMaxTransientRetries = 2;
 
 std::string new_child_session_id() {
   const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -169,7 +176,7 @@ class Team {
         const std::string to = owner_alive ? task.owner_session_id : task.lead_session_id;
         const std::string text = report_text(id, task.title, result);
         reports_[id] = {text, false};
-        inbox_[to].push_back({id, text});
+        push_inbox_locked(to, {id, text});
         --workers_;
         listener = listener_;
       }
@@ -179,19 +186,22 @@ class Team {
   }
 
   // A finished background task's report (marked delivered), if there is one.
+  // Once handed out, the text is freed: the session keeps the output anyway.
   std::optional<std::string> take_report(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = reports_.find(id);
-    if (it == reports_.end()) return std::nullopt;
+    if (it == reports_.end() || it->second.text.empty()) return std::nullopt;
+    std::string text = std::move(it->second.text);
+    it->second.text.clear();
     it->second.delivered = true;
-    return it->second.text;
+    return text;
   }
 
   void post(const std::string& to, std::string text) {
     std::function<void()> listener;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      inbox_[to].push_back({"", std::move(text)});
+      push_inbox_locked(to, {"", std::move(text)});
       listener = listener_;
     }
     cv_.notify_all();
@@ -205,7 +215,7 @@ class Team {
     if (it == inbox_.end()) return out;
     for (auto& item : it->second) {
       if (stale(item)) continue;
-      if (!item.task_id.empty()) reports_[item.task_id].delivered = true;
+      if (!item.task_id.empty()) release_report_locked(item.task_id);
       out.push_back(std::move(item.text));
     }
     inbox_.erase(it);
@@ -255,6 +265,24 @@ class Team {
   }
 
  private:
+  void push_inbox_locked(const std::string& to, InboxItem item) {
+    auto& box = inbox_[to];
+    box.push_back(std::move(item));
+    while (box.size() > kMaxInboxItems) {
+      if (!box.front().task_id.empty()) release_report_locked(box.front().task_id);
+      box.erase(box.begin());
+    }
+  }
+
+  // The report is delivered (or dropped unseen): mark it and free its text.
+  void release_report_locked(const std::string& id) {
+    auto it = reports_.find(id);
+    if (it == reports_.end()) return;
+    it->second.delivered = true;
+    it->second.text.clear();
+    it->second.text.shrink_to_fit();
+  }
+
   bool stale(const InboxItem& item) const {
     if (item.task_id.empty()) return false;
     auto it = reports_.find(item.task_id);
@@ -286,6 +314,41 @@ JsonValue task_item(const std::string& session_id, const std::string& lead,
           {"parent_session_id", lead}, {"description", title},
           {"agent", "subagent"},     {"model", model},
           {"status", status}};
+}
+
+// Errors a retry can fix: rate limits, overload, timeouts and dropped connections.
+bool is_transient_error(const std::string& text) {
+  std::string lower = text;
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  for (const char* marker :
+       {"429", "rate limit", "rate_limit", "overloaded", "502", "503", "504", "timed out",
+        "timeout", "connection reset", "temporarily unavailable"}) {
+    if (lower.find(marker) != std::string::npos) return true;
+  }
+  return false;
+}
+
+// Runs one subagent. After a transient failure it is resumed in the same child
+// session, whose history already ends with the prompt (task_run saved it).
+JsonValue run_subagent(const SubagentRunner& runner, JsonValue args,
+                       const std::shared_ptr<std::atomic<bool>>& abort) {
+  for (int attempt = 0;; ++attempt) {
+    JsonValue sub;
+    try {
+      sub = runner(args, abort);
+    } catch (const std::exception& e) {
+      sub = {{"error", std::string("subagent crashed: ") + e.what()}};
+    }
+    const bool retry = sub.is_object() && sub.contains("error") &&
+                       attempt < kMaxTransientRetries && !(abort && abort->load()) &&
+                       is_transient_error(error_text(sub["error"]));
+    if (!retry) return sub;
+    LOG_INFO("subagent {} hit a transient error; retrying ({}/{})",
+             args.value("session_id", std::string("?")), attempt + 1, kMaxTransientRetries);
+    args["resume"] = true;
+    std::this_thread::sleep_for(std::chrono::seconds(2 * (attempt + 1)));
+  }
 }
 
 std::string seconds_since(std::chrono::steady_clock::time_point t) {
@@ -761,12 +824,7 @@ JsonValue task_run(const JsonValue& args, const ToolExecutionContext& context) {
         session_id, task,
         [runner = context.subagent_runner, sub_args, abort_flag, session_id, title,
          model]() -> JsonValue {
-          JsonValue sub;
-          try {
-            sub = runner(sub_args, abort_flag);
-          } catch (const std::exception& e) {
-            sub = {{"error", std::string("subagent crashed: ") + e.what()}};
-          }
+          JsonValue sub = run_subagent(runner, sub_args, abort_flag);
           if (abort_flag->load() && sub.contains("error")) sub = {{"error", "killed"}};
           return finish_task(session_id, title, model, std::move(sub));
         });
@@ -784,12 +842,7 @@ JsonValue task_run(const JsonValue& args, const ToolExecutionContext& context) {
     std::string id;
     ~Unregister() { Team::instance().remove(id); }
   } unregister{session_id};
-  JsonValue sub;
-  try {
-    sub = context.subagent_runner(sub_args, context.abort_flag);
-  } catch (const std::exception& e) {
-    sub = {{"error", std::string("subagent crashed: ") + e.what()}};
-  }
+  JsonValue sub = run_subagent(context.subagent_runner, sub_args, context.abort_flag);
   return finish_task(session_id, title, model, std::move(sub));
 }
 
