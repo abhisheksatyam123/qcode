@@ -1,6 +1,7 @@
 #include <qcode/config/config.h>
 #include <qcode/core/ssl_config.h>
 #include <qcode/transform/provider_transform.h>
+#include <qcode/tools/task_target.h>
 #include "providers/anthropic/anthropic_oauth.h"
 #include "providers/internal/opencode_zen_headers.h"
 
@@ -485,6 +486,38 @@ std::string config_path() {
             .string();
     }
     return "opencode.json";
+}
+
+std::string config_subagent_model() {
+    namespace fs = std::filesystem;
+    static std::mutex mu;
+    static std::string cached_path;
+    static fs::file_time_type cached_mtime{};
+    static std::string cached_value;
+    const std::string path = config_path();
+    std::error_code ec;
+    const auto mtime = fs::last_write_time(path, ec);
+    std::lock_guard<std::mutex> lock(mu);
+    if (ec) {
+        cached_path.clear();
+        cached_value.clear();
+        return {};
+    }
+    if (path == cached_path && mtime == cached_mtime) return cached_value;
+    std::string value;
+    try {
+        std::ifstream in(path);
+        const auto doc = nlohmann::json::parse(in, nullptr, false, /*ignore_comments=*/true);
+        if (doc.is_object() && doc.contains("subagent_model") &&
+            doc["subagent_model"].is_string()) {
+            value = doc["subagent_model"].get<std::string>();
+        }
+    } catch (...) {
+    }
+    cached_path = path;
+    cached_mtime = mtime;
+    cached_value = value;
+    return value;
 }
 
 std::string get_notes_root() {
@@ -1004,9 +1037,20 @@ std::string format_provider_catalog_for_prompt(
     const bool has_self = !current_provider_id.empty() && !current_model_id.empty();
     std::string out = "### Models for subagents (from opencode.json)\n\n";
     out += "Pick the provider:model that fits each task (capability, speed, cost) and pass "
-           "it as `model` to `task`. Omit `model` to use your own";
-    if (has_self) {
-        out += " (`" + std::string(current_provider_id) + ":" + std::string(current_model_id) + "`)";
+           "it as `model` to `task`. ";
+    // Same default the task runner applies (task_target.h).
+    const std::string delegate =
+        default_subagent_model(providers, current_provider_id, current_model_id);
+    if (!delegate.empty()) {
+        out += "Omit `model` to use the delegation default `" + delegate +
+               "` (fast, low cost: right for most delegated jobs); name a stronger "
+               "model only for hard reasoning or large designs";
+    } else {
+        out += "Omit `model` to use your own";
+        if (has_self) {
+            out += " (`" + std::string(current_provider_id) + ":" +
+                   std::string(current_model_id) + "`)";
+        }
     }
     out += ". Prices are USD per 1M input/output tokens.\n\n";
     char price[64];

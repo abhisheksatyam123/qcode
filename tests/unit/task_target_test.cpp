@@ -1,6 +1,12 @@
 #include <qcode/tools/task_target.h>
 #include <qcode/tools/task_tool.h>
 
+#include <qcode/config/config.h>
+
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
@@ -177,6 +183,84 @@ TEST(TaskTargetTest, ExplicitCursorStillBinds) {
       catalog, "opencode", "big-pickle");
   EXPECT_TRUE(t.error.empty()) << t.error;
   EXPECT_EQ(t.provider_id, "cursor");
+}
+
+std::vector<ProviderInfo> haiku_catalog() {
+  ProviderInfo go;
+  go.id = "mockgo";
+  for (const char* id : {"claude-3-5-haiku-20241022", "claude-haiku-5-5",
+                         "claude-haiku-4-5", "claude-opus-5-5"}) {
+    ModelInfo m;
+    m.id = id;
+    m.tool_call = true;
+    go.models.push_back(m);
+  }
+  ProviderInfo other;
+  other.id = "openrouter";
+  ModelInfo h;
+  h.id = "anthropic/claude-haiku-6";
+  h.tool_call = true;
+  other.models.push_back(h);
+  ModelInfo no_tools;
+  no_tools.id = "anthropic/claude-haiku-9";  // cannot run a tool loop
+  other.models.push_back(no_tools);
+  return {go, other};
+}
+
+TEST(SubagentDefaultModelTest, PicksNewestHaikuOnLeadProviderFirst) {
+  const auto providers = haiku_catalog();
+  EXPECT_EQ(newest_haiku_model(providers, "mockgo"), "mockgo:claude-haiku-5-5");
+  // No preference: newest anywhere, tool-calling only.
+  EXPECT_EQ(newest_haiku_model(providers), "openrouter:anthropic/claude-haiku-6");
+  EXPECT_EQ(default_subagent_model(providers, "mockgo", "claude-opus-5-5",
+                                   std::string()),
+            "mockgo:claude-haiku-5-5");
+}
+
+TEST(SubagentDefaultModelTest, ConfiguredSubagentModelWins) {
+  const auto providers = haiku_catalog();
+  EXPECT_EQ(default_subagent_model(providers, "mockgo", "claude-opus-5-5",
+                                   std::string("mockgo/claude-haiku-4-5")),
+            "mockgo:claude-haiku-4-5");
+  // "inherit" keeps the lead's model.
+  EXPECT_EQ(default_subagent_model(providers, "mockgo", "claude-opus-5-5",
+                                   std::string("inherit")),
+            "");
+  // Unknown configured model falls back to the Haiku default.
+  EXPECT_EQ(default_subagent_model(providers, "mockgo", "claude-opus-5-5",
+                                   std::string("nope:missing")),
+            "mockgo:claude-haiku-5-5");
+}
+
+TEST(SubagentDefaultModelTest, NoHaikuMeansLeadModel) {
+  EXPECT_EQ(default_subagent_model(sample_catalog(), "cursor", "cursor-grok-4.6",
+                                   std::string()),
+            "");
+}
+
+TEST(SubagentDefaultModelTest, ReadsSubagentModelFromConfigAndCatalogNamesIt) {
+  const auto path = std::filesystem::temp_directory_path() / "qcode_subagent_model_test.json";
+  {
+    std::ofstream out(path);
+    out << R"({"subagent_model": "mockgo/claude-haiku-4-5"})";
+  }
+  const char* old = std::getenv("OPENCODE_CONFIG");
+  const std::string saved = old ? old : "";
+  setenv("OPENCODE_CONFIG", path.c_str(), 1);
+  EXPECT_EQ(config_subagent_model(), "mockgo/claude-haiku-4-5");
+  const auto providers = haiku_catalog();
+  EXPECT_EQ(default_subagent_model(providers, "mockgo", "claude-opus-5-5"),
+            "mockgo:claude-haiku-4-5");
+  const auto catalog =
+      format_provider_catalog_for_prompt(providers, "mockgo", "claude-opus-5-5");
+  EXPECT_NE(catalog.find("delegation default `mockgo:claude-haiku-4-5`"),
+            std::string::npos);
+  if (old) {
+    setenv("OPENCODE_CONFIG", saved.c_str(), 1);
+  } else {
+    unsetenv("OPENCODE_CONFIG");
+  }
+  std::filesystem::remove(path);
 }
 
 }  // namespace

@@ -1,3 +1,4 @@
+#include <qcode/config/config.h>
 #include <qcode/core/logger.h>
 #include <qcode/tools/task_target.h>
 #include <qcode/transform/provider_transform.h>
@@ -185,6 +186,76 @@ SubagentTarget resolve_subagent_target(
     return out;
   }
   return bind_spec(specs.front(), providers, default_provider_id, default_model_id);
+}
+
+namespace {
+
+// Numeric runs of a model id, in order: claude-haiku-5-5 -> {5, 5},
+// claude-3-5-haiku-20241022 -> {3, 5, 20241022}. Compared
+// lexicographically, newer Claude generations sort higher.
+std::vector<long long> version_key(std::string_view id) {
+  std::vector<long long> key;
+  long long cur = -1;
+  for (const char c : id) {
+    if (c >= '0' && c <= '9') {
+      cur = (cur < 0 ? 0 : cur) * 10 + (c - '0');
+      if (cur > 1'000'000'000'000LL) cur = 1'000'000'000'000LL;
+    } else if (cur >= 0) {
+      key.push_back(cur);
+      cur = -1;
+    }
+  }
+  if (cur >= 0) key.push_back(cur);
+  return key;
+}
+
+}  // namespace
+
+std::string newest_haiku_model(const std::vector<ProviderInfo>& providers,
+                               std::string_view preferred_provider_id) {
+  const ProviderInfo* best_provider = nullptr;
+  const ModelInfo* best_model = nullptr;
+  std::vector<long long> best_key;
+  bool best_preferred = false;
+  for (const auto& provider : providers) {
+    if (!is_provider_authenticated(provider)) continue;
+    const bool preferred = !preferred_provider_id.empty() &&
+                           (provider.id == preferred_provider_id ||
+                            provider.name == preferred_provider_id);
+    for (const auto& model : provider.models) {
+      if (!is_model_working(provider, model)) continue;
+      if (to_lower(model.id).find("haiku") == std::string::npos) continue;
+      auto key = version_key(model.id);
+      const bool better =
+          best_model == nullptr || (preferred && !best_preferred) ||
+          (preferred == best_preferred && key > best_key);
+      if (better) {
+        best_provider = &provider;
+        best_model = &model;
+        best_key = std::move(key);
+        best_preferred = preferred;
+      }
+    }
+  }
+  if (best_model == nullptr) return {};
+  return best_provider->id + ":" + best_model->id;
+}
+
+std::string default_subagent_model(const std::vector<ProviderInfo>& providers,
+                                   std::string_view lead_provider_id,
+                                   std::string_view lead_model_id,
+                                   std::optional<std::string> configured) {
+  const std::string spec = configured ? *configured : config_subagent_model();
+  if (!spec.empty()) {
+    if (is_inherit_model_id(spec)) return {};
+    const auto target =
+        resolve_subagent_target(spec, providers, lead_provider_id, lead_model_id);
+    if (target.provider != nullptr && target.model_info != nullptr) {
+      return target.provider_id + ":" + target.model_id;
+    }
+    LOG_WARN("subagent_model '{}' is not in the catalog; using the Haiku default", spec);
+  }
+  return newest_haiku_model(providers, lead_provider_id);
 }
 
 }  // namespace qcode

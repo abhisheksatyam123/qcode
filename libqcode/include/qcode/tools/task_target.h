@@ -2,6 +2,7 @@
 
 #include <qcode/config/provider_info.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,5 +33,24 @@ SubagentTarget resolve_subagent_target(
     const std::vector<ProviderInfo>& providers,
     std::string_view default_provider_id,
     std::string_view default_model_id);
+
+// The model a subagent runs on when its task names none, as
+// "provider:model", or "" for the lead's own model:
+//   1. opencode.json "subagent_model" (see config_subagent_model()), when it
+//      resolves in the catalog ("inherit" -> "");
+//   2. else the newest Claude Haiku model in the catalog (fast and cheap
+//      for delegated work), on the lead's provider first;
+//   3. else "".
+// `configured` overrides step 1's lookup (tests); nullopt reads the config.
+std::string default_subagent_model(
+    const std::vector<ProviderInfo>& providers,
+    std::string_view lead_provider_id,
+    std::string_view lead_model_id,
+    std::optional<std::string> configured = std::nullopt);
+
+// Newest "haiku" model of the catalog as "provider:model" ("" if none),
+// preferring `preferred_provider_id`. Only models that can run a tool loop.
+std::string newest_haiku_model(const std::vector<ProviderInfo>& providers,
+                               std::string_view preferred_provider_id = "");
 
 }  // namespace qcode

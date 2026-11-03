@@ -36,6 +36,11 @@ bool login_anthropic_oauth(std::string* out_error = nullptr);
 // $XDG_CONFIG_HOME/opencode/opencode.json, else ~/.config/opencode/opencode.json.
 [[nodiscard]] std::string config_path();
 
+// opencode.json top-level "subagent_model" ("provider/model",
+// "provider:model", or "inherit" for the lead's own model); empty when
+// unset. Re-read only when the file changes.
+[[nodiscard]] std::string config_subagent_model();
+
 // Resolve the notes root directory (OPENCODE_NOTES_ROOT / HOME env, else default).
 [[nodiscard]] std::string get_notes_root();
 

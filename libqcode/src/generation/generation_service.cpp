@@ -335,11 +335,21 @@ static JsonValue run_subagent_turn(const SubagentEnv& env,
   const std::string description = args.value("description", "");
   const std::string sub_session_id = args.value("session_id", "");
 
+  // A task that names no model runs on the delegation default (opencode.json
+  // subagent_model, else the newest Haiku), not on the lead's model.
+  std::string requested_model = args.value("model", "");
+  if (requested_model.empty()) {
+    requested_model =
+        default_subagent_model(*env.providers, env.provider_id, env.model_id);
+    if (!requested_model.empty()) {
+      LOG_INFO("run_subagent_turn: no model given; delegating on {}", requested_model);
+    }
+  }
   SubagentTarget target = resolve_subagent_target(
-      args.value("model", ""), *env.providers, env.provider_id, env.model_id);
-  if (!target.provider && !env.model_id.empty() && args.value("model", "") != env.model_id) {
+      requested_model, *env.providers, env.provider_id, env.model_id);
+  if (!target.provider && !env.model_id.empty() && requested_model != env.model_id) {
     LOG_WARN("run_subagent_turn: requested model '{}' not found, falling back to lead model '{}:{}'",
-             args.value("model", ""), env.provider_id, env.model_id);
+             requested_model, env.provider_id, env.model_id);
     target = resolve_subagent_target(
         env.model_id, *env.providers, env.provider_id, env.model_id);
   }

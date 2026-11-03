@@ -182,6 +182,17 @@ prompt and picks one per task (omit `model` for its own). Subagents can list
 the team, message the lead or a sister, and start sisters; messages and
 background reports are delivered before the recipient's next step.
 
+Delegation model: a `task` that names no `model` runs on the delegation
+default, not on the lead's model. That is the top-level `subagent_model` in
+opencode.json (any `provider/model`; `"inherit"` keeps the lead's model),
+else the newest Claude Haiku in the catalog (the lead's provider first; for
+example `claude-haiku-5-5`), else the lead's model. The orchestrator's model
+catalog names the default, so it only picks a bigger model for hard jobs.
+
+```json
+{"subagent_model": "anthropic/claude-haiku-5-5"}
+```
+
 Automatic compaction: like Claude Code, a session compacts itself during the
 tool loop once the next request would carry `compaction.threshold_tokens` of
 context. The loop summarizes with the exact request it was about to send plus
