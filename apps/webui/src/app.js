@@ -4286,6 +4286,7 @@ async function loadDelegatedSessionsTab() {
       });
     }
 
+    const statusLabel = { running: 'Running', completed: 'Done', done: 'Done', failed: 'Failed', error: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted', killed: 'Killed', saved: 'Saved', queued: 'Queued' };
     const totalCount = combined.length;
     let filtered = combined;
     if (state.sessionsFilterText) {
@@ -4303,8 +4304,21 @@ async function loadDelegatedSessionsTab() {
     sessionsContent.innerHTML = '';
     const heading = document.createElement('div');
     heading.className = 'panel-subhead';
+    // Per-status counts, most active first: "2 Running · 1 Done · 1 Failed".
+    const counts = new Map();
+    for (const c of combined) {
+      const key = String(c.status || 'saved').toLowerCase();
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const order = ['running', 'queued', 'failed', 'error', 'interrupted', 'killed', 'cancelled', 'done', 'completed', 'saved'];
+    const summary = [...counts.entries()]
+      .sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
+      .map(([key, n]) => n + ' ' + (statusLabel[key] || key))
+      .join(' · ');
     heading.innerHTML = '<span>' + (state.sessionsFilterText ? `${filtered.length} of ${totalCount}` : String(totalCount))
-      + ' subagent' + (totalCount === 1 ? '' : 's') + '</span><span class="panel-subhead-hint">Click to open in chat</span>';
+      + ' subagent' + (totalCount === 1 ? '' : 's') + '</span>'
+      + (summary ? '<span class="panel-subhead-summary">' + esc(summary) + '</span>' : '')
+      + '<span class="panel-subhead-hint">Click to open in chat</span>';
     sessionsContent.appendChild(heading);
 
     if (filtered.length === 0) {
@@ -4314,7 +4328,6 @@ async function loadDelegatedSessionsTab() {
 
     const list = document.createElement('div');
     list.className = 'agent-list';
-    const statusLabel = { running: 'Running', completed: 'Done', done: 'Done', failed: 'Failed', error: 'Failed', cancelled: 'Cancelled', saved: 'Saved', queued: 'Queued' };
     for (const item of filtered) {
       const sid = item.sid;
       const row = document.createElement('div');

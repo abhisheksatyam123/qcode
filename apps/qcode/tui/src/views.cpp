@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <iomanip>
+#include <map>
 #include <algorithm>
 #include <climits>
 #include <filesystem>
@@ -1455,8 +1456,20 @@ ftxui::Element render_view(
             content_rows.push_back(
                 text("  Spawn subagents using the task tool. They will appear here for the active session.") | dim);
         } else {
+            // Per-status counts after the total: "▶ SUBAGENTS (3) · 1 running · 2 done".
+            std::map<std::string, int> counts;
+            for (const auto& t : tasks) ++counts[t.status.empty() ? std::string("saved") : t.status];
+            std::string summary;
+            for (const char* key : {"running", "error", "interrupted", "done", "saved"}) {
+                auto it = counts.find(key);
+                if (it == counts.end()) continue;
+                const char* label = std::string_view(key) == "error" ? "failed"
+                                  : std::string_view(key) == "done" ? "done"
+                                  : key;
+                summary += " · " + std::to_string(it->second) + " " + label;
+            }
             content_rows.push_back(hbox(
-                text("▶ SUBAGENTS (" + std::to_string(tasks.size()) + ")") | bold | color(Color::CyanLight)
+                text("▶ SUBAGENTS (" + std::to_string(tasks.size()) + ")" + summary) | bold | color(Color::CyanLight)
             ));
             for (size_t row_i = 0; row_i < tasks.size(); ++row_i) {
                 const auto& t = tasks[row_i];
