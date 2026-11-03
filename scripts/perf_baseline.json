@@ -1,7 +1,12 @@
 {
-  "startup_ms": 30.3,
+  "startup_ms": 28.3,
   "idle_rss_mb": 16.2,
-  "loaded_rss_mb": 17.3,
-  "turns": 50,
-  "server_errors": 0
+  "loaded_rss_mb": 25.2,
+  "turns": 30,
+  "turns_generated": 30,
+  "stub_hits": 60,
+  "turn_p50_ms": 4.6,
+  "server_errors": 0,
+  "tui_first_paint_ms": 85.9,
+  "tui_rss_mb": 14.2
 }
