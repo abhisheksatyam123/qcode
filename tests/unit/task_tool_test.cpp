@@ -531,6 +531,36 @@ TEST(TaskToolTest, PermanentFailureIsNotRetried) {
   EXPECT_EQ(out["metadata"].value("status", ""), "error");
 }
 
+TEST(TaskToolTest, ListedStatusFollowsAFinishedSubagentThatRunsAgain) {
+  const std::string parent = "parent_list_cache";
+  qcode::session::ensure_session_row(parent, "Parent", "p", "m", "/ws");
+  ToolExecutionContext context;
+  context.session_id = parent;
+  bool fail_next = false;
+  context.subagent_runner = [&](const JsonValue&, std::shared_ptr<std::atomic<bool>>) {
+    if (fail_next) return JsonValue{{"error", "provider exploded"}};
+    return JsonValue{{"output", "first run"}};
+  };
+
+  const JsonValue first = TaskTool::execute(JsonValue{{"prompt", "a"}}, context);
+  const std::string child = first["metadata"].value("sessionId", "");
+  ASSERT_FALSE(child.empty());
+  auto status_of = [&](const std::string& id) {
+    const JsonValue listing = TaskTool::list_tasks(parent);
+    for (const auto& t : listing["metadata"]["tasks"]) {
+      if (t.value("task_id", "") == id) return t.value("status", std::string());
+    }
+    return std::string("missing");
+  };
+  EXPECT_EQ(status_of(child), "done");
+  EXPECT_EQ(status_of(child), "done");  // second poll answers from the cache
+
+  // Resuming the finished subagent must not leave the cached "done" behind.
+  fail_next = true;
+  TaskTool::execute(JsonValue{{"task_id", child}, {"prompt", "again"}}, context);
+  EXPECT_EQ(status_of(child), "error");
+}
+
 TEST(TaskToolTest, SwappedCursorTaskFieldsAreRepaired) {
   const JsonValue norm = TaskTool::normalize_spawn_args(JsonValue{
       {"prompt", "explore"},
