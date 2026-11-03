@@ -311,6 +311,10 @@ const providerSelect = document.getElementById('provider-select');
 const modelSelect = document.getElementById('model-select');
 const reasoningSelect = document.getElementById('reasoning-select');
 const modalOverlay = document.getElementById('modal-overlay');
+// One backdrop-click handler for every modal. Modals used to add their own
+// listener on each open and only remove it on a backdrop click, so every
+// modal closed by Escape or a button left one more listener behind.
+modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) closeModal(); });
 const statusSession = document.getElementById('header-session-title');
 const statusWorkspace = document.getElementById('header-session-workspace');
 const newSessionBtn = document.getElementById('new-session-btn');
@@ -1647,9 +1651,6 @@ function showNewSessionModal() {
   function close() { modalOverlay.classList.remove('active'); modalOverlay.innerHTML = ''; }
 
   document.getElementById('ns-cancel').addEventListener('click', close);
-  modalOverlay.addEventListener('click', function bd(e) {
-    if (e.target === modalOverlay) { modalOverlay.removeEventListener('click', bd); close(); }
-  });
 
   async function doCreate() {
     const title = titleInput.value.trim();
@@ -1815,7 +1816,6 @@ function showRenameModal(targetSessionId, currentTitle) {
       </div>`;
     modalOverlay.classList.add('active');
     document.getElementById('modal-close-btn').addEventListener('click', closeModal);
-    modalOverlay.addEventListener('click', function bd(e) { if (e.target === modalOverlay) { modalOverlay.removeEventListener('click', bd); closeModal(); } });
     return;
   }
   modalOverlay.innerHTML = `
@@ -1862,7 +1862,6 @@ function showRenameModal(targetSessionId, currentTitle) {
     if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
     e.stopPropagation();
   });
-  modalOverlay.addEventListener('click', function bd(e) { if (e.target === modalOverlay) { modalOverlay.removeEventListener('click', bd); closeModal(); } });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2597,6 +2596,9 @@ async function syncSessionMessages(session) {
 // opts.force refetches the history even when the revision looks unchanged.
 async function refreshSession(session, opts) {
   if (!session || !session.id || session.stub) return;
+  // A tab closed mid-turn (its end-of-turn refresh is still queued) must not
+  // refetch its whole history into an object nothing renders any more.
+  if (!state.openSessions.includes(session)) return;
   const force = !!(opts && opts.force);
   if (session.refreshing) {
     if (force || !session.refreshAgain) session.refreshAgain = force ? 'force' : 'light';
@@ -5846,6 +5848,10 @@ async function deleteSessionPermanently(id) {
       }
     }
     state.openSessions = state.openSessions.filter(s => !removedIds.has(s.id));
+    // Drafts are keyed by session id; a deleted session's draft would otherwise sit in localStorage forever.
+    for (const rid of removedIds) {
+      try { localStorage.removeItem('qcode-draft-' + rid); } catch (_) {}
+    }
 
     if (removedIds.has(state.sessionId)) {
       if (state.openSessions.length > 0) {
