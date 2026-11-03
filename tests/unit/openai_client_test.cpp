@@ -165,8 +165,10 @@ TEST(OpenAIRequestBuilderTest, ZenSessionIdCarriesCurrentDescendingTimestamp) {
           .count());
   constexpr uint64_t kTimestampMask = (1ull << 36) - 1;
   const uint64_t now_ts36 = now_ms & kTimestampMask;
-  const uint64_t age =
-      (decoded_ts36 + kTimestampMask + 1 - now_ts36) & kTimestampMask;
+  // Age is now minus the id's timestamp. The id is minted a few ms before this
+  // read, so the difference is small and positive; the old operand order wrapped
+  // to ~2^36 whenever the clock had moved on by a millisecond or more.
+  const uint64_t age = (now_ts36 - decoded_ts36) & kTimestampMask;
   EXPECT_LE(age, 5000ull);
 }
 

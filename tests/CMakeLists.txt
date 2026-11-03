@@ -8,6 +8,7 @@ add_executable(qcode_tests
     unit/mock_provider_test.cpp
     unit/provider_factory_test.cpp
     unit/tui_bus_test.cpp
+    unit/agent_mode_test.cpp
     unit/bus_json_codec_test.cpp
     unit/session_store_test.cpp
     unit/tool_catalog_test.cpp

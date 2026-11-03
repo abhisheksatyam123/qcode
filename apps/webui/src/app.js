@@ -279,7 +279,7 @@ const state = {
   // UI Tabs & layout state
   activeTab: 'chat', // 'chat' | 'files' | 'stats' | 'sessions'
   parentSessionId: null,
-  agentMode: 'orchestrator',
+  agentMode: 'normal',
   layoutMode: 'tab', // 'tab' or 'split'
   // Files tab: explorer + editor
   filesSubtab: 'explorer', // 'explorer' | 'git'
@@ -311,6 +311,23 @@ const providerSelect = document.getElementById('provider-select');
 const modelSelect = document.getElementById('model-select');
 const reasoningSelect = document.getElementById('reasoning-select');
 const modalOverlay = document.getElementById('modal-overlay');
+const streamStatusEl = document.getElementById('stream-status');
+// Last element focused outside the modal, restored when the modal closes.
+let modalReturnFocus = null;
+document.addEventListener('focusin', (e) => {
+  if (!modalOverlay.contains(e.target)) modalReturnFocus = e.target;
+}, true);
+// Keep Tab / Shift+Tab cycling inside an open modal (focus trap).
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || !isModalOpen()) return;
+  const focusables = [...modalOverlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')];
+  if (!focusables.length) { e.preventDefault(); return; }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const inside = modalOverlay.contains(document.activeElement);
+  if (e.shiftKey && (!inside || document.activeElement === first)) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (!inside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+}, true);
 const statusSession = document.getElementById('header-session-title');
 const statusWorkspace = document.getElementById('header-session-workspace');
 const newSessionBtn = document.getElementById('new-session-btn');
@@ -1594,8 +1611,7 @@ function updateStatusBar() {
     if (!isSub) {
       agentModeBtn.textContent = formatAgentModeTitle(state.agentMode);
       agentModeBtn.classList.remove('subagent');
-      agentModeBtn.classList.toggle('autonomous', state.agentMode === 'autonomous' || state.agentMode === 'monitor');
-      agentModeBtn.classList.toggle('plan', state.agentMode === 'plan');
+      agentModeBtn.classList.toggle('orchestrator', normalizeAgentMode(state.agentMode) === 'orchestrator');
       agentModeBtn.title = `Agent Mode: ${formatAgentModeTitle(state.agentMode)} (Click to switch)`;
     }
   }
@@ -1644,7 +1660,7 @@ function showNewSessionModal() {
 
   titleInput.focus();
 
-  function close() { modalOverlay.classList.remove('active'); modalOverlay.innerHTML = ''; }
+  function close() { closeModal(); }
 
   document.getElementById('ns-cancel').addEventListener('click', close);
   modalOverlay.addEventListener('click', function bd(e) {
@@ -1708,6 +1724,11 @@ function updateLayoutUI() {
     if (sessionsPanel) sessionsPanel.classList.remove('hidden');
     if (tabSessionsBtn) tabSessionsBtn.classList.add('active');
   }
+  [tabChatBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
+    if (!b) return;
+    if (b.classList.contains('active')) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
 
   renderSessionTabs();
 }
@@ -1724,6 +1745,9 @@ function closeModal() {
   modalOverlay.classList.remove('active');
   modalOverlay.innerHTML = '';
   if (pickerCleanup) { pickerCleanup(); pickerCleanup = null; }
+  const back = modalReturnFocus;
+  modalReturnFocus = null;
+  if (back && back.isConnected && typeof back.focus === 'function') back.focus({ preventScroll: true });
 }
 
 // ── Fuzzy finder ──
@@ -1742,11 +1766,12 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
   modalOverlay.innerHTML = `
     <div class="picker-modal fuzzy-picker">
       <div class="picker-header">${esc(title)}</div>
-      <input class="rename-input fuzzy-input" id="fuzzy-input" type="text"
+      <input class="rename-input fuzzy-input" id="fuzzy-input" type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="fuzzy-body"
              placeholder="${esc(placeholder || 'Type to filter...')}" value="${esc(query)}" autofocus />
-      <div class="picker-body" id="fuzzy-body"></div>
+      <div class="picker-body" id="fuzzy-body" role="listbox" aria-label="${esc(title)}"></div>
       <div class="picker-footer"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>Enter</kbd> select</span><span><kbd>Esc</kbd> close</span></div>
     </div>`;
+  modalOverlay.setAttribute('aria-label', title);
   modalOverlay.classList.add('active');
   const input = document.getElementById('fuzzy-input');
   const body = document.getElementById('fuzzy-body');
@@ -1765,11 +1790,11 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
       const it = filtered[i];
       if (it.category && it.category !== lastCat) {
         lastCat = it.category;
-        html += `<div class="picker-category">${esc(lastCat)}</div>`;
+        html += `<div class="picker-category" role="presentation">${esc(lastCat)}</div>`;
       }
       const cls = i === cursorIdx ? 'picker-item selected' : 'picker-item';
       const marker = it.isActive ? '<span class="active-dot" title="Current"></span>' : '';
-      html += `<div class="${cls}" data-idx="${i}">`;
+      html += `<div class="${cls}" id="fuzzy-opt-${i}" role="option" aria-selected="${i === cursorIdx}" data-idx="${i}">`;
       html += `<span class="marker">${marker}</span>`;
       html += `<span class="item-label">${esc(it.label)}</span>`;
       if (it.sublabel) html += `<span class="item-id">${esc(it.sublabel)}</span>`;
@@ -1782,6 +1807,7 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
     body.innerHTML = html;
     const sel = body.querySelector('.picker-item.selected');
     if (sel) sel.scrollIntoView({ block: 'nearest' });
+    input.setAttribute('aria-activedescendant', filtered.length ? 'fuzzy-opt-' + cursorIdx : '');
     body.querySelectorAll('.picker-item').forEach(el => {
       el.addEventListener('click', () => { const idx = parseInt(el.dataset.idx); closeModal(); onSelect(filtered[idx]); });
     });
@@ -1794,7 +1820,7 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
     if (ev.key === 'ArrowDown') { ev.preventDefault(); cursorIdx = Math.min(cursorIdx + 1, Math.max(0, filtered.length - 1)); renderBody(); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); cursorIdx = Math.max(cursorIdx - 1, 0); renderBody(); }
     else if (ev.key === 'Enter') { ev.preventDefault(); if (filtered[cursorIdx]) { closeModal(); onSelect(filtered[cursorIdx]); } }
-    else if (ev.key === 'Escape') { ev.preventDefault(); closeModal(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeModal(); }
   });
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
@@ -1906,17 +1932,19 @@ function updateSlashMenu() {
 function showSlashMenu(matches) {
   if (!slashMenuEl) { slashMenuEl = document.createElement('div'); slashMenuEl.className = 'slash-menu'; promptInput.parentElement.appendChild(slashMenuEl); }
   slashActiveIdx = 0;
+  slashMenuEl.setAttribute('role', 'listbox');
   slashMenuEl.innerHTML = matches.map((m, i) =>
-    `<div class="slash-menu-item${i === 0 ? ' active' : ''}" data-cmd="${m.name}"><span class="cmd-name">${m.name}</span><span class="cmd-desc">${m.desc}</span></div>`
+    `<div class="slash-menu-item${i === 0 ? ' active' : ''}" role="option" aria-selected="${i === 0}" data-cmd="${m.name}"><span class="cmd-name">${m.name}</span><span class="cmd-desc">${m.desc}</span></div>`
   ).join('');
   slashMenuEl.style.display = 'block';
+  promptInput.setAttribute('aria-expanded', 'true');
   slashMenuEl.querySelectorAll('.slash-menu-item').forEach(el => {
     el.addEventListener('click', () => { const cmd = el.dataset.cmd; promptInput.value = ''; closeSlashMenu(); handleSlashCommand(cmd); });
   });
 }
 
-function updateSlashMenuSelection(items) { items.forEach((el, i) => { el.classList.toggle('active', i === slashActiveIdx); }); }
-function closeSlashMenu() { if (slashMenuEl) { slashMenuEl.style.display = 'none'; slashMenuEl.innerHTML = ''; } slashActiveIdx = -1; }
+function updateSlashMenuSelection(items) { items.forEach((el, i) => { const on = i === slashActiveIdx; el.classList.toggle('active', on); el.setAttribute('aria-selected', String(on)); }); }
+function closeSlashMenu() { if (slashMenuEl) { slashMenuEl.style.display = 'none'; slashMenuEl.innerHTML = ''; } slashActiveIdx = -1; promptInput.setAttribute('aria-expanded', 'false'); }
 
 function addSystemMessage(text) {
   const session = state.openSessions.find(s => s.id === state.sessionId);
@@ -1929,37 +1957,36 @@ function addSystemMessage(text) {
   }
 }
 
+// Two agent modes (server: generation/agent_mode.h). Retired modes map
+// onto them: autonomous/monitor delegated (orchestrator), plan/build did not.
+function normalizeAgentMode(mode) {
+  if (mode === 'subagent') return 'subagent';
+  if (mode === 'orchestrator' || mode === 'autonomous' || mode === 'monitor') return 'orchestrator';
+  return 'normal';
+}
+
 function formatAgentModeTitle(mode) {
-  if (mode === 'autonomous' || mode === 'monitor') return 'Autonomous Monitor';
-  if (mode === 'plan') return 'Plan Mode';
-  if (mode === 'subagent') return 'Subagent';
-  if (mode && mode !== 'orchestrator') return mode;
-  return 'Orchestrator';
+  const m = normalizeAgentMode(mode);
+  if (m === 'subagent') return 'Subagent';
+  return m === 'orchestrator' ? 'Orchestrator' : 'Normal';
 }
 
 async function showAgentModePicker() {
-  const currentMode = state.agentMode || 'orchestrator';
+  const currentMode = normalizeAgentMode(state.agentMode);
   const modes = [
     {
+      id: 'normal',
+      label: 'Normal',
+      sublabel: 'Works alone: reads, edits and verifies with tools, no subagents',
+      isActive: currentMode === 'normal',
+      badges: [{ type: 'ctx', text: 'Default' }]
+    },
+    {
       id: 'orchestrator',
-      label: '⚡ Lead Orchestrator',
-      sublabel: 'Default: plans, executes tools, delegates to parallel subagents',
+      label: 'Orchestrator',
+      sublabel: 'Manages subagent sessions: delegates jobs in parallel, monitors and merges reports',
       isActive: currentMode === 'orchestrator',
       badges: [{ type: 'reasoning', text: 'Lead' }]
-    },
-    {
-      id: 'autonomous',
-      label: '🔄 Autonomous Monitor Agent',
-      sublabel: 'Self-running: delegates to subagents, monitors long-running tasks, autocompacts',
-      isActive: currentMode === 'autonomous' || currentMode === 'monitor',
-      badges: [{ type: 'free', text: 'Self-Running' }]
-    },
-    {
-      id: 'plan',
-      label: '📐 Plan Mode',
-      sublabel: 'Read-only architecture analysis & implementation planning',
-      isActive: currentMode === 'plan',
-      badges: [{ type: 'ctx', text: 'Planning' }]
     }
   ];
 
@@ -1970,6 +1997,8 @@ async function showAgentModePicker() {
 }
 
 async function selectAgentMode(mode) {
+  mode = normalizeAgentMode(mode);
+  if (mode === 'subagent') return;
   state.agentMode = mode;
   const session = state.openSessions.find(s => s.id === state.sessionId);
   if (session) {
@@ -1994,10 +2023,10 @@ function handleAgentCommand(args) {
   const clean = (args || '').trim().toLowerCase();
   if (clean === 'orchestrator' || clean === 'lead') {
     selectAgentMode('orchestrator');
-  } else if (clean === 'autonomous' || clean === 'monitor' || clean === 'self') {
-    selectAgentMode('autonomous');
-  } else if (clean === 'plan') {
-    selectAgentMode('plan');
+  } else if (clean === 'normal') {
+    selectAgentMode('normal');
+  } else if (clean === 'toggle') {
+    selectAgentMode(normalizeAgentMode(state.agentMode) === 'orchestrator' ? 'normal' : 'orchestrator');
   } else {
     showAgentModePicker();
   }
@@ -2047,6 +2076,8 @@ function handleHelpCommand() {
         <div class="help-row"><kbd>Esc</kbd><span>Stop generation</span></div>
         <div class="help-row"><kbd>/retry</kbd><span>Retry last prompt</span></div>
         <div class="help-row"><kbd>F2</kbd><span>Toggle thinking</span></div>
+        <div class="help-row"><kbd>Ctrl</kbd>+<kbd>B</kbd><span>Toggle sidebar</span></div>
+        <div class="help-row"><kbd>Alt</kbd>+<kbd>F</kbd><span>Toggle file tree</span></div>
         <div class="help-row"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd><span>Chat / Files / Stats / Subagents</span></div>
         <div class="help-row"><kbd>/theme</kbd><span>Switch theme</span></div>
         <div class="help-row"><kbd>/queue</kbd><span>List or drop queued prompts</span></div>
@@ -2067,6 +2098,33 @@ function handleHelpCommand() {
   document.addEventListener('keydown', close, true);
 }
 
+// Hex colour helpers for theme contrast. Non-hex inputs are passed through.
+function mixHex(a, b, p) {
+  if (!/^#[0-9a-f]{6}$/i.test(a) || !/^#[0-9a-f]{6}$/i.test(b)) return a;
+  return '#' + [1, 3, 5].map(i => {
+    const x = parseInt(a.slice(i, i + 2), 16);
+    const y = parseInt(b.slice(i, i + 2), 16);
+    return Math.round(x + (y - x) * p).toString(16).padStart(2, '0');
+  }).join('');
+}
+function contrastRatio(a, b) {
+  const lum = (c) => [1, 3, 5].map(i => {
+    const v = parseInt(c.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+// Move `fg` toward `target` until it reaches `min` contrast on every background.
+function readableTone(fg, target, bgs, min) {
+  if (![fg, target, ...bgs].every(c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c))) return fg;
+  for (let p = 0; p <= 1.0001; p += 0.05) {
+    const c = mixHex(fg, target, p);
+    if (bgs.every(b => contrastRatio(c, b) >= min)) return c;
+  }
+  return target;
+}
+
 function applyTheme(name) {
   const t = THEMES[name];
   if (!t) return false;
@@ -2079,8 +2137,11 @@ function applyTheme(name) {
   set('--surface-raised', t.raised);
   set('--surface-soft', t.surface);
   set('--text', t.text);
-  set('--muted', t.muted);
-  set('--faint', `color-mix(in srgb, ${t.muted} 72%, ${t.bg})`);
+  // Muted and faint text must stay readable (WCAG AA 4.5:1) on every surface.
+  const surfaces = [t.bg, t.surface, t.raised].filter(Boolean);
+  const muted = readableTone(t.muted, t.text, surfaces, 4.5);
+  set('--muted', muted);
+  set('--faint', readableTone(mixHex(muted, t.bg, 0.72), t.text, surfaces, 4.5));
   set('--accent', t.accent);
   set('--accent-strong', t.accent2);
   set('--blue', t.accent2);
@@ -2469,7 +2530,7 @@ async function loadSessionData(id) {
       session.workspace = info.workspace || '';
       session.provider = info.provider || '';
       session.model = info.model || '';
-      session.agentMode = info.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+      session.agentMode = info.agent_mode ? normalizeAgentMode(info.agent_mode) : (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
       session.reasoning = info.reasoning_mode || session.reasoning || state.reasoning || 'low';
       session.parentSessionId = info.parent_session_id || state.parentSessionId || '';
       // Taken before /messages, so a write in between still reads as a change.
@@ -2496,7 +2557,7 @@ async function loadSessionData(id) {
 // Lightweight session built from a /sessions row. History is fetched on first open.
 function makeSessionStub(row) {
   const id = row.id;
-  const agentMode = row.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+  const agentMode = row.agent_mode ? normalizeAgentMode(row.agent_mode) : (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
   return {
     id: id,
     title: row.title || ((agentMode === 'subagent' ? 'Subagent ' : 'Session ') + id.substring(0, 8)),
@@ -2774,7 +2835,7 @@ function postGenerate(session, text) {
       text,
       provider: resolved.provider,
       model: resolved.model,
-      agent_mode: session.agentMode || state.agentMode || 'orchestrator',
+      agent_mode: normalizeAgentMode(session.agentMode || state.agentMode),
       reasoning_mode: state.reasoning,
       session_id: session.id
     })
@@ -5475,7 +5536,13 @@ async function getFsPath(rel) {
 
 const MD_IMG_EXTS = /^(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i;
 
+let lastGenerating = null;
 function setGenerating(on) {
+  if (messagesEl) messagesEl.setAttribute('aria-busy', on ? 'true' : 'false');
+  if (streamStatusEl && lastGenerating !== Boolean(on)) {
+    if (lastGenerating !== null) streamStatusEl.textContent = on ? 'Generating response' : 'Response complete';
+    lastGenerating = Boolean(on);
+  }
   sendBtn.disabled = false;
   promptInput.disabled = false;
   sendBtn.innerHTML = on
@@ -5757,7 +5824,7 @@ async function switchSession(id) {
   state.sessionId = id;
   state.sessionTitle = stripTags(session.title || '');
   state.sessionWorkspace = stripTags(session.workspace || '');
-  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
   if (session.reasoning) {
     state.reasoning = session.reasoning;
     if (reasoningSelect) reasoningSelect.value = session.reasoning;

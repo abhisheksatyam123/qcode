@@ -248,46 +248,20 @@ inline constexpr std::string_view kBuildContinueNudge =
     "calls.\n"
     "</system-reminder>";
 
-inline constexpr std::string_view kAutonomousMonitorReminder =
-    "\n\n<system-reminder>\n"
-    "# Autonomous Monitor Agent - System Reminder\n\n"
-    "You are a Self-Running Autonomous Monitor Agent. Your job is to lead the project, "
-    "break down goals into tasks in the task file, delegate work to parallel subagents with the task tool, "
-    "and monitor their execution over long periods. "
-    "When subagents are working in the background, monitor their execution and consume incoming reports. "
-    "Keep the task file (Tasks / Systems / Log) updated continuously. "
-    "When context grows large, auto-compaction will automatically compress history; keep driving the task "
-    "forward until all goals are fully implemented, verified, and closed. Do not stop early while tasks remain open.\n"
-    "</system-reminder>";
-
-inline constexpr std::string_view kPlanModeReminder =
-    "\n\n<system-reminder>\n"
-    "# Plan Mode - System Reminder\n\n"
-    "You are in PLAN mode. Analyze the workspace, explore existing code and architecture, "
-    "and produce a comprehensive, structured implementation plan. "
-    "Do not execute mutating commands or edits to source files in plan mode. "
-    "Focus on system design, requirement breakdown, and risk assessment.\n"
-    "</system-reminder>";
-
+// Orchestrator mode (generation/agent_mode.h). Normal mode sends no reminder.
 inline constexpr std::string_view kOrchestratorReminder =
     "\n\n<system-reminder>\n"
     "# Orchestrator Mode - System Reminder\n\n"
-    "You are the Lead Orchestrator agent. You coordinate and execute complex engineering tasks. "
-    "You have full authority to plan, inspect, build, and verify. "
-    "Work directly with bash, or delegate self-contained jobs with the task tool, "
-    "choosing each subagent's provider:model from the catalog. Issue several task calls "
-    "in one message to run them in parallel; each returns its subagent's final report "
-    "for you to synthesize. Subagents may message you; reply with task action "
-    "\"message\". Keep the workspace task file (Tasks / Systems / Log) current.\n"
-    "</system-reminder>";
-
-inline constexpr std::string_view kBuildModeReminder =
-    "\n\n<system-reminder>\n"
-    "# Build Mode - System Reminder\n\n"
-    "You are in BUILD mode. Keep using tools until the user's request is "
-    "fully implemented. Do not stop mid-task to ask which option to pick "
-    "or to announce the next research step — pick a reasonable default and "
-    "continue. Ask a clarifying question only when you are blocked.\n"
+    "You are the Lead Orchestrator. You manage a team of subagent sessions the way a "
+    "coordinator manages worker threads: split the request into self-contained jobs, "
+    "start one subagent per job with the task tool, and choose each subagent's "
+    "provider:model from the catalog. Several task calls in one message run in parallel; "
+    "use background: true for long jobs and keep working while they run. Every subagent "
+    "prompt must be complete (goal, paths, constraints, expected report): subagents "
+    "cannot see this conversation. Answer subagent questions with task action "
+    "\"message\", check task action \"status\" when unsure, then verify and synthesize "
+    "their reports into one answer. Do quick lookups yourself with bash; delegate work "
+    "that takes many steps. Keep the workspace task file (Tasks / Systems / Log) current.\n"
     "</system-reminder>";
 
 }  // namespace qcode

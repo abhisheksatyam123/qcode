@@ -1,6 +1,7 @@
 #include <qcode/generation/turn_prefix.h>
 
 #include <qcode/core/logger.h>
+#include <qcode/generation/agent_mode.h>
 #include <qcode/generation/generation_continue.h>
 #include <qcode/tools/tool_catalog.h>
 #include <qcode/transform/provider_transform.h>
@@ -17,14 +18,10 @@ std::string build_turn_system_prompt(
     std::string_view current_model_id,
     std::string_view agent_mode) {
   std::string out = system_prompt;
-  if (is_subagent || agent_mode == "subagent") return out;
-  if (agent_mode == "autonomous" || agent_mode == "monitor") {
-    out += std::string(kAutonomousMonitorReminder);
-  } else if (agent_mode == "plan") {
-    out += std::string(kPlanModeReminder);
-  } else {
-    out += std::string(kOrchestratorReminder);
-  }
+  if (is_subagent) return out;
+  // Normal mode works alone: no orchestrator reminder, no model catalog.
+  if (normalize_agent_mode(agent_mode) != kAgentModeOrchestrator) return out;
+  out += std::string(kOrchestratorReminder);
   const std::string catalog_section = format_provider_catalog_for_prompt(
       providers, current_provider_id, current_model_id);
   if (!catalog_section.empty()) {
@@ -37,6 +34,20 @@ ToolSet build_turn_tools(bool enable_task_tool, bool vision_supported) {
   const auto cfg = enable_task_tool ? ToolConfig::orchestrator(vision_supported)
                                     : ToolConfig::subagent(vision_supported);
   return ToolCatalog::build_definitions(cfg);
+}
+
+ToolConfig turn_tool_config(bool is_subagent, std::string_view agent_mode,
+                            bool vision_supported) {
+  if (is_subagent) return ToolConfig::subagent(vision_supported);
+  return normalize_agent_mode(agent_mode) == kAgentModeOrchestrator
+             ? ToolConfig::orchestrator(vision_supported)
+             : ToolConfig::normal(vision_supported);
+}
+
+ToolSet build_turn_tools(bool is_subagent, std::string_view agent_mode,
+                         bool vision_supported) {
+  return ToolCatalog::build_definitions(
+      turn_tool_config(is_subagent, agent_mode, vision_supported));
 }
 
 void apply_turn_sampling(GenerateOptions& opts, const ModelInfo* model,

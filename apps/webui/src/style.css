@@ -152,7 +152,8 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, kbd, pre, samp { font-family: var(--font-mono); }
 ::selection { background: color-mix(in srgb, var(--accent) 32%, transparent); }
-:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 button:focus:not(:focus-visible) { outline: none; }
 
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
@@ -579,8 +580,7 @@ kbd {
   border-radius: 50%;
   background: var(--accent);
 }
-.agent-mode-btn.plan::before { background: var(--warning); }
-.agent-mode-btn.autonomous::before { background: var(--success); }
+.agent-mode-btn.orchestrator::before { background: var(--success); }
 .agent-mode-btn.subagent::before { background: var(--blue); }
 .thinking-toggle-btn[aria-pressed="true"] { color: var(--text); border-color: var(--border-strong); }
 .thinking-toggle-btn.off, .thinking-toggle-btn[aria-pressed="false"] { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--faint); }
@@ -1861,8 +1861,17 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
 }
 
 @media (max-width: 768px) {
-  :root { --header-h: 50px; --text-lg: 15px; }
-  #main-header { gap: 6px; }
+  :root { --header-h: 50px; --text-lg: 15px; --gutter: 16px; }
+  #main-header { gap: 6px; padding: 0 var(--gutter); }
+  /* Primary controls get a 40px hit area on phones */
+  .menu-toggle-btn, .sidebar-close-btn, .session-add-btn { width: 40px; height: 40px; }
+  .sidebar-nav-btn, .control-group select, #clear-btn { height: 40px; }
+  .tool-header { min-height: 40px; }
+  #send-btn, .pause-btn, .retry-btn { height: 40px; }
+  #send-btn { min-width: 40px; }
+  .retry-btn { width: 40px; }
+  /* Wide markdown tables scroll inside their box instead of squeezing cells */
+  .md-content th, .md-content td, .markdown-body th, .markdown-body td { overflow-wrap: normal; word-break: normal; min-width: 7em; }
   .agent-mode-btn { padding: 0 9px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
   .thinking-toggle-btn { padding: 0 9px; }
   .parent-back-btn { padding: 0 8px; }

@@ -106,7 +106,7 @@ GenerateOptions build_cache_replay_request(const CacheReplayInput& input,
   // Same tool schemas as the last routed request — tool definitions are
   // part of the cacheable prefix (and Zen requires bash/read declared).
   if (input.enable_tools) {
-    opts.tools = build_turn_tools(!is_subagent,
+    opts.tools = build_turn_tools(is_subagent, input.agent_mode,
                                   input.vision_supported);
   }
   opts.session_id = input.session_id;

@@ -42,6 +42,7 @@ inline std::vector<SlashCommand> builtin_slash_commands() {
         {"session",     "Select session", "Manage and load saved sessions",            "Session"},
         {"compact",     "Compact",        "Summarize conversation to save context",    "Session"},
         {"variant",     "Model variant",  "Select thinking / reasoning effort",        "Model"},
+        {"mode",        "Agent mode",     "/mode [normal|orchestrator] (Shift+Tab)",   "Agent"},
         {"queue",       "Prompt queue",   "/queue [rm <n>] — list or drop queued prompts", "Session"},
         {"clear-queue", "Clear queue",    "Clear all queued prompts",                  "Session"},
         {"stop",        "Stop generation", "Abort active turn or clear queued prompts", "Session"},
@@ -65,6 +66,18 @@ struct VariantEntry {
 // Model-specific thinking variants plus "off". Used by the /variant picker.
 [[nodiscard]] std::vector<VariantEntry> build_variant_entries(
     const ModelInfo& model);
+
+// Switch the agent mode ("normal" / "orchestrator"; see
+// generation/agent_mode.h): rebuilds `system_prompt` for the mode, persists
+// it on the session and toasts. A subagent session keeps its role (false).
+bool set_agent_mode(
+    ChatState& state,
+    const std::string& mode,
+    const std::vector<ProviderInfo>& providers_list,
+    int selected_provider,
+    int selected_model,
+    std::string& system_prompt,
+    bus::BusPort& bus);
 
 // Dispatch a slash command.
 bool handle_slash_command(
