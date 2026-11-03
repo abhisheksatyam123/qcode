@@ -1747,12 +1747,18 @@ CompactResult compact_database() {
     if (std::filesystem::exists(path, ec)) {
         result.bytes_before = static_cast<long long>(std::filesystem::file_size(path, ec));
     }
-    auto db_lock = SharedDbHandle::instance().acquire();
-    sqlite3* db = db_lock.db;
-    if (!db) {
+    // A connection of its own with a short wait: the shared handle opens with a
+    // 5 s busy timeout, and a refusal should come back fast.
+    sqlite3* db = nullptr;
+    if (sqlite3_open(path.c_str(), &db) != SQLITE_OK) {
         result.message = "could not open database at " + path;
+        if (db) sqlite3_close(db);
         return result;
     }
+    struct CloseOnExit {
+        sqlite3* db;
+        ~CloseOnExit() { sqlite3_close(db); }
+    } close_on_exit{db};
     // VACUUM needs the write lock with no other transaction open. Another qcode
     // process that is writing holds it, and a busy wait would stall the command,
     // so take the lock with a short wait and refuse with a clear message if
@@ -1762,7 +1768,7 @@ CompactResult compact_database() {
                          "; close it (or stop qcode serve) and run again";
         return result;
     };
-    sqlite3_busy_timeout(db, 2000);
+    sqlite3_busy_timeout(db, 500);
     char* err_msg = nullptr;
     if (sqlite3_exec(db, "BEGIN EXCLUSIVE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
         const int rc = sqlite3_errcode(db) & 0xff;
