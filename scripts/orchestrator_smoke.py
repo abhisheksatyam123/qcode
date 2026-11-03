@@ -53,6 +53,7 @@ class Stub:
 
     def __init__(self) -> None:
         self.kill_seen = threading.Event()
+        self.hits_seen = threading.Event()  # set when a subagent request arrives
         self.lead_ids: dict[str, str] = {}
         self.subagent_hits = Counter()
         self.lock = threading.Lock()
@@ -111,7 +112,7 @@ class Stub:
 
     def respond(self, body: dict, handler) -> None:
         text = json.dumps(body.get("messages", []))
-        if LEAD_PROMPT in text or "SMOKE TUI" in text:
+        if LEAD_PROMPT in text or "SMOKE TUI" in text or "SMOKE CANCEL" in text:
             self.respond_lead(body, handler)
         else:
             self.respond_subagent(body, handler)
@@ -121,6 +122,7 @@ class Stub:
         name = self.subagent_name(body)
         with self.lock:
             self.subagent_hits[name] += 1
+            self.hits_seen.set()
         content = f"report {name}"
         if name == "C":
             self.kill_seen.wait(timeout=30)
@@ -147,6 +149,7 @@ class Stub:
             name = next((n for n in SPAWN_NAMES if f"job {n}" in last_user), "unknown")
         with self.lock:
             self.subagent_hits[name] += 1
+            self.hits_seen.set()
         self.send(handler, {"role": "assistant", "content": f"report {name}"})
         if name == "C":
             self.kill_seen.wait(timeout=30)
@@ -157,6 +160,14 @@ class Stub:
         messages = body.get("messages", [])
         results = [m for m in messages if m.get("role") == "tool"]
         n = len(results)
+        if "SMOKE CANCEL" in json.dumps(messages):
+            # Interrupt scenario: one blocking subagent, held until the lead is cancelled.
+            if n == 0:
+                self.tool_calls(handler, [("task", {"prompt": "job C", "description": "C"})])
+            else:
+                self.send(handler, {"role": "assistant", "content": "SMOKE DONE"}, finish="stop")
+                self.finish(handler)
+            return
         if "SMOKE TUI" in json.dumps(messages):
             # TUI scenario: A finishes, C runs until someone stops it with k.
             if n == 0:

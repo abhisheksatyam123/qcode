@@ -1,4 +1,5 @@
 #include <qcode/generation/generation_controller.h>
+#include <qcode/tools/task_tool.h>
 #include <qcode/generation/agent_mode.h>
 
 #include <qcode/compaction/compaction_request.h>
@@ -104,6 +105,8 @@ void GenerationController::request_abort() {
     if (state.abort_flag) {
         state.abort_flag->store(true, std::memory_order_release);
     }
+    // Esc stops the team too: background subagents of this session are aborted.
+    if (!active_session_id_.empty()) TaskTool::abort_team(active_session_id_);
     queue_paused_ = true;
     abort_requested_ns_.store(
         std::chrono::steady_clock::now().time_since_epoch().count(),

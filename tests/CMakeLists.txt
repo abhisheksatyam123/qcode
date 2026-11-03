@@ -233,6 +233,16 @@ if(TARGET qcode)
 
     # Web Subagents panel: headless Chromium clicks Stop on a running subagent
     # against the same stub. Skipped (77) without node+Playwright or Chromium.
+    # Cancel (API) and Esc (TUI) stop the lead's turn and its subagents within a
+    # second, and leave no running task behind.
+    add_test(NAME InterruptSmokeServe
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/interrupt_smoke.py
+            --binary $<TARGET_FILE:qcode>)
+    set_tests_properties(InterruptSmokeServe PROPERTIES
+        LABELS smoke
+        TIMEOUT 120
+    )
+
     add_test(NAME WebuiStopSmoke
         COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/webui_stop_smoke.py
             --binary $<TARGET_FILE:qcode>)
