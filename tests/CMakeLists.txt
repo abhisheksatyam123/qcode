@@ -211,8 +211,11 @@ if(TARGET qcode)
     add_test(NAME OrchestratorSmokeServe
         COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/orchestrator_smoke.py
             --binary $<TARGET_FILE:qcode>)
+    # Serial: these start real servers and time turns, so parallel load skews
+    # them.
     set_tests_properties(OrchestratorSmokeServe PROPERTIES
         LABELS smoke
+        RUN_SERIAL TRUE
         TIMEOUT 120
     )
 
@@ -223,6 +226,7 @@ if(TARGET qcode)
             --binary $<TARGET_FILE:qcode>)
     set_tests_properties(OrchestratorSmokeTui PROPERTIES
         LABELS smoke
+        RUN_SERIAL TRUE
         TIMEOUT 120
         SKIP_RETURN_CODE 77
     )
