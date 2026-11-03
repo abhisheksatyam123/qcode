@@ -259,13 +259,12 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
     ScopedSessionLog scoped_session_log(session_id);
     // Parse request body
     nlohmann::json body;
-    try {
-        body = nlohmann::json::parse(req_body);
-    } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
+    if (!parse_object_body(req_body, res, body)) return;
+    if (!check_fields(body, res, {{"text", FieldType::String}, {"resume", FieldType::Boolean},
+                                  {"provider", FieldType::String}, {"model", FieldType::String},
+                                  {"system_prompt", FieldType::String},
+                                  {"reasoning_mode", FieldType::String}, {"agent_mode", FieldType::String},
+                                  {"attachments", FieldType::Array}})) return;
 
     const bool is_resume = body.value("resume", false);
     std::string text = body.value("text", "");
@@ -579,13 +578,8 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
 // ── Generate response (Deprecated generic fallback) ──
 svr.Post("/generate", [handle_generate](const httplib::Request& req, httplib::Response& res) {
     nlohmann::json body;
-    try {
-        body = nlohmann::json::parse(req.body);
-    } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
+    if (!parse_object_body(req.body, res, body)) return;
+    if (!check_fields(body, res, {{"session_id", FieldType::String}})) return;
     std::string session_id = body.value("session_id", "");
     if (session_id.empty()) {
         res.status = 400;
@@ -635,11 +629,10 @@ svr.Post("/tasks/([^/]+)/kill", [](const httplib::Request& req, httplib::Respons
 // ── Create session ──
 svr.Post("/sessions", [default_workspace, providers_list](const httplib::Request& req, httplib::Response& res) {
     nlohmann::json body;
-    try { body = nlohmann::json::parse(req.body); } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
+    if (!parse_object_body(req.body, res, body)) return;
+    if (!check_fields(body, res, {{"provider", FieldType::String}, {"model", FieldType::String},
+                                  {"workspace", FieldType::String}, {"title", FieldType::String},
+                                  {"custom_id", FieldType::String}, {"agent_mode", FieldType::String}})) return;
     std::string provider = body.value("provider", "");
     std::string model = body.value("model", "");
     std::string workspace = body.value("workspace", "");
@@ -676,11 +669,8 @@ svr.Post("/sessions", [default_workspace, providers_list](const httplib::Request
 // ── Rename session ──
 svr.Post("/rename", [](const httplib::Request& req, httplib::Response& res) {
     nlohmann::json body;
-    try { body = nlohmann::json::parse(req.body); } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
+    if (!parse_object_body(req.body, res, body)) return;
+    if (!check_fields(body, res, {{"session_id", FieldType::String}, {"title", FieldType::String}})) return;
     std::string session_id = body.value("session_id", "");
     std::string new_title = body.value("title", "");
     if (session_id.empty() || !qcode::session::is_valid_session_id(session_id)) {
@@ -703,8 +693,13 @@ svr.Post("/rename", [](const httplib::Request& req, httplib::Response& res) {
 auto cancel_session = [](const std::string& session_id, httplib::Response& res) {
     auto session = find_session(session_id);
     if (!session) {
-        res.status = 404;
-        res.set_content(R"({"error":"session not found"})", "application/json");
+        // A stored session with no live turn is simply idle: nothing to stop.
+        if (!qcode::session::session_exists(session_id)) {
+            res.status = 404;
+            res.set_content(R"({"error":"session not found"})", "application/json");
+            return;
+        }
+        res.set_content(R"({"status":"cancelled"})", "application/json");
         return;
     }
     abort_turn(*session);
@@ -718,11 +713,8 @@ auto cancel_session = [](const std::string& session_id, httplib::Response& res) 
 
 svr.Post("/session/cancel", [cancel_session](const httplib::Request& req, httplib::Response& res) {
     nlohmann::json body;
-    try { body = nlohmann::json::parse(req.body); } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
+    if (!parse_object_body(req.body, res, body)) return;
+    if (!check_fields(body, res, {{"session_id", FieldType::String}})) return;
     std::string session_id = body.value("session_id", "");
     if (session_id.empty()) {
         res.status = 400;
@@ -743,14 +735,10 @@ svr.Post("/session/([^/]+)/abort", [cancel_session](const httplib::Request& req,
 // ── Withdraw prompts the running turn has not taken yet ──
 // Body {"text": "..."} drops that prompt; an empty body drops all of them.
 svr.Delete("/session/([^/]+)/queue", [](const httplib::Request& req, httplib::Response& res) {
-    std::string text;
-    try {
-        if (!req.body.empty()) text = nlohmann::json::parse(req.body).value("text", "");
-    } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
+    nlohmann::json body;
+    if (!parse_object_body(req.body, res, body, /*allow_empty=*/true)) return;
+    if (!check_fields(body, res, {{"text", FieldType::String}})) return;
+    std::string text = body.value("text", "");
     size_t removed = 0;
     if (auto session = find_session(url_decode(req.matches[1]))) {
         std::lock_guard<std::mutex> lock(session->queue_mutex);
@@ -819,11 +807,8 @@ svr.Post("/session/([^/]+)/mode", [](const httplib::Request& req, httplib::Respo
         return;
     }
     nlohmann::json body;
-    try { body = nlohmann::json::parse(req.body); } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
+    if (!parse_object_body(req.body, res, body)) return;
+    if (!check_fields(body, res, {{"agent_mode", FieldType::String}, {"reasoning_mode", FieldType::String}})) return;
     std::string agent_mode = body.value("agent_mode", "");
     std::string reasoning_mode = body.value("reasoning_mode", "");
     auto stored = qcode::session::get_session_modes(sid);

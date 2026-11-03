@@ -109,6 +109,9 @@ void register_system_routes(
             svr.set_pre_routing_handler(
                 [webui = options.webui_dir](const httplib::Request& req,
                                             httplib::Response& res) {
+                    // This hook replaces the one in setup_server_routes, so the
+                    // session path check runs here too.
+                    if (rejected_session_path(req, res)) return httplib::Server::HandlerResponse::Handled;
                     return serve_precompressed(webui, req, res);
                 });
         } else {
@@ -194,7 +197,9 @@ void register_system_routes(
     // Model User Feedback
     svr.Post("/api/models/feedback", [](const httplib::Request& req, httplib::Response& res) {
         try {
-            auto body = nlohmann::json::parse(req.body);
+            nlohmann::json body;
+            if (!parse_object_body(req.body, res, body)) return;
+            if (!check_fields(body, res, {{"model_id", FieldType::String}, {"rating", FieldType::String}})) return;
             std::string model_id = body.value("model_id", "");
             std::string rating = body.value("rating", "up");
             if (model_id.empty()) {

@@ -42,15 +42,8 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     }
 
     nlohmann::json body;
-    try {
-        if (!req.body.empty()) {
-            body = nlohmann::json::parse(req.body);
-        }
-    } catch (...) {
-        res.status = 400;
-        res.set_content(R"({"error":"invalid JSON"})", "application/json");
-        return;
-    }
+    if (!parse_object_body(req.body, res, body, /*allow_empty=*/true)) return;
+    if (!check_fields(body, res, {{"keep", FieldType::Number}})) return;
 
     int keep = body.value("keep", 5);
 
