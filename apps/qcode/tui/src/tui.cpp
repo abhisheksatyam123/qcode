@@ -204,14 +204,21 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         qcode::logger::set_thread_name("spinner");
         try {
             while (app_running->load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 const std::string st = store.status_snapshot();
-                if (store.is_generating() || st == "generating" || st == "agent") {
+                const bool generating =
+                    store.is_generating() || st == "generating" || st == "agent";
+                const bool queued = store.has_queued_prompt();
+                if (generating) {
                     store.advance_frame();
-                } else if (store.has_queued_prompt() && !generation.is_busy() && st != "error") {
+                } else if (queued && !generation.is_busy() && st != "error") {
                     // Fail-safe watchdog: wake the UI to process pending queued prompts.
                     screen.Post(Event::Custom);
                 }
+                // 10 Hz only while a spinner or queue needs it; an idle TUI
+                // wakes 4 times a second instead of 10.
+                std::this_thread::sleep_for(
+                    (generating || queued) ? std::chrono::milliseconds(100)
+                                           : std::chrono::milliseconds(250));
             }
         } catch (const std::exception& e) {
             LOG_ERROR("spinner_thread exception: {}", e.what());
