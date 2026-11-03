@@ -68,6 +68,17 @@ jobs:
 
     - uses: lukka/get-cmake@latest
 
+    # C++ named modules disable ccache (see CMakeLists.txt), so reuse the build
+    # tree instead. Ninja rebuilds only what changed since the last run on this
+    # branch or main. Each run saves a fresh entry; restore takes the newest.
+    - name: Restore build tree
+      uses: actions/cache@v4
+      with:
+        path: build/host-${{ matrix.build_type }}
+        key: qcode-build-${{ runner.os }}-${{ matrix.build_type }}-${{ github.run_id }}
+        restore-keys: |
+          qcode-build-${{ runner.os }}-${{ matrix.build_type }}-
+
     - name: Build
       env:
         CC: clang-18
@@ -90,6 +101,8 @@ jobs:
   asan:
     name: ASan/UBSan
     runs-on: ubuntu-latest
+    # Sanitizer build is slow and not a PR gate: run it on main pushes and manual dispatch.
+    if: github.event_name != 'pull_request'
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
