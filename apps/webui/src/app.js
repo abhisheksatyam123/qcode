@@ -440,6 +440,20 @@ const THEMES = {
     "warning": "#FBBF24",
     "success": "#4ADE80"
   },
+  "qcode-light": {
+    "title": "QCode Light",
+    "scheme": "light",
+    "bg": "#F6F7FA",
+    "surface": "#FFFFFF",
+    "raised": "#EDF0F5",
+    "text": "#171B26",
+    "muted": "#545C70",
+    "accent": "#2F45C9",
+    "accent2": "#2437A8",
+    "danger": "#B42318",
+    "warning": "#92400E",
+    "success": "#166534"
+  },
   "opencode": {
     "title": "OpenCode",
     "bg": "#0A0A0A",
@@ -1119,11 +1133,16 @@ async function handleHashChange() {
 // ── Init ──
 async function init() {
   try {
+    // Only an explicit choice (qcode-theme) is kept; otherwise follow the OS setting.
     const savedTheme = localStorage.getItem('qcode-theme');
-    if (savedTheme && THEMES[savedTheme]) applyTheme(savedTheme);
+    applyTheme(savedTheme && THEMES[savedTheme] ? savedTheme : systemThemeName(), { persist: false });
   } catch (_) {}
   restorePrefs();
-  if (state.theme && THEMES[state.theme]) applyTheme(state.theme);
+  try {
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+      if (!localStorage.getItem('qcode-theme')) applyTheme(systemThemeName(), { persist: false });
+    });
+  } catch (_) {}
   if (state.reasoning && reasoningSelect) reasoningSelect.value = state.reasoning;
   if (state.provider && providerSelect) providerSelect.value = state.provider;
   // Startup requests run together rather than one round trip after another.
@@ -1383,6 +1402,16 @@ function setupEventListeners() {
   }
   if (thinkingToggleBtn) {
     thinkingToggleBtn.addEventListener('click', () => toggleThinking());
+  }
+  const themeToggleBtn = document.getElementById('theme-toggle-btn');
+  if (themeToggleBtn) {
+    syncThemeToggle();
+    themeToggleBtn.addEventListener('click', () => {
+      // Manual choice: flip between the dark and light QCode themes and save it.
+      const next = THEMES[state.theme] && THEMES[state.theme].scheme === 'light' ? 'qcode' : 'qcode-light';
+      applyTheme(next);
+      showToast('Theme: ' + THEMES[next].title);
+    });
   }
   syncThinkingToggleBtn();
   if (retryBtn) {
@@ -2179,13 +2208,34 @@ function readableTone(fg, target, bgs, min) {
   return target;
 }
 
-function applyTheme(name) {
+// The theme to use when the user has not picked one: follow the OS setting.
+function systemThemeName() {
+  try {
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'qcode-light' : 'qcode';
+  } catch (_) { return 'qcode'; }
+}
+
+// Keeps the header light/dark button in step with the active theme.
+function syncThemeToggle() {
+  const btn = document.getElementById('theme-toggle-btn');
+  if (!btn) return;
+  const light = !!(THEMES[state.theme] && THEMES[state.theme].scheme === 'light');
+  btn.textContent = light ? 'Dark' : 'Light';
+  btn.title = light ? 'Switch to dark theme' : 'Switch to light theme';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+// persist=false is for automatic choices (startup, OS change) so they do not pin the theme.
+function applyTheme(name, { persist = true } = {}) {
   const t = THEMES[name];
   if (!t) return false;
   state.theme = name;
   const root = document.documentElement;
   root.dataset.theme = name;
   const set = (k, v) => root.style.setProperty(k, v);
+  root.style.colorScheme = t.scheme === 'light' ? 'light' : 'dark';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', t.bg);
   set('--bg', t.bg);
   set('--surface', t.surface);
   set('--surface-raised', t.raised);
@@ -2202,8 +2252,17 @@ function applyTheme(name) {
   set('--danger', t.danger);
   set('--warning', t.warning);
   set('--success', t.success);
-  try { localStorage.setItem('qcode-theme', name); } catch (_) {}
+  // Text on accent buttons: pick black or white, whichever contrasts more with the accent.
+  // Buttons and the logo use a gradient that starts 20% lighter than the accent, so check both ends.
+  const accentEnds = [t.accent, mixHex(t.accent, '#ffffff', 0.2)];
+  const worst = fg => Math.min(...accentEnds.map(c => contrastRatio(fg, c)));
+  const onAccent = worst('#000000') >= worst('#ffffff') ? '#000000' : '#ffffff';
+  set('--on-accent', onAccent);
+  if (persist) {
+    try { localStorage.setItem('qcode-theme', name); } catch (_) {}
+  }
   persistPrefs();
+  syncThemeToggle();
   return true;
 }
 
