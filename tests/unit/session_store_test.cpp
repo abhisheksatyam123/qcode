@@ -223,6 +223,40 @@ TEST_F(SessionStoreTest, ParentAndChildSessionQueries) {
     EXPECT_EQ(get_parent_session_id("ses_child_1"), parent);
 }
 
+TEST_F(SessionStoreTest, SessionListsCarryCountsActivityAndModes) {
+    const std::string a = create_new_session("prov", "model", "/ws", "A");
+    const std::string b = create_new_session("prov", "model", "/ws", "B");
+    ensure_session_row("ses_kid", "Kid", "prov", "model", "/ws", a);
+    set_session_modes(a, "orchestrator", "high");
+    save_message(a, "User", "one");
+    save_message(a, "Assistant", "two");
+    save_message("ses_kid", "Assistant", "x");
+
+    auto list = list_sessions_full();
+    ASSERT_EQ(list.size(), 2u);
+    const auto& ia = list[0].id == a ? list[0] : list[1];
+    const auto& ib = list[0].id == a ? list[1] : list[0];
+    EXPECT_EQ(ia.message_count, 2);
+    EXPECT_EQ(ib.message_count, 0);
+    EXPECT_GT(ia.last_active_at, 0);
+    EXPECT_EQ(ia.agent_mode, "orchestrator");
+    EXPECT_EQ(ia.reasoning_mode, "high");
+    EXPECT_EQ(ib.agent_mode, "");
+
+    auto kids = list_sessions_full(true, a);
+    ASSERT_EQ(kids.size(), 1u);
+    EXPECT_EQ(kids[0].id, "ses_kid");
+    EXPECT_EQ(kids[0].message_count, 1);
+    EXPECT_EQ(kids[0].agent_mode, "subagent");
+    EXPECT_TRUE(list_sessions_full(true, b).empty());
+
+    auto info = get_session_info(a);
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->message_count, 2);
+    EXPECT_EQ(info->reasoning_mode, "high");
+    EXPECT_FALSE(get_session_info("no-such-session").has_value());
+}
+
 TEST_F(SessionStoreTest, LoadLastSessionMessage) {
     const std::string sid = create_new_session("prov", "model", "/ws", "Last Msg Test");
     EXPECT_EQ(load_last_session_message(sid), std::nullopt);

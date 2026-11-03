@@ -95,6 +95,10 @@ struct SessionInfo {
     std::string provider;
     std::string model;
     std::string parent_session_id;
+    // Stored modes (same values get_session_modes returns), read in the same
+    // query so listing N sessions is one query, not N+1.
+    std::string agent_mode;
+    std::string reasoning_mode;
     long long last_active_at = 0;
     int message_count = 0;
 };
