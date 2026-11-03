@@ -254,7 +254,12 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
     }
 
     // Overwrite history in SQLite database to persist the compact set
-    qcode::session::overwrite_session_history(sid, new_messages);
+    if (!qcode::session::overwrite_session_history(sid, new_messages)) {
+        res.status = 409;
+        res.set_content(R"({"error":"session changed in another process; reload and retry"})",
+                        "application/json");
+        return;
+    }
 
     nlohmann::json res_j;
     res_j["status"] = "success";

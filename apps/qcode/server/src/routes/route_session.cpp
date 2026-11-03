@@ -885,7 +885,12 @@ svr.Post("/session/([^/]+)/clear", [](const httplib::Request& req, httplib::Resp
     }
 
     // Permanently truncate the persisted history in SQLite.
-    qcode::session::overwrite_session_history(sid, {});
+    if (!qcode::session::overwrite_session_history(sid, {})) {
+        res.status = 409;
+        res.set_content(R"({"error":"session changed in another process; reload and retry"})",
+                        "application/json");
+        return;
+    }
 
     res.set_content(R"({"ok":true})", "application/json");
 });
