@@ -389,6 +389,17 @@ TEST(SessionStore, ConcurrentChildWriter) {
     EXPECT_EQ(load_session_messages(sid).size(), static_cast<size_t>(kRowsPerChild));
 }
 
+TEST_F(SessionStoreTest, SaveAndQueuePopReportTheirResult) {
+    const std::string sid = create_new_session("prov", "model", "/ws", "Results");
+    EXPECT_TRUE(save_message(sid, "User", "ok"));
+    EXPECT_FALSE(save_message("bad/id", "User", "rejected"));
+
+    queued_prompt_add(sid, "first");
+    EXPECT_TRUE(queued_prompt_pop(sid));
+    EXPECT_TRUE(queued_prompt_load(sid).empty());
+    EXPECT_FALSE(queued_prompt_pop("bad/id"));
+}
+
 TEST_F(SessionStoreTest, LoadLastSessionMessage) {
     const std::string sid = create_new_session("prov", "model", "/ws", "Last Msg Test");
     EXPECT_EQ(load_last_session_message(sid), std::nullopt);

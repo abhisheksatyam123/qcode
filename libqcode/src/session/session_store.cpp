@@ -4,6 +4,7 @@
 
 #include <uuid.h>
 #include <climits>
+#include <deque>
 #include <cstdlib>
 #include <random>
 #include <sstream>
@@ -50,7 +51,10 @@ public:
     MessageWriterConnection(const MessageWriterConnection&) = delete;
     MessageWriterConnection& operator=(const MessageWriterConnection&) = delete;
 
-    void write(const std::string& session_id, const std::string& sender,
+    // Returns false when the row could not be written now. A row that failed on
+    // busy/locked stays queued and is retried, in order, before the next write.
+    // Other failures (for example a constraint error) drop only that row.
+    bool write(const std::string& session_id, const std::string& sender,
                const std::string& content, long long created_at) {
         std::lock_guard<std::mutex> lock(mutex_);
         const std::string expected_path = get_db_path();
@@ -62,7 +66,10 @@ public:
         if (!db_) {
             std::string actual_path;
             db_ = open_database(actual_path);
-            if (!db_) return;
+            if (!db_) {
+                enqueue_pending(session_id, sender, content, created_at);
+                return false;
+            }
             current_path_ = expected_path;
             // 10s (was 2s): parallel subagents writing large tool results
             // used to hit SQLITE_BUSY and silently DROP messages. Matches
@@ -74,37 +81,73 @@ public:
             if (!prepare_stmt(db_, kInsertSql, &insert_)) {
                 sqlite3_close(db_);
                 db_ = nullptr;
-                return;
+                enqueue_pending(session_id, sender, content, created_at);
+                return false;
             }
         }
-        if (!insert_) return;
-        sqlite3_reset(insert_);
-        sqlite3_clear_bindings(insert_);
-        sqlite3_bind_text(
-            insert_, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(insert_, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(insert_, 3, content.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int64(insert_, 4, created_at);
-        int rc = sqlite3_step(insert_);
-        // SQLITE_BUSY/LOCKED can still outlive the busy timeout under heavy
-        // parallel writes; retry a couple of times before dropping the row.
-        for (int attempt = 0; (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) &&
-                              attempt < 2;
-             ++attempt) {
-            sqlite3_reset(insert_);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            rc = sqlite3_step(insert_);
+        if (!insert_) return false;
+        enqueue_pending(session_id, sender, content, created_at);
+        while (!pending_.empty()) {
+            const int rc = insert_row(pending_.front());
+            if (rc == SQLITE_DONE) {
+                pending_.pop_front();
+                continue;
+            }
+            if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) break;  // keep, retry later
+            LOG_ERROR("SQLite: message insert dropped for session '{}' (sender '{}') rc={}: {}",
+                      pending_.front().session_id, pending_.front().sender, rc,
+                      sqlite3_errmsg(db_));
+            pending_.pop_front();
         }
-        if (rc != SQLITE_DONE) {
-            LOG_ERROR("SQLite: message insert failed for session '{}' (sender '{}') rc={}: {}",
-                      session_id, sender, rc, sqlite3_errmsg(db_));
+        if (!pending_.empty()) {
+            LOG_ERROR("SQLite: {} message(s) still pending after busy retries", pending_.size());
+            return false;
         }
+        return true;
     }
 
 private:
+    struct PendingRow {
+        std::string session_id;
+        std::string sender;
+        std::string content;
+        long long created_at = 0;
+    };
+    // Bounded so a database that stays locked cannot grow memory without limit.
+    static constexpr size_t kMaxPending = 512;
+
+    void enqueue_pending(const std::string& session_id, const std::string& sender,
+                         const std::string& content, long long created_at) {
+        if (pending_.size() >= kMaxPending) {
+            LOG_ERROR("SQLite: pending message queue full; dropping oldest row (session '{}')",
+                      pending_.front().session_id);
+            pending_.pop_front();
+        }
+        pending_.push_back(PendingRow{session_id, sender, content, created_at});
+    }
+
+    // Binds and steps one row. Returns the final sqlite3_step result.
+    int insert_row(const PendingRow& row) {
+        int rc = SQLITE_ERROR;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            sqlite3_reset(insert_);
+            sqlite3_clear_bindings(insert_);
+            sqlite3_bind_text(insert_, 1, row.session_id.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(insert_, 2, row.sender.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(insert_, 3, row.content.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(insert_, 4, row.created_at);
+            rc = sqlite3_step(insert_);
+            if (rc != SQLITE_BUSY && rc != SQLITE_LOCKED) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        sqlite3_reset(insert_);
+        return rc;
+    }
+
     sqlite3* db_ = nullptr;
     std::string current_path_;
     sqlite3_stmt* insert_ = nullptr;
+    std::deque<PendingRow> pending_;
     std::mutex mutex_;
 };
 
@@ -597,16 +640,16 @@ qcode::ReasoningContentPart decode_reasoning_row(const std::string& content) {
 }
 }  // namespace
 
-void save_message(const std::string& session_id, const std::string& sender, const std::string& content) {
+bool save_message(const std::string& session_id, const std::string& sender, const std::string& content) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
-        return;
+        return false;
     }
 
     auto now = std::chrono::system_clock::now();
     long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     static MessageWriterConnection writer;
-    writer.write(session_id, sender, content, created_at);
+    return writer.write(session_id, sender, content, created_at);
 }
 
 // ── Persisted prompt queue ──
@@ -676,25 +719,34 @@ std::vector<std::string> queued_prompt_load(const std::string& session_id) {
     return out;
 }
 
-void queued_prompt_pop(const std::string& session_id) {
-    if (session_id.empty() || !is_valid_session_id(session_id)) return;
+bool queued_prompt_pop(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return false;
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
-    if (!db) return;
+    if (!db) return false;
 
-    // Delete only the oldest row for this session.
+    // Delete only the oldest row for this session. A failed delete leaves the
+    // row behind, so the prompt would run again after a restart: retry busy
+    // errors and report failure rather than dropping it silently.
     const std::string sql =
         "DELETE FROM queued_prompts WHERE id = ("
         "  SELECT id FROM queued_prompts WHERE session_id = ?"
         "  ORDER BY id ASC LIMIT 1);";
-    sqlite3_stmt* stmt = nullptr;
-    if (prepare_stmt(db, sql.c_str(), &stmt)) {
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        sqlite3_stmt* stmt = nullptr;
+        if (!prepare_stmt(db, sql.c_str(), &stmt)) return false;
         sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-        if (sqlite3_step(stmt) != SQLITE_DONE) {
-            LOG_ERROR("SQLite: queued_prompt_pop failed: {}", sqlite3_errmsg(db));
-        }
+        const int rc = sqlite3_step(stmt);
         sqlite3_finalize(stmt);
+        if (rc == SQLITE_DONE) return true;
+        if (rc != SQLITE_BUSY && rc != SQLITE_LOCKED) {
+            LOG_ERROR("SQLite: queued_prompt_pop failed rc={}: {}", rc, sqlite3_errmsg(db));
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20 * (attempt + 1)));
     }
+    LOG_ERROR("SQLite: queued_prompt_pop gave up after busy retries for session '{}'", session_id);
+    return false;
 }
 
 void queued_prompt_remove_at(const std::string& session_id, size_t index_1based) {

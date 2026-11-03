@@ -368,7 +368,7 @@ bool AppStore::has_queued_prompt() {
     return !prompt_queue_.empty();
 }
 
-std::string AppStore::dequeue_prompt() {
+std::optional<std::string> AppStore::dequeue_prompt() {
     std::string prompt;
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -378,8 +378,16 @@ std::string AppStore::dequeue_prompt() {
         LOG_DEBUG("Store: dequeue_prompt queue_size={}",
                   static_cast<int>(prompt_queue_.size()));
     }
-    if (!session_id().empty()) {
-        qcode::session::queued_prompt_pop(session_id());
+    if (!session_id().empty() && !qcode::session::queued_prompt_pop(session_id())) {
+        // The row is still persisted: put the prompt back at the front and let
+        // the caller back off, instead of running it now and again on restart.
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            prompt_queue_.push_front(prompt);
+            sync_queue_mirror_unlocked();
+        }
+        notify();
+        return std::nullopt;
     }
     notify();
     return prompt;

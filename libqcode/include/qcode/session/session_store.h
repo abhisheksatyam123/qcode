@@ -46,7 +46,9 @@ bool is_valid_session_id(const std::string& id);
 bool session_exists(const std::string& session_id);
 
 // Save a single chat message into the SQLite database
-void save_message(const std::string& session_id, const std::string& sender, const std::string& content);
+// Returns false if the row could not be written yet. Rows that hit a busy
+// database are kept and written, in order, before the next save.
+bool save_message(const std::string& session_id, const std::string& sender, const std::string& content);
 
 // Content of a "Reasoning" row: the thinking text, or {"text","signature"}
 // when the provider signed it. Anthropic replays signed thinking blocks
@@ -78,7 +80,9 @@ void queued_prompt_append_last(const std::string& session_id, const std::string&
 // All queued prompts for a session, oldest first.
 std::vector<std::string> queued_prompt_load(const std::string& session_id);
 // Drop the oldest queued prompt (call after it starts running).
-void queued_prompt_pop(const std::string& session_id);
+// Returns false if the delete could not be committed (after short retries on
+// busy), so the caller can keep the prompt instead of running it.
+bool queued_prompt_pop(const std::string& session_id);
 // Remove the 1-based entry; no-op when out of range.
 void queued_prompt_remove_at(const std::string& session_id, size_t index_1based);
 // Drop every queued prompt for the session (user-initiated clear).
