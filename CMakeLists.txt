@@ -164,8 +164,9 @@ FetchContent_Declare(ftxui
     GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
     GIT_TAG v6.1.9
     GIT_SHALLOW TRUE
-    PATCH_COMMAND git apply --whitespace=nowarn
-        ${CMAKE_SOURCE_DIR}/cmake/patches/ftxui-idle-loop.patch
+    PATCH_COMMAND ${CMAKE_COMMAND}
+        -DPATCH_FILE=${CMAKE_SOURCE_DIR}/cmake/patches/ftxui-idle-loop.patch
+        -P ${CMAKE_SOURCE_DIR}/cmake/apply_patch_once.cmake
 )
 FetchContent_MakeAvailable(ftxui)
 
