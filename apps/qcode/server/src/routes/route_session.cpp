@@ -37,8 +37,8 @@ namespace server {
 
 namespace {
 nlohmann::json session_public_json(const qcode::session::SessionInfo& s) {
-    auto modes = qcode::session::get_session_modes(s.id);
-    std::string agent = modes.first;
+    // Modes come from the same row (no per-session lookup).
+    std::string agent = s.agent_mode;
     if (agent.empty()) {
         agent = (s.id.rfind("ses_", 0) == 0) ? "subagent" : "orchestrator";
     }
@@ -49,7 +49,7 @@ nlohmann::json session_public_json(const qcode::session::SessionInfo& s) {
         {"provider", s.provider},
         {"model", s.model},
         {"agent_mode", agent},
-        {"reasoning_mode", modes.second},
+        {"reasoning_mode", s.reasoning_mode},
         {"parent_session_id", s.parent_session_id}
     };
 }
