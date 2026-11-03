@@ -70,7 +70,18 @@ TEST(RegistryTest, OpenRouterRequiresKey) {
   ClientResolution res =
       ProviderRegistry::instance().resolve("openrouter", "");
   EXPECT_FALSE(res.ok());
-  EXPECT_FALSE(res.error.empty());
+  EXPECT_NE(res.error.find("OPENROUTER_API_KEY"), std::string::npos);
+  EXPECT_NE(res.error.find("opencode.json"), std::string::npos);
+}
+
+TEST(RegistryTest, OpenAIRequiresKeyAndPointsAtConfig) {
+  ScopedEnv key("OPENAI_API_KEY");
+  key.unset();
+  register_core_providers();
+  ClientResolution res = ProviderRegistry::instance().resolve("openai", "");
+  EXPECT_FALSE(res.ok());
+  EXPECT_NE(res.error.find("OPENAI_API_KEY"), std::string::npos);
+  EXPECT_NE(res.error.find("opencode.json"), std::string::npos);
 }
 
 TEST(RegistryTest, OpenRouterSucceedsWithKey) {
