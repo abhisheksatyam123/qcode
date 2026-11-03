@@ -12,6 +12,14 @@ curl -fsSL https://raw.githubusercontent.com/abhisheksatyam123/qcode/main/script
 
 This installs the latest tagged release to `~/.qcode/<version>/` and links `qcode` into `~/.local/bin`. Set `QCODE_VERSION=v0.2.0` to pin a version. Each download is checked against the release's `SHA256SUMS`. Run `qcode --version` to see the tag and commit.
 
+The binary uses the system OpenSSL and libcurl, so install these first:
+
+- **Debian/Ubuntu:** `sudo apt-get install libssl3 libcurl4`
+- **Fedora/RHEL:** `sudo dnf install openssl-libs libcurl`
+- **macOS:** `brew install openssl@3 curl`
+
+After installing, `install.sh` checks the binary's libraries with `ldd` (Linux) or `otool -L` (macOS) and prints the missing ones with the command to install them. The install still completes.
+
 ### Building from source
 
 You will need:

@@ -75,6 +75,46 @@ tar -C "$dest" -xzf "$tmp/$asset"
 mkdir -p "$BIN_DIR"
 ln -sf "$dest/qcode" "$BIN_DIR/qcode"
 
+# Warn about shared libraries the binary cannot load, with the command that fixes it.
+# Linux uses ldd, macOS uses otool. A missing library is reported, not fatal, so the
+# user can install it and run again.
+check_runtime_libs() {
+  bin=$1
+  missing=""
+  case "$platform" in
+    linux-*)
+      if command -v ldd >/dev/null 2>&1; then
+        missing=$(ldd "$bin" 2>/dev/null | sed -n 's/^[[:space:]]*\([^ ]*\) => not found.*/\1/p')
+      fi
+      if [ -n "$missing" ]; then
+        echo "warning: qcode needs shared libraries that are not installed:"
+        echo "$missing" | sed 's/^/  /'
+        echo "install them, then run qcode again:"
+        echo "  Debian/Ubuntu:  sudo apt-get install libssl3 libcurl4"
+        echo "  Fedora/RHEL:    sudo dnf install openssl-libs libcurl"
+      fi
+      ;;
+    macos-*)
+      if command -v otool >/dev/null 2>&1; then
+        otool -L "$bin" | tail -n +2 | awk '{print $1}' | while read -r dep; do
+          case "$dep" in
+            /usr/lib/*|/System/*) ;;
+            *) [ -e "$dep" ] || echo "$dep" ;;
+          esac
+        done > "$tmp/missing"
+        if [ -s "$tmp/missing" ]; then
+          echo "warning: qcode needs libraries that are not installed:"
+          sed 's/^/  /' "$tmp/missing"
+          echo "install them, then run qcode again:"
+          echo "  brew install openssl@3 curl"
+        fi
+      fi
+      ;;
+  esac
+}
+
+check_runtime_libs "$dest/qcode"
+
 echo "installed qcode $version to $dest"
 echo "linked $BIN_DIR/qcode"
 case ":$PATH:" in
