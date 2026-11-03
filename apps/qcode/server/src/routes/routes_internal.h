@@ -46,6 +46,12 @@ inline bool parse_object_body(const std::string& raw, httplib::Response& res,
     return true;
 }
 
+// Runs first in every pre-routing hook. Refuses foreign Host and cross-site
+// Origin, answers CORS preflight, and checks the bearer token. Returns true
+// when it has written the response.
+bool security_gate(const httplib::Request& req, httplib::Response& res,
+                   const SecurityPolicy& policy);
+
 // Session-scoped paths answer a malformed id with 400 and an unknown one with
 // 404. Returns true when it wrote a rejection. Must run in the pre-routing hook.
 bool rejected_session_path(const httplib::Request& req, httplib::Response& res);

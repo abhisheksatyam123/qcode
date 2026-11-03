@@ -48,8 +48,12 @@ void handle_signal(int sig) {
 }
 
 int qcode::app::run_server(int argc, char* argv[]) {
-    constexpr const char* kUsage = "Usage: qcode serve [--port PORT] [--log-dir DIR]\n";
+    constexpr const char* kUsage =
+        "Usage: qcode serve [--port PORT] [--host ADDR] [--log-dir DIR]\n"
+        "  --host ADDR  address to listen on (default 127.0.0.1). A non-loopback\n"
+        "               address requires QCODE_SERVER_TOKEN to be set.\n";
     int port = 9080;
+    std::string host = "127.0.0.1";
     std::string custom_log_dir;
     for (int i = 1; i < argc; i++) {
         const std::string arg = argv[i];
@@ -57,7 +61,7 @@ int qcode::app::run_server(int argc, char* argv[]) {
             std::cout << kUsage;
             return 0;
         }
-        if (arg == "--port" || arg == "-p" || arg == "--log-dir") {
+        if (arg == "--port" || arg == "-p" || arg == "--log-dir" || arg == "--host") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: " << arg << " requires a value\n" << kUsage;
                 return 2;
@@ -65,6 +69,10 @@ int qcode::app::run_server(int argc, char* argv[]) {
             const std::string value = argv[++i];
             if (arg == "--log-dir") {
                 custom_log_dir = value;
+                continue;
+            }
+            if (arg == "--host") {
+                host = value;
                 continue;
             }
             // std::stoi throws on junk ("abc") and silently accepts "9080x".
@@ -79,6 +87,17 @@ int qcode::app::run_server(int argc, char* argv[]) {
             continue;
         }
         std::cerr << "Unknown option: " << arg << "\n\n" << kUsage;
+        return 2;
+    }
+
+    // Loopback is the default. Anything wider needs a token; the token itself is
+    // never logged or printed.
+    const bool loopback_bind = host == "127.0.0.1" || host == "localhost" || host == "::1";
+    const char* token_env = std::getenv("QCODE_SERVER_TOKEN");
+    const std::string api_token = token_env ? token_env : "";
+    if (!loopback_bind && api_token.empty()) {
+        std::cerr << "Error: --host " << host << " is not a loopback address. Set QCODE_SERVER_TOKEN "
+                  << "to require a bearer token on every request, or keep the default 127.0.0.1.\n";
         return 2;
     }
 
@@ -130,6 +149,8 @@ int qcode::app::run_server(int argc, char* argv[]) {
     svr.set_keep_alive_timeout(2);
 
     qcode::server::ServerSetupOptions options;
+    options.security.loopback_bind = loopback_bind;
+    options.security.token = loopback_bind ? "" : api_token;
     {
         std::string webui_path = std::string(argv[0]);
         auto pos = webui_path.find_last_of("/\\");
@@ -155,12 +176,12 @@ int qcode::app::run_server(int argc, char* argv[]) {
     });
 
     LOG_INFO("Starting HTTP server on port {}...", port);
-    std::cout << "QCode server listening on http://0.0.0.0:" << port << "\n";
+    std::cout << "QCode server listening on http://" << host << ":" << port << "\n";
     std::cout << "  Health:  GET /health\n";
     std::cout << "  Providers: GET /providers\n";
     std::cout << "  Generate:  POST /generate (body: {\"text\":\"...\", \"provider\":\"...\", \"model\":\"...\"})\n";
     std::cout << "    Response is NDJSON stream of events\n";
-    svr.listen("0.0.0.0", port);
+    svr.listen(host, port);
 
     g_shutdown_requested = true;
     if (shutdown_watcher.joinable()) {

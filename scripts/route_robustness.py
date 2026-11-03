@@ -19,6 +19,7 @@ import argparse
 import concurrent.futures
 import http.client
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -29,6 +30,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from perf_guard import MODEL, StubProvider, base_env, free_port, wait_ready, write_config  # noqa: E402
+
+# The API key perf_guard writes into the generated config. It must never reach a
+# response body or a log line.
+SECRET = b"perf-guard-dummy"
+SEEN_BODIES: list[bytes] = []
 
 OVERSIZE = b'{"text": "' + b"x" * (20 * 1024 * 1024) + b'"}'
 
@@ -127,35 +133,151 @@ def expected_valid(method: str, template: str, body_name: str) -> int:
     return rule.get(body_name, rule["default"])
 
 
-def send(base: str, method: str, path: str, body: bytes | None = None,
-         content_type: str = "application/json") -> int:
-    """Returns the HTTP status, or -1 (refused / reset) or -2 (timeout).
+def request_raw(port: int, method: str, path: str, body: bytes | None = None,
+                headers: dict | None = None) -> tuple[int, dict, bytes]:
+    """One request. Returns (status, response headers, body). Status is -1 on
+    refused/reset and -2 on timeout.
 
     The server may answer before a large upload is finished (it rejects the
     request early and closes the socket). That is a valid answer, so a send
     error is not fatal: the response is still read if it can be.
     """
-    host, port = base.rsplit("//", 1)[1].split(":")
-    conn = http.client.HTTPConnection(host, int(port), timeout=30)
-    headers = {}
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    hdrs = {}
     if body is not None:
-        headers["Content-Type"] = content_type
+        hdrs["Content-Type"] = "application/json"
+    hdrs.update(headers or {})
     try:
         try:
-            conn.request(method, path, body=body, headers=headers)
+            conn.request(method, path, body=body, headers=hdrs)
         except (BrokenPipeError, ConnectionResetError):
             pass  # answered early; fall through and read the response
         resp = conn.getresponse()
-        resp.read()
-        return resp.status
+        data = resp.read()
+        SEEN_BODIES.append(data[: 1 << 20])
+        return resp.status, {k.lower(): v for k, v in resp.getheaders()}, data
     except ConnectionRefusedError:
-        return -1
+        return -1, {}, b""
     except (socket.timeout, TimeoutError):
-        return -2
+        return -2, {}, b""
     except (ConnectionError, http.client.HTTPException, OSError):
-        return -1
+        return -1, {}, b""
     finally:
         conn.close()
+
+
+def send(base: str, method: str, path: str, body: bytes | None = None) -> int:
+    return request_raw(int(base.rsplit(":", 1)[1]), method, path, body)[0]
+
+
+def security_checks(port: int, sid: str, home: Path, check, ensure) -> None:
+    """Browser and network exposure: Host, Origin, CORS, static and symlink paths."""
+    def req(method, path, body=None, headers=None):
+        return request_raw(port, method, path, body, headers)
+
+    rename_body = json.dumps({"session_id": sid, "title": "robustness"}).encode()
+    evil = {"Origin": "http://evil.example"}
+
+    # DNS rebinding: a name other than loopback must not reach the API.
+    check("sec Host evil.example GET /health",
+          req("GET", "/health", headers={"Host": "evil.example"})[0], 403)
+    check("sec Host 127.0.0.1 GET /health",
+          req("GET", "/health", headers={"Host": f"127.0.0.1:{port}"})[0], 200)
+
+    # Cross-site browser requests: Origin must be loopback or the same host.
+    check("sec Origin evil GET /health", req("GET", "/health", headers=evil)[0], 403)
+    check("sec Origin evil GET session", req("GET", f"/session/{sid}", headers=evil)[0], 403)
+    check("sec Origin evil POST /rename", req("POST", "/rename", rename_body, evil)[0], 403)
+    check("sec Origin evil preflight",
+          req("OPTIONS", "/rename", headers={**evil, "Access-Control-Request-Method": "POST"})[0], 403)
+    st, h, _ = req("OPTIONS", "/rename", headers={"Origin": "http://localhost:5173",
+                                                  "Access-Control-Request-Method": "POST"})
+    check("sec preflight from localhost dev server", st, 204)
+    ensure("sec preflight echoes only the allowed origin",
+           h.get("access-control-allow-origin") == "http://localhost:5173")
+
+    # Requests without Origin (curl, the CLI) are not cross-site and stay open.
+    st, h, _ = req("GET", "/health")
+    check("sec no Origin GET /health", st, 200)
+    ensure("sec no wildcard CORS on same-origin responses",
+           h.get("access-control-allow-origin") != "*")
+    st, h, _ = req("GET", "/health", headers={"Origin": "http://localhost:5173"})
+    check("sec localhost origin GET /health", st, 200)
+    ensure("sec ACAO echoes the allowed origin, never *",
+           h.get("access-control-allow-origin") == "http://localhost:5173")
+
+    # Static paths cannot leave the web UI root.
+    check("sec static encoded ../", req("GET", "/%2e%2e/%2e%2e/etc/passwd")[0], 404)
+    check("sec static ..%2F", req("GET", "/..%2F..%2Fetc%2Fpasswd")[0], 404)
+
+    # A symlink inside the workspace that points outside it must not be followed.
+    os.symlink("/etc", home / "escape")
+    check("sec symlink fs/read escape/passwd",
+          req("GET", f"/session/{sid}/fs/read?path=escape/passwd")[0], 400)
+    check("sec symlink fs/list escape",
+          req("GET", f"/session/{sid}/fs/list?path=escape")[0], 400)
+    check("sec symlink fs/write escape/probe",
+          req("PUT", f"/session/{sid}/fs/write",
+              json.dumps({"path": "escape/qcode-robust-probe", "content": "x"}).encode())[0], 400)
+    ensure("sec symlink write did not reach /etc", not Path("/etc/qcode-robust-probe").exists())
+
+
+def non_loopback_checks(binary: Path, stub, check, ensure) -> None:
+    """Binding beyond loopback must need a token, and the token must gate the API."""
+    token = "robust-token-123"
+    with tempfile.TemporaryDirectory(prefix="qcode-robust-remote-") as tmp:
+        home = Path(tmp) / "home"
+        logs = Path(tmp) / "logs"
+        home.mkdir()
+        logs.mkdir()
+        env = base_env(home, write_config(home, stub.port))
+        env.pop("QCODE_SERVER_TOKEN", None)
+        port = free_port()
+        serve = [str(binary), "serve", "--host", "0.0.0.0", "--port", str(port), "--log-dir", str(logs)]
+
+        p = subprocess.Popen(serve, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            _, err = p.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            _, err = p.communicate()
+        check("sec 0.0.0.0 without a token refuses to start", p.returncode, 2)
+        ensure("sec refusal names QCODE_SERVER_TOKEN", b"QCODE_SERVER_TOKEN" in err)
+
+        proc = subprocess.Popen(serve, env={**env, "QCODE_SERVER_TOKEN": token},
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            try:
+                wait_ready(f"http://127.0.0.1:{port}", proc, 20.0)
+            except RuntimeError as e:
+                ensure(f"sec token run starts: {e}", False)
+                return
+            check("sec token: /health open", request_raw(port, "GET", "/health")[0], 200)
+            check("sec token: /api/version without token",
+                  request_raw(port, "GET", "/api/version")[0], 401)
+            check("sec token: wrong token",
+                  request_raw(port, "GET", "/api/version",
+                              headers={"Authorization": "Bearer nope"})[0], 401)
+            check("sec token: right token",
+                  request_raw(port, "GET", "/api/version",
+                              headers={"Authorization": f"Bearer {token}"})[0], 200)
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(timeout=5)
+        ensure("sec token run: API key not in logs", not secret_in_dir(logs))
+
+
+def secret_in_dir(d: Path) -> bool:
+    return any(f.is_file() and SECRET in f.read_bytes() for f in d.rglob("*"))
+
+
+def secret_scan(ensure, log_dir: Path) -> None:
+    """The API key must not appear in any response body or server log."""
+    ensure("API key absent from every response body",
+           not any(SECRET in b for b in SEEN_BODIES))
+    ensure("API key absent from server logs", not secret_in_dir(log_dir))
+
 
 
 def make_session(base: str, workspace: str) -> str:
@@ -182,6 +304,11 @@ def main() -> int:
     base = f"http://127.0.0.1:{port}"
     findings: list[str] = []
     results: list[tuple[str, int, str]] = []
+
+    def ensure(label: str, cond: bool) -> None:
+        results.append((label, int(cond), "true"))
+        if not cond:
+            findings.append(f"{label} -> FAILED")
 
     def check(label: str, status: int, expected) -> None:
         """expected is an int, or a set of ints when timing decides the answer."""
@@ -277,7 +404,12 @@ def main() -> int:
             check("control DELETE /session/{sid}", send(base, "DELETE", f"/session/{victim}"), 200)
             check("control GET deleted session -> 404", send(base, "GET", f"/session/{victim}"), 404)
 
-            # 6. The server must still answer after all of the above.
+            # 6. Security contract. Browsers and other hosts must not be able to
+            #    drive the API, and paths must stay inside their roots.
+            security_checks(port, sid, home, check, ensure)
+            non_loopback_checks(args.binary, stub, check, ensure)
+
+            # 7. The server must still answer after all of the above.
             check("post-run /health", send(base, "GET", "/health"), 200)
             if proc.poll() is not None:
                 findings.append(f"server exited during the run with code {proc.returncode}")
@@ -290,6 +422,7 @@ def main() -> int:
                     proc.kill()
                     proc.wait()
             stub.stop()
+        secret_scan(ensure, logs)
 
     if args.dump:
         args.dump.write_text(json.dumps(results, indent=1), encoding="utf-8")

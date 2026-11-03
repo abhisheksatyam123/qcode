@@ -107,10 +107,11 @@ void register_system_routes(
                                                     : "no-cache");
             });
             svr.set_pre_routing_handler(
-                [webui = options.webui_dir](const httplib::Request& req,
-                                            httplib::Response& res) {
+                [webui = options.webui_dir, policy = options.security](
+                    const httplib::Request& req, httplib::Response& res) {
                     // This hook replaces the one in setup_server_routes, so the
-                    // session path check runs here too.
+                    // security gate and the session path check run here too.
+                    if (security_gate(req, res, policy)) return httplib::Server::HandlerResponse::Handled;
                     if (rejected_session_path(req, res)) return httplib::Server::HandlerResponse::Handled;
                     return serve_precompressed(webui, req, res);
                 });
