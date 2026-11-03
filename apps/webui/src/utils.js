@@ -616,3 +616,24 @@ export function healthRetryDelayMs(failures) {
 export function isRetryableHttpStatus(status) {
   return status === 502 || status === 503 || status === 504;
 }
+
+// A reply cut off by a server restart is shown with its partial text, but
+// the server never persisted that partial. A history refresh (after the
+// retry finishes) would drop it silently, so keep each such partial in the
+// position it had: right after the fresh copy of the prompt that started it.
+// The turn that failed last is handled by keepFailedTurn.
+export function keepInterruptedPartials(local, fresh) {
+  const persisted = new Set(fresh.filter(m => m.role === 'assistant').map(m => m.content || ''));
+  for (let i = 0; i < local.length - 1; i++) {
+    const m = local[i];
+    if (m.role !== 'assistant' || !m.streamError || !m.content || persisted.has(m.content)) continue;
+    let prompt = null;
+    for (let j = i - 1; j >= 0; j--) { if (local[j].role === 'user') { prompt = local[j]; break; } }
+    const at = prompt ? fresh.findIndex(x => x.role === 'user' && x.content === prompt.content) : -1;
+    if (at < 0) { fresh.push(m); continue; }
+    let k = at + 1;
+    while (k < fresh.length && fresh[k].role !== 'user') k++;
+    fresh.splice(k, 0, m);
+  }
+}
+

@@ -298,3 +298,39 @@ test('findStableMarkdownCut: keeps indented list continuations and frontmatter t
   const fm = '---\ntitle: x\n---\n\nbody\n';
   assert.equal(findStableMarkdownCut(fm), fm.indexOf('body'));
 });
+
+import { keepInterruptedPartials } from '../src/utils.js';
+
+test('keepInterruptedPartials: restores a cut-off reply after the prompt that started it', () => {
+  const local = [
+    { role: 'user', content: 'first' },
+    { role: 'assistant', content: 'answer one' },
+    { role: 'user', content: 'long' },
+    { role: 'assistant', content: 'partial text', streamError: 'Connection lost', stoppedEarly: true },
+    { role: 'user', content: 'long' },
+  ];
+  const fresh = [
+    { role: 'user', content: 'first' },
+    { role: 'assistant', content: 'answer one' },
+    { role: 'user', content: 'long' },
+    { role: 'user', content: 'long' },
+    { role: 'assistant', content: 'full retry reply' },
+  ];
+  keepInterruptedPartials(local, fresh);
+  assert.deepEqual(fresh.map(m => m.content), ['first', 'answer one', 'long', 'partial text', 'long', 'full retry reply']);
+});
+
+test('keepInterruptedPartials: leaves history alone when the server has the reply', () => {
+  const local = [
+    { role: 'user', content: 'q' },
+    { role: 'assistant', content: 'same', streamError: 'Connection lost' },
+    { role: 'user', content: 'next' },
+  ];
+  const fresh = [
+    { role: 'user', content: 'q' },
+    { role: 'assistant', content: 'same' },
+    { role: 'user', content: 'next' },
+  ];
+  keepInterruptedPartials(local, fresh);
+  assert.equal(fresh.length, 3);
+});
