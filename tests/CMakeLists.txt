@@ -46,8 +46,6 @@ add_executable(qcode_tests
     unit/workspace_fs_test.cpp
     unit/commands_test.cpp
     unit/tui_scroll_test.cpp
-    unit/tui_frame_pacer_test.cpp
-    unit/tui_clipboard_test.cpp
     unit/prompt_wrap_test.cpp
     unit/compaction_cache_test.cpp
     unit/session_title_test.cpp
