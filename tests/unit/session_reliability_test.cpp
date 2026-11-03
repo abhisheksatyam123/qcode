@@ -70,18 +70,20 @@ TEST_F(SessionModesStoreTest, InvalidSessionIdIsNoop) {
 
 class FileLoggerRotationTest : public ::testing::Test {
 protected:
+    // ctest --parallel runs every test in its own process, so tests must not
+    // share a log path: a sibling's SetUp/rotation would remove or rename the
+    // file under this one. Each fixture gets its own directory.
     void SetUp() override {
-        path_ = "/tmp/qcode_rotation_test/app.log";
+        dir_ = "/tmp/qcode_rotation_test/" + std::to_string(::getpid()) + "_" +
+               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         std::error_code ec;
-        std::filesystem::create_directories("/tmp/qcode_rotation_test", ec);
-        std::filesystem::remove(path_, ec);
-        std::filesystem::remove(path_ + ".old", ec);
+        std::filesystem::create_directories(dir_, ec);
+        path_ = dir_ + "/app.log";
     }
 
     void TearDown() override {
         std::error_code ec;
-        std::filesystem::remove(path_, ec);
-        std::filesystem::remove(path_ + ".old", ec);
+        std::filesystem::remove_all(dir_, ec);
     }
 
     static std::uintmax_t size_or_zero(const std::string& p) {
@@ -90,6 +92,7 @@ protected:
                                               : 0;
     }
 
+    std::string dir_;
     std::string path_;
 };
 
