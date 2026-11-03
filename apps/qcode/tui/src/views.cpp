@@ -4,6 +4,7 @@
 #include "scroll_helpers.h"
 #include "file_diff_preview.h"
 #include "pickers.h"
+#include <qcode/config/config.h>
 #include <qcode/config/provider_info.h>
 #include <qcode/core/logger.h>
 #include <qcode/tools/task_tool.h>
@@ -572,6 +573,41 @@ ftxui::Element render_logo() {
     }) | hcenter;
 }
 
+namespace {
+
+// True when the current provider/model selection points at a real model.
+// A fresh install has no opencode.json, so the provider list is empty.
+bool has_selected_model(const std::vector<ProviderInfo>& providers, int provider, int model) {
+    if (provider < 0 || provider >= static_cast<int>(providers.size())) return false;
+    const auto& models = providers[provider].models;
+    return model >= 0 && model < static_cast<int>(models.size());
+}
+
+// Shown in place of the chat when no model is configured. The prompt stays
+// live, so the user can type /reload once they have added a config.
+ftxui::Element render_setup_required(const std::string& theme,
+                                     const ftxui::Component& input) {
+    auto prompt = input ? input->Render() : text("");
+    return vbox({
+        render_logo(),
+        text(""),
+        text("No model is configured yet.") | bold | color(theme_text(theme)),
+        text(""),
+        text("qcode reads providers and models from:") | color(theme_text_muted()),
+        text("  " + qcode::config_path()) | color(accent2(theme)),
+        text(""),
+        text("Add a provider with at least one model to that file, or point") | color(theme_text_muted()),
+        text("OPENCODE_CONFIG at a file that has one. Then type /reload here.") | color(theme_text_muted()),
+        text(""),
+        hbox({
+            text(" ❯ ") | color(accent2(theme)) | bold,
+            prompt | color(theme_text(theme)) | flex,
+        }) | borderRounded | color(theme_border(theme)),
+    }) | center;
+}
+
+}  // namespace
+
 ftxui::Element render_view(
     const ChatState& state,
     const std::vector<ProviderInfo>& providers_list,
@@ -604,6 +640,9 @@ ftxui::Element render_view(
     const ftxui::Component& input
 ) {
     std::string theme = state.theme ? *state.theme : "opencode";
+    if (!has_selected_model(providers_list, selected_provider, selected_model)) {
+        return render_setup_required(theme, input);
+    }
 
     // ── Header: identity + model + context (transient status lives in footer) ──
     std::string hdr_model = providers_list[selected_provider].models[selected_model].name;
