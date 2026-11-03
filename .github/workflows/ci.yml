@@ -85,6 +85,10 @@ jobs:
         CXX: clang++-18
       run: uv run scripts/build.py --mode ${{ matrix.build_type }} --tests --export-compile-commands
 
+    - name: Install test helpers
+      # pyte drives the TUI smoke test (OrchestratorSmokeTui) through a pty.
+      run: python3 -m pip install --break-system-packages pyte
+
     - name: Run tests
       working-directory: build/host-${{ matrix.build_type }}
       run: |
