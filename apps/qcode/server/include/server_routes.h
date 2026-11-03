@@ -13,9 +13,19 @@
 namespace qcode {
 namespace server {
 
+// Who may reach the server. The default is loopback only: a Host header that
+// is not a loopback name is refused, which also blocks DNS rebinding.
+struct SecurityPolicy {
+  bool loopback_bind = true;
+  // When non-empty, every request except the health probes must carry
+  // "Authorization: Bearer <token>". Required when binding beyond loopback.
+  std::string token;
+};
+
 struct ServerSetupOptions {
   std::string webui_dir;
   std::string default_workspace;
+  SecurityPolicy security;
 };
 
 // Owns the GenerationService used by HTTP generation routes.

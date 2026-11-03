@@ -4,6 +4,7 @@
 #include "http_utils.h"
 
 #include <nlohmann/json.hpp>
+#include <string_view>
 
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/logger.h>
@@ -40,6 +41,97 @@ bool rejected_session_path(const httplib::Request& req, httplib::Response& res) 
   return false;
 }
 
+namespace {
+
+// "localhost", "127.0.0.1", "[::1]", each with an optional :port.
+bool is_loopback_authority(std::string_view authority) {
+  std::string_view host = authority;
+  if (!host.empty() && host.front() == '[') {
+    const auto close = host.find(']');
+    if (close == std::string_view::npos) return false;
+    host = host.substr(0, close + 1);
+  } else {
+    const auto colon = host.rfind(':');
+    if (colon != std::string_view::npos) host = host.substr(0, colon);
+  }
+  return host == "localhost" || host == "127.0.0.1" || host == "[::1]" || host == "::1";
+}
+
+// "scheme://authority" -> "authority", or empty when there is no scheme.
+std::string_view origin_authority(std::string_view origin) {
+  const auto sep = origin.find("://");
+  if (sep == std::string_view::npos) return {};
+  return origin.substr(sep + 3);
+}
+
+bool constant_time_equal(std::string_view a, std::string_view b) {
+  if (a.size() != b.size()) return false;
+  unsigned char diff = 0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    diff |= static_cast<unsigned char>(a[i] ^ b[i]);
+  }
+  return diff == 0;
+}
+
+bool is_health_probe(const httplib::Request& req) {
+  return (req.method == "GET" || req.method == "HEAD") &&
+         (req.path == "/health" || req.path == "/api/health");
+}
+
+}  // namespace
+
+bool security_gate(const httplib::Request& req, httplib::Response& res,
+                   const SecurityPolicy& policy) {
+  // Host: on a loopback bind, only loopback names reach the API. A DNS name
+  // that resolves to 127.0.0.1 (DNS rebinding) carries its own Host and fails here.
+  const std::string host = req.get_header_value("Host");
+  if (policy.loopback_bind && !host.empty() && !is_loopback_authority(host)) {
+    send_error(res, 403, "host not allowed");
+    return true;
+  }
+
+  // Origin: browsers send it on cross-site requests. Loopback origins (local
+  // pages, the Vite dev server) and this server's own origin are allowed. Any
+  // other origin, including "null", is refused. Allowed origins are echoed,
+  // never "*".
+  const std::string origin = req.get_header_value("Origin");
+  if (!origin.empty()) {
+    const auto authority = origin_authority(origin);
+    const bool allowed = !authority.empty() &&
+                         (is_loopback_authority(authority) || authority == host);
+    if (!allowed) {
+      send_error(res, 403, "cross-origin request refused");
+      return true;
+    }
+    res.set_header("Access-Control-Allow-Origin", origin);
+    res.set_header("Vary", "Origin");
+  }
+
+  if (req.method == "OPTIONS") {
+    if (!origin.empty()) {
+      res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD");
+      res.set_header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+      res.set_header("Access-Control-Max-Age", "86400");
+    }
+    res.status = 204;
+    return true;
+  }
+
+  // Token: beyond loopback every request needs it, except the health probes.
+  if (!policy.token.empty() && !is_health_probe(req)) {
+    const std::string auth = req.get_header_value("Authorization");
+    const std::string prefix = "Bearer ";
+    const bool ok = auth.rfind(prefix, 0) == 0 &&
+                    constant_time_equal(std::string_view(auth).substr(prefix.size()), policy.token);
+    if (!ok) {
+      res.set_header("WWW-Authenticate", "Bearer");
+      send_error(res, 401, "missing or wrong bearer token");
+      return true;
+    }
+  }
+  return false;
+}
+
 void setup_server_routes(
     httplib::Server& server,
     std::shared_ptr<qcode::bus::BusRuntime> bus,
@@ -49,23 +141,14 @@ void setup_server_routes(
     g_backend = std::make_unique<qcode::GenerationService>(*bus, *providers);
   }
 
-  // Enable CORS for LAN and browser clients
-  server.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
-    if (req.method == "OPTIONS") {
-      res.set_header("Access-Control-Allow-Origin", "*");
-      res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD");
-      res.set_header("Access-Control-Allow-Headers", "*");
-      res.set_header("Access-Control-Max-Age", "86400");
-      res.status = 204;
-      return httplib::Server::HandlerResponse::Handled;
-    }
+  // Security gate first, then the session-path checks. The web UI hook in
+  // register_system_routes replaces this one when a web UI directory exists, so
+  // it runs the same gate.
+  server.set_pre_routing_handler([policy = options.security](const httplib::Request& req,
+                                                             httplib::Response& res) {
+    if (security_gate(req, res, policy)) return httplib::Server::HandlerResponse::Handled;
     if (rejected_session_path(req, res)) return httplib::Server::HandlerResponse::Handled;
     return httplib::Server::HandlerResponse::Unhandled;
-  });
-
-  server.set_post_routing_handler([](const httplib::Request&, httplib::Response& res) {
-    res.set_header("Access-Control-Allow-Origin", "*");
-    res.set_header("Access-Control-Allow-Headers", "*");
   });
 
   // An exception that reaches here is a server bug: log it and answer 500.

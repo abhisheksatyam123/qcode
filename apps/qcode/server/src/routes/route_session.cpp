@@ -174,8 +174,6 @@ void stream_turn(httplib::Response& res, std::shared_ptr<GenSession> session,
             }
         }
     );
-    res.set_header("Access-Control-Allow-Origin", "*");
-    res.set_header("Access-Control-Allow-Headers", "*");
     res.set_header("Cache-Control", "no-cache, no-transform");
     res.set_header("Connection", "keep-alive");
     res.set_header("X-Accel-Buffering", "no");
