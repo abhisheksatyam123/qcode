@@ -8,7 +8,11 @@
  */
 #include <qcode_app/frontends.h>
 
+#include <cstdlib>
 #include <iostream>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <string_view>
 #include <vector>
 
@@ -53,6 +57,16 @@ std::vector<char*> mode_argv(int argc, char* argv[], int first) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+#if defined(__GLIBC__)
+    // Each glibc malloc arena keeps its own free lists. With the HTTP pool
+    // (64 workers) and the session threads, the default arena count (8 x
+    // cores) let RSS climb ~1 MB per 10 turns while the heap stayed flat.
+    // Two arenas hold the same heap at a fraction of the footprint.
+    // Respects an explicit MALLOC_ARENA_MAX from the environment.
+    if (std::getenv("MALLOC_ARENA_MAX") == nullptr) {
+        mallopt(M_ARENA_MAX, 2);
+    }
+#endif
     const std::string_view command = argc > 1 ? argv[1] : "";
 
     if (command.empty()) {
