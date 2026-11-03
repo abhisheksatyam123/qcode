@@ -1,4 +1,5 @@
 #include <qcode/generation/turn_prefix.h>
+#include <qcode/generation/agent_mode.h>
 #include <qcode/generation/model_client.h>
 #include <qcode/tools/task_tool.h>
 #include <qcode/compaction/compaction_request.h>
@@ -1340,16 +1341,6 @@ static void run_tools_generation_bus(
             aborted = true;
             break;
           }
-        } else if (!is_child_turn && (ctx.agent_mode == "autonomous" || ctx.agent_mode == "monitor") &&
-                   auto_continues < 50) {
-          ++auto_continues;
-          LOG_INFO("run_tools_generation_bus: autonomous monitor cycle {} for session {}",
-                   auto_continues, ctx.session_id);
-          append_message(qcode::Message::user(
-              "[System Note: Autonomous monitor cycle. Check current task file status. "
-              "If tasks remain open, continue delegating with the task tool, executing, or verifying. "
-              "If all tasks in the plan are fully done and verified, summarize results and finish.]"
-          ));
         } else {
           LOG_DEBUG(
               "run_tools_generation_bus: step={} no tool calls, finishing",
@@ -1947,17 +1938,21 @@ void run_generation_with_bus(
     qcode::GenerateOptions base_opts;
     base_opts.model = resolved_model_id;
 
-    // ── Agent mode: orchestrator (default) or subagent (child session) ──
-    const bool is_subagent = (ctx.agent_mode == "subagent") ||
+    // ── Agent mode: normal (default), orchestrator, or subagent (child session) ──
+    const std::string agent_mode = normalize_agent_mode(ctx.agent_mode);
+    const bool is_subagent = (agent_mode == kAgentRoleSubagent) ||
                              (!ctx.session_id.empty() && qcode::session::is_child_session(ctx.session_id));
+    const bool is_orchestrator = !is_subagent && agent_mode == kAgentModeOrchestrator;
     // Prompt-cache prefix: single source of truth shared with compaction
     // (build_cache_replay_request) so both requests stay byte-identical.
     base_opts.system = build_turn_system_prompt(system_prompt, is_subagent, providers,
-                                                provider_id, resolved_model_id, ctx.agent_mode);
+                                                provider_id, resolved_model_id, agent_mode);
     if (is_subagent) {
-        LOG_INFO("ChatBus: agent_mode=subagent (focused worker, nested delegation disabled)");
-    } else {
+        LOG_INFO("ChatBus: agent_mode=subagent (focused worker)");
+    } else if (is_orchestrator) {
         LOG_INFO("ChatBus: agent_mode=orchestrator (lead coordinator with parallel subagents)");
+    } else {
+        LOG_INFO("ChatBus: agent_mode=normal (single agent, no delegation)");
     }
 
     Model transform_model(resolved_model_id, provider_id);
@@ -1984,10 +1979,11 @@ void run_generation_with_bus(
     const bool is_server_duplex_agent =
         (client.tool_execution_model() == ToolExecutionModel::ServerSideDuplex);
     if (enable_tools) {
-      const bool enable_task_tool = !is_subagent;
       const bool supports_vision = (resolved_model != nullptr && resolved_model->vision);
       // Prompt-cache prefix: same builder compaction uses to replay tools.
-      base_opts.tools = build_turn_tools(enable_task_tool, supports_vision);
+      const ToolConfig tool_cfg = turn_tool_config(is_subagent, agent_mode, supports_vision);
+      const bool enable_task_tool = tool_cfg.enable_task;
+      base_opts.tools = ToolCatalog::build_definitions(tool_cfg);
       int max_tool_steps = 0;
       if (const char* env_steps = std::getenv("QCODE_MAX_STEPS")) {
         try {

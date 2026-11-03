@@ -5,8 +5,10 @@
 #include <qcode/core/message.h>
 #include <qcode/core/model.h>
 #include <qcode/core/tool.h>
+#include <qcode/tools/tool_catalog.h>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace qcode {
@@ -22,10 +24,10 @@ namespace qcode {
 // message prefix byte-for-byte so the auxiliary call is a genuine prefix of
 // the last routed request and reuses the warm prefix cache.
 
-// Build the wire system prompt for a turn: `system_prompt` plus the mode
-// reminder and provider catalog, exactly as ChatBus assembles it.
-//   is_subagent  -> raw prompt only (focused worker, no catalog)
-//   otherwise    -> orchestrator reminder + catalog
+// Build the wire system prompt for a turn, exactly as ChatBus assembles it.
+//   is_subagent          -> raw prompt only (focused worker, no catalog)
+//   agent_mode normal    -> raw prompt only (works alone, no catalog)
+//   orchestrator         -> orchestrator reminder + provider catalog
 std::string build_turn_system_prompt(
     const std::string& system_prompt,
     bool is_subagent,
@@ -34,8 +36,16 @@ std::string build_turn_system_prompt(
     std::string_view current_model_id = "",
     std::string_view agent_mode = "orchestrator");
 
-// Tool definitions dispatched for a turn.
-//   enable_task_tool -> orchestrator tool set, else subagent tool set.
+// Tool set of a turn by role and mode:
+//   is_subagent          -> subagent set (bash, task for team messages, image)
+//   agent_mode normal    -> bash (+ image); no task tool
+//   orchestrator         -> bash, task (+ image)
+ToolConfig turn_tool_config(bool is_subagent, std::string_view agent_mode,
+                            bool vision_supported);
+ToolSet build_turn_tools(bool is_subagent, std::string_view agent_mode,
+                         bool vision_supported);
+
+// Legacy form: enable_task_tool -> orchestrator set, else subagent set.
 ToolSet build_turn_tools(bool enable_task_tool, bool vision_supported);
 
 // Sampling defaults and output budget of a turn: temperature/top_p by model

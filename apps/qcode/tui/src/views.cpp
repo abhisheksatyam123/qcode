@@ -7,6 +7,7 @@
 #include <qcode/config/config.h>
 #include <qcode/config/provider_info.h>
 #include <qcode/core/logger.h>
+#include <qcode/generation/agent_mode.h>
 #include <qcode/tools/task_tool.h>
 #include <qcode/session/session_store.h>
 #include <qcode/transform/provider_transform.h>
@@ -813,9 +814,14 @@ ftxui::Element render_view(
                    : emptyElement()),
         (agent_busy ? text(" " + footer_spin) | color(accent(theme)) | bold
                     : emptyElement()),
-        ((state.agent_mode && *state.agent_mode == "subagent")
-             ? text(" Subagent") | bold | color(Color::CyanLight)
-             : text(" Orchestrator") | bold | color(accent2(theme))),
+        [&] {
+            const std::string mode = qcode::normalize_agent_mode(
+                state.agent_mode ? *state.agent_mode : std::string());
+            const Element chip = text(" " + qcode::agent_mode_label(mode)) | bold;
+            if (mode == qcode::kAgentRoleSubagent) return chip | color(Color::CyanLight);
+            if (mode == qcode::kAgentModeOrchestrator) return chip | color(accent2(theme));
+            return chip | color(theme_text(theme));
+        }(),
         text(" " + hdr_model) | color(accent(theme)),
     };
     if (!variant_label.empty())
@@ -834,6 +840,8 @@ ftxui::Element render_view(
         }
         footer_bits.push_back(text("tab") | bold | color(theme_text(theme)));
         footer_bits.push_back(text(" agents  ") | dim | color(theme_text_muted(theme)));
+        footer_bits.push_back(text("shift+tab") | bold | color(theme_text(theme)));
+        footer_bits.push_back(text(" mode  ") | dim | color(theme_text_muted(theme)));
         footer_bits.push_back(text("ctrl+p") | bold | color(theme_text(theme)));
         footer_bits.push_back(text(" commands ") | dim | color(theme_text_muted(theme)));
     }

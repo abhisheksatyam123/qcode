@@ -2,6 +2,7 @@
 #include "session_runtime.h"
 #include "http_utils.h"
 
+#include <qcode/generation/agent_mode.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/core/logger.h>
 #include <qcode/config/provider_info.h>
@@ -38,10 +39,10 @@ namespace server {
 namespace {
 nlohmann::json session_public_json(const qcode::session::SessionInfo& s) {
     // Modes come from the same row (no per-session lookup).
-    std::string agent = s.agent_mode;
-    if (agent.empty()) {
-        agent = (s.id.rfind("ses_", 0) == 0) ? "subagent" : "orchestrator";
-    }
+    std::string agent = s.agent_mode.empty()
+                            ? ((s.id.rfind("ses_", 0) == 0) ? std::string(qcode::kAgentRoleSubagent)
+                                                            : std::string(qcode::kDefaultAgentMode))
+                            : qcode::normalize_agent_mode(s.agent_mode);
     return {
         {"id", s.id},
         {"title", s.title},
@@ -333,9 +334,6 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
         system_prompt = body["system_prompt"].get<std::string>();
     }
 
-    if (system_prompt.empty()) {
-        system_prompt = qcode::SystemPrompt::build_default(qcode::ToolConfig::orchestrator(vision_supported));
-    }
     std::string reasoning_mode = body.value("reasoning_mode", "off");
     std::string agent_mode = body.value("agent_mode", "");
     if (agent_mode.empty()) {
@@ -343,7 +341,15 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
         agent_mode = modes.first;
     }
     if (agent_mode.empty()) {
-        agent_mode = (session_id.rfind("ses_", 0) == 0) ? "subagent" : "orchestrator";
+        agent_mode = (session_id.rfind("ses_", 0) == 0) ? std::string(qcode::kAgentRoleSubagent)
+                                                        : std::string(qcode::kDefaultAgentMode);
+    }
+    agent_mode = qcode::normalize_agent_mode(agent_mode);
+    if (system_prompt.empty()) {
+        system_prompt = agent_mode == qcode::kAgentRoleSubagent
+                            ? qcode::SystemPrompt::build_default(
+                                  qcode::ToolConfig::subagent(vision_supported))
+                            : qcode::SystemPrompt::build_for_mode(agent_mode, vision_supported);
     }
 
     std::shared_ptr<GenSession> session;
@@ -646,7 +652,7 @@ svr.Post("/sessions", [default_workspace, providers_list](const httplib::Request
     std::string agent_mode = body.value("agent_mode", "");
     auto id = qcode::session::create_new_session(provider, model, workspace, custom_id);
     if (!agent_mode.empty()) {
-        qcode::session::set_session_modes(id, agent_mode, "");
+        qcode::session::set_session_modes(id, qcode::normalize_agent_mode(agent_mode), "");
     }
     std::string title = qcode::session::get_session_title(id);
     if (title.empty()) {
@@ -810,8 +816,9 @@ svr.Post("/session/([^/]+)/mode", [](const httplib::Request& req, httplib::Respo
     std::string reasoning_mode = body.value("reasoning_mode", "");
     auto stored = qcode::session::get_session_modes(sid);
     if (agent_mode.empty()) {
-        agent_mode = stored.first.empty() ? "orchestrator" : stored.first;
+        agent_mode = stored.first.empty() ? std::string(qcode::kDefaultAgentMode) : stored.first;
     }
+    agent_mode = qcode::normalize_agent_mode(agent_mode);
     if (reasoning_mode.empty()) {
         reasoning_mode = stored.second.empty() ? "off" : stored.second;
     }

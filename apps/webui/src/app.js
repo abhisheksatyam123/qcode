@@ -279,7 +279,7 @@ const state = {
   // UI Tabs & layout state
   activeTab: 'chat', // 'chat' | 'files' | 'stats' | 'sessions'
   parentSessionId: null,
-  agentMode: 'orchestrator',
+  agentMode: 'normal',
   layoutMode: 'tab', // 'tab' or 'split'
   // Files tab: explorer + editor
   filesSubtab: 'explorer', // 'explorer' | 'git'
@@ -1611,8 +1611,7 @@ function updateStatusBar() {
     if (!isSub) {
       agentModeBtn.textContent = formatAgentModeTitle(state.agentMode);
       agentModeBtn.classList.remove('subagent');
-      agentModeBtn.classList.toggle('autonomous', state.agentMode === 'autonomous' || state.agentMode === 'monitor');
-      agentModeBtn.classList.toggle('plan', state.agentMode === 'plan');
+      agentModeBtn.classList.toggle('orchestrator', normalizeAgentMode(state.agentMode) === 'orchestrator');
       agentModeBtn.title = `Agent Mode: ${formatAgentModeTitle(state.agentMode)} (Click to switch)`;
     }
   }
@@ -1958,37 +1957,36 @@ function addSystemMessage(text) {
   }
 }
 
+// Two agent modes (server: generation/agent_mode.h). Retired modes map
+// onto them: autonomous/monitor delegated (orchestrator), plan/build did not.
+function normalizeAgentMode(mode) {
+  if (mode === 'subagent') return 'subagent';
+  if (mode === 'orchestrator' || mode === 'autonomous' || mode === 'monitor') return 'orchestrator';
+  return 'normal';
+}
+
 function formatAgentModeTitle(mode) {
-  if (mode === 'autonomous' || mode === 'monitor') return 'Autonomous Monitor';
-  if (mode === 'plan') return 'Plan Mode';
-  if (mode === 'subagent') return 'Subagent';
-  if (mode && mode !== 'orchestrator') return mode;
-  return 'Orchestrator';
+  const m = normalizeAgentMode(mode);
+  if (m === 'subagent') return 'Subagent';
+  return m === 'orchestrator' ? 'Orchestrator' : 'Normal';
 }
 
 async function showAgentModePicker() {
-  const currentMode = state.agentMode || 'orchestrator';
+  const currentMode = normalizeAgentMode(state.agentMode);
   const modes = [
     {
+      id: 'normal',
+      label: 'Normal',
+      sublabel: 'Works alone: reads, edits and verifies with tools, no subagents',
+      isActive: currentMode === 'normal',
+      badges: [{ type: 'ctx', text: 'Default' }]
+    },
+    {
       id: 'orchestrator',
-      label: '⚡ Lead Orchestrator',
-      sublabel: 'Default: plans, executes tools, delegates to parallel subagents',
+      label: 'Orchestrator',
+      sublabel: 'Manages subagent sessions: delegates jobs in parallel, monitors and merges reports',
       isActive: currentMode === 'orchestrator',
       badges: [{ type: 'reasoning', text: 'Lead' }]
-    },
-    {
-      id: 'autonomous',
-      label: '🔄 Autonomous Monitor Agent',
-      sublabel: 'Self-running: delegates to subagents, monitors long-running tasks, autocompacts',
-      isActive: currentMode === 'autonomous' || currentMode === 'monitor',
-      badges: [{ type: 'free', text: 'Self-Running' }]
-    },
-    {
-      id: 'plan',
-      label: '📐 Plan Mode',
-      sublabel: 'Read-only architecture analysis & implementation planning',
-      isActive: currentMode === 'plan',
-      badges: [{ type: 'ctx', text: 'Planning' }]
     }
   ];
 
@@ -1999,6 +1997,8 @@ async function showAgentModePicker() {
 }
 
 async function selectAgentMode(mode) {
+  mode = normalizeAgentMode(mode);
+  if (mode === 'subagent') return;
   state.agentMode = mode;
   const session = state.openSessions.find(s => s.id === state.sessionId);
   if (session) {
@@ -2023,10 +2023,10 @@ function handleAgentCommand(args) {
   const clean = (args || '').trim().toLowerCase();
   if (clean === 'orchestrator' || clean === 'lead') {
     selectAgentMode('orchestrator');
-  } else if (clean === 'autonomous' || clean === 'monitor' || clean === 'self') {
-    selectAgentMode('autonomous');
-  } else if (clean === 'plan') {
-    selectAgentMode('plan');
+  } else if (clean === 'normal') {
+    selectAgentMode('normal');
+  } else if (clean === 'toggle') {
+    selectAgentMode(normalizeAgentMode(state.agentMode) === 'orchestrator' ? 'normal' : 'orchestrator');
   } else {
     showAgentModePicker();
   }
@@ -2530,7 +2530,7 @@ async function loadSessionData(id) {
       session.workspace = info.workspace || '';
       session.provider = info.provider || '';
       session.model = info.model || '';
-      session.agentMode = info.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+      session.agentMode = info.agent_mode ? normalizeAgentMode(info.agent_mode) : (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
       session.reasoning = info.reasoning_mode || session.reasoning || state.reasoning || 'low';
       session.parentSessionId = info.parent_session_id || state.parentSessionId || '';
       // Taken before /messages, so a write in between still reads as a change.
@@ -2557,7 +2557,7 @@ async function loadSessionData(id) {
 // Lightweight session built from a /sessions row. History is fetched on first open.
 function makeSessionStub(row) {
   const id = row.id;
-  const agentMode = row.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+  const agentMode = row.agent_mode ? normalizeAgentMode(row.agent_mode) : (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
   return {
     id: id,
     title: row.title || ((agentMode === 'subagent' ? 'Subagent ' : 'Session ') + id.substring(0, 8)),
@@ -2835,7 +2835,7 @@ function postGenerate(session, text) {
       text,
       provider: resolved.provider,
       model: resolved.model,
-      agent_mode: session.agentMode || state.agentMode || 'orchestrator',
+      agent_mode: normalizeAgentMode(session.agentMode || state.agentMode),
       reasoning_mode: state.reasoning,
       session_id: session.id
     })
@@ -5824,7 +5824,7 @@ async function switchSession(id) {
   state.sessionId = id;
   state.sessionTitle = stripTags(session.title || '');
   state.sessionWorkspace = stripTags(session.workspace || '');
-  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
   if (session.reasoning) {
     state.reasoning = session.reasoning;
     if (reasoningSelect) reasoningSelect.value = session.reasoning;

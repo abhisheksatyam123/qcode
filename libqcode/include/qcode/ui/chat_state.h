@@ -83,9 +83,10 @@ struct ChatState {
     std::shared_ptr<std::unordered_map<unsigned long, HitBox>>
         thinking_header_boxes =
             std::make_shared<std::unordered_map<unsigned long, HitBox>>();
-    // Agent mode: "orchestrator" (default) or "subagent" (delegated worker).
+    // Agent mode: "normal" (default), "orchestrator", or "subagent" for a
+    // delegated worker session. See generation/agent_mode.h.
     std::shared_ptr<std::string> agent_mode =
-        std::make_shared<std::string>("orchestrator");
+        std::make_shared<std::string>("normal");
     // Reasoning/thinking level: "off" or a model-configured effort from JSON.
     std::shared_ptr<std::string> reasoning_mode =
         std::make_shared<std::string>("off");
