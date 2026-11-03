@@ -8,6 +8,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, usageModelRows, detectFsLanguage, extractChildSessionId, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from '../src/utils.js';
+import { healthRetryDelayMs, isRetryableHttpStatus } from '../src/utils.js';
+
+test('healthRetryDelayMs: backs off while offline and caps at 10 s', () => {
+  assert.equal(healthRetryDelayMs(1), 2000);
+  assert.equal(healthRetryDelayMs(2), 4000);
+  assert.equal(healthRetryDelayMs(3), 8000);
+  assert.equal(healthRetryDelayMs(4), 10000);
+  assert.equal(healthRetryDelayMs(50), 10000);
+});
+
+test('isRetryableHttpStatus: gateway errors retry, client errors do not', () => {
+  for (const s of [502, 503, 504]) assert.equal(isRetryableHttpStatus(s), true);
+  for (const s of [200, 400, 404, 409, 500]) assert.equal(isRetryableHttpStatus(s), false);
+});
 
 test('fuzzyScore: subsequence + ordering', () => {
   assert.equal(fuzzyScore('', 'anything'), 0);
