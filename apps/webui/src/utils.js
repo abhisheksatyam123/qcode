@@ -563,3 +563,45 @@ export const PALETTE_COMMANDS = [
   { id: 'theme_select',        label: 'Switch Theme',             sublabel: '/theme',        category: 'Appearance' },
   { id: 'help',                label: 'Help & Shortcuts',         sublabel: '/help',         category: 'General' },
 ];
+
+// Streaming markdown is rendered as append-only "stable" chunks plus a small
+// live tail, so each token re-parses only the paragraph being written instead
+// of the whole reply (and selections in finished paragraphs survive).
+// Returns the largest offset >= `from` where `text` can be split into two
+// independently renderable markdown documents: just after a blank line that
+// is outside any code fence or $$ math block and is followed by an unindented
+// line (an indented one may continue a list item). `from` must itself be a
+// safe split point (0 or a value this function returned). Rare constructs
+// that still render differently when split (reference links, HTML blocks)
+// are corrected by the full render when the stream ends.
+export function findStableMarkdownCut(text, from = 0) {
+  let pos = from;
+  if (from === 0 && /^---\r?\n/.test(text)) {
+    const end = text.search(/\n---[ \t]*(\r?\n|$)/);
+    if (end < 0) return 0;
+    const nl = text.indexOf('\n', end + 1);
+    if (nl < 0) return 0;
+    pos = nl + 1;
+  }
+  let cut = from;
+  let fence = '';
+  let inMath = false;
+  let prevBlank = false;
+  while (pos < text.length) {
+    const nl = text.indexOf('\n', pos);
+    if (nl < 0) break;  // the last line is still being written
+    const line = text.slice(pos, nl);
+    if (prevBlank && !fence && !inMath && line.length > 0 && !/^\s/.test(line)) cut = pos;
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (m) {
+      if (!fence) fence = m[1];
+      else if (m[1][0] === fence[0] && m[1].length >= fence.length && line.trim() === m[1]) fence = '';
+    } else if (!fence) {
+      const dollars = line.split('$$').length - 1;
+      if (dollars % 2 === 1) inMath = !inMath;
+    }
+    prevBlank = line.trim() === '';
+    pos = nl + 1;
+  }
+  return cut;
+}

@@ -89,7 +89,7 @@ window.copyPlantUmlCode = function(diagramId, btn) {
   });
 };
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -1282,7 +1282,28 @@ function setupEventListeners() {
   const sessFilter = document.getElementById('sessions-filter-input');
   if (sessFilter) sessFilter.addEventListener('input', () => { state.sessionsFilterText = sessFilter.value; renderSessionTabs(); });
   const chatC = document.getElementById('chat-container');
-  if (chatC) chatC.addEventListener('scroll', () => updateJumpPill(), { passive: true });
+  if (chatC) {
+    chatC.addEventListener('scroll', onChatScroll, { passive: true });
+    const unstick = () => { chatStick = false; };
+    chatC.addEventListener('wheel', (e) => { if (e.deltaY < 0) unstick(); }, { passive: true });
+    chatC.addEventListener('touchmove', unstick, { passive: true });
+    // Scrollbar drags; selection drags are tracked by chatSelecting.
+    chatC.addEventListener('pointerdown', (e) => {
+      if (e.target === chatC && e.offsetX >= chatC.clientWidth) chatPointerHeld = true;
+    });
+    window.addEventListener('pointerup', () => { chatPointerHeld = false; });
+    window.addEventListener('pointercancel', () => { chatPointerHeld = false; });
+    document.addEventListener('keydown', (e) => {
+      if (/^(PageUp|ArrowUp|Home)$/.test(e.key)
+          && (e.target === document.body || chatC.contains(e.target))) unstick();
+    });
+  }
+  messagesEl.addEventListener('pointerdown', (e) => {
+    if (e.button === 0 && e.pointerType === 'mouse' && !e.target.closest('button, a, input, textarea, select, [role="button"]')) chatSelecting = true;
+  });
+  window.addEventListener('pointerup', () => { if (chatSelecting) flushDeferredRenders(); });
+  window.addEventListener('pointercancel', () => { if (chatSelecting) flushDeferredRenders(); });
+  window.addEventListener('blur', () => { if (chatSelecting) flushDeferredRenders(); });
   document.addEventListener('click', (e) => {
     if (slashMenuEl && !slashMenuEl.contains(e.target) && e.target !== promptInput) {
       closeSlashMenu();
@@ -2317,10 +2338,19 @@ function renderThoughtBlock(text, opts) {
     + '<span class="reasoning-title">' + (live ? 'Thinking' : 'Thought') + '</span>'
     + '<span class="thought-tokens">' + compact + ' tokens</span>';
   const rt = document.createElement('div'); rt.className = 'reasoning-text';
-  rt.innerHTML = renderMarkdown(text); tagMarkdownLinks(rt);
+  // Collapsed thoughts are parsed on first expand, not on every re-render.
+  let filled = false;
+  const fill = () => {
+    if (filled || rt._stream) return;  // the live stream already fills it
+    filled = true;
+    if (live) renderMarkdownStreaming(rt, text, { decorate: false });
+    else { rt.innerHTML = renderMarkdown(text); tagMarkdownLinks(rt); }
+  };
+  if (open) fill();
   rl.addEventListener('click', () => {
     const collapsed = rc.classList.toggle('collapsed');
     rl.setAttribute('aria-expanded', String(!collapsed));
+    if (!collapsed) fill();
   });
   rc.appendChild(rl); rc.appendChild(rt);
   return rc;
@@ -2978,7 +3008,7 @@ async function runGeneration(session, text, res) {
   const assistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [], createdAt: Date.now() };
   session.messages.push(userMsg, assistantMsg);
   const stream = beginStream(session, assistantMsg);
-  if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+  if (session.id === state.sessionId) { renderMessages(); scrollToBottom(true); }
 
   if (!res) {
     try {
@@ -3020,7 +3050,7 @@ async function queuePrompt(session, text) {
   if (!session.promptQueue) session.promptQueue = [];
   session.promptQueue.push(text);
   updateQueueIndicator();
-  if (session.id === state.sessionId) { renderMessages(); scrollToBottom(); }
+  if (session.id === state.sessionId) { renderMessages(); scrollToBottom(true); }
   const stops = session.stops || 0;
   let res;
   try {
@@ -3125,6 +3155,19 @@ function loadMermaid() {
   return mermaidLoadPromise;
 }
 
+// While the user drags a selection in the chat, renders wait for the mouse
+// to come up: replacing DOM under a drag-selection drops it, and following
+// new output would yank the text away from the pointer.
+let chatSelecting = false;
+const deferredRenders = { full: null, stream: null };
+function flushDeferredRenders() {
+  chatSelecting = false;
+  const { full, stream } = deferredRenders;
+  deferredRenders.full = deferredRenders.stream = null;
+  if (full) full();
+  else if (stream) stream();
+}
+
 // Coalesces bursts of full rebuilds (tool/usage events) into one render + scroll per frame.
 let fullRenderPending = false;
 function scheduleFullRender() {
@@ -3132,6 +3175,7 @@ function scheduleFullRender() {
   fullRenderPending = true;
   requestAnimationFrame(() => {
     fullRenderPending = false;
+    if (chatSelecting) { deferredRenders.full = scheduleFullRender; return; }
     renderMessages();
     scrollToBottom();
   });
@@ -3147,7 +3191,9 @@ function scheduleStreamingRender(session, msg) {
   streamRenderPending = true;
   const run = () => requestAnimationFrame(() => {
     streamRenderPending = false;
-    if (session.id !== state.sessionId) return;
+    // A render queued behind the stream's end must not re-stream the final one.
+    if (session.id !== state.sessionId || !session.stream || session.stream.msg !== msg) return;
+    if (chatSelecting) { deferredRenders.stream = () => scheduleStreamingRender(session, msg); return; }
     const t0 = performance.now();
     renderStreamingIncremental(msg);
     streamRenderCost = performance.now() - t0;
@@ -3190,12 +3236,12 @@ function renderStreamingIncremental(msg) {
   if (last && last.kind === 'thought' && state.showThinking) {
     const blocks = lastChild.querySelectorAll('.reasoning-block .reasoning-text');
     const el = blocks[blocks.length - 1];
-    if (el) { el.innerHTML = renderMarkdown(last.text || ''); tagMarkdownLinks(el); }
+    if (el) renderMarkdownStreaming(el, last.text || '', { decorate: false });
   } else {
     const blocks = lastChild.querySelectorAll('.md-content');
     const el = blocks[blocks.length - 1];
     const text = (last && last.kind === 'text') ? last.text : msg.content;
-    if (el && text) renderMarkdownInto(el, text);
+    if (el && text) renderMarkdownStreaming(el, text);
   }
   const session = state.openSessions.find(x => x.id === state.sessionId);
   if (session && cacheEntry && cacheEntry.el === lastChild) {
@@ -4385,17 +4431,33 @@ function renderSignature(session, msg, index) {
     state.showThinking ? 1 : 0, live ? 1 : 0].join('|');
 }
 
+// Puts exactly `nodes` into `parent`, in order, moving only what changed.
+// Unchanged message nodes are never detached, so layout work stays local to
+// what changed and a text selection inside them survives the render.
+function reconcileChildren(parent, nodes) {
+  let cur = parent.firstChild;
+  for (const node of nodes) {
+    if (node === cur) { cur = cur.nextSibling; continue; }
+    parent.insertBefore(node, cur);
+  }
+  while (cur) { const next = cur.nextSibling; parent.removeChild(cur); cur = next; }
+}
+
 function renderMessages() {
-  messagesEl.innerHTML = '';
   const session = state.openSessions.find(s => s.id === state.sessionId);
-  if (!session) return;
+  if (!session) { reconcileChildren(messagesEl, []); return; }
+  const out = [];
 
   const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
   if (isSub) {
-    const banner = document.createElement('div');
-    banner.className = 'subagent-session-banner';
     const modelLabel = session.model ? `${session.provider ? session.provider + ' / ' : ''}${session.model}` : '';
-    banner.innerHTML = `
+    const key = session.id + '|' + modelLabel;
+    let banner = renderCache.banner;
+    if (!banner || banner._key !== key) {
+      banner = document.createElement('div');
+      banner._key = key;
+      banner.className = 'subagent-session-banner';
+      banner.innerHTML = `
       <div class="subagent-banner-info">
         <span class="subagent-banner-icon">${icon('bot', 16)}</span>
         <span class="subagent-banner-title">Subagent session</span>
@@ -4404,17 +4466,22 @@ function renderMessages() {
       </div>
       <button type="button" class="subagent-banner-back-btn" title="Return to parent session (Esc or b)">Back to parent</button>
     `;
-    const backBtn = banner.querySelector('.subagent-banner-back-btn');
-    if (backBtn) backBtn.addEventListener('click', returnToParentSession);
-    messagesEl.appendChild(banner);
+      const backBtn = banner.querySelector('.subagent-banner-back-btn');
+      if (backBtn) backBtn.addEventListener('click', returnToParentSession);
+      renderCache.banner = banner;
+    }
+    out.push(banner);
   }
 
   const queue = session.promptQueue || [];
   if (state.reasoning === 'off' && session.messages.length > 0) {
-    const hint = document.createElement('div');
-    hint.className = 'thinking-hint';
-    hint.textContent = 'Reasoning is Off — set Low/Med/High or /variant for thinking trace.';
-    messagesEl.appendChild(hint);
+    if (!renderCache.hint) {
+      const hint = document.createElement('div');
+      hint.className = 'thinking-hint';
+      hint.textContent = 'Reasoning is Off — set Low/Med/High or /variant for thinking trace.';
+      renderCache.hint = hint;
+    }
+    out.push(renderCache.hint);
   }
   if (session.messages.length === 0 && queue.length === 0) {
     const empty = document.createElement('div');
@@ -4423,7 +4490,10 @@ function renderMessages() {
       + '<h2>What are we building?</h2>'
       + '<p>Ask QCode to explore the workspace, write code, or run a command.</p>'
       + '<div class="empty-chat-hint"><span><kbd>/</kbd> commands</span><span><kbd>Ctrl</kbd> <kbd>P</kbd> palette</span><span><kbd>Enter</kbd> send</span></div>';
-    messagesEl.appendChild(empty);
+    out.push(empty);
+    renderCache.sessionId = session.id;
+    renderCache.nodes = [];
+    reconcileChildren(messagesEl, out);
     return;
   }
   // Reuse the DOM of messages that did not change since the last render so
@@ -4443,17 +4513,55 @@ function renderMessages() {
       if (sameView && i >= prev.length) el.classList.add('enter');
     }
     nodes.push({ sig, msg, el });
-    messagesEl.appendChild(el);
+    out.push(el);
   });
   renderCache.sessionId = session.id;
   renderCache.nodes = nodes;
-  if (queue.length > 0) messagesEl.appendChild(renderQueuedBlock(queue));
+  if (queue.length > 0) out.push(renderQueuedBlock(queue));
+  reconcileChildren(messagesEl, out);
 }
 
 function renderMarkdownInto(el, text) {
+  el._stream = null;
   el.innerHTML = renderMarkdown(text);
   tagMarkdownLinks(el);
   decorateCodeBlocks(el);
+}
+
+// Streaming variant of renderMarkdownInto: finished paragraphs are rendered
+// once into their own chunk elements and never touched again; only the tail
+// (the paragraph or code block still being written) is re-parsed per frame.
+// That keeps per-token cost flat on long replies and leaves text selections
+// in finished paragraphs intact. The stream's final full render replaces it.
+function renderMarkdownStreaming(el, text, opts) {
+  const decorate = !(opts && opts.decorate === false);
+  let st = el._stream;
+  if (!st || !text.startsWith(st.prefix)) {
+    el.innerHTML = '';
+    st = el._stream = { prefix: '', cut: 0, tail: document.createElement('div'), tailText: null };
+    st.tail.className = 'md-stream-tail';
+    el.appendChild(st.tail);
+  }
+  const fill = (node, src) => {
+    node.innerHTML = renderMarkdown(src);
+    tagMarkdownLinks(node);
+    if (decorate) decorateCodeBlocks(node);
+  };
+  const cut = findStableMarkdownCut(text, st.cut);
+  if (cut > st.cut) {
+    const chunk = document.createElement('div');
+    chunk.className = 'md-stream-chunk';
+    fill(chunk, text.slice(st.cut, cut));
+    el.insertBefore(chunk, st.tail);
+    st.cut = cut;
+    st.prefix = text.slice(0, cut);
+    st.tailText = null;
+  }
+  const tailText = text.slice(st.cut);
+  if (tailText !== st.tailText) {
+    fill(st.tail, tailText);
+    st.tailText = tailText;
+  }
 }
 
 // Fenced blocks from the marked renderer already carry a header with a copy
@@ -4510,7 +4618,8 @@ function renderMessage(msg) {
   const appendText = (text, streaming) => {
     const textEl = document.createElement('div');
     textEl.className = 'md-content' + (streaming ? ' streaming-cursor' : '');
-    renderMarkdownInto(textEl, text);
+    if (streaming) renderMarkdownStreaming(textEl, text);
+    else renderMarkdownInto(textEl, text);
     content.appendChild(textEl);
   };
   let toolGroup = null;
@@ -5384,12 +5493,30 @@ function nearBottom() {
   if (!c) return true;
   return (c.scrollHeight - c.scrollTop - c.clientHeight) < 120;
 }
+// Whether the chat follows new output. Only the user unsticks it, by
+// scrolling up (wheel, touch, keys, scrollbar or a selection drag); growth of
+// the streaming reply or layout shifts never do. It sticks again once they
+// are back at the very bottom, press the Latest pill, or send.
+let chatStick = true;
+let chatScrollRaf = 0;
+let chatPointerHeld = false;
+function onChatScroll() {
+  if (chatScrollRaf) return;
+  chatScrollRaf = requestAnimationFrame(() => {
+    chatScrollRaf = 0;
+    const c = document.getElementById('chat-container');
+    if (!c) return;
+    const gap = c.scrollHeight - c.scrollTop - c.clientHeight;
+    if (gap <= 4) chatStick = true;
+    else if (chatPointerHeld || chatSelecting) chatStick = false;
+    updateJumpPill();
+  });
+}
 function scrollToBottom(force) {
   const c = document.getElementById('chat-container');
   if (!c) return;
-  if (force || nearBottom() || document.body.classList.contains('is-generating')) {
-    c.scrollTop = c.scrollHeight;
-  }
+  if (force) chatStick = true;
+  if (chatStick) c.scrollTop = c.scrollHeight;
   updateJumpPill();
 }
 function updateJumpPill() {
@@ -5397,10 +5524,11 @@ function updateJumpPill() {
   if (!c || !document.getElementById('main-area')) return;
   let pill = document.getElementById('jump-latest');
   const show = (c.scrollHeight - c.scrollTop - c.clientHeight) > 300;
+  if (show === !!pill) return;
   if (show && !pill) {
     pill = document.createElement('button'); pill.id = 'jump-latest'; /* id="jump-latest" */ pill.className = 'jump-latest';
     pill.innerHTML = icon('arrowDown', 14) + '<span>Latest</span>'; pill.type = 'button'; pill.setAttribute('aria-label', 'Jump to latest message');
-    pill.addEventListener('click', () => { c.scrollTop = c.scrollHeight; updateJumpPill(); });
+    pill.addEventListener('click', () => scrollToBottom(true));
     (document.getElementById('input-area') || document.getElementById('main-area')).appendChild(pill);
   } else if (!show && pill) pill.remove();
 }
@@ -5668,7 +5796,7 @@ async function switchSession(id) {
   persistPrefs();
   setGenerating(session.generating);
   renderMessages();
-  scrollToBottom();
+  scrollToBottom(true);
   renderSessionTabs();
   updateStatusBar();
   closeMobileSidebar();

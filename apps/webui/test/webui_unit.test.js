@@ -250,3 +250,34 @@ test('renderUsageSections: subagent cost line', async () => {
   const none = renderUsageSections({ usage: { model_calls: 1 }, subagents: { sessions: 0 } });
   assert.doesNotMatch(none, /subagent session/);
 });
+
+import { findStableMarkdownCut } from '../src/utils.js';
+
+test('findStableMarkdownCut: splits after finished paragraphs only', () => {
+  assert.equal(findStableMarkdownCut('hello wor'), 0);
+  assert.equal(findStableMarkdownCut('para one\n\npara tw'), 0, 'last line is still being written');
+  const t = 'para one\n\npara two\n';
+  assert.equal(findStableMarkdownCut(t), t.indexOf('para two'));
+  const t2 = 'a\n\nb\n\nc\n';
+  assert.equal(findStableMarkdownCut(t2), t2.indexOf('c'));
+  assert.equal(findStableMarkdownCut(t2, t2.indexOf('c')), t2.indexOf('c'));
+});
+
+test('findStableMarkdownCut: never splits inside code fences or math', () => {
+  const open = 'intro\n\n```js\nconst a = 1;\n\nconst b = 2;\n';
+  assert.equal(findStableMarkdownCut(open), open.indexOf('```'));
+  const closed = open + '```\n\nafter\n';
+  assert.equal(findStableMarkdownCut(closed), closed.indexOf('after'));
+  const tilde = 'x\n\n~~~\n```\n\ny\n';
+  assert.equal(findStableMarkdownCut(tilde), tilde.indexOf('~~~'));
+  const math = 'x\n\n$$\na\n\nb\n';
+  assert.equal(findStableMarkdownCut(math), math.indexOf('$$'));
+});
+
+test('findStableMarkdownCut: keeps indented list continuations and frontmatter together', () => {
+  const list = '- item\n\n  more of item\n';
+  assert.equal(findStableMarkdownCut(list), 0);
+  assert.equal(findStableMarkdownCut('---\ntitle: x\n\nmore: y\n'), 0, 'unterminated frontmatter');
+  const fm = '---\ntitle: x\n---\n\nbody\n';
+  assert.equal(findStableMarkdownCut(fm), fm.indexOf('body'));
+});
