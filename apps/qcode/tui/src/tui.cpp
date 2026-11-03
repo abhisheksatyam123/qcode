@@ -259,7 +259,8 @@ int qcode::app::run_tui(int argc, char* argv[]) {
     qcode::session::init_database();
     qcode::session::seed_model_capabilities(providers_list);
     std::string last_session = qcode::session::get_last_active_session();
-    if (last_session.empty() && !providers_list.empty()) {
+    if (last_session.empty() && !providers_list.empty() &&
+        !providers_list[selected_provider].models.empty()) {
         std::string prov = providers_list[selected_provider].name;
         std::string mod = providers_list[selected_provider].models[selected_model].name;
         last_session = qcode::session::create_new_session(prov, mod);
