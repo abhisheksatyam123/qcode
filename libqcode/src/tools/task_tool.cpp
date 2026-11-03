@@ -31,6 +31,8 @@ constexpr std::size_t kMaxInboxItems = 256;
 // A subagent that fails on a transient provider error is resumed (same session,
 // same history) up to this many times, after a short backoff.
 constexpr int kMaxTransientRetries = 2;
+// First line of the stored row for a run that was killed before it finished.
+constexpr const char* kKilledMarker = "[killed]";
 
 std::string new_child_session_id() {
   const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -90,6 +92,10 @@ struct Report {
 };
 
 std::string report_text(const std::string& id, const std::string& title, const JsonValue& r) {
+  if (r.value("killed", false)) {
+    return "[Background task " + id + " (" + title + ") killed]\n" +
+           r.value("output", std::string("(no output before the kill)"));
+  }
   if (r.contains("error")) {
     return "[Background task " + id + " (" + title + ") failed]\nError: " +
            error_text(r["error"]);
@@ -392,6 +398,7 @@ std::string stored_task_status(const std::string& id, std::string* output) {
   auto last = qcode::session::load_last_session_message(id);
   if (!last || last->first != "Assistant") return "interrupted";
   if (output) *output = last->second;
+  if (last->second.rfind(kKilledMarker, 0) == 0) return "killed";
   return last->second.rfind("Error", 0) == 0 ? "error" : "done";
 }
 
@@ -698,6 +705,18 @@ JsonValue finish_task(const std::string& session_id, const std::string& title,
     used_model = sub["provider"].get<std::string>() + ":" + used_model;
   }
   JsonValue metadata = {{"sessionId", session_id}, {"task_id", session_id}, {"model", used_model}};
+  if (sub.value("killed", false)) {
+    const std::string partial = sub.value("output", std::string());
+    const std::string stored = std::string(kKilledMarker) + "\n" +
+                               (partial.empty() ? std::string("Killed before it reported.")
+                                                : partial);
+    qcode::session::save_message(session_id, "Assistant", stored);
+    forget_finished(session_id);
+    metadata["status"] = "killed";
+    return {{"killed", true},
+            {"output", stored + "\n\n[task_id: " + session_id + "]"},
+            {"metadata", metadata}};
+  }
   if (sub.contains("error")) {
     const std::string err = error_text(sub["error"]);
     qcode::session::save_message(session_id, "Assistant", "Error: " + err);
@@ -869,7 +888,13 @@ JsonValue task_run(const JsonValue& args, const ToolExecutionContext& context) {
         [runner = context.subagent_runner, sub_args, abort_flag, session_id, title,
          model]() -> JsonValue {
           JsonValue sub = run_subagent(runner, sub_args, abort_flag);
-          if (abort_flag->load() && sub.contains("error")) sub = {{"error", "killed"}};
+          // Kill is recorded in the abort flag. Set before the run returned: killed,
+          // keeping whatever partial output it has. Set after: the run finished.
+          if (abort_flag->load()) {
+            JsonValue killed = {{"killed", true}};
+            if (sub.is_object() && sub.contains("output")) killed["output"] = sub["output"];
+            sub = std::move(killed);
+          }
           return finish_task(session_id, title, model, std::move(sub));
         });
     return {{"title", "task (background): " + title},
