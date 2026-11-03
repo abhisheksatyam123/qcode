@@ -73,7 +73,10 @@ Status names:
 | saved (web UI) | A stored subagent session that is no longer live. |
 
 In the TUI, press `k` on the Subagents tab (with an empty prompt) to stop the
-selected running subagent. The web panel has no stop button; use the `kill` action.
+selected running subagent. In the web panel, a running row has a Stop button. Both call
+the same kill, and the panel refreshes on its own while a subagent runs. A subagent whose
+provider call is still in flight is marked killed when that call returns. The `kill`
+action does the same from the lead.
 
 The TUI Subagents tab shows the total and the count per status, for example
 `SUBAGENTS (3) · 1 running · 1 failed · 1 done`. The web panel shows the same
@@ -101,7 +104,7 @@ running when the lead's turn ends. Stop one with `kill`.
 | F3 | Copy mode. Mouse tracking is off, so the terminal can select text. Press again to turn it back on. |
 | Ctrl+P | Command palette. |
 
-Slash commands include `/mode`, `/compact [N]` (keeps the last N messages, default 4), `/help`, and `/stop`.
+Slash commands include `/mode` (or `/agent normal|orchestrator|toggle` in the web UI), `/compact [N]` (keeps the last N messages, default 4), `/help`, and `/stop`.
 
 ## Database maintenance
 

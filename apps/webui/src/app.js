@@ -89,7 +89,7 @@ window.copyPlantUmlCode = function(diagramId, btn) {
   });
 };
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, isRetryableHttpStatus } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, keepInterruptedPartials, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, isRetryableHttpStatus } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -321,8 +321,16 @@ let modalReturnFocus = null;
 document.addEventListener('focusin', (e) => {
   if (!modalOverlay.contains(e.target)) modalReturnFocus = e.target;
 }, true);
-// Keep Tab / Shift+Tab cycling inside an open modal (focus trap).
+// Keep Tab / Shift+Tab cycling inside an open modal (focus trap), and let Esc
+// close the modal from any control inside it, not only from its text input.
+// stopPropagation keeps the global Esc (pause generation) from firing too.
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isModalOpen()) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeModal();
+    return;
+  }
   if (e.key !== 'Tab' || !isModalOpen()) return;
   const focusables = [...modalOverlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')];
   if (!focusables.length) { e.preventDefault(); return; }
@@ -2117,7 +2125,7 @@ function handleHelpCommand() {
         <div class="help-section">Model</div>
         <div class="help-row"><kbd>/model</kbd><span>Switch model</span></div>
         <div class="help-row"><kbd>/variant</kbd><span>Reasoning effort</span></div>
-        <div class="help-row"><kbd>/agent</kbd><span>Orchestrator / Plan</span></div>
+        <div class="help-row"><kbd>/agent</kbd><span>Normal / Orchestrator</span></div>
         <div class="help-section">View</div>
         <div class="help-row"><kbd>Esc</kbd><span>Stop generation</span></div>
         <div class="help-row"><kbd>/retry</kbd><span>Retry last prompt</span></div>
@@ -2691,6 +2699,7 @@ async function syncSessionMessages(session) {
   if (!Array.isArray(msgs) || session.stream) return false;
   const tmp = { messages: [] };
   parseMessages(msgs, tmp);
+  keepInterruptedPartials(session.messages, tmp.messages);
   keepFailedTurn(session.messages, tmp.messages);
   if (messageSignature(tmp.messages) === messageSignature(session.messages)) return false;
   const stickToBottom = nearBottom();
@@ -4278,6 +4287,8 @@ async function returnToParentSession() {
   showToast('Returned to parent session');
 }
 
+let delegatedPollTimer = null;
+
 async function loadDelegatedSessionsTab() {
   if (!sessionsContent) return;
   if (!state.sessionId) {
@@ -4341,6 +4352,17 @@ async function loadDelegatedSessionsTab() {
         model: sub.model || '',
         description: sub.title || sub.id
       });
+    }
+
+    // Keep the panel live while a subagent runs, so Stop and completion show
+    // up without a manual reload. The timer stops once nothing is running.
+    clearTimeout(delegatedPollTimer);
+    delegatedPollTimer = null;
+    if (state.activeTab === 'sessions' && combined.some(c => c.status === 'running')) {
+      delegatedPollTimer = setTimeout(() => {
+        delegatedPollTimer = null;
+        if (state.activeTab === 'sessions') loadDelegatedSessionsTab();
+      }, 1500);
     }
 
     const statusLabel = { running: 'Running', completed: 'Done', done: 'Done', failed: 'Failed', error: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted', killed: 'Killed', saved: 'Saved', queued: 'Queued' };
@@ -5776,6 +5798,7 @@ function toastRegion() {
     r = document.createElement('div');
     r.id = 'toast-region';
     r.className = 'toast-region';
+    r.setAttribute('role', 'status');
     r.setAttribute('aria-live', 'polite');
     document.body.appendChild(r);
   }
@@ -6067,7 +6090,12 @@ function closeSessionTab(id) {
 
 async function deleteSessionPermanently(id) {
   try {
-    const res = await fetch(`/session/${id}`, { method: 'DELETE' });
+    let res;
+    try {
+      res = await fetch(`/session/${id}`, { method: 'DELETE' });
+    } catch (_) {
+      throw new Error('check your connection and try again');
+    }
     if (!res.ok) {
       throw new Error(await responseError(res));
     }
@@ -6144,11 +6172,11 @@ function renderSessionTabs() {
           ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">${esc(ws)}</div>` : ''}
         </div>
         <div class="session-item-actions">
-          <button class="session-action-btn pin-session-btn${isPinned ? ' on' : ''}" data-id="${session.id}" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin session' : 'Pin session'}">${pinIcon(isPinned)}</button>
+          <button class="session-action-btn pin-session-btn${isPinned ? ' on' : ''}" data-id="${session.id}" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin' : 'Pin'} session: ${esc(title)}">${pinIcon(isPinned)}</button>
           ${isSub
-            ? `<button class="session-action-btn close-session-tab-btn" data-id="${session.id}" title="Close (keeps saved session)" aria-label="Close session">${icon('x', 13)}</button>`
-            : `<button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename" aria-label="Rename session">${SVG_ICONS.rename}</button>`}
-          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently" aria-label="Delete session">${SVG_ICONS.delete}</button>
+            ? `<button class="session-action-btn close-session-tab-btn" data-id="${session.id}" title="Close (keeps saved session)" aria-label="Close session: ${esc(title)}">${icon('x', 13)}</button>`
+            : `<button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename" aria-label="Rename session: ${esc(title)}">${SVG_ICONS.rename}</button>`}
+          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently" aria-label="Delete session: ${esc(title)}">${SVG_ICONS.delete}</button>
         </div>
       </div>
     `;
