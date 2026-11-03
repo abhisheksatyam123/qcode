@@ -15,6 +15,7 @@ add_executable(qcode_tests
     unit/tool_catalog_test.cpp
     unit/commands_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/prompt_wrap.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/clipboard.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/bus_json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/workspace_fs.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/http_utils.cpp
@@ -186,4 +187,14 @@ if(TARGET qcode)
             TIMEOUT 120
         )
     endif()
+endif()
+
+# Headless TUI frame benchmark (not a test): qcode_tui_bench [messages] [frames]
+if(TARGET qcode-frontend-tui)
+    add_executable(qcode_tui_bench bench/tui_render_bench.cpp)
+    target_link_libraries(qcode_tui_bench PRIVATE qcode-frontend-tui)
+    set_target_properties(qcode_tui_bench PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
 endif()
