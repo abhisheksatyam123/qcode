@@ -368,8 +368,15 @@ JsonValue run_subagent(const SubagentRunner& runner, JsonValue args,
     if (!retry) return sub;
     LOG_INFO("subagent {} hit a transient error; retrying ({}/{})",
              args.value("session_id", std::string("?")), attempt + 1, kMaxTransientRetries);
+    // Backoff in short steps, so a kill during the wait is honored at once.
+    const auto backoff_until = std::chrono::steady_clock::now() +
+                               std::chrono::seconds(2 * (attempt + 1));
+    while (std::chrono::steady_clock::now() < backoff_until &&
+           !(abort && abort->load())) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    if (abort && abort->load()) return sub;
     args["resume"] = true;
-    std::this_thread::sleep_for(std::chrono::seconds(2 * (attempt + 1)));
   }
 }
 
