@@ -701,6 +701,8 @@ auto cancel_session = [](const std::string& session_id, httplib::Response& res) 
         return;
     }
     abort_turn(*session);
+    // Background subagents outlive their turn by design, but a cancel stops them too.
+    qcode::TaskTool::abort_team(session_id);
     {
         std::unique_lock<std::mutex> lock(session->queue_mutex);
         session->queue_cv.wait_for(lock, std::chrono::seconds(3),

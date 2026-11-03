@@ -94,6 +94,10 @@ Esc aborts the running turn in the TUI. A second Esc forces the UI to stop. In
 the web UI, Escape cancels the active generation. Background subagents keep
 running when the lead's turn ends. Stop one with `kill`.
 
+A cancel (Esc, or `POST /session/<id>/cancel`) also stops the lead's subagents, blocking
+and background, and their in-flight requests are cut. Each stops within about a second,
+and a stopped blocking subagent is recorded as killed.
+
 ## Keyboard shortcuts (TUI)
 
 | Key | Action |

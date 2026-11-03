@@ -35,6 +35,10 @@ class TaskTool {
                                             const std::string& status)>;
   static void set_status_observer(StatusObserver observer);
 
+  // Stops the running subagents of `lead_session_id` (blocking and background):
+  // their abort flags are set, and their in-flight requests are cut.
+  static void abort_team(const std::string& lead_session_id);
+
   static constexpr const char* kDescription =
       "Work with subagents: other model instances with their own context. A subagent "
       "cannot see your conversation, so `prompt` must hold every detail it needs. "

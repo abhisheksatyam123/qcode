@@ -601,6 +601,10 @@ bool TaskTool::wait_for_notices_or_tasks(
   return Team::instance().has(session_id);
 }
 
+void TaskTool::abort_team(const std::string& lead_session_id) {
+  if (!lead_session_id.empty()) Team::instance().abort_related(lead_session_id);
+}
+
 void TaskTool::delete_session_tasks(const std::string& session_id) {
   if (!session_id.empty()) Team::instance().abort_related(session_id);
 }
@@ -948,6 +952,12 @@ JsonValue task_run(const JsonValue& args, const ToolExecutionContext& context) {
       ~Unregister() { Team::instance().remove(id); }
     } unregister{session_id};
     JsonValue sub = run_subagent(context.subagent_runner, sub_args, context.abort_flag);
+    // Stopped by the lead's cancel or Esc: killed, keeping any partial output.
+    if (context.abort_flag && context.abort_flag->load()) {
+      JsonValue killed = {{"killed", true}};
+      if (sub.is_object() && sub.contains("output")) killed["output"] = sub["output"];
+      sub = std::move(killed);
+    }
     out = finish_task(session_id, title, model, std::move(sub));
   }
   // Reported after the removal, as in the background path.
