@@ -97,7 +97,9 @@ int qcode::app::run_cli(int argc, char* argv[]) {
         if (!cfg.workspace.empty()) create["workspace"] = cfg.workspace;
         auto created = cli.Post("/sessions", create.dump(), "application/json");
         if (!created) {
-            std::cerr << "Error: " << httplib::to_string(created.error()) << "\n";
+            std::cerr << "Error: cannot reach a qcode server at " << cfg.server << " ("
+                      << httplib::to_string(created.error()) << ").\n"
+                      << "Start one with `qcode serve`, or pass --server <url>.\n";
             return 1;
         }
         if (created->status != 200) {

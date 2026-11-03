@@ -3,6 +3,18 @@
 This guide covers the two agent modes, subagents, keyboard shortcuts, and
 database maintenance. Setup and configuration are in the [README](../README.md).
 
+## First run
+
+qcode reads providers and models from one `opencode.json` (`$OPENCODE_CONFIG`,
+else `~/.config/opencode/opencode.json`). `qcode --help` prints the path.
+Add a provider with at least one model to that file. Its API key can go in the
+file or come from the environment, for example `OPENAI_API_KEY`. Without a
+provider, the TUI shows a setup screen with the same steps, and `qcode serve`
+exits with an error that names the file.
+
+`qcode prompt` needs a running server. Start one with `qcode serve`, or pass
+`--server <url>`.
+
 ## Agent modes
 
 qcode has two modes. The mode decides whether the agent can delegate work.
@@ -97,5 +109,8 @@ To reclaim it, run:
 qcode db compact
 ```
 
-The command prints the size before and after, in bytes. The database is
-rewritten in place, so run it while no other qcode process is using it.
+The command prints the size before and after, in bytes. It needs the write
+lock. If another qcode process is writing to the database, it refuses with
+`another qcode process is using ...`, exits with status 1, and leaves the file
+unchanged. A qcode process that is open but idle does not block it. Close the
+other process (or stop `qcode serve`) and run the command again.
