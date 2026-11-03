@@ -96,8 +96,11 @@ test('markdown fixtures: tables + task lists render', () => {
   const prepareMarkdownBody = (t) => ({ frontmatter: null, md: t });
   const getMarkedRenderer = () => ({});
   const renderFrontmatterBox = () => '';
-  const render = new Function('marked', 'esc', 'prepareMarkdownBody', 'getMarkedRenderer', 'renderFrontmatterBox',
-    fnSrc + '\nreturn renderMarkdown;')(marked, esc, prepareMarkdownBody, getMarkedRenderer, renderFrontmatterBox);
+  // Lazy-load hooks: no highlighter yet, and requests for libraries are no-ops here.
+  const getHljs = () => null;
+  const loadRichVendor = () => Promise.resolve(false);
+  const render = new Function('marked', 'esc', 'prepareMarkdownBody', 'getMarkedRenderer', 'renderFrontmatterBox', 'getHljs', 'loadRichVendor',
+    fnSrc + '\nreturn renderMarkdown;')(marked, esc, prepareMarkdownBody, getMarkedRenderer, renderFrontmatterBox, getHljs, loadRichVendor);
   const tableMd = '| a | b |\n|---|---|\n| 1 | 2 |';
   const taskMd = '- [ ] todo\n- [x] done';
   assert.ok(render(tableMd).startsWith('TABLE:'));
