@@ -1565,6 +1565,12 @@ function setupEventListeners() {
   document.addEventListener('keydown', (e) => {
     const key = e.key;
     const mod = e.ctrlKey || e.metaKey;
+    // "?" opens the shortcut help, but only when the user is not typing into a field.
+    if (key === '?' && !mod && !e.altKey && !isTypingTarget(e.target) && !isModalOpen()) {
+      e.preventDefault();
+      handleHelpCommand();
+      return;
+    }
     if (mod && key.toLowerCase() === 'p') {
       e.preventDefault();
       showCommandPalette();
@@ -1822,6 +1828,13 @@ function updateLayoutUI() {
 
 function isModalOpen() {
   return modalOverlay.classList.contains('active');
+}
+
+// True when keystrokes would go into a text field, so single-key shortcuts must not fire.
+function isTypingTarget(el) {
+  if (!el || !el.tagName) return false;
+  if (el.isContentEditable) return true;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
 }
 
 function closeModal() {
@@ -2146,22 +2159,25 @@ function handleHelpCommand() {
       <div class="picker-body help-body">
         <p class="help-lead">Press <kbd>Ctrl</kbd>+<kbd>P</kbd> to see every command.</p>
         <div class="help-section">Session</div>
-        <div class="help-row"><kbd>Ctrl</kbd>+<kbd>N</kbd><span>New session</span></div>
-        <div class="help-row"><kbd>/new</kbd><span>Start a new session</span></div>
+        <div class="help-row"><kbd>/new</kbd><span>New session</span></div>
         <div class="help-row"><kbd>/session</kbd><span>Switch session</span></div>
-        <div class="help-row"><kbd>/rename</kbd><span>Rename current session</span></div>
         <div class="help-row"><kbd>/compact</kbd><span>Summarize context</span></div>
         <div class="help-section">Model</div>
         <div class="help-row"><kbd>/model</kbd><span>Switch model</span></div>
         <div class="help-row"><kbd>/variant</kbd><span>Reasoning effort</span></div>
-        <div class="help-row"><kbd>/agent</kbd><span>Normal / Orchestrator</span></div>
         <div class="help-section">View</div>
         <div class="help-row"><kbd>Esc</kbd><span>Stop generation</span></div>
         <div class="help-row"><kbd>/retry</kbd><span>Retry last prompt</span></div>
-        <div class="help-row"><kbd>F2</kbd><span>Toggle thinking</span></div>
+        <div class="help-row"><kbd>F2</kbd><span>Show / hide thinking</span></div>
+        <div class="help-section">Web only</div>
+        <div class="help-row"><kbd>Ctrl</kbd>+<kbd>P</kbd><span>Command palette (every command)</span></div>
+        <div class="help-row"><kbd>Ctrl</kbd>+<kbd>N</kbd><span>New session</span></div>
         <div class="help-row"><kbd>Ctrl</kbd>+<kbd>B</kbd><span>Toggle sidebar</span></div>
         <div class="help-row"><kbd>Alt</kbd>+<kbd>F</kbd><span>Toggle file tree</span></div>
         <div class="help-row"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd><span>Chat / Files / Stats / Subagents</span></div>
+        <div class="help-row"><kbd>?</kbd><span>Show this help (when not typing)</span></div>
+        <div class="help-row"><kbd>/agent</kbd><span>Normal / Orchestrator</span></div>
+        <div class="help-row"><kbd>/rename</kbd><span>Rename current session</span></div>
         <div class="help-row"><kbd>/theme</kbd><span>Switch theme</span></div>
         <div class="help-row"><kbd>/queue</kbd><span>List or drop queued prompts</span></div>
         <div class="help-row"><kbd>/clear-queue</kbd><span>Clear all queued prompts</span></div>
