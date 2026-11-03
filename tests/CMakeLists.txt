@@ -188,6 +188,28 @@ if(TARGET qcode)
             TIMEOUT 120
         )
     endif()
+
+    # Orchestrator smoke: the lead spawns, kills and resumes subagents against a
+    # scripted provider, and the server API reports the statuses. Cross-platform
+    # (no /proc), so it does not depend on the perf guard's Linux gate.
+    add_test(NAME OrchestratorSmokeServe
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/orchestrator_smoke.py
+            --binary $<TARGET_FILE:qcode>)
+    set_tests_properties(OrchestratorSmokeServe PROPERTIES
+        LABELS smoke
+        TIMEOUT 120
+    )
+
+    # The same flow in the TUI under a pty, read through pyte. Skipped (77) when
+    # pyte is not installed.
+    add_test(NAME OrchestratorSmokeTui
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/tui_orchestrator_smoke.py
+            --binary $<TARGET_FILE:qcode>)
+    set_tests_properties(OrchestratorSmokeTui PROPERTIES
+        LABELS smoke
+        TIMEOUT 120
+        SKIP_RETURN_CODE 77
+    )
 endif()
 
 # Headless TUI frame benchmark (not a test): qcode_tui_bench [messages] [frames]

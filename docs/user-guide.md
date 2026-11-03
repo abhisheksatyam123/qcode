@@ -72,6 +72,9 @@ Status names:
 | killed | Stopped by `kill` before it returned. |
 | saved (web UI) | A stored subagent session that is no longer live. |
 
+In the TUI, press `k` on the Subagents tab (with an empty prompt) to stop the
+selected running subagent. The web panel has no stop button; use the `kill` action.
+
 The TUI Subagents tab shows the total and the count per status, for example
 `SUBAGENTS (3) · 1 running · 1 failed · 1 done`. The web panel shows the same
 counts as a summary line under the heading.

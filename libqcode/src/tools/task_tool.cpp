@@ -944,6 +944,10 @@ void TaskTool::set_notice_listener(std::function<void()> listener) {
   Team::instance().set_listener(std::move(listener));
 }
 
+bool TaskTool::kill_task(const std::string& task_id) {
+  return !task_id.empty() && Team::instance().kill(task_id);
+}
+
 void TaskTool::shutdown_background(std::chrono::milliseconds timeout) {
   Team::instance().shutdown(timeout);
 }
