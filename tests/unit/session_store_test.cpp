@@ -6,7 +6,10 @@
 
 #include <chrono>
 #include <filesystem>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <cstdlib>
+#include <vector>
 #include <string>
 
 namespace qcode {
@@ -315,6 +318,75 @@ TEST_F(SessionStoreTest, CompactConvertsLegacyFileToIncrementalVacuum) {
     auto msgs = load_session_messages(sid);
     ASSERT_EQ(msgs.size(), 1u);
     EXPECT_EQ(msgs[0].second, "hello");
+}
+
+// Two processes (TUI and server) share one database file. This runs the same
+// first-launch path in several processes at once: each one migrates a fresh
+// file and writes its own session. Every row must land and no process may fail.
+// The children are re-executions of this binary running only the child test
+// below, so they never inherit an open SQLite connection from the parent.
+TEST_F(SessionStoreTest, ConcurrentProcessesMigrateAndWriteOneDatabase) {
+    const std::string shared = db_path_ + ".shared";
+    std::error_code ec;
+    std::filesystem::remove(shared, ec);
+    std::filesystem::remove(shared + "-wal", ec);
+    std::filesystem::remove(shared + "-shm", ec);
+    // The global test environment rewrites QCODE_DB_PATH in every process, so
+    // children get the shared path through their own variable.
+    setenv("QCODE_CONCURRENT_DB", shared.c_str(), 1);
+    setenv("QCODE_CONCURRENT_CHILD", "1", 1);
+
+    constexpr int kChildren = 4;
+    constexpr int kRowsPerChild = 300;
+    std::vector<pid_t> pids;
+    for (int i = 0; i < kChildren; ++i) {
+        pid_t pid = fork();
+        ASSERT_GE(pid, 0);
+        if (pid == 0) {
+            execl("/proc/self/exe", "qcode_tests",
+                  "--gtest_filter=SessionStore.ConcurrentChildWriter", nullptr);
+            _exit(127);
+        }
+        pids.push_back(pid);
+    }
+
+    for (pid_t pid : pids) {
+        int status = 0;
+        ASSERT_EQ(waitpid(pid, &status, 0), pid);
+        EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0)
+            << "child " << pid << " failed (status " << status << ")";
+    }
+
+    // Read back through the parent's own connection, pointed at the shared file.
+    setenv("QCODE_DB_PATH", shared.c_str(), 1);
+    for (pid_t pid : pids) {
+        const std::string sid = "ses_child_" + std::to_string(pid);
+        EXPECT_EQ(load_session_messages(sid).size(), static_cast<size_t>(kRowsPerChild))
+            << "rows lost for " << sid;
+    }
+    EXPECT_EQ(list_sessions_full(true).size(), static_cast<size_t>(kChildren));
+
+    unsetenv("QCODE_CONCURRENT_CHILD");
+    unsetenv("QCODE_CONCURRENT_DB");
+    setenv("QCODE_DB_PATH", db_path_.c_str(), 1);
+    std::filesystem::remove(shared, ec);
+    std::filesystem::remove(shared + "-wal", ec);
+    std::filesystem::remove(shared + "-shm", ec);
+}
+
+// Runs only when re-executed by the test above (QCODE_CONCURRENT_CHILD set).
+// Plain TEST, not TEST_F: the fixture would point QCODE_DB_PATH somewhere else.
+TEST(SessionStore, ConcurrentChildWriter) {
+    if (!std::getenv("QCODE_CONCURRENT_CHILD")) GTEST_SKIP();
+    setenv("QCODE_DB_PATH", std::getenv("QCODE_CONCURRENT_DB"), 1);
+    constexpr int kRowsPerChild = 300;
+    const std::string sid = "ses_child_" + std::to_string(::getpid());
+    init_database();
+    ensure_session_row(sid, "child", "prov", "model", "/ws");
+    for (int k = 0; k < kRowsPerChild; ++k) {
+        save_message(sid, "User", "row " + std::to_string(k));
+    }
+    EXPECT_EQ(load_session_messages(sid).size(), static_cast<size_t>(kRowsPerChild));
 }
 
 TEST_F(SessionStoreTest, LoadLastSessionMessage) {
