@@ -50,6 +50,8 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
 
   // Test hook: parse one SSE `data:` payload as if it came off the wire.
   void feed_sse_for_test(const std::string& data) { process_sse_event(data); }
+  // Turns the text-delta fast path off, so a test can compare it with the full parse.
+  void set_fast_delta_path_for_test(bool enabled) { fast_delta_path_ = enabled; }
 
  private:
 
@@ -68,6 +70,7 @@ class AnthropicStreamImpl : public internal::StreamResultImpl {
   Usage stream_usage_{};
   bool stream_usage_seen_ = false;
   bool content_pushed_ = false;
+  bool fast_delta_path_ = true;
   int max_retries_ = 4;
   bool finish_pushed_ = false;
   FinishReason finish_reason_ = kFinishReasonStop;

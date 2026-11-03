@@ -8,6 +8,7 @@
 #include <qcode/core/logger.h>
 #include <qcode/transform/gemini_transform.h>
 #include "core/response_utils.h"
+#include "providers/internal/sse_fast_path.h"
 
 namespace qcode {
 namespace openai {
@@ -38,11 +39,10 @@ std::optional<std::string> reasoning_signature(const nlohmann::json& delta) {
 std::optional<std::string> plain_content_delta(std::string_view data) {
   // Any of these anywhere in the line means the event may carry more than a
   // text delta, so leave it to the full parser.
-  static constexpr std::array<std::string_view, 12> kSlowMarkers = {
-      "tool_calls", "function", "reasoning", "usage", "error", "candidates",
-      "response", "refusal", "\"type\"", "thought", "signature", "audio"};
-  for (const auto marker : kSlowMarkers) {
-    if (data.find(marker) != std::string_view::npos) return std::nullopt;
+  if (sse_fast::contains_any(data, {"tool_calls", "function", "reasoning", "usage",
+                                    "error", "candidates", "response", "refusal",
+                                    "\"type\"", "thought", "signature", "audio"})) {
+    return std::nullopt;
   }
 
   // Compact (OpenAI) and spaced (Python json.dumps) layouts.
@@ -59,42 +59,13 @@ std::optional<std::string> plain_content_delta(std::string_view data) {
     start += kSpacedHead.size();
   }
 
-  // Decode the JSON string literal. \u escapes are left to the full parser.
   std::string text;
   size_t i = start;
-  for (;;) {
-    if (i >= data.size()) return std::nullopt;
-    const char c = data[i];
-    if (c == '"') break;
-    if (static_cast<unsigned char>(c) < 0x20) return std::nullopt;
-    if (c != '\\') {
-      text += c;
-      ++i;
-      continue;
-    }
-    if (i + 1 >= data.size()) return std::nullopt;
-    switch (data[i + 1]) {
-      case '"': text += '"'; break;
-      case '\\': text += '\\'; break;
-      case '/': text += '/'; break;
-      case 'n': text += '\n'; break;
-      case 't': text += '\t'; break;
-      case 'r': text += '\r'; break;
-      case 'b': text += '\b'; break;
-      case 'f': text += '\f'; break;
-      default: return std::nullopt;
-    }
-    i += 2;
-  }
+  if (!sse_fast::decode_json_string(data, i, text)) return std::nullopt;
 
-  // Everything after the closing quote must close the delta and the chunk
-  // with finish_reason null, and nothing else. Whitespace is ignored.
-  std::string tail;
-  for (size_t j = i + 1; j < data.size(); ++j) {
-    if (data[j] != ' ') tail += data[j];
-  }
-  if (tail == R"(},"finish_reason":null}]})" ||
-      tail == R"(},"logprobs":null,"finish_reason":null}]})") {
+  // The delta must close with finish_reason null and nothing else follows.
+  if (sse_fast::tail_equals(data, i + 1, R"(},"finish_reason":null}]})") ||
+      sse_fast::tail_equals(data, i + 1, R"(},"logprobs":null,"finish_reason":null}]})")) {
     return text;
   }
   return std::nullopt;

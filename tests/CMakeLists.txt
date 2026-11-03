@@ -10,6 +10,7 @@ add_executable(qcode_tests
     unit/tui_bus_test.cpp
     unit/agent_mode_test.cpp
     unit/openai_sse_fast_path_test.cpp
+    unit/anthropic_sse_fast_path_test.cpp
     unit/task_tool_contract_test.cpp
     unit/bus_json_codec_test.cpp
     unit/session_store_test.cpp

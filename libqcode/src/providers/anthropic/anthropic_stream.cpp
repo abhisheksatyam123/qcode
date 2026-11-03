@@ -2,11 +2,13 @@
 #include "anthropic_response_parser.h"
 
 #include "core/http_request_handler.h"
+#include "providers/internal/sse_fast_path.h"
 #include <qcode/core/logger.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <optional>
 #include <string_view>
 #include <thread>
 #include <random>
@@ -394,9 +396,62 @@ void AnthropicStreamImpl::run_stream(const std::string& url,
   mark_complete();
 }
 
+namespace {
+
+// Fast path for the commonest Anthropic event: a text delta,
+//   {"type":"content_block_delta","index":N,"delta":{"type":"text_delta","text":"..."}}
+// with nothing else in the event. Any other shape returns nullopt and goes
+// through the full parse.
+std::optional<std::string> plain_text_delta(std::string_view data) {
+  static constexpr std::string_view kCompactHead =
+      R"({"type":"content_block_delta","index":)";
+  static constexpr std::string_view kCompactMid =
+      R"(,"delta":{"type":"text_delta","text":")";
+  static constexpr std::string_view kSpacedHead =
+      R"({"type": "content_block_delta", "index": )";
+  static constexpr std::string_view kSpacedMid =
+      R"(, "delta": {"type": "text_delta", "text": ")";
+
+  size_t pos = 0;
+  std::string_view mid;
+  if (data.starts_with(kCompactHead)) {
+    pos = kCompactHead.size();
+    mid = kCompactMid;
+  } else if (data.starts_with(kSpacedHead)) {
+    pos = kSpacedHead.size();
+    mid = kSpacedMid;
+  } else {
+    return std::nullopt;
+  }
+
+  // Index: one or more digits.
+  const size_t digits_start = pos;
+  while (pos < data.size() && data[pos] >= '0' && data[pos] <= '9') ++pos;
+  if (pos == digits_start) return std::nullopt;
+
+  if (data.substr(pos, mid.size()) != mid) return std::nullopt;
+  size_t i = pos + mid.size();
+  std::string text;
+  if (!sse_fast::decode_json_string(data, i, text)) return std::nullopt;
+
+  // The text delta closes its object and the event, and nothing follows.
+  if (!sse_fast::tail_equals(data, i + 1, "}}")) return std::nullopt;
+  return text;
+}
+
+}  // namespace
+
 void AnthropicStreamImpl::process_sse_event(const std::string& data) {
   if (data == "[DONE]") {
     return;
+  }
+
+  if (fast_delta_path_) {
+    if (auto text = plain_text_delta(data)) {
+      push_event(StreamEvent(std::move(*text)));
+      content_pushed_ = true;
+      return;
+    }
   }
 
   try {
