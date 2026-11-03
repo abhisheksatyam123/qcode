@@ -558,8 +558,14 @@ int qcode::app::run_tui(int argc, char* argv[]) {
                     }
                 }
             }
-            if (state.session_id && !state.session_id->empty()) {
-                qcode::session::overwrite_session_history(*state.session_id, hist);
+            if (state.session_id && !state.session_id->empty() &&
+                !qcode::session::overwrite_session_history(*state.session_id, hist)) {
+                // Another process wrote to this session; cancel the retry and
+                // show the stored history rather than drop its rows.
+                state.messages_history = std::make_shared<qcode::Messages>(
+                    qcode::session::load_session_history_parsed(*state.session_id));
+                store.add_toast("Retry cancelled: session changed elsewhere", "warning", 3000);
+                return false;
             }
         }
 

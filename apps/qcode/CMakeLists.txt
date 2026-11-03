@@ -107,5 +107,10 @@ add_custom_command(TARGET qcode POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${QCODE_WEBUI_SRC}"
         "$<TARGET_FILE_DIR:qcode>/webui"
-    COMMENT "Copying WebUI next to qcode"
+    # Pre-compressed copies (*.gz) of the text assets, served with
+    # Content-Encoding: gzip. Only the installed copy gets them.
+    COMMAND ${CMAKE_COMMAND}
+        -DWEBUI_DIR="$<TARGET_FILE_DIR:qcode>/webui"
+        -P "${CMAKE_SOURCE_DIR}/cmake/compress_webui.cmake"
+    COMMENT "Copying WebUI next to qcode and pre-compressing it"
 )

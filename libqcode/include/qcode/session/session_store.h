@@ -63,7 +63,11 @@ void reload_session_history(const std::string& session_id, ChatState& state);
 std::vector<qcode::Message> load_session_history_parsed(const std::string& session_id);
 
 // Overwrite all messages in SQLite database for a session
-void overwrite_session_history(const std::string& session_id, const std::vector<qcode::Message>& messages);
+// Replace all stored messages for a session. Returns false, and leaves the
+// database as it was, if another process wrote to the session since this process
+// last loaded or wrote it (the caller should reload and decide again), or if the
+// write failed.
+bool overwrite_session_history(const std::string& session_id, const std::vector<qcode::Message>& messages);
 
 // Load saved messages (sender, content) for a session, oldest first
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id);

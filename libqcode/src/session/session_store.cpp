@@ -5,6 +5,7 @@
 #include <uuid.h>
 #include <climits>
 #include <deque>
+#include <unordered_map>
 #include <cstdlib>
 #include <random>
 #include <sstream>
@@ -38,6 +39,39 @@
 
 namespace qcode {
 namespace session {
+
+namespace {
+// The newest message id this process has loaded or written for each session, per
+// database file. An overwrite is allowed only if the database still ends at that
+// id, which means no other process has written since this process last looked.
+std::mutex g_seen_mutex;
+std::unordered_map<std::string, long long> g_seen_last_id;
+
+std::string seen_key(const std::string& session_id) {
+    return get_db_path() + '\n' + session_id;
+}
+void remember_seen_last_id(const std::string& session_id, long long id) {
+    std::lock_guard<std::mutex> lock(g_seen_mutex);
+    g_seen_last_id[seen_key(session_id)] = id;
+}
+bool seen_last_id(const std::string& session_id, long long& out) {
+    std::lock_guard<std::mutex> lock(g_seen_mutex);
+    auto it = g_seen_last_id.find(seen_key(session_id));
+    if (it == g_seen_last_id.end()) return false;
+    out = it->second;
+    return true;
+}
+long long last_message_id(sqlite3* db, const std::string& session_id) {
+    long long id = 0;
+    sqlite3_stmt* stmt = nullptr;
+    if (prepare_stmt(db, "SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id = ?;", &stmt)) {
+        sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) == SQLITE_ROW) id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+    return id;
+}
+}  // namespace
 
 class MessageWriterConnection final {
 public:
@@ -90,6 +124,8 @@ public:
         while (!pending_.empty()) {
             const int rc = insert_row(pending_.front());
             if (rc == SQLITE_DONE) {
+                remember_seen_last_id(pending_.front().session_id,
+                                      sqlite3_last_insert_rowid(db_));
                 pending_.pop_front();
                 continue;
             }
@@ -772,12 +808,14 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
         return history;
     }
 
-    const char* sql = "SELECT sender, content FROM messages WHERE session_id = ? ORDER BY id ASC;";
+    const char* sql = "SELECT sender, content, id FROM messages WHERE session_id = ? ORDER BY id ASC;";
     sqlite3_stmt* stmt = nullptr;
     int legacy_tool_seq = 0;
+    long long newest_id = 0;
     if (prepare_stmt(db, sql, &stmt)) {
         sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_STATIC);
         while (sqlite3_step(stmt) == SQLITE_ROW) {
+            newest_id = std::max<long long>(newest_id, sqlite3_column_int64(stmt, 2));
             const unsigned char* sender_txt = sqlite3_column_text(stmt, 0);
             const unsigned char* content_txt = sqlite3_column_text(stmt, 1);
 
@@ -942,6 +980,7 @@ std::vector<qcode::Message> load_session_history_parsed(const std::string& sessi
             history.push_back(qcode::Message::system(content));
         }
         sqlite3_finalize(stmt);
+        remember_seen_last_id(session_id, newest_id);
     }
 
     // Parallel tool results land in completion order; the tool loop sent
@@ -1104,42 +1143,56 @@ static void rollback_if_open(sqlite3* db) {
     }
 }
 
-void overwrite_session_history(const std::string& session_id, const std::vector<qcode::Message>& messages) {
+bool overwrite_session_history(const std::string& session_id, const std::vector<qcode::Message>& messages) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
-        return;
+        return false;
     }
 
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
     if (!db) {
-        return;
+        return false;
     }
 
-    // All-or-nothing: the DELETE and every INSERT commit together, or the
-    // previous history is left untouched.
+    // BEGIN IMMEDIATE takes the write lock before the check, so no other process
+    // can add a row between the check and the rewrite.
     char* err_msg = nullptr;
-    if (sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+    if (sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
         LOG_ERROR("SQLite: failed to begin transaction: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
-        return;
+        return false;
+    }
+
+    // Refuse if another process wrote to this session after this process last
+    // loaded or wrote it: the rewrite would delete those rows. The caller reloads
+    // from the database and decides again.
+    long long seen = 0;
+    const long long current = last_message_id(db, session_id);
+    if (seen_last_id(session_id, seen) && seen != current) {
+        LOG_WARN("SQLite: session '{}' changed in another process (last id {} -> {}); overwrite skipped",
+                 session_id, seen, current);
+        rollback_if_open(db);
+        return false;
     }
 
     if (!write_session_history_rows(db, session_id, messages)) {
         LOG_ERROR("SQLite: overwrite of session '{}' rolled back", session_id);
         rollback_if_open(db);
-        return;
+        return false;
     }
 
     if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
         LOG_ERROR("SQLite: failed to commit transaction: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
         rollback_if_open(db);
-        return;
+        return false;
     }
+    remember_seen_last_id(session_id, last_message_id(db, session_id));
     // Compaction shrinks history; hand the freed pages back (new files only,
     // see init_database).
     sqlite3_exec(db, "PRAGMA incremental_vacuum;", nullptr, nullptr, nullptr);
+    return true;
 }
 
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
