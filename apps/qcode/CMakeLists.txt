@@ -92,6 +92,8 @@ target_include_directories(qcode PRIVATE
 )
 target_compile_definitions(qcode PRIVATE
     QCODE_VERSION="${PROJECT_VERSION}"
+    QCODE_GIT_DESCRIBE="${QCODE_GIT_DESCRIBE}"
+    QCODE_GIT_COMMIT="${QCODE_GIT_COMMIT}"
 )
 target_link_libraries(qcode PRIVATE
     qcode-frontend-tui

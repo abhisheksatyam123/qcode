@@ -4,6 +4,16 @@ C++20 toolkit for AI-powered coding agents. One `qcode` binary provides an inter
 
 ## Installation
 
+### Prebuilt release (Linux x86_64, macOS arm64)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abhisheksatyam123/qcode/main/scripts/install.sh | sh
+```
+
+This installs the latest tagged release to `~/.qcode/<version>/` and links `qcode` into `~/.local/bin`. Set `QCODE_VERSION=v0.2.0` to pin a version. Each download is checked against the release's `SHA256SUMS`. Run `qcode --version` to see the tag and commit.
+
+### Building from source
+
 You will need:
 
 - A C++20 compatible compiler (`gcc` 12+, `clang` 14+, or MSVC)

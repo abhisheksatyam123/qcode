@@ -54,10 +54,14 @@ class OpenAIStreamImpl : public internal::StreamResultImpl {
 #ifdef QCODE_TESTING
   // Allow unit tests to drive the SSE parser directly.
   void test_parse_sse_line(const std::string& line) { parse_sse_line(line); }
+  // Turns the plain-content-delta fast path off, so a test can compare it with
+  // the full parse on the same stream.
+  void test_set_fast_delta_path(bool enabled) { fast_delta_path_ = enabled; }
 #endif
 
  private:
   std::chrono::seconds event_timeout_{30};
+  bool fast_delta_path_ = true;
   void run_stream(const std::string& url,
                   const httplib::Headers& headers,
                   std::string body);

@@ -1,5 +1,9 @@
 #include "openai_stream.h"
 
+#include <array>
+#include <optional>
+#include <string_view>
+
 #include "openai_response_parser.h"
 #include <qcode/core/logger.h>
 #include <qcode/transform/gemini_transform.h>
@@ -26,6 +30,76 @@ std::optional<std::string> reasoning_signature(const nlohmann::json& delta) {
   return std::nullopt;
 }
 
+// Fast path for the commonest SSE event: a chat-completions chunk whose only
+// payload is one text delta, `choices[0].delta.content`, with no finish_reason.
+// Every other shape returns nullopt and goes through the full DOM parse. The
+// accepted shapes are checked strictly, so an unexpected field, escape or
+// layout falls back rather than being guessed at.
+std::optional<std::string> plain_content_delta(std::string_view data) {
+  // Any of these anywhere in the line means the event may carry more than a
+  // text delta, so leave it to the full parser.
+  static constexpr std::array<std::string_view, 12> kSlowMarkers = {
+      "tool_calls", "function", "reasoning", "usage", "error", "candidates",
+      "response", "refusal", "\"type\"", "thought", "signature", "audio"};
+  for (const auto marker : kSlowMarkers) {
+    if (data.find(marker) != std::string_view::npos) return std::nullopt;
+  }
+
+  // Compact (OpenAI) and spaced (Python json.dumps) layouts.
+  static constexpr std::string_view kCompactHead =
+      R"("choices":[{"index":0,"delta":{"content":")";
+  static constexpr std::string_view kSpacedHead =
+      R"("choices": [{"index": 0, "delta": {"content": ")";
+  size_t start = data.find(kCompactHead);
+  if (start != std::string_view::npos) {
+    start += kCompactHead.size();
+  } else {
+    start = data.find(kSpacedHead);
+    if (start == std::string_view::npos) return std::nullopt;
+    start += kSpacedHead.size();
+  }
+
+  // Decode the JSON string literal. \u escapes are left to the full parser.
+  std::string text;
+  size_t i = start;
+  for (;;) {
+    if (i >= data.size()) return std::nullopt;
+    const char c = data[i];
+    if (c == '"') break;
+    if (static_cast<unsigned char>(c) < 0x20) return std::nullopt;
+    if (c != '\\') {
+      text += c;
+      ++i;
+      continue;
+    }
+    if (i + 1 >= data.size()) return std::nullopt;
+    switch (data[i + 1]) {
+      case '"': text += '"'; break;
+      case '\\': text += '\\'; break;
+      case '/': text += '/'; break;
+      case 'n': text += '\n'; break;
+      case 't': text += '\t'; break;
+      case 'r': text += '\r'; break;
+      case 'b': text += '\b'; break;
+      case 'f': text += '\f'; break;
+      default: return std::nullopt;
+    }
+    i += 2;
+  }
+
+  // Everything after the closing quote must close the delta and the chunk
+  // with finish_reason null, and nothing else. Whitespace is ignored.
+  std::string tail;
+  for (size_t j = i + 1; j < data.size(); ++j) {
+    if (data[j] != ' ') tail += data[j];
+  }
+  if (tail == R"(},"finish_reason":null}]})" ||
+      tail == R"(},"logprobs":null,"finish_reason":null}]})") {
+    return text;
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
@@ -40,6 +114,13 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
       return;
     }
 
+
+    if (fast_delta_path_) {
+      if (auto text = plain_content_delta(data)) {
+        push_event(StreamEvent(std::move(*text)));
+        return;
+      }
+    }
 
     try {
       auto json = nlohmann::json::parse(data);
