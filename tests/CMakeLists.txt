@@ -172,4 +172,18 @@ if(TARGET qcode)
         TIMEOUT 5
         WILL_FAIL TRUE
     )
+
+    # Headless perf guard: startup latency and RSS of `qcode serve` against
+    # scripts/perf_baseline.json. Linux only (reads /proc). Filter with -L perf.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME PerfGuardServe
+            COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/perf_guard.py
+                --binary $<TARGET_FILE:qcode>
+                --baseline ${CMAKE_SOURCE_DIR}/scripts/perf_baseline.json
+                --turns 50)
+        set_tests_properties(PerfGuardServe PROPERTIES
+            LABELS perf
+            TIMEOUT 120
+        )
+    endif()
 endif()
