@@ -158,10 +158,14 @@ find_package(CURL REQUIRED)
 # FTXUI is required by libqcode src/ui/ (markdown/message/tool UI),
 # not only by the TUI app binary.
 include(FetchContent)
+# cmake/patches/ftxui-idle-loop.patch makes FTXUI's event and animation
+# threads block while idle instead of waking 66 and 50 times a second.
 FetchContent_Declare(ftxui
     GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
     GIT_TAG v6.1.9
     GIT_SHALLOW TRUE
+    PATCH_COMMAND git apply --whitespace=nowarn
+        ${CMAKE_SOURCE_DIR}/cmake/patches/ftxui-idle-loop.patch
 )
 FetchContent_MakeAvailable(ftxui)
 

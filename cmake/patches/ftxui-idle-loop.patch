@@ -1,0 +1,107 @@
+diff --git a/src/ftxui/component/screen_interactive.cpp b/src/ftxui/component/screen_interactive.cpp
+index 77d164ac..7eb2bc9b 100644
+--- a/src/ftxui/component/screen_interactive.cpp
++++ b/src/ftxui/component/screen_interactive.cpp
+@@ -5,6 +5,8 @@
+ #include <algorithm>  // for copy, max, min
+ #include <array>      // for array
+ #include <atomic>
++#include <condition_variable>  // for condition_variable
++#include <mutex>            // for mutex, lock_guard
+ #include <chrono>  // for operator-, milliseconds, operator>=, duration, common_type<>::type, time_point
+ #include <csignal>  // for signal, SIGTSTP, SIGABRT, SIGWINCH, raise, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, __sighandler_t, size_t
+ #include <cstdint>
+@@ -174,10 +176,18 @@ int CheckStdinReady(int usec_timeout) {
+ // Read char from the terminal.
+ void EventListener(std::atomic<bool>* quit, Sender<Task> out) {
+   auto parser = TerminalInputParser(std::move(out));
++  // Only an unfinished escape sequence needs the short Timeout() poll. When
++  // nothing is pending, wait up to idle_microseconds per check so an idle
++  // terminal does not wake 50 times a second.
++  constexpr int idle_microseconds = 250 * 1000;
++  bool pending = false;
+ 
+   while (!*quit) {
+-    if (!CheckStdinReady(timeout_microseconds)) {
+-      parser.Timeout(timeout_milliseconds);
++    if (!CheckStdinReady(pending ? timeout_microseconds : idle_microseconds)) {
++      if (pending) {
++        parser.Timeout(timeout_milliseconds);
++        pending = false;
++      }
+       continue;
+     }
+ 
+@@ -187,6 +197,7 @@ void EventListener(std::atomic<bool>* quit, Sender<Task> out) {
+     for (size_t i = 0; i < l; ++i) {
+       parser.Add(buffer[i]);  // NOLINT
+     }
++    pending = l > 0;
+   }
+ }
+ #endif
+@@ -335,12 +346,30 @@ class CapturedMouseImpl : public CapturedMouseInterface {
+   std::function<void(void)> callback_;
+ };
+ 
++// Animation wake-up state. RequestAnimationFrame() sets animation_wanted and
++// notifies; the listener sleeps on the condition variable while nothing is
++// animating, so an idle UI does not receive 66 ticks per second.
++std::atomic<bool> animation_wanted{false};
++std::mutex animation_mutex;
++std::condition_variable animation_cv;
++
+ void AnimationListener(std::atomic<bool>* quit, Sender<Task> out) {
+   // Animation at around 60fps.
+   const auto time_delta = std::chrono::milliseconds(15);
++  // While idle, send a heartbeat task this often. The loop handles pending
++  // signals (SIGTERM, SIGINT) only when it wakes, so this bounds that latency.
++  const auto idle_heartbeat = std::chrono::milliseconds(250);
+   while (!*quit) {
++    bool wanted = false;
++    {
++      std::unique_lock<std::mutex> lock(animation_mutex);
++      animation_cv.wait_for(lock, idle_heartbeat,
++                            [&] { return *quit || animation_wanted.load(); });
++      wanted = animation_wanted.load();
++    }
++    if (*quit) break;
+     out->Send(AnimationTask());
+-    std::this_thread::sleep_for(time_delta);
++    if (wanted) std::this_thread::sleep_for(time_delta);
+   }
+ }
+ 
+@@ -469,6 +498,11 @@ void ScreenInteractive::RequestAnimationFrame() {
+     return;
+   }
+   animation_requested_ = true;
++  {
++    std::lock_guard<std::mutex> lock(animation_mutex);
++    animation_wanted = true;
++  }
++  animation_cv.notify_one();
+   auto now = animation::Clock::now();
+   const auto time_histeresis = std::chrono::milliseconds(33);
+   if (now - previous_animation_time_ >= time_histeresis) {
+@@ -833,6 +867,7 @@ void ScreenInteractive::HandleTask(Component component, Task& task) {
+       }
+ 
+       animation_requested_ = false;
++      animation_wanted = false;
+       const animation::TimePoint now = animation::Clock::now();
+       const animation::Duration delta = now - previous_animation_time_;
+       previous_animation_time_ = now;
+@@ -1035,7 +1070,11 @@ void ScreenInteractive::Exit() {
+ 
+ // private:
+ void ScreenInteractive::ExitNow() {
+-  quit_ = true;
++  {
++    std::lock_guard<std::mutex> lock(animation_mutex);
++    quit_ = true;
++  }
++  animation_cv.notify_all();
+   task_sender_.reset();
+ }
+ 
