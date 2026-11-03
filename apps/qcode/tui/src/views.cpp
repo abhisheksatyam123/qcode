@@ -600,6 +600,8 @@ ftxui::Element render_setup_required(const std::string& theme,
         text(""),
         text("Add a provider with at least one model to that file, or point") | color(theme_text_muted()),
         text("OPENCODE_CONFIG at a file that has one. Then type /reload here.") | color(theme_text_muted()),
+        text("The key can go in the file or come from the environment, for") | color(theme_text_muted()),
+        text("example OPENAI_API_KEY. Restart qcode after exporting it.") | color(theme_text_muted()),
     };
     // Why the file gave no models (parse error, mistyped fields), if known.
     const auto warnings = qcode::config_warnings();

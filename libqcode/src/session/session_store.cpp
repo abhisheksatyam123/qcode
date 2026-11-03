@@ -1753,12 +1753,35 @@ CompactResult compact_database() {
         result.message = "could not open database at " + path;
         return result;
     }
+    // VACUUM needs the write lock with no other transaction open. Another qcode
+    // process that is writing holds it, and a busy wait would stall the command,
+    // so take the lock with a short wait and refuse with a clear message if
+    // another process has it. An open but idle process holds no lock and is fine.
+    const auto refuse = [&result, &path]() {
+        result.message = "another qcode process is using " + path +
+                         "; close it (or stop qcode serve) and run again";
+        return result;
+    };
+    sqlite3_busy_timeout(db, 2000);
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db, "BEGIN EXCLUSIVE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        const int rc = sqlite3_errcode(db) & 0xff;
+        sqlite3_free(err_msg);
+        if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) return refuse();
+        result.message = std::string("could not lock database: ") + sqlite3_errmsg(db);
+        return result;
+    }
+    sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     // Takes effect because VACUUM rebuilds the file with the new mode.
     sqlite3_exec(db, "PRAGMA auto_vacuum=INCREMENTAL;", nullptr, nullptr, nullptr);
-    char* err_msg = nullptr;
     if (sqlite3_exec(db, "VACUUM;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
-        result.message = std::string("VACUUM failed: ") + (err_msg ? err_msg : "unknown error");
+        const int rc = sqlite3_errcode(db) & 0xff;
+        const bool locked = rc == SQLITE_BUSY || rc == SQLITE_LOCKED;
+        if (!locked) {
+            result.message = std::string("VACUUM failed: ") + (err_msg ? err_msg : "unknown error");
+        }
         sqlite3_free(err_msg);
+        if (locked) return refuse();
         return result;
     }
     // VACUUM writes through the WAL; fold it back into the main file.
