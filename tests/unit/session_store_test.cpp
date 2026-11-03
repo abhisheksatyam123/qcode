@@ -285,6 +285,38 @@ TEST_F(SessionStoreTest, DeletedSessionPagesAreReturnedToTheFile) {
     sqlite3_close(raw);
 }
 
+TEST_F(SessionStoreTest, CompactConvertsLegacyFileToIncrementalVacuum) {
+    const std::string sid = create_new_session("prov", "model", "/ws", "Legacy");
+    save_message(sid, "User", "hello");
+
+    // Simulate a database created before auto_vacuum was enabled.
+    {
+        sqlite3* raw = nullptr;
+        ASSERT_EQ(sqlite3_open(db_path_.c_str(), &raw), SQLITE_OK);
+        sqlite3_exec(raw, "PRAGMA auto_vacuum=NONE; VACUUM;", nullptr, nullptr, nullptr);
+        sqlite3_close(raw);
+    }
+
+    const CompactResult result = compact_database();
+    ASSERT_TRUE(result.ok) << result.message;
+    EXPECT_GT(result.bytes_before, 0);
+    EXPECT_GT(result.bytes_after, 0);
+
+    sqlite3* raw = nullptr;
+    ASSERT_EQ(sqlite3_open(db_path_.c_str(), &raw), SQLITE_OK);
+    sqlite3_stmt* st = nullptr;
+    ASSERT_EQ(sqlite3_prepare_v2(raw, "PRAGMA auto_vacuum;", -1, &st, nullptr), SQLITE_OK);
+    ASSERT_EQ(sqlite3_step(st), SQLITE_ROW);
+    EXPECT_EQ(sqlite3_column_int(st, 0), 2);  // INCREMENTAL
+    sqlite3_finalize(st);
+    sqlite3_close(raw);
+
+    // Data survives the rewrite.
+    auto msgs = load_session_messages(sid);
+    ASSERT_EQ(msgs.size(), 1u);
+    EXPECT_EQ(msgs[0].second, "hello");
+}
+
 TEST_F(SessionStoreTest, LoadLastSessionMessage) {
     const std::string sid = create_new_session("prov", "model", "/ws", "Last Msg Test");
     EXPECT_EQ(load_last_session_message(sid), std::nullopt);

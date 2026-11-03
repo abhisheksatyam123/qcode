@@ -166,6 +166,20 @@ void record_session_model_call(const std::string& session_id,
 // recursively (each child records its own model calls and cost).
 SubagentUsage get_subagent_usage(const std::string& session_id);
 
+// Rewrite the database file with incremental auto_vacuum and return its freed
+// pages to the OS. Needed once for databases created before auto_vacuum was
+// enabled for new files; it rewrites the whole file, so it can take a while
+// and needs free disk space about the size of the database. Fails with a
+// message (and leaves the file as it was) if another process holds the write
+// lock for longer than the busy timeout.
+struct CompactResult {
+    bool ok = false;
+    std::string message;
+    long long bytes_before = 0;
+    long long bytes_after = 0;
+};
+CompactResult compact_database();
+
 // Delete a session and its associated messages
 std::vector<std::string> get_child_session_ids(const std::string& parent_session_id);
 std::string get_parent_session_id(const std::string& session_id);
