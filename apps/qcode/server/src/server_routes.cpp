@@ -1,15 +1,44 @@
 #include "server_routes.h"
 #include "routes/routes_internal.h"
 
+#include "http_utils.h"
+
 #include <nlohmann/json.hpp>
 
 #include <qcode/core/in_process_bus.h>
+#include <qcode/core/logger.h>
+#include <qcode/session/session_store.h>
 #include <qcode/generation/generation_service.h>
 
 namespace qcode {
 namespace server {
 
 std::unique_ptr<qcode::GenerationService> g_backend;
+
+// Session-scoped paths answer a malformed id with 400 and an unknown one with
+// 404, before any handler runs. /session/last and /session/cancel are literal
+// routes, not ids.
+bool rejected_session_path(const httplib::Request& req, httplib::Response& res) {
+  for (const std::string prefix : {std::string("/session/"), std::string("/api/session/")}) {
+    if (req.path.rfind(prefix, 0) != 0) continue;
+    const std::string rest = req.path.substr(prefix.size());
+    const auto slash = rest.find('/');
+    const std::string raw_id = rest.substr(0, slash);
+    if (raw_id.empty()) return false;
+    if (slash == std::string::npos && (raw_id == "last" || raw_id == "cancel")) return false;
+    const std::string id = url_decode(raw_id);
+    if (!qcode::session::is_valid_session_id(id)) {
+      send_error(res, 400, "invalid session_id");
+      return true;
+    }
+    if (!qcode::session::session_exists(id)) {
+      send_error(res, 404, "session not found");
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
 
 void setup_server_routes(
     httplib::Server& server,
@@ -30,6 +59,7 @@ void setup_server_routes(
       res.status = 204;
       return httplib::Server::HandlerResponse::Handled;
     }
+    if (rejected_session_path(req, res)) return httplib::Server::HandlerResponse::Handled;
     return httplib::Server::HandlerResponse::Unhandled;
   });
 
@@ -38,21 +68,19 @@ void setup_server_routes(
     res.set_header("Access-Control-Allow-Headers", "*");
   });
 
-  // Handlers read request bodies with nlohmann accessors. A body that is not an
-  // object, or has a field of the wrong type, throws; that is the client's
-  // mistake, so answer 400 with the reason. Anything else stays a 500.
-  server.set_exception_handler([](const httplib::Request&, httplib::Response& res,
+  // An exception that reaches here is a server bug: log it and answer 500.
+  // Bad request bodies and unknown sessions are rejected before handlers run.
+  server.set_exception_handler([](const httplib::Request& req, httplib::Response& res,
                                   std::exception_ptr ep) {
+    std::string what = "unknown exception";
     try {
       std::rethrow_exception(ep);
-    } catch (const nlohmann::json::exception& e) {
-      res.status = 400;
-      res.set_content(nlohmann::json({{"error", std::string("invalid request body: ") + e.what()}}).dump(),
-                      "application/json");
+    } catch (const std::exception& e) {
+      what = e.what();
     } catch (...) {
-      res.status = 500;
-      res.set_content(R"({"error":"internal error"})", "application/json");
     }
+    LOG_ERROR("Unhandled exception for {} {}: {}", req.method, req.path, what);
+    qcode::server::send_error(res, 500, "internal error");
   });
 
   register_system_routes(server, providers, options);
