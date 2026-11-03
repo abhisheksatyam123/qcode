@@ -6,6 +6,31 @@ project(qcode
     LANGUAGES C CXX
 )
 
+# Build provenance for `qcode --version`: nearest git tag (with commit count and
+# dirty flag) and short commit. Falls back to "unknown" outside a git checkout.
+execute_process(
+    COMMAND git describe --tags --always --dirty
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE QCODE_GIT_DESCRIBE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE QCODE_GIT_DESCRIBE_RESULT
+)
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE QCODE_GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE QCODE_GIT_COMMIT_RESULT
+)
+if(NOT QCODE_GIT_DESCRIBE_RESULT EQUAL 0 OR QCODE_GIT_DESCRIBE STREQUAL "")
+    set(QCODE_GIT_DESCRIBE "unknown")
+endif()
+if(NOT QCODE_GIT_COMMIT_RESULT EQUAL 0 OR QCODE_GIT_COMMIT STREQUAL "")
+    set(QCODE_GIT_COMMIT "unknown")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -14,7 +39,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Named modules (`import qcode.config`) on host Clang + Ninja with CMake 3.28+
 # and clang-scan-deps. Android, GCC, and Unix Makefiles keep the header surface.
 find_program(QCODE_CLANG_SCAN_DEPS NAMES clang-scan-deps clang-scan-deps-18)
+# Escape hatch: the module path is verified on Linux clang-18 in CI. Apple
+# clang reports as "AppleClang" and can pick it up on macOS, which CI does not
+# build, so the macOS release job turns modules off with this option.
+option(QCODE_DISABLE_CXX_MODULES "Force the header-only build even when named modules are available" OFF)
 if(NOT ANDROID
+   AND NOT QCODE_DISABLE_CXX_MODULES
    AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.28"
    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang"
    AND QCODE_CLANG_SCAN_DEPS
