@@ -62,14 +62,6 @@ class Stub:
             def log_message(self, *_args) -> None:
                 pass
 
-            def do_GET(self) -> None:  # noqa: N802
-                # GET /release: the browser check has sent its Stop, so the
-                # held subagent reply comes back (see the note in Stub).
-                outer.kill_seen.set()
-                self.send_response(200)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-
             def do_POST(self) -> None:  # noqa: N802
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0") or 0)) or b"{}")
                 if not self.path.endswith("/chat/completions"):

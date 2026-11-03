@@ -106,6 +106,36 @@ std::string report_text(const std::string& id, const std::string& title, const J
 
 // Running subagents, background reports and inboxes. Leaked on purpose:
 // detached background workers may outlive static destruction.
+std::mutex& observer_mutex() {
+  static auto* mutex = new std::mutex();
+  return *mutex;
+}
+
+TaskTool::StatusObserver& observer_slot() {
+  static TaskTool::StatusObserver slot;
+  return slot;
+}
+
+// The final status of a finished subagent's result (done, error or killed).
+std::string final_status(const JsonValue& result) {
+  if (result.is_object() && result.contains("metadata") && result["metadata"].is_object()) {
+    return result["metadata"].value("status", std::string("done"));
+  }
+  return "done";
+}
+
+// Reports one subagent transition to the observer, if one is set. Called with
+// no Team lock held, so an observer may do bus work.
+void notify_status(const std::string& lead_session_id, const std::string& task_id,
+                   const std::string& status) {
+  TaskTool::StatusObserver fn;
+  {
+    std::lock_guard<std::mutex> lock(observer_mutex());
+    fn = observer_slot();
+  }
+  if (fn) fn(lead_session_id, task_id, status);
+}
+
 class Team {
  public:
   static Team& instance() {
@@ -188,6 +218,8 @@ class Team {
         listener = listener_;
       }
       cv_.notify_all();
+      // After the removal: a status read from the team now sees the final state.
+      notify_status(task.lead_session_id, id, final_status(result));
       if (listener) listener();
     }).detach();
   }
@@ -883,10 +915,11 @@ JsonValue task_run(const JsonValue& args, const ToolExecutionContext& context) {
   if (background) {
     auto abort_flag = std::make_shared<std::atomic<bool>>(false);
     task.abort_flag = abort_flag;
+    notify_status(lead, session_id, "running");
     Team::instance().start_background(
         session_id, task,
         [runner = context.subagent_runner, sub_args, abort_flag, session_id, title,
-         model]() -> JsonValue {
+         model, lead]() -> JsonValue {
           JsonValue sub = run_subagent(runner, sub_args, abort_flag);
           // Kill is recorded in the abort flag. Set before the run returned: killed,
           // keeping whatever partial output it has. Set after: the run finished.
@@ -906,13 +939,20 @@ JsonValue task_run(const JsonValue& args, const ToolExecutionContext& context) {
   }
 
   task.abort_flag = context.abort_flag;
+  notify_status(lead, session_id, "running");
   Team::instance().add(session_id, task);
-  struct Unregister {
-    std::string id;
-    ~Unregister() { Team::instance().remove(id); }
-  } unregister{session_id};
-  JsonValue sub = run_subagent(context.subagent_runner, sub_args, context.abort_flag);
-  return finish_task(session_id, title, model, std::move(sub));
+  JsonValue out;
+  {
+    struct Unregister {
+      std::string id;
+      ~Unregister() { Team::instance().remove(id); }
+    } unregister{session_id};
+    JsonValue sub = run_subagent(context.subagent_runner, sub_args, context.abort_flag);
+    out = finish_task(session_id, title, model, std::move(sub));
+  }
+  // Reported after the removal, as in the background path.
+  notify_status(lead, session_id, final_status(out));
+  return out;
 }
 
 }  // namespace
@@ -986,6 +1026,11 @@ Tool TaskTool::definition() {
             });
   tool.name = "task";
   return tool;
+}
+
+void TaskTool::set_status_observer(StatusObserver observer) {
+  std::lock_guard<std::mutex> lock(observer_mutex());
+  observer_slot() = std::move(observer);
 }
 
 }  // namespace qcode

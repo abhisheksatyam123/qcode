@@ -74,9 +74,10 @@ Status names:
 
 In the TUI, press `k` on the Subagents tab (with an empty prompt) to stop the
 selected running subagent. In the web panel, a running row has a Stop button. Both call
-the same kill, and the panel refreshes on its own while a subagent runs. A subagent whose
-provider call is still in flight is marked killed when that call returns. The `kill`
-action does the same from the lead.
+the same kill. The kill aborts the subagent's in-flight provider request, so the row turns
+killed within about a second. The panel updates from the lead's event stream while the
+lead's turn runs, and falls back to a 10 s refresh while a row is still running (for a
+subagent that outlives the turn). The `kill` action does the same from the lead.
 
 The TUI Subagents tab shows the total and the count per status, for example
 `SUBAGENTS (3) · 1 running · 1 failed · 1 done`. The web panel shows the same

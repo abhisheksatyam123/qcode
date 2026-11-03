@@ -28,6 +28,13 @@ using JsonValue = nlohmann::json;
 // recipient's inbox and are handed to its next model request.
 class TaskTool {
  public:
+  // Called on each subagent transition: "running", then "done", "error" or
+  // "killed". The server turns these into bus events for the Subagents panel.
+  using StatusObserver = std::function<void(const std::string& lead_session_id,
+                                            const std::string& task_id,
+                                            const std::string& status)>;
+  static void set_status_observer(StatusObserver observer);
+
   static constexpr const char* kDescription =
       "Work with subagents: other model instances with their own context. A subagent "
       "cannot see your conversation, so `prompt` must hold every detail it needs. "

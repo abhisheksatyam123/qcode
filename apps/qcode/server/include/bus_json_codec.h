@@ -35,6 +35,7 @@ nlohmann::json user_message_injected_to_json(const qcode::contract::UserMessageI
 nlohmann::json session_title_changed_to_json(const qcode::contract::SessionTitleChanged::Payload& p);
 nlohmann::json conversation_compacted_to_json(const qcode::contract::ConversationCompacted::Payload& p);
 nlohmann::json session_status_to_json(const qcode::contract::SessionStatusChanged::Payload& p);
+nlohmann::json task_status_to_json(const qcode::contract::TaskStatusChanged::Payload& p);
 nlohmann::json error_occurred_to_json(const qcode::contract::ErrorOccurred::Payload& p);
 nlohmann::json reasoning_delta_to_json(const qcode::contract::ReasoningDelta::Payload& p);
 nlohmann::json step_latency_to_json(const qcode::contract::StepLatency::Payload& p);

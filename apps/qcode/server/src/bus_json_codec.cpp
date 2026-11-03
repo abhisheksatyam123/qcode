@@ -66,6 +66,15 @@ nlohmann::json conversation_compacted_to_json(const ConversationCompacted::Paylo
     };
 }
 
+nlohmann::json task_status_to_json(const TaskStatusChanged::Payload& p) {
+    return {
+        {"type", TaskStatusChanged::type},
+        {"lead_session_id", p.lead_session_id},
+        {"task_id", p.task_id},
+        {"status", p.status}
+    };
+}
+
 nlohmann::json session_status_to_json(const SessionStatusChanged::Payload& p) {
     return {
         {"type", SessionStatusChanged::type},
@@ -158,6 +167,9 @@ std::optional<nlohmann::json> serialize_event(
     }
     if (event_type == SessionStatusChanged::type) {
         return session_status_to_json(std::any_cast<const SessionStatusChanged::Payload&>(payload));
+    }
+    if (event_type == TaskStatusChanged::type) {
+        return task_status_to_json(std::any_cast<const TaskStatusChanged::Payload&>(payload));
     }
     if (event_type == ErrorOccurred::type) {
         return error_occurred_to_json(std::any_cast<const ErrorOccurred::Payload&>(payload));

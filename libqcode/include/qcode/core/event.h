@@ -144,6 +144,17 @@ struct SessionStatusChanged {
     };
 };
 
+// A subagent of a lead session started, finished, or was killed. Sent to the
+// lead's stream and to the Subagents panel; carries no partial output.
+struct TaskStatusChanged {
+    static constexpr const char* type = "backend.task.status.changed";
+    struct Payload {
+        std::string lead_session_id;
+        std::string task_id;
+        std::string status; // "running", "done", "error", "killed"
+    };
+};
+
 struct ErrorOccurred {
     static constexpr const char* type = "backend.error.occurred";
     struct Payload {
@@ -258,6 +269,7 @@ inline void register_all_events(bus::BusPort& bus) {
     bus.register_event<ConversationCompacted>();
     bus.register_event<SessionTitleChanged>();
     bus.register_event<SessionStatusChanged>();
+    bus.register_event<TaskStatusChanged>();
     bus.register_event<ErrorOccurred>();
     bus.register_event<StepLatency>();
     bus.register_event<TokenUsageUpdated>();
