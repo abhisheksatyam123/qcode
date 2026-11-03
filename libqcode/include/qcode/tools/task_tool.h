@@ -74,6 +74,9 @@ class TaskTool {
   static bool has_notices(const std::string& session_id);
   // Called whenever something lands in an inbox (on the sender's thread).
   static void set_notice_listener(std::function<void()> listener);
+  // Stop a running background subagent (the TUI's k key and the kill action).
+  // False when `task_id` is not a running background task.
+  static bool kill_task(const std::string& task_id);
   // Stop every background task and wait up to `timeout` for them to end.
   static void shutdown_background(std::chrono::milliseconds timeout);
 };

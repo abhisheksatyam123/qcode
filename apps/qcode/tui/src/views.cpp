@@ -1570,7 +1570,7 @@ ftxui::Element render_view(
         content_rows.push_back(hbox(
             text(" SUBAGENTS ") | bold | color(accent2(theme)),
             filler(),
-            text("click a task to open it in chat") | dim
+            text("click to open · k stops a running one") | dim
         ));
         content_rows.push_back(separatorLight() | color(accent(theme)));
 
