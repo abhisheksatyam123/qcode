@@ -98,6 +98,7 @@ compaction::CacheReplayInput make_input(
 TEST(CompactionCacheTest, SystemPromptMatchesLiveTurnPrefixInEveryMode) {
   const auto providers = make_providers();
   const std::vector<std::pair<std::string, bool>> modes = {
+      {"normal", false},
       {"orchestrator", false},
       {"subagent", true},
   };
@@ -110,10 +111,10 @@ TEST(CompactionCacheTest, SystemPromptMatchesLiveTurnPrefixInEveryMode) {
 
     EXPECT_EQ(opts.system, build_turn_system_prompt(
                                "BASE SYSTEM PROMPT", is_subagent,
-                               providers));
+                               providers, "", "", mode));
     EXPECT_NE(opts.system.find("BASE SYSTEM PROMPT"), std::string::npos);
-    // Orchestrator carries its reminder; subagent stays raw.
-    const bool expect_orchestrator = !is_subagent;
+    // Orchestrator carries its reminder; normal and subagent stay raw.
+    const bool expect_orchestrator = mode == "orchestrator";
     EXPECT_EQ(opts.system.find("Orchestrator Mode") != std::string::npos,
               expect_orchestrator);
     // The compaction directive must never replace the system prompt.
@@ -153,6 +154,19 @@ TEST(CompactionCacheTest, HistoryIsReplayedThroughTheSameNormalization) {
               static_cast<int>(expected[i].role));
     EXPECT_EQ(opts.messages[i].get_text(), expected[i].get_text());
   }
+}
+
+// Normal mode replays the normal tool set: no task tool.
+TEST(CompactionCacheTest, NormalModeReplaysToolsWithoutTask) {
+  const auto providers = make_providers();
+  auto in = make_input(providers);
+  in.agent_mode = "normal";
+  const auto opts = compaction::build_cache_replay_request(
+      in, "anthropic/claude-sonnet-4", "openrouter", make_history());
+  EXPECT_EQ(tool_names(opts.tools),
+            tool_names(build_turn_tools(false, "normal", false)));
+  EXPECT_EQ(opts.tools.find("task"), opts.tools.end());
+  EXPECT_NE(opts.tools.find("bash"), opts.tools.end());
 }
 
 // Tool schemas segment matches the live turn exactly.

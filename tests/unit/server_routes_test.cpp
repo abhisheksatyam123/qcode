@@ -437,7 +437,8 @@ TEST_F(ServerRoutesTest, TasksAndSubagentSessionLookup) {
     std::string sid = nlohmann::json::parse(res_create->body).value("id", "");
     ASSERT_FALSE(sid.empty());
 
-    // Mode switch route updates agent_mode and reasoning_mode.
+    // Mode switch route updates agent_mode and reasoning_mode. Only normal
+    // and orchestrator exist; the retired "autonomous" maps to orchestrator.
     auto res_mode = client_->Post(
         "/session/" + sid + "/mode",
         nlohmann::json({{"agent_mode", "autonomous"}}).dump(),
@@ -445,7 +446,15 @@ TEST_F(ServerRoutesTest, TasksAndSubagentSessionLookup) {
     ASSERT_TRUE(res_mode);
     EXPECT_EQ(res_mode->status, 200);
     auto after = nlohmann::json::parse(client_->Get("/session/" + sid)->body);
-    EXPECT_EQ(after.value("agent_mode", ""), "autonomous");
+    EXPECT_EQ(after.value("agent_mode", ""), "orchestrator");
+
+    auto res_normal = client_->Post(
+        "/session/" + sid + "/mode",
+        nlohmann::json({{"agent_mode", "plan"}}).dump(),
+        "application/json");
+    ASSERT_TRUE(res_normal);
+    auto after_normal = nlohmann::json::parse(client_->Get("/session/" + sid)->body);
+    EXPECT_EQ(after_normal.value("agent_mode", ""), "normal");
     EXPECT_TRUE(after.contains("reasoning_mode"));
 }
 

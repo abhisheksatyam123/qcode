@@ -13,7 +13,6 @@ using ::qcode::GenerationRequest;
 using ::qcode::GenerationService;
 using ::qcode::ascii_lower;
 using ::qcode::kBuildContinueNudge;
-using ::qcode::kBuildModeReminder;
 using ::qcode::looks_like_task_completion;
 using ::qcode::looks_like_task_stall;
 using ::qcode::run_generation_with_bus;

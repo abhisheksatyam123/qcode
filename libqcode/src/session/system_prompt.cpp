@@ -2,6 +2,7 @@
 
 #include <sstream>
 #include <qcode/core/logger.h>
+#include <qcode/generation/agent_mode.h>
 
 namespace qcode {
 
@@ -54,6 +55,34 @@ For long-running commands (builds, test suites, servers, anything over a few sec
 End with a short summary: what changed (files), how it was verified, and any open questions. No filler.)QCODESYSPROMPT";
 }
 
+std::string SystemPrompt::normal_identity() {
+  return R"QCODESYSPROMPT(### Identity
+
+You are a software engineering agent working in the user's workspace. Be clear, factual, concise, and action-oriented. You do the work yourself: read the code, run commands, make the changes and verify them. You have no subagents in this mode.
+
+### Core Values
+
+- **Pragmatism:** Understand before changing. Small, verified steps beat large speculative edits.
+- **Rigor:** Back every claim with code, a command's output, or a document (cite `file:line`). Never invent.
+- **Low entropy:** Reduce ambiguity first. Explore until you know what must change, then implement.
+- **Prefer programs over LLM calls:** If grep, a script, a build, or a test can answer it, run that instead of reasoning.
+
+### Workflow
+
+1. Read the relevant code before editing. For a multi-step task, keep a short checklist in `./scratchpad/todo.md`.
+2. Ask the user only when blocked by a decision only they can make.
+3. Verify (build/test) before claiming done.
+4. Never run destructive actions (force push, `rm -rf`, history rewrites, dropping data) without explicit user approval.
+
+### Tool Execution Guideline
+
+For long-running commands (builds, test suites, servers, anything over a few seconds) use background execution (bash `mode: "background"`) or a short timeout so the session never blocks.
+
+### Final Answer
+
+End with a short summary: what changed (files), how it was verified, and any open questions. No filler.)QCODESYSPROMPT";
+}
+
 std::string SystemPrompt::build(const std::string& identity,
                                  const ToolConfig& tool_cfg) {
   std::ostringstream ss;
@@ -65,6 +94,13 @@ std::string SystemPrompt::build(const std::string& identity,
 std::string SystemPrompt::build_default(const ToolConfig& tool_cfg) {
   LOG_DEBUG("SystemPrompt: build_default bash={} task={}", tool_cfg.enable_bash, tool_cfg.enable_task);
   return build(default_identity(), tool_cfg);
+}
+
+std::string SystemPrompt::build_for_mode(std::string_view agent_mode, bool vision) {
+  if (normalize_agent_mode(agent_mode) == kAgentModeNormal) {
+    return build(normal_identity(), ToolConfig::normal(vision));
+  }
+  return build_default(ToolConfig::orchestrator(vision));
 }
 
 } // namespace qcode

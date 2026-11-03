@@ -37,6 +37,7 @@ add_executable(qcode_tests
     unit/task_tool_test.cpp
     unit/task_target_test.cpp
     unit/generation_continue_test.cpp
+    unit/agent_mode_test.cpp
     unit/bus_json_codec_test.cpp
     unit/git_workspace_test.cpp
     unit/session_store_test.cpp

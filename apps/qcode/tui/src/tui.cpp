@@ -26,7 +26,9 @@
 #include <qcode/core/perf.h>
 #include <qcode/core/session_file_logger.h>
 #include <qcode/core/jthread.h>
+#include <qcode/generation/agent_mode.h>
 #include <qcode/generation/generation_service.h>
+#include <qcode/generation/turn_prefix.h>
 #include <qcode/providers/authenticated_providers.h>
 #include <qcode/ui/commands.h>
 #include <qcode/transform/provider_transform.h>
@@ -346,7 +348,7 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         }
         qcode::session::set_session_modes(
             *state.session_id,
-            state.agent_mode ? *state.agent_mode : "orchestrator",
+            state.agent_mode ? *state.agent_mode : std::string(qcode::kDefaultAgentMode),
             *state.reasoning_mode);
     };
 
@@ -379,10 +381,19 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         persist_session_variant();
     };
 
+    // The system prompt follows the agent mode: normal works alone (no task
+    // tool), orchestrator delegates (see generation/agent_mode.h).
+    std::string synced_prompt_key;  // "<mode>|<vision>" of system_prompt
     auto sync_tool_config_and_system_prompt = [&]() {
         const auto* mi = current_model_info();
-        tool_cfg.enable_image = (mi != nullptr && mi->vision);
-        system_prompt = qcode::SystemPrompt::build_default(tool_cfg);
+        const bool vision = (mi != nullptr && mi->vision);
+        const std::string mode = qcode::normalize_agent_mode(
+            state.agent_mode ? *state.agent_mode : std::string(qcode::kDefaultAgentMode));
+        std::string key = mode + (vision ? "|v" : "|-");
+        if (key == synced_prompt_key) return;
+        tool_cfg = qcode::turn_tool_config(false, mode, vision);
+        system_prompt = qcode::SystemPrompt::build_for_mode(mode, vision);
+        synced_prompt_key = std::move(key);
     };
 
     apply_config_variant_if_unset();
@@ -469,13 +480,16 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         if (state.session_id && !state.session_id->empty()) {
             qcode::session::set_session_modes(
                 *state.session_id,
-                state.agent_mode ? *state.agent_mode : "orchestrator", lvl);
+                state.agent_mode ? *state.agent_mode : std::string(qcode::kDefaultAgentMode), lvl);
         }
         store.add_toast("Variant: " + lvl, lvl == "off" ? "info" : "success",
                         1500);
     };
 
     auto make_generation_request = [&]() -> qcode::GenerationRequest {
+        // The mode may have changed since the last sync (/mode, Shift+Tab,
+        // a session restore), so every turn takes its prompt from it.
+        sync_tool_config_and_system_prompt();
         return qcode::GenerationRequest{
             .providers = providers_list,
             .provider_idx = selected_provider,
@@ -581,12 +595,13 @@ int qcode::app::run_tui(int argc, char* argv[]) {
                 selected_model = resolved->second;
             }
         }
-        sync_tool_config_and_system_prompt();
         auto modes = qcode::session::get_session_modes(id);
         if (state.agent_mode) {
-            *state.agent_mode =
-                modes.first == "subagent" ? "subagent" : "orchestrator";
+            *state.agent_mode = modes.first.empty()
+                                    ? std::string(qcode::kDefaultAgentMode)
+                                    : qcode::normalize_agent_mode(modes.first);
         }
+        sync_tool_config_and_system_prompt();
 
         refresh_subagents();
         state.tab_selected = 0;
@@ -1148,6 +1163,14 @@ int qcode::app::run_tui(int argc, char* argv[]) {
 
     main_container |= CatchEvent([&](Event e) {
         if (qcode::tui::handle_variant_select_keys(e, overlays, [&](const std::string& vid) { apply_variant(vid); })) return true;
+        // Shift+Tab: switch agent mode (normal <-> orchestrator).
+        if (e == Event::TabReverse && !overlays.any(state)) {
+            const std::string current =
+                state.agent_mode ? *state.agent_mode : std::string(qcode::kDefaultAgentMode);
+            qcode::set_agent_mode(state, qcode::next_agent_mode(current), providers_list,
+                                  selected_provider, selected_model, system_prompt, *bus);
+            return true;
+        }
         // Toggle COPY MODE (F3): disables mouse tracking so the terminal
         // emulator can do native text selection (clean copy/paste).
         if (e == Event::F3) {

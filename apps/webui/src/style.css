@@ -579,8 +579,7 @@ kbd {
   border-radius: 50%;
   background: var(--accent);
 }
-.agent-mode-btn.plan::before { background: var(--warning); }
-.agent-mode-btn.autonomous::before { background: var(--success); }
+.agent-mode-btn.orchestrator::before { background: var(--success); }
 .agent-mode-btn.subagent::before { background: var(--blue); }
 .thinking-toggle-btn[aria-pressed="true"] { color: var(--text); border-color: var(--border-strong); }
 .thinking-toggle-btn.off, .thinking-toggle-btn[aria-pressed="false"] { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--faint); }
