@@ -221,20 +221,19 @@ std::string zen_wire_model_id(std::string model_id) {
   const std::string id = to_lower(model_id);
   // Retired Zen ids answer 400 ModelError / 410 ModelDeprecated. Snap them
   // onto ids the current free pool accepts so old sessions and configs keep
-  // working. Live chat free pool:
-  //   big-pickle, beam-free, exo-free, mimo-v2.6-flash-free,
-  //   nemotron-3-ultra-free, nemotron-3.5-super-vl-free,
-  //   nemotron-3.5-lightning-free, longcat-2.5-preview-free,
-  //   deepseek-v4.1-flash-free, glm-5.3-flash-free,
-  //   minimax-m3.1-flash-free.
+  // working. Live chat free pool (GET /zen/v1/models, 2026-11-03):
+  //   big-pickle, beam-free, flint-40b-free, mimo-v2.6-flash-free,
+  //   nemotron-3.5-super-vl-free, nemotron-3.5-lightning-free,
+  //   deepseek-v4.1-flash-free, glm-5.3-flash-free, pulse-alpha-free.
   // (jev-1.13-free uses the separate SystemOne API and is not chat.)
   if (contains(id, "ox-alpha") || contains(id, "ox alpha") ||
       contains(id, "x-preview-f-free") || contains(id, "x-preview-f")) {
     return "big-pickle";
   }
-  // Zen's own 410 says space-bunny-free -> minimax-m3.1-flash-free and
-  // mimo-v2.5-free -> mimo-v2.6-flash-free. Keep the replacement family.
-  if (contains(id, "space-bunny")) return "minimax-m3.1-flash-free";
+  // Zen's own 410 said space-bunny-free -> minimax-m3.1-flash-free, but that
+  // id left the free pool for Go; keep old sessions on a live free model.
+  // mimo-v2.5-free -> mimo-v2.6-flash-free is still valid.
+  if (contains(id, "space-bunny")) return "big-pickle";
   if (contains(id, "mimo-v2.5") || contains(id, "mimo-v2-5") ||
       contains(id, "mimo-v2-flash-free") ||
       contains(id, "mimo-v2-omni-free")) {
@@ -242,8 +241,10 @@ std::string zen_wire_model_id(std::string model_id) {
   }
   if (contains(id, "minimax-m2.1-free") ||
       contains(id, "minimax-m2.5-free") ||
-      contains(id, "minimax-m3-free")) {
-    return "minimax-m3.1-flash-free";
+      contains(id, "minimax-m3-free") ||
+      contains(id, "minimax-m3.1-flash-free")) {
+    // MiniMax ids moved to Go; Zen free callers get the generic free model.
+    return "big-pickle";
   }
   if (contains(id, "glm-4.7-free") || contains(id, "glm-5-free")) {
     return "glm-5.3-flash-free";
@@ -251,7 +252,9 @@ std::string zen_wire_model_id(std::string model_id) {
   if (contains(id, "deepseek-v4-flash-free")) {
     return "deepseek-v4.1-flash-free";
   }
-  if (contains(id, "longcat-2.0")) return "longcat-2.5-preview-free";
+  if (contains(id, "longcat-2.0") || contains(id, "longcat-2.5")) {
+    return "flint-40b-free";
+  }
   if (contains(id, "nemotron-3-super")) {
     return "nemotron-3.5-lightning-free";
   }

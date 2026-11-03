@@ -105,11 +105,11 @@ static constexpr const char* kOpenRouterReferer = "https://opencode.ai/";
 // GET https://opencode.ai/zen/v1/models no longer accepts these; they answer
 // 400 ModelError or 410 ModelDeprecated. Live ids on a non-chat API (Jev /
 // SystemOne) are excluded too. Drop from the picker even if an old
-// opencode.json lists them. Keep this in sync with the live chat free pool:
-// big-pickle, beam-free, exo-free, mimo-v2.6-flash-free,
-// nemotron-3-ultra-free, nemotron-3.5-super-vl-free,
-// nemotron-3.5-lightning-free, longcat-2.5-preview-free,
-// deepseek-v4.1-flash-free, glm-5.3-flash-free, minimax-m3.1-flash-free.
+// opencode.json lists them. Keep this in sync with the live chat free pool
+// (verified 2026-11-03): big-pickle, beam-free, flint-40b-free,
+// mimo-v2.6-flash-free, nemotron-3.5-super-vl-free,
+// nemotron-3.5-lightning-free, deepseek-v4.1-flash-free,
+// glm-5.3-flash-free, pulse-alpha-free.
 // (jev-1.13-free is live but speaks the separate SystemOne API, not chat.)
 static bool zen_id_is_retired(const std::string& id) {
     static const std::unordered_set<std::string> kRetired{
@@ -124,7 +124,8 @@ static bool zen_id_is_retired(const std::string& id) {
         // Deprecated preview/free experiments.
         "fledge-alpha-free", "ll-alpha-free", "cat-jam-free",
         "ring-2.6-1t-free", "step-5-preview-free",
-        "longcat-2.0-free", "deepseek-v4-flash-free",
+        "longcat-2.0-free", "longcat-2.5-preview-free", "deepseek-v4-flash-free",
+        "exo-free", "nemotron-3-ultra-free", "minimax-m3.1-flash-free",
         "ling-2.6-flash-free", "ling-3.0-flash-free",
         "ling-3.0-flash-fin-free", "ling-3.0-tiny-free",
         "ling-3.1-flash-free", "trinity-large-preview-free",

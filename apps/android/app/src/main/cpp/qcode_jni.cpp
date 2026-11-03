@@ -142,17 +142,15 @@ std::string build_provider_config(const std::string& openrouter_key,
   json += R"cfg(
       },
       "models": {
-        "minimax-m3.1-flash-free": { "name": "MiniMax M3.1 Flash (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1000000, "output": 512000 } },
-        "nemotron-3.5-super-vl-free": { "name": "Nemotron 3.5 Super VL (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1048576, "output": 131072 } },
-        "nemotron-3.5-lightning-free": { "name": "Nemotron 3.5 Lightning (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 262144 } },
-        "nemotron-3-ultra-free": { "name": "Nemotron 3 Ultra (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1000000, "output": 128000 } },
-        "exo-free": { "name": "Exo (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1048576, "output": 131072 } },
-        "longcat-2.5-preview-free": { "name": "LongCat 2.5 Preview (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1000000, "output": 131072 } },
-        "mimo-v2.6-flash-free": { "name": "MiMo V2.6 Flash (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
-        "beam-free": { "name": "Beam (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 1048576, "output": 131072 } },
-        "deepseek-v4.1-flash-free": { "name": "DeepSeek V4.1 Flash (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
-        "glm-5.3-flash-free": { "name": "GLM 5.3 Flash (Free)", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
-        "big-pickle": { "name": "Big Pickle (Free)", "tool_call": true, "reasoning": true, "limit": { "context": 200000, "output": 32000 } }
+        "big-pickle": { "name": "Big Pickle", "tool_call": true, "reasoning": true, "limit": { "context": 200000, "output": 32000 } },
+        "beam-free": { "name": "Beam Free", "tool_call": true, "reasoning": true, "limit": { "context": 1048576, "output": 131072 } },
+        "flint-40b-free": { "name": "Flint 40B Free", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 65536 } },
+        "mimo-v2.6-flash-free": { "name": "MiMo-V2.6-Flash Free", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
+        "nemotron-3.5-super-vl-free": { "name": "Nemotron 3.5 Super VL Free", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1048576, "output": 131072 } },
+        "nemotron-3.5-lightning-free": { "name": "Nemotron 3.5 Lightning Free", "tool_call": true, "reasoning": true, "limit": { "context": 262144, "output": 262144 } },
+        "deepseek-v4.1-flash-free": { "name": "DeepSeek V4.1 Flash Free", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
+        "glm-5.3-flash-free": { "name": "GLM-5.3-Flash Free", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 200000, "output": 32000 } },
+        "pulse-alpha-free": { "name": "Pulse Alpha Free", "tool_call": true, "reasoning": true, "vision": true, "limit": { "context": 1048576, "output": 131072 } }
       }
     },
     "openrouter": {
