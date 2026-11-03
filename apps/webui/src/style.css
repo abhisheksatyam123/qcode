@@ -353,7 +353,7 @@ kbd {
   margin: 0 -4px;
   padding: 0 4px 8px;
 }
-.session-list-empty { padding: 8px; color: var(--faint); font-size: var(--text-sm); }
+.session-list-empty { padding: 8px; color: var(--muted); font-size: var(--text-sm); line-height: 1.45; }
 .session-item-wrapper {
   position: relative;
   display: flex;
@@ -1651,7 +1651,7 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
 /* Git changes */
 .files-git { flex: 1; overflow-y: auto; padding: 16px clamp(12px, 3vw, 24px) 40px; min-height: 0; }
 .files-workspace { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; font-family: var(--font-mono); font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
-.files-empty { padding: 16px 6px; color: var(--faint); font-size: 13px; }
+.files-empty { padding: 16px 6px; color: var(--muted); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .files-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .files-summary .chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); font-size: var(--text-sm); color: var(--muted); }
 .add { color: var(--success); }
