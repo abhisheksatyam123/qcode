@@ -400,6 +400,74 @@ TEST_F(SessionStoreTest, SaveAndQueuePopReportTheirResult) {
     EXPECT_FALSE(queued_prompt_pop("bad/id"));
 }
 
+// A database last written by a version 4 build: the tables and columns that
+// existed before v5. Migrating it must keep its rows and add everything newer.
+TEST_F(SessionStoreTest, UpgradesAnOlderDatabaseInOneTransaction) {
+    const std::string old_path = db_path_ + ".v4";
+    std::error_code ec;
+    std::filesystem::remove(old_path, ec);
+    std::filesystem::remove(old_path + "-wal", ec);
+    std::filesystem::remove(old_path + "-shm", ec);
+
+    const char* sid = "11111111-1111-1111-1111-111111111111";
+    {
+        sqlite3* raw = nullptr;
+        ASSERT_EQ(sqlite3_open(old_path.c_str(), &raw), SQLITE_OK);
+        ASSERT_EQ(sqlite3_exec(raw,
+            "PRAGMA journal_mode=WAL;"
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, provider TEXT, model TEXT,"
+            "  created_at INTEGER, workspace TEXT DEFAULT '', parent_session_id TEXT DEFAULT '');"
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT,"
+            "  sender TEXT, content TEXT, created_at INTEGER,"
+            "  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE);"
+            "INSERT INTO sessions(id, title, created_at, workspace) VALUES("
+            "  '11111111-1111-1111-1111-111111111111', 'Old chat', 100, '/old');"
+            "INSERT INTO messages(session_id, sender, content, created_at) VALUES("
+            "  '11111111-1111-1111-1111-111111111111', 'User', 'hello from v4', 101);"
+            "PRAGMA user_version = 4;",
+            nullptr, nullptr, nullptr), SQLITE_OK);
+        sqlite3_close(raw);
+    }
+
+    setenv("QCODE_DB_PATH", old_path.c_str(), 1);
+    init_database();
+
+    // Existing rows survive the upgrade.
+    EXPECT_EQ(get_session_title(sid), "Old chat");
+    auto msgs = load_session_messages(sid);
+    ASSERT_EQ(msgs.size(), 1u);
+    EXPECT_EQ(msgs[0].second, "hello from v4");
+
+    // Version and every later column or table are in place.
+    sqlite3* raw = nullptr;
+    ASSERT_EQ(sqlite3_open(old_path.c_str(), &raw), SQLITE_OK);
+    auto pragma_int = [&](const char* sql) {
+        sqlite3_stmt* st = nullptr;
+        int value = -1;
+        if (sqlite3_prepare_v2(raw, sql, -1, &st, nullptr) == SQLITE_OK &&
+            sqlite3_step(st) == SQLITE_ROW) {
+            value = sqlite3_column_int(st, 0);
+        }
+        sqlite3_finalize(st);
+        return value;
+    };
+    EXPECT_EQ(pragma_int("PRAGMA user_version;"), 11);
+    EXPECT_EQ(pragma_int("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name IN "
+                         "('prompt_tokens','completion_tokens','total_tokens','agent_mode',"
+                         "'reasoning_mode','persona','usage_stats');"), 7);
+    EXPECT_EQ(pragma_int("SELECT COUNT(*) FROM sqlite_master WHERE name = 'queued_prompts';"), 1);
+
+    // Running it again on a current file changes nothing.
+    init_database();
+    EXPECT_EQ(pragma_int("PRAGMA user_version;"), 11);
+    sqlite3_close(raw);
+
+    setenv("QCODE_DB_PATH", db_path_.c_str(), 1);
+    std::filesystem::remove(old_path, ec);
+    std::filesystem::remove(old_path + "-wal", ec);
+    std::filesystem::remove(old_path + "-shm", ec);
+}
+
 TEST_F(SessionStoreTest, LoadLastSessionMessage) {
     const std::string sid = create_new_session("prov", "model", "/ws", "Last Msg Test");
     EXPECT_EQ(load_last_session_message(sid), std::nullopt);
