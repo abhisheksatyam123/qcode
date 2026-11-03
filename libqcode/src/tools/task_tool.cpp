@@ -9,6 +9,7 @@
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -316,6 +317,27 @@ JsonValue task_item(const std::string& session_id, const std::string& lead,
           {"status", status}};
 }
 
+// Final status of finished child sessions, so a poll (the TUI and web UI ask
+// every few seconds) reads each child's last message once instead of on every
+// refresh. An entry is dropped when its session runs again, and pruned when
+// the session no longer lists.
+struct FinishedStatus {
+  std::string status;
+  std::string model;
+};
+std::mutex& finished_mutex() {
+  static auto* m = new std::mutex();
+  return *m;
+}
+std::map<std::string, FinishedStatus>& finished_cache() {
+  static auto* cache = new std::map<std::string, FinishedStatus>();
+  return *cache;
+}
+void forget_finished(const std::string& id) {
+  std::lock_guard<std::mutex> lock(finished_mutex());
+  finished_cache().erase(id);
+}
+
 // Errors a retry can fix: rate limits, overload, timeouts and dropped connections.
 bool is_transient_error(const std::string& text) {
   std::string lower = text;
@@ -488,12 +510,24 @@ JsonValue TaskTool::list_tasks(const std::string& lead_session_id) {
   // Finished subagents are durable child sessions; their last row says how
   // they ended (a run cut short by a crash has no final Assistant row).
   if (!lead_session_id.empty()) {
+    std::lock_guard<std::mutex> lock(finished_mutex());
+    auto& cache = finished_cache();
+    std::map<std::string, bool> listed;
     for (const auto& s : qcode::session::list_sessions_full(true, lead_session_id)) {
       if (std::find(running_ids.begin(), running_ids.end(), s.id) != running_ids.end()) continue;
-      const std::string status = stored_task_status(s.id, nullptr);
-      const std::string model = !s.provider.empty() ? (s.provider + ":" + s.model) : s.model;
-      tasks.push_back(task_item(s.id, s.parent_session_id, s.title, model, status));
-      summary += "- " + s.id + " [" + status + "] " + model + " · " + s.title + "\n";
+      listed[s.id] = true;
+      auto hit = cache.find(s.id);
+      if (hit == cache.end()) {
+        const std::string model = !s.provider.empty() ? (s.provider + ":" + s.model) : s.model;
+        hit = cache.emplace(s.id, FinishedStatus{stored_task_status(s.id, nullptr), model}).first;
+      }
+      const FinishedStatus& f = hit->second;
+      tasks.push_back(task_item(s.id, s.parent_session_id, s.title, f.model, f.status));
+      summary += "- " + s.id + " [" + f.status + "] " + f.model + " · " + s.title + "\n";
+    }
+    // Drop entries for sessions that stopped listing (deleted, or running now).
+    for (auto it = cache.begin(); it != cache.end();) {
+      it = listed.count(it->first) ? std::next(it) : cache.erase(it);
     }
   }
   return {{"title", "subagent tasks"},
@@ -660,11 +694,13 @@ JsonValue finish_task(const std::string& session_id, const std::string& title,
   if (sub.contains("error")) {
     const std::string err = error_text(sub["error"]);
     qcode::session::save_message(session_id, "Assistant", "Error: " + err);
+    forget_finished(session_id);  // after the row: a poll must not cache the old status
     metadata["status"] = "error";
     return {{"error", err + "\n[task_id: " + session_id + "]"}, {"metadata", metadata}};
   }
   const std::string output = sub.value("output", "(subagent finished without output)");
   qcode::session::save_message(session_id, "Assistant", output);
+  forget_finished(session_id);
   metadata["status"] = "done";
   std::string footer = "\n\n[task_id: " + session_id;
   if (!used_model.empty()) footer += " · " + used_model;
@@ -802,6 +838,7 @@ JsonValue task_run(const JsonValue& args, const ToolExecutionContext& context) {
     }
     qcode::session::ensure_session_row(session_id, title, "", "", context.workspace, lead);
   }
+  forget_finished(session_id);
   qcode::session::save_message(session_id, "User", prompt);
 
   JsonValue sub_args = {{"prompt", prompt},

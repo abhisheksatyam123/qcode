@@ -4,9 +4,13 @@
 #include <qcode/core/message.h>
 
 #include <cstdlib>
+#include <regex>
 #include <string>
+#include <thread>
+#include <utility>
 
 #include <gtest/gtest.h>
+#include <httplib.h>
 #include <nlohmann/json.hpp>
 
 namespace qcode {
@@ -17,6 +21,43 @@ inline const char* env_or_null(const char* name) {
   const char* v = std::getenv(name);
   return (v != nullptr && v[0] != '\0') ? v : nullptr;
 }
+
+/// Live-network tests (real provider APIs) run only when QCODE_LIVE_TESTS is
+/// set. CI sets it for PRs labelled `live-tests` and for manual runs.
+inline bool live_tests_enabled() { return env_or_null("QCODE_LIVE_TESTS") != nullptr; }
+
+/// Answers every POST on 127.0.0.1 with a fixed status and body. Lets error-path
+/// tests exercise a real HTTP round trip without leaving the machine.
+class LocalStatusServer {
+ public:
+  LocalStatusServer(int status, std::string body) {
+    // Pre-routing runs for every path, so the provider's endpoint is irrelevant.
+    server_.set_pre_routing_handler(
+        [status, body = std::move(body)](const httplib::Request&,
+                                         httplib::Response& res) {
+          res.status = status;
+          res.set_content(body, "application/json");
+          return httplib::Server::HandlerResponse::Handled;
+        });
+    port_ = server_.bind_to_any_port("127.0.0.1");
+    if (port_ > 0) {
+      thread_ = std::thread([this] { server_.listen_after_bind(); });
+    }
+  }
+  ~LocalStatusServer() {
+    server_.stop();
+    if (thread_.joinable()) thread_.join();
+  }
+  LocalStatusServer(const LocalStatusServer&) = delete;
+  LocalStatusServer& operator=(const LocalStatusServer&) = delete;
+
+  std::string base_url() const { return "http://127.0.0.1:" + std::to_string(port_); }
+
+ private:
+  httplib::Server server_;
+  int port_ = -1;
+  std::thread thread_;
+};
 
 // Base test fixture with common setup
 class AITestFixture : public ::testing::Test {

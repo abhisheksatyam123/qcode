@@ -1,4 +1,5 @@
 #include <qcode/generation/generation_controller.h>
+#include <qcode/generation/agent_mode.h>
 
 #include <qcode/compaction/compaction_request.h>
 #include <qcode/session/session_title.h>
@@ -326,8 +327,9 @@ void GenerationController::spawn_unlocked(std::string prompt,
                 GenerationContext ctx{
                     .session_id = spawn_session,
                     .reasoning_mode = *state_ptr->reasoning_mode,
-                    .agent_mode = state_ptr->agent_mode ? *state_ptr->agent_mode
-                                                        : "build",
+                    .agent_mode = state_ptr->agent_mode
+                                      ? *state_ptr->agent_mode
+                                      : std::string(kDefaultAgentMode),
                     .workspace = session::get_session_workspace(spawn_session),
                     .abort_flag = abort_flag,
                     .has_queued_work = [store_ptr]() {

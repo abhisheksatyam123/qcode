@@ -29,7 +29,7 @@ struct CacheReplayInput {
   // Raw turn system prompt, exactly as handed to generation (TUI
   // handle_slash_command / server generate route).
   std::string system_prompt;
-  // "orchestrator" | "subagent" (GenerationContext::agent_mode).
+  // "normal" | "orchestrator" | "subagent" (GenerationContext::agent_mode).
   std::string agent_mode = "orchestrator";
   // Child session (qcode::session::is_child_session), mirroring ChatBus.
   bool is_subagent = false;

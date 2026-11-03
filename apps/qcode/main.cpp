@@ -7,6 +7,7 @@
  *   qcode prompt <text>   one-shot HTTP client
  */
 #include <qcode_app/frontends.h>
+#include <qcode/session/session_store.h>
 
 #include <iostream>
 #include <string_view>
@@ -26,6 +27,7 @@ void print_help() {
         << "  tui               Interactive terminal UI (default)\n"
         << "  serve             Headless HTTP API and WebUI\n"
         << "  prompt <text>     One-shot prompt through qcode serve\n"
+        << "  db compact        Rewrite the database to return freed space\n"
         << "\n"
         << "Global options:\n"
         << "  -h, --help        Show this help and exit\n"
@@ -78,6 +80,22 @@ int main(int argc, char* argv[]) {
     if (command == "prompt") {
         auto args = mode_argv(argc, argv, 2);
         return qcode::app::run_cli(argc - 1, args.data());
+    }
+
+    if (command == "db") {
+        if (argc > 2 && std::string_view(argv[2]) == "compact") {
+            const auto result = qcode::session::compact_database();
+            if (!result.ok) {
+                std::cerr << "qcode db compact: " << result.message << '\n';
+                return 1;
+            }
+            std::cout << "qcode db compact: " << result.message << " ("
+                      << result.bytes_before << " -> " << result.bytes_after
+                      << " bytes)\n";
+            return 0;
+        }
+        std::cerr << "Usage: qcode db compact\n";
+        return 2;
     }
 
     std::cerr << "Unknown mode: " << command << "\n\n";

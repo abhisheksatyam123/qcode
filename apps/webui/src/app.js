@@ -279,7 +279,7 @@ const state = {
   // UI Tabs & layout state
   activeTab: 'chat', // 'chat' | 'files' | 'stats' | 'sessions'
   parentSessionId: null,
-  agentMode: 'orchestrator',
+  agentMode: 'normal',
   layoutMode: 'tab', // 'tab' or 'split'
   // Files tab: explorer + editor
   filesSubtab: 'explorer', // 'explorer' | 'git'
@@ -311,6 +311,10 @@ const providerSelect = document.getElementById('provider-select');
 const modelSelect = document.getElementById('model-select');
 const reasoningSelect = document.getElementById('reasoning-select');
 const modalOverlay = document.getElementById('modal-overlay');
+// One backdrop-click handler for every modal. Modals used to add their own
+// listener on each open and only remove it on a backdrop click, so every
+// modal closed by Escape or a button left one more listener behind.
+modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) closeModal(); });
 const streamStatusEl = document.getElementById('stream-status');
 // Last element focused outside the modal, restored when the modal closes.
 let modalReturnFocus = null;
@@ -1114,8 +1118,15 @@ async function init() {
   if (state.theme && THEMES[state.theme]) applyTheme(state.theme);
   if (state.reasoning && reasoningSelect) reasoningSelect.value = state.reasoning;
   if (state.provider && providerSelect) providerSelect.value = state.provider;
+  // Startup requests run together rather than one round trip after another.
+  // Each keeps its own failure handling; the rejection is observed where it is awaited.
+  const versionReq = fetch("/api/version");
+  versionReq.catch(() => {});
+  const sessionsReq = fetch('/sessions');
+  sessionsReq.catch(() => {});
+  const providersReady = loadProviders();
   try {
-    const verRes = await fetch("/api/version");
+    const verRes = await versionReq;
     if (verRes.ok) {
       const verData = await verRes.json();
       const sub = document.getElementById("brand-sub");
@@ -1126,7 +1137,7 @@ async function init() {
     }
   } catch (_) {}
 
-  await loadProviders();
+  await providersReady;
   setupEventListeners();
   restoreSidebarState();
   restoreFsTreeState();
@@ -1144,7 +1155,7 @@ async function init() {
   updateStatusBar();
   
   try {
-    const sessionsRes = await fetch('/sessions');
+    const sessionsRes = await sessionsReq;
     if (sessionsRes.ok) {
       const sessions = await sessionsRes.json();
       if (Array.isArray(sessions) && sessions.length > 0) {
@@ -1611,8 +1622,7 @@ function updateStatusBar() {
     if (!isSub) {
       agentModeBtn.textContent = formatAgentModeTitle(state.agentMode);
       agentModeBtn.classList.remove('subagent');
-      agentModeBtn.classList.toggle('autonomous', state.agentMode === 'autonomous' || state.agentMode === 'monitor');
-      agentModeBtn.classList.toggle('plan', state.agentMode === 'plan');
+      agentModeBtn.classList.toggle('orchestrator', normalizeAgentMode(state.agentMode) === 'orchestrator');
       agentModeBtn.title = `Agent Mode: ${formatAgentModeTitle(state.agentMode)} (Click to switch)`;
     }
   }
@@ -1664,9 +1674,6 @@ function showNewSessionModal() {
   function close() { closeModal(); }
 
   document.getElementById('ns-cancel').addEventListener('click', close);
-  modalOverlay.addEventListener('click', function bd(e) {
-    if (e.target === modalOverlay) { modalOverlay.removeEventListener('click', bd); close(); }
-  });
 
   async function doCreate() {
     const title = titleInput.value.trim();
@@ -1842,7 +1849,6 @@ function showRenameModal(targetSessionId, currentTitle) {
       </div>`;
     modalOverlay.classList.add('active');
     document.getElementById('modal-close-btn').addEventListener('click', closeModal);
-    modalOverlay.addEventListener('click', function bd(e) { if (e.target === modalOverlay) { modalOverlay.removeEventListener('click', bd); closeModal(); } });
     return;
   }
   modalOverlay.innerHTML = `
@@ -1889,7 +1895,6 @@ function showRenameModal(targetSessionId, currentTitle) {
     if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
     e.stopPropagation();
   });
-  modalOverlay.addEventListener('click', function bd(e) { if (e.target === modalOverlay) { modalOverlay.removeEventListener('click', bd); closeModal(); } });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1958,37 +1963,36 @@ function addSystemMessage(text) {
   }
 }
 
+// Two agent modes (server: generation/agent_mode.h). Retired modes map
+// onto them: autonomous/monitor delegated (orchestrator), plan/build did not.
+function normalizeAgentMode(mode) {
+  if (mode === 'subagent') return 'subagent';
+  if (mode === 'orchestrator' || mode === 'autonomous' || mode === 'monitor') return 'orchestrator';
+  return 'normal';
+}
+
 function formatAgentModeTitle(mode) {
-  if (mode === 'autonomous' || mode === 'monitor') return 'Autonomous Monitor';
-  if (mode === 'plan') return 'Plan Mode';
-  if (mode === 'subagent') return 'Subagent';
-  if (mode && mode !== 'orchestrator') return mode;
-  return 'Orchestrator';
+  const m = normalizeAgentMode(mode);
+  if (m === 'subagent') return 'Subagent';
+  return m === 'orchestrator' ? 'Orchestrator' : 'Normal';
 }
 
 async function showAgentModePicker() {
-  const currentMode = state.agentMode || 'orchestrator';
+  const currentMode = normalizeAgentMode(state.agentMode);
   const modes = [
     {
+      id: 'normal',
+      label: 'Normal',
+      sublabel: 'Works alone: reads, edits and verifies with tools, no subagents',
+      isActive: currentMode === 'normal',
+      badges: [{ type: 'ctx', text: 'Default' }]
+    },
+    {
       id: 'orchestrator',
-      label: '⚡ Lead Orchestrator',
-      sublabel: 'Default: plans, executes tools, delegates to parallel subagents',
+      label: 'Orchestrator',
+      sublabel: 'Manages subagent sessions: delegates jobs in parallel, monitors and merges reports',
       isActive: currentMode === 'orchestrator',
       badges: [{ type: 'reasoning', text: 'Lead' }]
-    },
-    {
-      id: 'autonomous',
-      label: '🔄 Autonomous Monitor Agent',
-      sublabel: 'Self-running: delegates to subagents, monitors long-running tasks, autocompacts',
-      isActive: currentMode === 'autonomous' || currentMode === 'monitor',
-      badges: [{ type: 'free', text: 'Self-Running' }]
-    },
-    {
-      id: 'plan',
-      label: '📐 Plan Mode',
-      sublabel: 'Read-only architecture analysis & implementation planning',
-      isActive: currentMode === 'plan',
-      badges: [{ type: 'ctx', text: 'Planning' }]
     }
   ];
 
@@ -1999,6 +2003,8 @@ async function showAgentModePicker() {
 }
 
 async function selectAgentMode(mode) {
+  mode = normalizeAgentMode(mode);
+  if (mode === 'subagent') return;
   state.agentMode = mode;
   const session = state.openSessions.find(s => s.id === state.sessionId);
   if (session) {
@@ -2023,10 +2029,10 @@ function handleAgentCommand(args) {
   const clean = (args || '').trim().toLowerCase();
   if (clean === 'orchestrator' || clean === 'lead') {
     selectAgentMode('orchestrator');
-  } else if (clean === 'autonomous' || clean === 'monitor' || clean === 'self') {
-    selectAgentMode('autonomous');
-  } else if (clean === 'plan') {
-    selectAgentMode('plan');
+  } else if (clean === 'normal') {
+    selectAgentMode('normal');
+  } else if (clean === 'toggle') {
+    selectAgentMode(normalizeAgentMode(state.agentMode) === 'orchestrator' ? 'normal' : 'orchestrator');
   } else {
     showAgentModePicker();
   }
@@ -2530,7 +2536,7 @@ async function loadSessionData(id) {
       session.workspace = info.workspace || '';
       session.provider = info.provider || '';
       session.model = info.model || '';
-      session.agentMode = info.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+      session.agentMode = info.agent_mode ? normalizeAgentMode(info.agent_mode) : (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
       session.reasoning = info.reasoning_mode || session.reasoning || state.reasoning || 'low';
       session.parentSessionId = info.parent_session_id || state.parentSessionId || '';
       // Taken before /messages, so a write in between still reads as a change.
@@ -2557,7 +2563,7 @@ async function loadSessionData(id) {
 // Lightweight session built from a /sessions row. History is fetched on first open.
 function makeSessionStub(row) {
   const id = row.id;
-  const agentMode = row.agent_mode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+  const agentMode = row.agent_mode ? normalizeAgentMode(row.agent_mode) : (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
   return {
     id: id,
     title: row.title || ((agentMode === 'subagent' ? 'Subagent ' : 'Session ') + id.substring(0, 8)),
@@ -2658,6 +2664,9 @@ async function syncSessionMessages(session) {
 // opts.force refetches the history even when the revision looks unchanged.
 async function refreshSession(session, opts) {
   if (!session || !session.id || session.stub) return;
+  // A tab closed mid-turn (its end-of-turn refresh is still queued) must not
+  // refetch its whole history into an object nothing renders any more.
+  if (!state.openSessions.includes(session)) return;
   const force = !!(opts && opts.force);
   if (session.refreshing) {
     if (force || !session.refreshAgain) session.refreshAgain = force ? 'force' : 'light';
@@ -2835,7 +2844,7 @@ function postGenerate(session, text) {
       text,
       provider: resolved.provider,
       model: resolved.model,
-      agent_mode: session.agentMode || state.agentMode || 'orchestrator',
+      agent_mode: normalizeAgentMode(session.agentMode || state.agentMode),
       reasoning_mode: state.reasoning,
       session_id: session.id
     })
@@ -3192,6 +3201,61 @@ async function sendMessage() {
   await runGeneration(session, text);
 }
 
+
+// KaTeX (~300 KB) and highlight.js (~150 KB) are fetched on first use, not at
+// page load. renderMarkdown and the code viewers keep their typeof checks, so
+// content drawn before a library lands is re-rendered once it arrives.
+const RICH_VENDOR = {
+  katex: { js: '/vendor-katex.min.js', css: '/vendor-katex.min.css', ready: () => typeof katex !== 'undefined' && !!katex.renderToString },
+  hljs: { js: '/vendor-hljs.min.js', ready: () => !!getHljs() }
+};
+const richVendorLoads = {};
+function loadRichVendor(kind) {
+  const spec = RICH_VENDOR[kind];
+  if (spec.ready()) return Promise.resolve(true);
+  // A failed load stays failed: the page keeps rendering plain text, as it did
+  // when a vendor script was missing.
+  if (!richVendorLoads[kind]) {
+    const loads = [];
+    if (spec.css) {
+      loads.push(new Promise((resolve) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = spec.css;
+        link.onload = () => resolve(true);
+        link.onerror = () => resolve(false);
+        document.head.appendChild(link);
+      }));
+    }
+    loads.push(new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = spec.js;
+      s.onload = () => resolve(true);
+      s.onerror = () => { s.remove(); resolve(false); };
+      document.head.appendChild(s);
+    }));
+    richVendorLoads[kind] = Promise.all(loads).then(() => {
+      const ok = spec.ready();
+      if (ok) rerenderRichContent();
+      return ok;
+    });
+  }
+  return richVendorLoads[kind];
+}
+// Loads still in flight for the rich libraries this text needs (empty when none).
+function richVendorJobsFor(text) {
+  const jobs = [];
+  if (typeof text !== 'string') return jobs;
+  if (!RICH_VENDOR.katex.ready() && /\$|\\[([]/.test(text)) jobs.push(loadRichVendor('katex'));
+  if (!RICH_VENDOR.hljs.ready() && /```|~~~/.test(text)) jobs.push(loadRichVendor('hljs'));
+  return jobs;
+}
+// Re-draw the open transcript once a library lands. A live stream is left
+// alone; its final full render picks the library up.
+function rerenderRichContent() {
+  const cur = state.openSessions.find(s => s.id === state.sessionId);
+  if (cur && !cur.stream && !cur.stub) renderMessages();
+}
 
 // Mermaid is ~3.5 MB; fetch it on the first diagram instead of at page load.
 let mermaidLoadPromise = null;
@@ -4040,6 +4104,7 @@ async function openFsFile(relPath, fragment = null) {
     if (!res.ok) throw new Error(data.error || res.statusText || 'read failed');
 
     state.fsSavedContent = data.content || '';
+    await Promise.all([loadRichVendor('hljs'), ...richVendorJobsFor(state.fsSavedContent)]);
     setFsEditorContent(state.fsSavedContent, state.fsOpenPath);
     setFsDirty(false);
 
@@ -5451,6 +5516,10 @@ function renderMarkdown(text) {
   const mathTokens = [];
   const codeBlocks = [];
 
+  // Libraries not fetched yet: request them now (the transcript re-renders when they arrive).
+  if (typeof katex === 'undefined' && /\$|\\[([]/.test(text)) loadRichVendor('katex');
+  if (!getHljs() && /```|~~~/.test(text)) loadRichVendor('hljs');
+
   // 1. Protect code fences
   let protectedText = text.replace(/(```[\s\S]*?```|`[^`\n]+`)/g, (match) => {
     const cid = '@@CODE_BLOCK_' + codeBlocks.length + '@@';
@@ -5820,11 +5889,18 @@ async function switchSession(id) {
     }
     if (pendingSwitchId !== id) return;
   }
+  // History waits for the rich libraries it needs, so it never draws unhighlighted first.
+  const richJobs = session.messages && session.messages.length
+    ? richVendorJobsFor(session.messages.map(m => m.content || '').join('\n')) : [];
+  if (richJobs.length) {
+    await Promise.all(richJobs);
+    if (pendingSwitchId !== id) return;
+  }
 
   state.sessionId = id;
   state.sessionTitle = stripTags(session.title || '');
   state.sessionWorkspace = stripTags(session.workspace || '');
-  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'orchestrator');
+  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
   if (session.reasoning) {
     state.reasoning = session.reasoning;
     if (reasoningSelect) reasoningSelect.value = session.reasoning;
@@ -5913,6 +5989,10 @@ async function deleteSessionPermanently(id) {
       }
     }
     state.openSessions = state.openSessions.filter(s => !removedIds.has(s.id));
+    // Drafts are keyed by session id; a deleted session's draft would otherwise sit in localStorage forever.
+    for (const rid of removedIds) {
+      try { localStorage.removeItem('qcode-draft-' + rid); } catch (_) {}
+    }
 
     if (removedIds.has(state.sessionId)) {
       if (state.openSessions.length > 0) {

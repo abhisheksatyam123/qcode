@@ -350,10 +350,15 @@ TEST_F(OpenAIClientTest, SupportsAnyNonEmptyModel) {
 
 // Text Generation Tests - Testing error handling without network calls
 TEST_F(OpenAIClientTest, GenerateTextWithInvalidApiKey) {
-  qcode::openai::OpenAIClient client("invalid-key", "https://api.openai.com");
+  // Local stand-in for api.openai.com rejecting the key with a 401.
+  LocalStatusServer server(
+      401,
+      R"({"error":{"message":"Incorrect API key provided","type":"invalid_request_error","code":"invalid_api_key"}})");
+  qcode::retry::RetryConfig retry_config;
+  retry_config.max_retries = 0;
+  qcode::openai::OpenAIClient client("invalid-key", server.base_url(), retry_config);
   auto options = createBasicOptions();
 
-  // This will attempt a real call and should fail gracefully
   auto result = client.generate_text(options);
 
   // We expect this to fail since we're using an invalid API key
@@ -364,11 +369,11 @@ TEST_F(OpenAIClientTest, GenerateTextWithInvalidApiKey) {
 TEST_F(OpenAIClientTest, GenerateTextWithBadUrl) {
   qcode::retry::RetryConfig retry_config;
   retry_config.max_retries = 0;
-  qcode::openai::OpenAIClient client(
-      "sk-test", "http://invalid-url-that-does-not-exist.example", retry_config);
+  // Port 1 on loopback refuses immediately, so no DNS or network is involved.
+  qcode::openai::OpenAIClient client("sk-test", "http://127.0.0.1:1", retry_config);
   auto options = createBasicOptions();
 
-  // This should fail due to network connectivity
+  // This should fail due to connection refusal
   auto result = client.generate_text(options);
 
   EXPECT_FALSE(result.is_success());

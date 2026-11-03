@@ -1,5 +1,7 @@
 #include <qcode/ui/commands.h>
 #include <qcode/generation/turn_prefix.h>
+#include <qcode/generation/agent_mode.h>
+#include <qcode/session/system_prompt.h>
 #include <qcode/generation/call_usage.h>
 #include <qcode/core/perf.h>
 #include <qcode/compaction/compaction_request.h>
@@ -98,6 +100,44 @@ std::vector<VariantEntry> build_variant_entries(const ModelInfo& model) {
         entries.push_back({id, std::move(title), std::move(description)});
     }
     return entries;
+}
+
+bool set_agent_mode(
+    ChatState& state,
+    const std::string& mode,
+    const std::vector<ProviderInfo>& providers_list,
+    int selected_provider,
+    int selected_model,
+    std::string& system_prompt,
+    bus::BusPort& bus) {
+    if (!state.agent_mode) return false;
+    if (normalize_agent_mode(*state.agent_mode) == kAgentRoleSubagent) return false;
+    const std::string target = normalize_agent_mode(mode);
+    if (target == kAgentRoleSubagent) return false;
+    *state.agent_mode = target;
+    bool vision = false;
+    if (selected_provider >= 0 &&
+        selected_provider < static_cast<int>(providers_list.size())) {
+        const auto& models = providers_list[selected_provider].models;
+        if (selected_model >= 0 && selected_model < static_cast<int>(models.size())) {
+            vision = models[selected_model].vision;
+        }
+    }
+    system_prompt = SystemPrompt::build_for_mode(target, vision);
+    if (state.session_id && !state.session_id->empty()) {
+        qcode::session::set_session_modes(
+            *state.session_id, target,
+            state.reasoning_mode ? *state.reasoning_mode : std::string());
+    }
+    const bool orchestrator = target == kAgentModeOrchestrator;
+    bus.publish<qcode::contract::ToastRequested>({
+        .message = orchestrator
+                       ? "Mode: Orchestrator (delegates to subagents)"
+                       : "Mode: Normal (works alone)",
+        .variant = "info",
+        .duration_ms = 2000});
+    LOG_INFO("Commands: agent mode set to '{}'", target);
+    return true;
 }
 
 bool handle_slash_command(
@@ -507,7 +547,7 @@ bool handle_slash_command(
         if (state.session_id && !state.session_id->empty()) {
             qcode::session::set_session_modes(
                 *state.session_id,
-                state.agent_mode ? *state.agent_mode : "orchestrator", lvl);
+                state.agent_mode ? *state.agent_mode : std::string(kDefaultAgentMode), lvl);
         }
         bus.publish<qcode::contract::ToastRequested>({
             .message = "Model variant (effort): " + lvl,
@@ -582,6 +622,31 @@ bool handle_slash_command(
         return true;
     }
 
+    if (cmd == "mode" || cmd == "agent") {
+        if (!state.agent_mode) return true;
+        std::string wanted = args;
+        std::transform(wanted.begin(), wanted.end(), wanted.begin(), ::tolower);
+        wanted.erase(0, wanted.find_first_not_of(' '));
+        wanted.erase(wanted.find_last_not_of(' ') + 1);
+        const std::string current = normalize_agent_mode(*state.agent_mode);
+        if (current == kAgentRoleSubagent) {
+            append_system_message(state, "This is a subagent session; its role is fixed.");
+            return true;
+        }
+        std::string target;
+        if (wanted.empty() || wanted == "toggle") {
+            target = next_agent_mode(current);
+        } else if (wanted == kAgentModeNormal || wanted == kAgentModeOrchestrator) {
+            target = wanted;
+        } else {
+            append_system_message(state, "Usage: /mode [normal|orchestrator]");
+            return true;
+        }
+        set_agent_mode(state, target, providers_list, selected_provider, selected_model,
+                       system_prompt, bus);
+        return true;
+    }
+
     if (cmd == "help" || cmd == "?") {
         std::ostringstream h;
         h << "Available commands:\n"
@@ -592,13 +657,14 @@ bool handle_slash_command(
           << "  /session <id>     - load a persistent session by id\n"
           << "  /rename <name>    - rename the current session title\n"
           << "  /compact [keep]   - compress conversation into a handoff summary\n"
+          << "  /mode [normal|orchestrator] - normal works alone; orchestrator delegates to subagents\n"
           << "  /tools [on|off]   - toggle tool use (observability vs streaming mode)\n"
           << "  /queue [rm <n>]   - list queued prompts / remove one (/cq clears all)\n"
           << "  /help             - show this help\n"
           << "  /retry            - resend the last failed prompt\n"
           << "  /thinking         - show or hide reasoning blocks\n"
           << "  /reload           - re-read opencode.json without restarting\n"
-          << "Keys: Esc stop · F3 copy mode (select text) · click ▸ or Thought to expand\n"
+          << "Keys: Esc stop · Shift+Tab switch mode · F3 copy mode (select text) · click ▸ or Thought to expand\n"
           << "Bash tool modes: run, background, list, status, kill, remove, cleanup.";
         append_system_message(state, h.str());
         return true;
@@ -647,7 +713,7 @@ void run_compaction(
     const std::string system_prompt_copy = system_prompt;
     const bool tools_enabled = enable_tools;
     const std::string agent_mode =
-        state.agent_mode ? *state.agent_mode : std::string("orchestrator");
+        state.agent_mode ? *state.agent_mode : std::string(kDefaultAgentMode);
     // The session variant the turns ran with: its thinking settings and
     // prompt are part of the cached prefix.
     const std::string reasoning_mode =

@@ -23,6 +23,10 @@ struct ToolConfig {
   bool enable_task{true};  // the task tool (orchestrator and subagents)
   bool enable_image{false};
 
+  // Normal mode: the agent works alone, without the task tool.
+  static ToolConfig normal(bool vision = false) {
+    return ToolConfig{true, false, vision};
+  }
   static ToolConfig orchestrator(bool vision = false) {
     return ToolConfig{true, true, vision};
   }

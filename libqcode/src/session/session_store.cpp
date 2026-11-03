@@ -1112,7 +1112,11 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
         LOG_ERROR("SQLite: failed to commit transaction: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
         rollback_if_open(db);
+        return;
     }
+    // Compaction shrinks history; hand the freed pages back (new files only,
+    // see init_database).
+    sqlite3_exec(db, "PRAGMA incremental_vacuum;", nullptr, nullptr, nullptr);
 }
 
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
@@ -1713,6 +1717,37 @@ bool is_child_session(const std::string& session_id) {
     return !get_parent_session_id(session_id).empty();
 }
 
+CompactResult compact_database() {
+    CompactResult result;
+    const std::string path = get_db_path();
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+        result.bytes_before = static_cast<long long>(std::filesystem::file_size(path, ec));
+    }
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) {
+        result.message = "could not open database at " + path;
+        return result;
+    }
+    // Takes effect because VACUUM rebuilds the file with the new mode.
+    sqlite3_exec(db, "PRAGMA auto_vacuum=INCREMENTAL;", nullptr, nullptr, nullptr);
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db, "VACUUM;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        result.message = std::string("VACUUM failed: ") + (err_msg ? err_msg : "unknown error");
+        sqlite3_free(err_msg);
+        return result;
+    }
+    // VACUUM writes through the WAL; fold it back into the main file.
+    sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE);", nullptr, nullptr, nullptr);
+    result.ok = true;
+    result.message = "compacted " + path;
+    if (std::filesystem::exists(path, ec)) {
+        result.bytes_after = static_cast<long long>(std::filesystem::file_size(path, ec));
+    }
+    return result;
+}
+
 void delete_session(const std::string& session_id) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
@@ -1741,6 +1776,9 @@ void delete_session(const std::string& session_id) {
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
+    // Deleting a session frees its message pages; return them to the OS
+    // (new files only, see init_database).
+    sqlite3_exec(db, "PRAGMA incremental_vacuum;", nullptr, nullptr, nullptr);
 }
 
 
