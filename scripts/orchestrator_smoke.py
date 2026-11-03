@@ -112,7 +112,7 @@ class Stub:
 
     def respond(self, body: dict, handler) -> None:
         text = json.dumps(body.get("messages", []))
-        if LEAD_PROMPT in text or "SMOKE TUI" in text or "SMOKE CANCEL" in text:
+        if LEAD_PROMPT in text or any(m in text for m in ("SMOKE TUI", "SMOKE CANCEL", "SMOKE MEM")):
             self.respond_lead(body, handler)
         else:
             self.respond_subagent(body, handler)
@@ -124,6 +124,10 @@ class Stub:
             self.subagent_hits[name] += 1
             self.hits_seen.set()
         content = f"report {name}"
+        if name.startswith("M"):
+            # Memory scenario: a slow reply with a body, so ten run at once.
+            time.sleep(1.0)
+            content = "m" * 100_000
         if name == "C":
             self.kill_seen.wait(timeout=30)
         return {"id": "smoke", "object": "chat.completion", "model": MODEL,
@@ -137,6 +141,9 @@ class Stub:
                           if m.get("role") == "user"), "")
         if "follow up A" in last_user:
             return "A-resumed"
+        mem = re.search(r"job (M\d+)", last_user)
+        if mem:
+            return mem.group(1)
         return next((n for n in SPAWN_NAMES if f"job {n}" in last_user), "unknown")
 
     def respond_subagent(self, body: dict, handler) -> None:
@@ -160,6 +167,28 @@ class Stub:
         messages = body.get("messages", [])
         results = [m for m in messages if m.get("role") == "tool"]
         n = len(results)
+        if "SMOKE MEM bg" in json.dumps(messages):
+            # Memory scenario, background: ten background subagents, then wait on each.
+            if n == 0:
+                self.tool_calls(handler, [("task", {"prompt": f"job M{i}", "description": f"M{i}",
+                                                    "background": True}) for i in range(10)])
+            elif n == 10:
+                ids = [self.id_from(results[i]) for i in range(10)]
+                self.tool_calls(handler, [("task", {"action": "wait", "task_id": t, "timeout_s": 60})
+                                          for t in ids])
+            else:
+                self.send(handler, {"role": "assistant", "content": "SMOKE DONE"}, finish="stop")
+                self.finish(handler)
+            return
+        if "SMOKE MEM" in json.dumps(messages):
+            # Memory scenario: ten blocking subagents in one message, then done.
+            if n == 0:
+                self.tool_calls(handler, [("task", {"prompt": f"job M{i}", "description": f"M{i}"})
+                                          for i in range(10)])
+            else:
+                self.send(handler, {"role": "assistant", "content": "SMOKE DONE"}, finish="stop")
+                self.finish(handler)
+            return
         if "SMOKE CANCEL" in json.dumps(messages):
             # Interrupt scenario: one blocking subagent, held until the lead is cancelled.
             if n == 0:

@@ -243,6 +243,16 @@ if(TARGET qcode)
         TIMEOUT 120
     )
 
+    # Server RSS across rounds of ten concurrent subagents: fails on growth
+    # per round that is not freed after the subagents finish.
+    add_test(NAME SubagentMemorySmoke
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/subagent_memory_smoke.py
+            --binary $<TARGET_FILE:qcode> --rounds 4 --background)
+    set_tests_properties(SubagentMemorySmoke PROPERTIES
+        LABELS smoke
+        TIMEOUT 240
+    )
+
     add_test(NAME WebuiStopSmoke
         COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/webui_stop_smoke.py
             --binary $<TARGET_FILE:qcode>)
