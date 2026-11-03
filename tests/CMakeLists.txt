@@ -191,6 +191,18 @@ if(TARGET qcode)
             RUN_SERIAL TRUE
             TIMEOUT 120
         )
+
+        # Hostile input on every route (bad bodies, unknown and traversal ids,
+        # oversized bodies, concurrent requests on one session). Fails on any 5xx
+        # or a server that exits. Expected rejections are 4xx.
+        add_test(NAME RouteRobustnessServe
+            COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/route_robustness.py
+                --binary $<TARGET_FILE:qcode>)
+        set_tests_properties(RouteRobustnessServe PROPERTIES
+            LABELS robustness
+            RUN_SERIAL TRUE
+            TIMEOUT 400
+        )
     endif()
 
     # Orchestrator smoke: the lead spawns, kills and resumes subagents against a
