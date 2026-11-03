@@ -255,8 +255,10 @@ std::vector<qcode::bus::Subscription> subscribe_session(
             // The in-memory live_* are kept only for any consumer that wants the
             // latest turn's value; the stats route passes 0 for live tokens so
             // get_session_stats does not double-count against the stored totals.
-            qcode::session::persist_session_token_stats(
-                session->id, p.prompt_tokens, p.completion_tokens, p.total_tokens);
+            if (p.prompt_tokens != 0 || p.completion_tokens != 0 || p.total_tokens != 0) {
+                qcode::session::persist_session_token_stats(
+                    session->id, p.prompt_tokens, p.completion_tokens, p.total_tokens);
+            }
             session->live_prompt_tokens = p.prompt_tokens;
             session->live_completion_tokens = p.completion_tokens;
             session->live_total_tokens = p.total_tokens;

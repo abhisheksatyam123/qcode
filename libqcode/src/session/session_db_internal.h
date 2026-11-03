@@ -37,6 +37,13 @@ inline sqlite3* open_database(std::string& out_path) {
         return nullptr;
     }
     sqlite3_busy_timeout(db, 5000);
+    // auto_vacuum is fixed once the file has pages, and journal_mode=WAL writes
+    // page 1, so this must run first. Only new files get INCREMENTAL; existing
+    // files keep their mode, where incremental_vacuum is a no-op.
+    sqlite3_exec(db, "PRAGMA auto_vacuum=INCREMENTAL;", nullptr, nullptr, nullptr);
+    // Cap the WAL file after each checkpoint resets it. Without this a long
+    // session can leave a WAL about as large as the database itself.
+    sqlite3_exec(db, "PRAGMA journal_size_limit=67108864;", nullptr, nullptr, nullptr);
     char* pragma_err = nullptr;
     if (sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nullptr, nullptr,
                      &pragma_err) != SQLITE_OK) {

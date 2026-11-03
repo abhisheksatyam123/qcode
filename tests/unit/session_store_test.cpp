@@ -2,6 +2,7 @@
 #include <qcode/core/message.h>
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <chrono>
 #include <filesystem>
@@ -255,6 +256,33 @@ TEST_F(SessionStoreTest, SessionListsCarryCountsActivityAndModes) {
     EXPECT_EQ(info->message_count, 2);
     EXPECT_EQ(info->reasoning_mode, "high");
     EXPECT_FALSE(get_session_info("no-such-session").has_value());
+}
+
+TEST_F(SessionStoreTest, DeletedSessionPagesAreReturnedToTheFile) {
+    const std::string sid = create_new_session("prov", "model", "/ws", "Big");
+    const std::string blob(4000, 'x');
+    for (int i = 0; i < 2000; ++i) save_message(sid, "ToolResult", blob);
+
+    delete_session(sid);
+
+    // Read the file directly: a fresh file uses incremental auto_vacuum and
+    // delete_session hands the freed pages back, so nothing stays on the
+    // freelist.
+    sqlite3* raw = nullptr;
+    ASSERT_EQ(sqlite3_open(db_path_.c_str(), &raw), SQLITE_OK);
+    auto pragma_int = [&](const char* sql) {
+        sqlite3_stmt* st = nullptr;
+        int value = -1;
+        if (sqlite3_prepare_v2(raw, sql, -1, &st, nullptr) == SQLITE_OK &&
+            sqlite3_step(st) == SQLITE_ROW) {
+            value = sqlite3_column_int(st, 0);
+        }
+        sqlite3_finalize(st);
+        return value;
+    };
+    EXPECT_EQ(pragma_int("PRAGMA auto_vacuum;"), 2);  // INCREMENTAL
+    EXPECT_EQ(pragma_int("PRAGMA freelist_count;"), 0);
+    sqlite3_close(raw);
 }
 
 TEST_F(SessionStoreTest, LoadLastSessionMessage) {

@@ -1112,7 +1112,11 @@ void overwrite_session_history(const std::string& session_id, const std::vector<
         LOG_ERROR("SQLite: failed to commit transaction: {}", err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
         rollback_if_open(db);
+        return;
     }
+    // Compaction shrinks history; hand the freed pages back (new files only,
+    // see init_database).
+    sqlite3_exec(db, "PRAGMA incremental_vacuum;", nullptr, nullptr, nullptr);
 }
 
 std::vector<std::pair<std::string, std::string>> load_session_messages(const std::string& session_id) {
@@ -1741,6 +1745,9 @@ void delete_session(const std::string& session_id) {
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
+    // Deleting a session frees its message pages; return them to the OS
+    // (new files only, see init_database).
+    sqlite3_exec(db, "PRAGMA incremental_vacuum;", nullptr, nullptr, nullptr);
 }
 
 
