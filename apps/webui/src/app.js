@@ -1272,9 +1272,9 @@ function setupEventListeners() {
       const res = await fetch('/session/' + state.sessionId + '/clear', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
       });
-      if (!res.ok) { showToast('Failed: ' + await res.text()); return; }
+      if (!res.ok) { showToast('Could not clear chat: ' + await responseError(res), 'error'); return; }
     } catch (e) {
-      showToast('Failed: ' + e.message);
+      showToast('Could not clear chat: ' + e.message, 'error');
       return;
     }
     const session = state.openSessions.find(s => s.id === state.sessionId);
@@ -1789,7 +1789,9 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
     if (cursorIdx >= filtered.length) cursorIdx = Math.max(0, filtered.length - 1);
     if (cursorIdx < 0) cursorIdx = 0;
     if (filtered.length === 0) {
-      body.innerHTML = '<div class="picker-empty">No matches</div>';
+      body.innerHTML = '<div class="picker-empty">' + (query.trim()
+        ? 'No matches for “' + esc(query.trim()) + '”'
+        : 'Nothing to show') + '</div>';
       return;
     }
     let html = '';
@@ -1866,7 +1868,7 @@ function showRenameModal(targetSessionId, currentTitle) {
   input.select();
   async function doRename() {
     const title = input.value.trim();
-    if (!title) { showToast('Enter a title'); return; }
+    if (!title) { showToast('Enter a title', 'warning'); return; }
     try {
       const res = await fetch('/rename', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1884,8 +1886,8 @@ function showRenameModal(targetSessionId, currentTitle) {
         renderSessionTabs();
         showToast('Renamed to: ' + title);
       }
-      else showToast('Failed: ' + await res.text());
-    } catch (e) { showToast('Failed: ' + e.message); }
+      else showToast('Could not rename session: ' + await responseError(res), 'error');
+    } catch (e) { showToast('Could not rename session: ' + e.message, 'error'); }
     closeModal();
   }
   document.getElementById('rename-ok-btn').addEventListener('click', doRename);
@@ -2338,7 +2340,11 @@ function selectModel(provider, model) {
 // ── /session ──
 async function handleSessionCommand(args) {
   let sessions;
-  try { const res = await fetch('/sessions'); sessions = await res.json(); } catch (e) { showToast('Failed: ' + e.message); return; }
+  try {
+    const res = await fetch('/sessions');
+    if (!res.ok) throw new Error(await responseError(res));
+    sessions = await res.json();
+  } catch (e) { showToast('Could not load sessions: ' + e.message, 'error'); return; }
   if (!sessions || sessions.length === 0) { showToast('No saved sessions'); return; }
   const items = sessions.map(s => ({
     id: s.id, label: s.title || '(untitled)',
@@ -2750,8 +2756,8 @@ async function doRenameDirect(title) {
   try {
     const res = await fetch('/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: state.sessionId, title }) });
     if (res.ok) { state.sessionTitle = title; updateStatusBar(); showToast('Renamed to: ' + title); }
-    else showToast('Failed: ' + await res.text());
-  } catch (e) { showToast('Failed: ' + e.message); }
+    else showToast('Could not rename session: ' + await responseError(res), 'error');
+  } catch (e) { showToast('Could not rename session: ' + e.message, 'error'); }
 }
 async function handleCompactCommand() {
   if (!state.sessionId) {
@@ -3501,17 +3507,17 @@ async function loadFilesTab() {
 async function loadGitChanges() {
   if (!filesGit) return;
   if (!state.sessionId) {
-    filesGit.innerHTML = '<div class="files-empty">No active session.</div>';
+    filesGit.innerHTML = '<div class="files-empty">No active session. Select or create one to see its working-tree changes.</div>';
     return;
   }
   filesGit.innerHTML = '<div class="files-empty">Loading working tree…</div>';
   try {
     const res = await fetch('/session/' + state.sessionId + '/files');
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await responseError(res));
     const data = await res.json();
     renderGitChanges(data);
   } catch (e) {
-    filesGit.innerHTML = '<div class="files-empty">Failed to load files: ' + esc(e.message) + '</div>';
+    filesGit.innerHTML = '<div class="files-empty">Could not load changes: ' + esc(e.message) + '</div>';
   }
 }
 
@@ -3705,7 +3711,7 @@ function renderFsBreadcrumb(relPath) {
 async function loadFsListing(relPath) {
   if (!fsListing) return;
   if (!state.sessionId) {
-    fsListing.innerHTML = '<div class="files-empty">No active session.</div>';
+    fsListing.innerHTML = '<div class="files-empty">No active session. Select or create one to browse its files.</div>';
     if (fsBreadcrumb) fsBreadcrumb.innerHTML = '';
     return;
   }
@@ -3760,7 +3766,9 @@ function renderFsListingEntries() {
   }
 
   if (entries.length === 0) {
-    html += '<div class="files-empty">' + (filter ? 'No matching files.' : 'Empty directory.') + '</div>';
+    html += '<div class="files-empty">' + (filter
+      ? 'No files match “' + esc((state.fsFilterText || '').trim()) + '”. Clear the filter to show all files.'
+      : 'This folder is empty.') + '</div>';
   } else {
     for (const e of entries) {
       const isDir = e.type === 'dir';
@@ -4424,7 +4432,7 @@ async function loadStatsTab(opts) {
   const requested = state.sessionId;
   try {
     const res = await fetch('/session/' + state.sessionId + '/stats');
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await responseError(res));
     const data = await res.json();
     if (requested !== state.sessionId) return;  // switched sessions meanwhile
     lastStatsData = data;
@@ -5803,7 +5811,8 @@ async function createNewSession(title = '', workspace = '') {
         custom_id: title
       })
     });
-    if (res.ok) {
+    if (!res.ok) throw new Error(await responseError(res));
+    {
       const data = await res.json();
       const resolvedTitle = (data.title && data.title !== data.id)
         ? data.title
@@ -5824,7 +5833,8 @@ async function createNewSession(title = '', workspace = '') {
       showToast('New session created');
     }
   } catch (e) {
-    showToast('Failed to create session: ' + e.message);
+    showToast('Could not create session: ' + e.message, 'error');
+    renderSessionTabs();
   }
 }
 
@@ -5979,7 +5989,7 @@ async function deleteSessionPermanently(id) {
   try {
     const res = await fetch(`/session/${id}`, { method: 'DELETE' });
     if (!res.ok) {
-      throw new Error(await res.text());
+      throw new Error(await responseError(res));
     }
     // Remove deleted session and any child sessions linked to it
     const removedIds = new Set([id]);
@@ -6009,7 +6019,7 @@ async function deleteSessionPermanently(id) {
     }
     showToast("Session and child subagents deleted.");
   } catch (e) {
-    showToast("Failed to delete session: " + e.message);
+    showToast("Could not delete session: " + e.message, 'error');
   }
 }
 
@@ -6028,7 +6038,9 @@ function renderSessionTabs() {
   if (q) list = list.filter(x => ((x.title||'') + ' ' + (x.workspace||'') + ' ' + x.id).toLowerCase().includes(q));
   list.sort((a, b) => ((state.pinned.includes(b.id)?1:0) - (state.pinned.includes(a.id)?1:0)));
   if (list.length === 0) {
-    sessionTabsContainer.innerHTML = '<div class="session-list-empty">No sessions yet</div>';
+    sessionTabsContainer.innerHTML = q
+      ? '<div class="session-list-empty">No sessions match “' + esc(q) + '”.</div>'
+      : '<div class="session-list-empty">No sessions yet. Click + to start one.</div>';
     return;
   }
   const pinIcon = (on) => `<svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
