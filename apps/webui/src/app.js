@@ -3402,33 +3402,65 @@ function rerenderRichContent() {
 // each other's output. Diagrams render one at a time through this queue, each
 // with a unique element id, and a failure is logged and shown for that diagram
 // only.
+//
+// The queue drains one diagram per idle callback, so a long chat with many
+// diagrams does not hold the main thread for its whole backlog. Diagrams on
+// screen go first. Total work is unchanged.
 const mermaidQueue = [];
 let mermaidQueueBusy = false;
 let mermaidRenderSeq = 0;
 
 function queueMermaidRender(targetId, code) {
   mermaidQueue.push({ targetId, code });
-  pumpMermaidQueue();
-}
-
-async function pumpMermaidQueue() {
   if (mermaidQueueBusy) return;
   mermaidQueueBusy = true;
-  while (mermaidQueue.length) {
-    const job = mermaidQueue.shift();
-    if (!document.getElementById(job.targetId)) continue;
-    try {
-      const m = await loadMermaid();
-      const { svg } = await m.render(`${job.targetId}-r${++mermaidRenderSeq}`, job.code);
-      const target = document.getElementById(job.targetId);
-      if (target) target.innerHTML = svg;
-    } catch (err) {
-      console.error('mermaid render failed for', job.targetId, err);
-      const target = document.getElementById(job.targetId);
-      if (target) target.innerHTML = '<div class="diagram-error">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
+  scheduleMermaidSlice();
+}
+
+function scheduleMermaidSlice() {
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(runMermaidSlice, { timeout: 300 });
+  } else {
+    setTimeout(runMermaidSlice, 16);
+  }
+}
+
+// Take the next job whose target is on screen if one is near the front of the
+// queue; otherwise take the oldest job.
+function takeMermaidJob() {
+  const vh = window.innerHeight;
+  const scan = Math.min(mermaidQueue.length, 20);
+  for (let i = 0; i < scan; i++) {
+    const el = document.getElementById(mermaidQueue[i].targetId);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > 0 && r.top < vh) return mermaidQueue.splice(i, 1)[0];
+  }
+  return mermaidQueue.shift();
+}
+
+async function runMermaidSlice() {
+  const job = takeMermaidJob();
+  if (job) {
+    const target = document.getElementById(job.targetId);
+    if (target) {
+      try {
+        const m = await loadMermaid();
+        const { svg } = await m.render(`${job.targetId}-r${++mermaidRenderSeq}`, job.code);
+        const again = document.getElementById(job.targetId);
+        if (again) again.innerHTML = svg;
+      } catch (err) {
+        console.error('mermaid render failed for', job.targetId, err);
+        const again = document.getElementById(job.targetId);
+        if (again) again.innerHTML = '<div class="diagram-error">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
+      }
     }
   }
-  mermaidQueueBusy = false;
+  if (mermaidQueue.length) {
+    scheduleMermaidSlice();
+  } else {
+    mermaidQueueBusy = false;
+  }
 }
 
 let mermaidLoadPromise = null;
