@@ -2117,7 +2117,7 @@ function handleHelpCommand() {
         <div class="help-section">Model</div>
         <div class="help-row"><kbd>/model</kbd><span>Switch model</span></div>
         <div class="help-row"><kbd>/variant</kbd><span>Reasoning effort</span></div>
-        <div class="help-row"><kbd>/agent</kbd><span>Orchestrator / Plan</span></div>
+        <div class="help-row"><kbd>/agent</kbd><span>Normal / Orchestrator</span></div>
         <div class="help-section">View</div>
         <div class="help-row"><kbd>Esc</kbd><span>Stop generation</span></div>
         <div class="help-row"><kbd>/retry</kbd><span>Retry last prompt</span></div>
@@ -4279,6 +4279,8 @@ async function returnToParentSession() {
   showToast('Returned to parent session');
 }
 
+let delegatedPollTimer = null;
+
 async function loadDelegatedSessionsTab() {
   if (!sessionsContent) return;
   if (!state.sessionId) {
@@ -4342,6 +4344,17 @@ async function loadDelegatedSessionsTab() {
         model: sub.model || '',
         description: sub.title || sub.id
       });
+    }
+
+    // Keep the panel live while a subagent runs, so Stop and completion show
+    // up without a manual reload. The timer stops once nothing is running.
+    clearTimeout(delegatedPollTimer);
+    delegatedPollTimer = null;
+    if (state.activeTab === 'sessions' && combined.some(c => c.status === 'running')) {
+      delegatedPollTimer = setTimeout(() => {
+        delegatedPollTimer = null;
+        if (state.activeTab === 'sessions') loadDelegatedSessionsTab();
+      }, 1500);
     }
 
     const statusLabel = { running: 'Running', completed: 'Done', done: 'Done', failed: 'Failed', error: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted', killed: 'Killed', saved: 'Saved', queued: 'Queued' };
