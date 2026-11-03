@@ -299,7 +299,9 @@ int qcode::app::run_tui(int argc, char* argv[]) {
             }
         }
     }
-    qcode::update_modified_files(state);
+    // Git status runs off the first-paint path: `git diff` and `git status`
+    // can take seconds in a large repo, so the Files tab fills in on a worker.
+    git_monitor.request_refresh(screen);
     refresh_subagents();
 
     // ── Popups state ──
