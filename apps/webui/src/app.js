@@ -321,8 +321,16 @@ let modalReturnFocus = null;
 document.addEventListener('focusin', (e) => {
   if (!modalOverlay.contains(e.target)) modalReturnFocus = e.target;
 }, true);
-// Keep Tab / Shift+Tab cycling inside an open modal (focus trap).
+// Keep Tab / Shift+Tab cycling inside an open modal (focus trap), and let Esc
+// close the modal from any control inside it, not only from its text input.
+// stopPropagation keeps the global Esc (pause generation) from firing too.
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isModalOpen()) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeModal();
+    return;
+  }
   if (e.key !== 'Tab' || !isModalOpen()) return;
   const focusables = [...modalOverlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')];
   if (!focusables.length) { e.preventDefault(); return; }
@@ -5790,6 +5798,7 @@ function toastRegion() {
     r = document.createElement('div');
     r.id = 'toast-region';
     r.className = 'toast-region';
+    r.setAttribute('role', 'status');
     r.setAttribute('aria-live', 'polite');
     document.body.appendChild(r);
   }
@@ -6081,7 +6090,12 @@ function closeSessionTab(id) {
 
 async function deleteSessionPermanently(id) {
   try {
-    const res = await fetch(`/session/${id}`, { method: 'DELETE' });
+    let res;
+    try {
+      res = await fetch(`/session/${id}`, { method: 'DELETE' });
+    } catch (_) {
+      throw new Error('check your connection and try again');
+    }
     if (!res.ok) {
       throw new Error(await responseError(res));
     }
@@ -6158,11 +6172,11 @@ function renderSessionTabs() {
           ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">${esc(ws)}</div>` : ''}
         </div>
         <div class="session-item-actions">
-          <button class="session-action-btn pin-session-btn${isPinned ? ' on' : ''}" data-id="${session.id}" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin session' : 'Pin session'}">${pinIcon(isPinned)}</button>
+          <button class="session-action-btn pin-session-btn${isPinned ? ' on' : ''}" data-id="${session.id}" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin' : 'Pin'} session: ${esc(title)}">${pinIcon(isPinned)}</button>
           ${isSub
-            ? `<button class="session-action-btn close-session-tab-btn" data-id="${session.id}" title="Close (keeps saved session)" aria-label="Close session">${icon('x', 13)}</button>`
-            : `<button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename" aria-label="Rename session">${SVG_ICONS.rename}</button>`}
-          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently" aria-label="Delete session">${SVG_ICONS.delete}</button>
+            ? `<button class="session-action-btn close-session-tab-btn" data-id="${session.id}" title="Close (keeps saved session)" aria-label="Close session: ${esc(title)}">${icon('x', 13)}</button>`
+            : `<button class="session-action-btn rename-session-btn" data-id="${session.id}" data-title="${esc(title)}" title="Rename" aria-label="Rename session: ${esc(title)}">${SVG_ICONS.rename}</button>`}
+          <button class="session-action-btn delete-session-btn" data-id="${session.id}" title="Delete permanently" aria-label="Delete session: ${esc(title)}">${SVG_ICONS.delete}</button>
         </div>
       </div>
     `;

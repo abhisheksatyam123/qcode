@@ -1856,7 +1856,9 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
     transform: translateX(-102%);
     box-shadow: var(--shadow-lg);
   }
-  #sidebar.active { transform: none; }
+  /* Hidden drawer leaves the tab order and the a11y tree; the slide-out still animates */
+  #sidebar { visibility: hidden; transition: transform var(--med) var(--ease), visibility 0s linear var(--med); }
+  #sidebar.active { transform: none; visibility: visible; transition: transform var(--med) var(--ease), visibility 0s; }
   #main-area .menu-toggle-btn { display: inline-flex !important; }
   .session-item-actions { opacity: 1; }
   .session-action-btn.pin-session-btn:not(.on) { display: none; }
@@ -1908,6 +1910,7 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
 
 /* Touch devices have no hover: keep actions reachable */
 @media (hover: none) {
+  .agent-mode-btn, .parent-back-btn { min-height: 36px; }
   .msg-actions, .session-item-actions { opacity: 1; }
   .copy-code-btn.floating { opacity: 1; }
 }
