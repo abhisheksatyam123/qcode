@@ -1915,3 +1915,18 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+.agent-card-stop {
+  margin-left: auto;
+  align-self: center;
+  padding: 2px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 999px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font: inherit;
+  font-size: 0.8em;
+  cursor: pointer;
+}
+.agent-card-stop:hover:not(:disabled) { filter: brightness(1.1); }
+.agent-card-stop:disabled { opacity: 0.5; cursor: default; }
