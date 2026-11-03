@@ -18,6 +18,9 @@
 #include <csignal>
 #include <cstdlib>
 #include <chrono>
+#include <charconv>
+#include <iostream>
+#include <system_error>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -45,17 +48,38 @@ void handle_signal(int sig) {
 }
 
 int qcode::app::run_server(int argc, char* argv[]) {
+    constexpr const char* kUsage = "Usage: qcode serve [--port PORT] [--log-dir DIR]\n";
     int port = 9080;
     std::string custom_log_dir;
     for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg == "--port" && i + 1 < argc) port = std::stoi(argv[++i]);
-        if (arg == "-p" && i + 1 < argc) port = std::stoi(argv[++i]);
-        if (arg == "--log-dir" && i + 1 < argc) custom_log_dir = argv[++i];
+        const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
-            std::cerr << "Usage: qcode serve [--port PORT] [--log-dir DIR]\n";
+            std::cout << kUsage;
             return 0;
         }
+        if (arg == "--port" || arg == "-p" || arg == "--log-dir") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: " << arg << " requires a value\n" << kUsage;
+                return 2;
+            }
+            const std::string value = argv[++i];
+            if (arg == "--log-dir") {
+                custom_log_dir = value;
+                continue;
+            }
+            // std::stoi throws on junk ("abc") and silently accepts "9080x".
+            int parsed = 0;
+            const char* end = value.data() + value.size();
+            const auto [ptr, ec] = std::from_chars(value.data(), end, parsed);
+            if (ec != std::errc{} || ptr != end || parsed < 1 || parsed > 65535) {
+                std::cerr << "Error: invalid port '" << value << "' (expected 1-65535)\n";
+                return 2;
+            }
+            port = parsed;
+            continue;
+        }
+        std::cerr << "Unknown option: " << arg << "\n\n" << kUsage;
+        return 2;
     }
 
     // One log file per session: <dir>/qcode-server-<session_id>.log
@@ -76,6 +100,10 @@ int qcode::app::run_server(int argc, char* argv[]) {
     if (providers_list->empty()) {
         LOG_ERROR("No providers configured. Add them to {}",
                   qcode::config_path());
+        // Logs go to a file, so also tell the terminal user what to do.
+        std::cerr << "Error: no providers configured. Add them to "
+                  << qcode::config_path()
+                  << " or set an API key such as OPENAI_API_KEY.\n";
         return 1;
     }
     LOG_INFO("Loaded {} provider(s)", providers_list->size());

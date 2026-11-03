@@ -457,6 +457,80 @@ TEST(TaskToolTest, ListsFinishedChildSessionsFromDatabase) {
 
 // ── Cursor exec path: repair Cursor's Task protobuf leftovers ──
 
+TEST(TaskToolTest, UndrainedInboxIsBoundedAndDroppedReportsStayReadable) {
+  const std::string parent = "parent_bg_bounded";
+  qcode::session::ensure_session_row(parent, "Parent", "p", "m", "/ws");
+  ToolExecutionContext context;
+  context.session_id = parent;
+  context.subagent_runner = [](const JsonValue&, std::shared_ptr<std::atomic<bool>>) {
+    return JsonValue{{"output", "bounded result"}};
+  };
+
+  // The lead never polls its inbox, so every report stays pending until dropped.
+  constexpr int kTasks = 300;
+  std::string first_id;
+  for (int i = 0; i < kTasks; ++i) {
+    const JsonValue out = TaskTool::execute(
+        JsonValue{{"prompt", "job " + std::to_string(i)}, {"background", true}}, context);
+    ASSERT_FALSE(out.contains("error")) << out.dump();
+    if (i == 0) first_id = out["metadata"].value("task_id", "");
+  }
+  for (int i = 0; i < 2000 && TaskTool::has_running_tasks(parent); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_FALSE(TaskTool::has_running_tasks(parent));
+
+  const auto notices = TaskTool::take_notices(parent);
+  EXPECT_EQ(notices.size(), 256u);  // the oldest 44 were dropped, not queued forever
+  EXPECT_FALSE(TaskTool::has_notices(parent));
+
+  // A dropped report is still reachable through its session.
+  const std::string status =
+      TaskTool::execute(JsonValue{{"action", "status"}, {"task_id", first_id}}, context)
+          .value("output", "");
+  EXPECT_THAT(status, testing::HasSubstr("bounded result"));
+}
+
+TEST(TaskToolTest, TransientFailureResumesTheSameSubagent) {
+  qcode::session::ensure_session_row("parent_retry_1", "Parent", "p", "m", "/ws");
+  int calls = 0;
+  JsonValue second_args;
+  ToolExecutionContext context;
+  context.session_id = "parent_retry_1";
+  context.subagent_runner = [&](const JsonValue& args, std::shared_ptr<std::atomic<bool>>) {
+    ++calls;
+    if (calls == 1) return JsonValue{{"error", "HTTP 429: rate limit exceeded"}};
+    second_args = args;
+    return JsonValue{{"output", "recovered"}};
+  };
+
+  const JsonValue out = TaskTool::execute(
+      JsonValue{{"description", "flaky"}, {"prompt", "do the thing"}}, context);
+
+  ASSERT_FALSE(out.contains("error")) << out.dump();
+  EXPECT_EQ(calls, 2);
+  EXPECT_EQ(out["metadata"].value("status", ""), "done");
+  EXPECT_THAT(out.value("output", ""), testing::StartsWith("recovered"));
+  EXPECT_TRUE(second_args.value("resume", false));
+  EXPECT_EQ(second_args.value("session_id", ""), out["metadata"].value("sessionId", "?"));
+}
+
+TEST(TaskToolTest, PermanentFailureIsNotRetried) {
+  qcode::session::ensure_session_row("parent_retry_2", "Parent", "p", "m", "/ws");
+  int calls = 0;
+  ToolExecutionContext context;
+  context.session_id = "parent_retry_2";
+  context.subagent_runner = [&](const JsonValue&, std::shared_ptr<std::atomic<bool>>) {
+    ++calls;
+    return JsonValue{{"error", "invalid API key"}};
+  };
+
+  const JsonValue out = TaskTool::execute(JsonValue{{"prompt", "x"}}, context);
+
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(out["metadata"].value("status", ""), "error");
+}
+
 TEST(TaskToolTest, SwappedCursorTaskFieldsAreRepaired) {
   const JsonValue norm = TaskTool::normalize_spawn_args(JsonValue{
       {"prompt", "explore"},
