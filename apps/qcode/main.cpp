@@ -20,6 +20,12 @@
 #ifndef QCODE_VERSION
 #define QCODE_VERSION "0.0.0"
 #endif
+#ifndef QCODE_GIT_DESCRIBE
+#define QCODE_GIT_DESCRIBE "unknown"
+#endif
+#ifndef QCODE_GIT_COMMIT
+#define QCODE_GIT_COMMIT "unknown"
+#endif
 
 namespace {
 
@@ -79,7 +85,8 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     if (command == "--version") {
-        std::cout << "qcode " << QCODE_VERSION << '\n';
+        std::cout << "qcode " << QCODE_VERSION << " (" << QCODE_GIT_DESCRIBE
+                  << ", commit " << QCODE_GIT_COMMIT << ")\n";
         return 0;
     }
 
