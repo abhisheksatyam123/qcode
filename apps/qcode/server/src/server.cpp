@@ -14,7 +14,11 @@
 
 #include <httplib.h>
 #include <unistd.h>
+#include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cstdio>
+#include <random>
 #include <csignal>
 #include <cstdlib>
 #include <chrono>
@@ -100,6 +104,14 @@ int qcode::app::run_server(int argc, char* argv[]) {
                   << "to require a bearer token on every request, or keep the default 127.0.0.1.\n";
         return 2;
     }
+    // The token goes into the startup URL unescaped, so keep it to URL-safe characters.
+    const bool url_safe = std::all_of(api_token.begin(), api_token.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '-' || c == '.' || c == '_' || c == '~';
+    });
+    if (!api_token.empty() && !url_safe) {
+        std::cerr << "Error: QCODE_SERVER_TOKEN may contain only letters, digits, '-', '.', '_' and '~'.\n";
+        return 2;
+    }
 
     // One log file per session: <dir>/qcode-server-<session_id>.log
     const std::string active_log_dir = !custom_log_dir.empty() ? custom_log_dir : log_dir();
@@ -151,6 +163,17 @@ int qcode::app::run_server(int argc, char* argv[]) {
     qcode::server::ServerSetupOptions options;
     options.security.loopback_bind = loopback_bind;
     options.security.token = loopback_bind ? "" : api_token;
+    if (!options.security.token.empty()) {
+        // The session cookie is random, not the token: a 128-bit value from the OS.
+        std::random_device rd;
+        std::string cookie;
+        for (int i = 0; i < 4; ++i) {
+            char buf[9];
+            std::snprintf(buf, sizeof buf, "%08x", static_cast<unsigned>(rd()));
+            cookie += buf;
+        }
+        options.security.cookie_value = cookie;
+    }
     {
         std::string webui_path = std::string(argv[0]);
         auto pos = webui_path.find_last_of("/\\");
@@ -177,6 +200,10 @@ int qcode::app::run_server(int argc, char* argv[]) {
 
     LOG_INFO("Starting HTTP server on port {}...", port);
     std::cout << "QCode server listening on http://" << host << ":" << port << "\n";
+    if (!options.security.token.empty()) {
+        const std::string shown_host = host == "0.0.0.0" ? "<this-machine-address>" : host;
+        std::cout << "Sign in: http://" << shown_host << ":" << port << "/?token=" << api_token << "\n";
+    }
     std::cout << "  Health:  GET /health\n";
     std::cout << "  Providers: GET /providers\n";
     std::cout << "  Generate:  POST /generate (body: {\"text\":\"...\", \"provider\":\"...\", \"model\":\"...\"})\n";

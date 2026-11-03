@@ -244,8 +244,10 @@ def non_loopback_checks(binary: Path, stub, check, ensure) -> None:
         check("sec 0.0.0.0 without a token refuses to start", p.returncode, 2)
         ensure("sec refusal names QCODE_SERVER_TOKEN", b"QCODE_SERVER_TOKEN" in err)
 
-        proc = subprocess.Popen(serve, env={**env, "QCODE_SERVER_TOKEN": token},
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout_path = Path(tmp) / "stdout.txt"
+        with open(stdout_path, "w") as out:
+            proc = subprocess.Popen(serve, env={**env, "QCODE_SERVER_TOKEN": token},
+                                    stdout=out, stderr=subprocess.DEVNULL)
         try:
             try:
                 wait_ready(f"http://127.0.0.1:{port}", proc, 20.0)
@@ -261,15 +263,53 @@ def non_loopback_checks(binary: Path, stub, check, ensure) -> None:
             check("sec token: right token",
                   request_raw(port, "GET", "/api/version",
                               headers={"Authorization": f"Bearer {token}"})[0], 200)
+
+            # Browser sign-in. A ?token= visit trades the token for an HttpOnly,
+            # SameSite=Strict cookie and redirects without the token in the URL.
+            st, h, _ = request_raw(port, "GET", f"/api/version?token={token}")
+            check("sec login: ?token= visit redirects", st, 302)
+            ensure("sec login: redirect drops the token from the URL",
+                   h.get("location") == "/api/version")
+            set_cookie = h.get("set-cookie", "")
+            ensure("sec login: cookie is HttpOnly and SameSite=Strict",
+                   "HttpOnly" in set_cookie and "SameSite=Strict" in set_cookie)
+            cookie_value = set_cookie.split(";", 1)[0].partition("=")[2]
+            ensure("sec login: cookie value is not the token", cookie_value not in ("", token))
+            check("sec login: cookie authorizes the API",
+                  request_raw(port, "GET", "/api/version",
+                              headers={"Cookie": f"qcode_auth={cookie_value}"})[0], 200)
+            check("sec login: wrong cookie refused",
+                  request_raw(port, "GET", "/api/version",
+                              headers={"Cookie": "qcode_auth=nope"})[0], 401)
+            check("sec login: wrong ?token= refused",
+                  request_raw(port, "GET", "/api/version?token=nope")[0], 401)
+            check("sec login: /login page served without auth",
+                  request_raw(port, "GET", "/login")[0], 200)
+            ensure("sec login: page has the token form",
+                   b'name="token"' in request_raw(port, "GET", "/login")[2])
+            st, h, _ = request_raw(port, "GET", "/", headers={"Accept": "text/html"})
+            check("sec login: browser without cookie goes to /login", st, 302)
+            ensure("sec login: redirect target is /login", h.get("location") == "/login")
+            form = {"Content-Type": "application/x-www-form-urlencoded"}
+            check("sec login: form with wrong token refused",
+                  request_raw(port, "POST", "/login", body=b"token=nope", headers=form)[0], 401)
+            st, h, _ = request_raw(port, "POST", "/login", body=f"token={token}".encode(), headers=form)
+            check("sec login: form with right token signs in", st, 303)
+            ensure("sec login: form sign-in sets the cookie", "qcode_auth=" in h.get("set-cookie", ""))
+            ensure("sec login: token is not in any response body",
+                   not any(token.encode() in b for b in SEEN_BODIES))
         finally:
             if proc.poll() is None:
                 proc.terminate()
                 proc.wait(timeout=5)
+        ensure("sec token run: printed a sign-in URL with the token",
+               f"/?token={token}".encode() in stdout_path.read_bytes())
         ensure("sec token run: API key not in logs", not secret_in_dir(logs))
+        ensure("sec token run: token not in logs", not secret_in_dir(logs, token.encode()))
 
 
-def secret_in_dir(d: Path) -> bool:
-    return any(f.is_file() and SECRET in f.read_bytes() for f in d.rglob("*"))
+def secret_in_dir(d: Path, needle: bytes = SECRET) -> bool:
+    return any(f.is_file() and needle in f.read_bytes() for f in d.rglob("*"))
 
 
 def secret_scan(ensure, log_dir: Path) -> None:

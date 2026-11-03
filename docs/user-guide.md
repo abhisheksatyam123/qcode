@@ -125,3 +125,53 @@ lock. If another qcode process is writing to the database, it refuses with
 `another qcode process is using ...`, exits with status 1, and leaves the file
 unchanged. A qcode process that is open but idle does not block it. Close the
 other process (or stop `qcode serve`) and run the command again.
+
+## Running the server on your network
+
+`qcode serve` listens on `127.0.0.1` only by default. Only programs on the same
+machine can reach it, and a web page in your browser cannot, because requests
+from other sites are refused.
+
+To reach the server from another machine, bind a network address and set a
+token:
+
+```sh
+QCODE_SERVER_TOKEN=$(openssl rand -hex 24) qcode serve --host 0.0.0.0 --port 9080
+```
+
+- The server refuses to start on a non-loopback address unless
+  `QCODE_SERVER_TOKEN` is set.
+- The token may use only letters, digits, `-`, `.`, `_` and `~`, because it goes
+  into a URL.
+- At startup the server prints a sign-in line such as
+  `Sign in: http://<this-machine-address>:9080/?token=…`. Replace the placeholder
+  with this machine's address on your network.
+
+Signing in in a browser:
+
+1. Open the sign-in URL. The server exchanges the token for a cookie and
+   redirects to the same page without the token in the address bar.
+2. If you open the page without the cookie (for example after a restart), you
+   land on the sign-in page. Paste the token there.
+
+The cookie is `HttpOnly` and `SameSite=Strict`, so page scripts cannot read it and
+other sites cannot send it. Its value is random for each server start, not the
+token itself, so restarting the server signs every browser out.
+
+API clients send the token instead of the cookie:
+
+```sh
+curl -H "Authorization: Bearer $QCODE_SERVER_TOKEN" http://<host>:9080/api/version
+```
+
+`/health` and `/api/health` need no token, so load balancers and status checks
+still work.
+
+Limits to know about:
+
+- The token and the cookie travel over plain HTTP. On a network you do not
+  trust, put the server behind a reverse proxy that terminates TLS, or use an
+  SSH tunnel, before you sign in.
+- The token is printed to the terminal at startup and is never written to the
+  server logs.
+- Restarting the server with a new token signs out every browser.

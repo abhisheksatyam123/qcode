@@ -78,6 +78,78 @@ bool is_health_probe(const httplib::Request& req) {
          (req.path == "/health" || req.path == "/api/health");
 }
 
+constexpr const char* kCookieName = "qcode_auth";
+
+constexpr const char* kLoginPage = R"HTML(<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qcode sign in</title>
+<style>
+body { font: 16px system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f5f5f5; color: #222; }
+form { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.15); width: min(90vw, 360px); box-sizing: border-box; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+p { margin: 0 0 12px; }
+input { width: 100%; box-sizing: border-box; padding: 10px; font-size: 16px; margin: 0 0 12px; }
+button { padding: 10px 16px; font-size: 16px; }
+@media (prefers-color-scheme: dark) { body { background: #1b1b1d; color: #eee; } form { background: #2a2a2d; } }
+</style></head>
+<body>
+<form method="post" action="/login">
+  <h1>qcode</h1>
+  <p>Paste the token printed when the server started.</p>
+  <label>Token <input name="token" type="password" autocomplete="off" autofocus required></label>
+  <button type="submit">Sign in</button>
+</form>
+</body></html>
+)HTML";
+
+// Value of one cookie from a Cookie header ("a=1; b=2"), or empty.
+std::string cookie_named(std::string_view header, std::string_view name) {
+  while (!header.empty()) {
+    const auto semi = header.find(';');
+    std::string_view part = header.substr(0, semi);
+    header = semi == std::string_view::npos ? std::string_view{} : header.substr(semi + 1);
+    while (!part.empty() && part.front() == ' ') part.remove_prefix(1);
+    const auto eq = part.find('=');
+    if (eq != std::string_view::npos && part.substr(0, eq) == name) {
+      return std::string(part.substr(eq + 1));
+    }
+  }
+  return {};
+}
+
+// One field from an application/x-www-form-urlencoded body, percent-decoded.
+std::string form_field(std::string_view body, std::string_view name) {
+  while (!body.empty()) {
+    const auto amp = body.find('&');
+    const std::string_view part = body.substr(0, amp);
+    body = amp == std::string_view::npos ? std::string_view{} : body.substr(amp + 1);
+    const auto eq = part.find('=');
+    if (eq != std::string_view::npos && part.substr(0, eq) == name) {
+      return url_decode(std::string(part.substr(eq + 1)));
+    }
+  }
+  return {};
+}
+
+void set_session_cookie(httplib::Response& res, const SecurityPolicy& policy) {
+  res.set_header("Set-Cookie", std::string(kCookieName) + "=" + policy.cookie_value +
+                                   "; Path=/; HttpOnly; SameSite=Strict");
+}
+
+// Bearer header or session cookie.
+bool authorized(const httplib::Request& req, const SecurityPolicy& policy) {
+  const std::string auth = req.get_header_value("Authorization");
+  const std::string prefix = "Bearer ";
+  if (auth.rfind(prefix, 0) == 0 &&
+      constant_time_equal(std::string_view(auth).substr(prefix.size()), policy.token)) {
+    return true;
+  }
+  const std::string cookie = cookie_named(req.get_header_value("Cookie"), kCookieName);
+  return !cookie.empty() && !policy.cookie_value.empty() &&
+         constant_time_equal(cookie, policy.cookie_value);
+}
+
 }  // namespace
 
 bool security_gate(const httplib::Request& req, httplib::Response& res,
@@ -117,15 +189,38 @@ bool security_gate(const httplib::Request& req, httplib::Response& res,
     return true;
   }
 
-  // Token: beyond loopback every request needs it, except the health probes.
-  if (!policy.token.empty() && !is_health_probe(req)) {
-    const std::string auth = req.get_header_value("Authorization");
-    const std::string prefix = "Bearer ";
-    const bool ok = auth.rfind(prefix, 0) == 0 &&
-                    constant_time_equal(std::string_view(auth).substr(prefix.size()), policy.token);
-    if (!ok) {
+  if (!policy.token.empty()) {
+    // The login page and its POST only hand out the session cookie.
+    if (req.path == "/login") {
+      if (req.method == "GET" || req.method == "HEAD") {
+        res.set_content(kLoginPage, "text/html; charset=utf-8");
+        return true;
+      }
+      // POST /login reads its form body in a route; pre-routing runs before the body is read.
+      if (req.method == "POST") return false;
+      send_error(res, 405, "method not allowed");
+      return true;
+    }
+
+    // First visit with ?token=...: trade the token for the session cookie and
+    // redirect to the same path without the token in the URL.
+    if (req.method == "GET" && req.has_param("token") &&
+        constant_time_equal(req.get_param_value("token"), policy.token)) {
+      set_session_cookie(res, policy);
+      res.status = 302;
+      res.set_header("Location", req.path);
+      return true;
+    }
+
+    if (!is_health_probe(req) && !authorized(req, policy)) {
+      if ((req.method == "GET" || req.method == "HEAD") &&
+          req.get_header_value("Accept").find("text/html") != std::string::npos) {
+        res.status = 302;
+        res.set_header("Location", "/login");
+        return true;
+      }
       res.set_header("WWW-Authenticate", "Bearer");
-      send_error(res, 401, "missing or wrong bearer token");
+      send_error(res, 401, "missing or wrong token: open the URL printed at startup, or sign in at /login");
       return true;
     }
   }
@@ -144,6 +239,21 @@ void setup_server_routes(
   // Security gate first, then the session-path checks. The web UI hook in
   // register_system_routes replaces this one when a web UI directory exists, so
   // it runs the same gate.
+  // Sign-in form. Reached through pre-routing with no token yet, so the body is read here.
+  server.Post("/login", [policy = options.security](const httplib::Request& req, httplib::Response& res) {
+    if (policy.token.empty()) {
+      send_error(res, 404, "not found");
+      return;
+    }
+    if (!constant_time_equal(form_field(req.body, "token"), policy.token)) {
+      send_error(res, 401, "wrong token");
+      return;
+    }
+    set_session_cookie(res, policy);
+    res.status = 303;
+    res.set_header("Location", "/");
+  });
+
   server.set_pre_routing_handler([policy = options.security](const httplib::Request& req,
                                                              httplib::Response& res) {
     if (security_gate(req, res, policy)) return httplib::Server::HandlerResponse::Handled;
