@@ -3528,6 +3528,10 @@ function handleEvent(evt, msg, session) {
     case 'backend.heartbeat':
       // Periodic keepalive from server — stream is healthy
       break;
+    case 'backend.task.status.changed':
+      // A subagent of this session started, finished or was killed.
+      if (evt.lead_session_id === state.sessionId) scheduleDelegatedRefresh(150);
+      break;
     case 'backend.message.delta':
       // Append (do NOT overwrite): backend sends incremental chunks and a
       // final empty-text delta with done=true, which would otherwise wipe
@@ -4363,9 +4367,28 @@ async function returnToParentSession() {
 }
 
 let delegatedPollTimer = null;
+let delegatedLoadSeq = 0;
+const kDelegatedFallbackMs = 10000;
+
+// Refresh the Subagents panel after delayMs, when it is the active tab.
+// An earlier pending refresh is kept: a slower one must not push it back.
+let delegatedPollDue = 0;
+function scheduleDelegatedRefresh(delayMs) {
+  const due = Date.now() + delayMs;
+  if (delegatedPollTimer && delegatedPollDue <= due) return;
+  clearTimeout(delegatedPollTimer);
+  delegatedPollDue = due;
+  delegatedPollTimer = setTimeout(() => {
+    delegatedPollTimer = null;
+    if (state.activeTab === 'sessions') loadDelegatedSessionsTab();
+  }, delayMs);
+}
 
 async function loadDelegatedSessionsTab() {
   if (!sessionsContent) return;
+  // Loads overlap (Stop, a task event and the fallback can each start one). An
+  // older load that answers last must not paint a stale row over a newer one.
+  const loadSeq = ++delegatedLoadSeq;
   if (!state.sessionId) {
     sessionsContent.innerHTML = emptyState('bot', 'No active session', 'Select or create a session to see its subagents.');
     return;
@@ -4399,6 +4422,8 @@ async function loadDelegatedSessionsTab() {
       }
     } catch (_) {}
 
+    if (loadSeq !== delegatedLoadSeq) return;  // a newer load owns the panel
+
     const seenSids = new Set();
     const combined = [];
 
@@ -4429,15 +4454,14 @@ async function loadDelegatedSessionsTab() {
       });
     }
 
-    // Keep the panel live while a subagent runs, so Stop and completion show
-    // up without a manual reload. The timer stops once nothing is running.
-    clearTimeout(delegatedPollTimer);
-    delegatedPollTimer = null;
-    if (state.activeTab === 'sessions' && combined.some(c => c.status === 'running')) {
-      delegatedPollTimer = setTimeout(() => {
-        delegatedPollTimer = null;
-        if (state.activeTab === 'sessions') loadDelegatedSessionsTab();
-      }, 1500);
+    // Subagent transitions arrive as backend.task.status.changed on the lead's
+    // stream and refresh the panel at once. This slow fallback covers a
+    // subagent that finishes after the lead's turn has ended (no stream).
+    if (combined.some(c => c.status === 'running')) {
+      scheduleDelegatedRefresh(kDelegatedFallbackMs);
+    } else {
+      clearTimeout(delegatedPollTimer);
+      delegatedPollTimer = null;
     }
 
     const statusLabel = { running: 'Running', completed: 'Done', done: 'Done', failed: 'Failed', error: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted', killed: 'Killed', saved: 'Saved', queued: 'Queued' };

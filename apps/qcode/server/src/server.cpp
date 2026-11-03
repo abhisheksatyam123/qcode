@@ -91,6 +91,17 @@ int qcode::app::run_server(int argc, char* argv[]) {
 
     g_bus = std::make_shared<qcode::bus::BusRuntime>();
     qcode::contract::register_all_events(*g_bus);
+    // Subagent transitions go onto the bus for the lead's stream and panel.
+    // The observer holds the bus weakly, so it is a no-op after shutdown.
+    qcode::TaskTool::set_status_observer(
+        [weak = std::weak_ptr<qcode::bus::BusRuntime>(g_bus)](
+            const std::string& lead_session_id, const std::string& task_id,
+            const std::string& status) {
+            if (auto bus = weak.lock()) {
+                bus->publish<qcode::contract::TaskStatusChanged>(
+                    {lead_session_id, task_id, status});
+            }
+        });
     qcode::providers::register_authenticated_providers();
     qcode::session::init_database();
 

@@ -212,6 +212,14 @@ std::vector<qcode::bus::Subscription> subscribe_session(
         }
     ));
 
+    subs.push_back(subscribe_weak<TaskStatusChanged>(bus, session,
+        [](const std::shared_ptr<GenSession>& session, const TaskStatusChanged::Payload& p) {
+            if (p.lead_session_id != session->id) return;
+            std::lock_guard<std::mutex> lock(session->queue_mutex);
+            push_event(*session, qcode::server::task_status_to_json(p));
+        }
+    ));
+
     subs.push_back(subscribe_weak<ErrorOccurred>(bus, session,
         [](const std::shared_ptr<GenSession>& session, const ErrorOccurred::Payload& p) {
             if (!p.session_id.empty() && p.session_id != session->id) return;

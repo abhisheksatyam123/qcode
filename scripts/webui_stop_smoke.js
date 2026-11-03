@@ -44,20 +44,20 @@ const executablePath = process.env.CHROME_PATH || undefined;
     await stop.waitFor({ state: 'visible', timeout: 20000 });
     console.log('stop button visible on a running row');
 
-    // Stop posts /tasks/<id>/kill. The kill is recorded at once, but the
-    // subagent's provider call is still in flight, so the stub releases it
-    // here, the way a provider answers once it is stopped.
+    // Stop posts /tasks/<id>/kill. The stub holds the subagent's provider reply
+    // and never releases it, so the row can only turn killed if the kill aborts
+    // the in-flight request.
     const killed = page.waitForResponse((r) => r.url().includes('/kill') && r.request().method() === 'POST');
     await stop.click();
     const kill = await killed;
     console.log('kill route answered ' + kill.status());
-    if (process.env.QCODE_RELEASE_URL) {
-      await fetch(process.env.QCODE_RELEASE_URL).catch(() => {});
-    }
-
-    // The panel reloads after the kill. The killed row shows a killed chip and
-    // no Stop button.
-    await page.locator('.status-chip.killed').first().waitFor({ state: 'visible', timeout: 15000 });
+    const t0 = Date.now();
+    await page.locator('.status-chip.killed').first().waitFor({ state: 'visible', timeout: 12000 });
+    const elapsed = Date.now() - t0;
+    console.log('row turned killed in ' + elapsed + ' ms');
+    // The panel is event-driven; the fallback poll is 10 s, so this would fail
+    // if the row only changed on the poll.
+    if (elapsed > 4000) throw new Error('killed row took ' + elapsed + ' ms: not event-driven');
     const stillRunning = await page.locator('.agent-card-stop').count();
     if (stillRunning !== 0) {
       throw new Error('a Stop button is still shown after the kill');

@@ -102,7 +102,7 @@ def main() -> int:
                 fail("no background subagent reached running")
 
             env_js = dict(os.environ, QCODE_BASE=base, QCODE_SID=sid, CHROME_PATH=chrome,
-                          QCODE_RELEASE_URL=f"http://127.0.0.1:{stub.port}/release")
+                          )
             browser = subprocess.run(["node", str(HERE / "webui_stop_smoke.js")], env=env_js,
                                      timeout=120, capture_output=True, text=True)
             sys.stdout.write(browser.stdout)
