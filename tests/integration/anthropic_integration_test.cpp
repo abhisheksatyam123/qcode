@@ -158,6 +158,7 @@ TEST_F(AnthropicIntegrationTest, DifferentModelSupport) {
 
 // Error Handling Tests
 TEST_F(AnthropicIntegrationTest, InvalidApiKey) {
+  if (!live_tests_enabled()) GTEST_SKIP() << "Set QCODE_LIVE_TESTS=1 to hit api.anthropic.com";
   // Test with invalid API key
   auto invalid_client = qcode::anthropic::create_client("sk-ant-invalid123");
 

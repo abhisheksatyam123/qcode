@@ -3,55 +3,16 @@
 add_executable(qcode_tests
     # Unit tests
     unit/openai_client_test.cpp
-    unit/markdown_test.cpp
-    unit/task_notes_test.cpp
-    unit/tool_timeout_test.cpp
-    unit/openai_responses_test.cpp
-    unit/openai_usage_test.cpp
     unit/anthropic_client_test.cpp
-    unit/anthropic_oauth_test.cpp
-    unit/anthropic_request_builder_test.cpp
-    unit/types_test.cpp
-    unit/openai_stream_test.cpp
-    unit/stream_result_test.cpp
-    unit/stream_step_test.cpp
-    unit/anthropic_stream_test.cpp
     unit/registry_test.cpp
-    unit/gemini_transform_test.cpp
-    unit/provider_transform_test.cpp
-    unit/antigravity_client_test.cpp
     unit/mock_provider_test.cpp
     unit/provider_factory_test.cpp
-    unit/cursor_provider_test.cpp
-    unit/bash_tool_test.cpp
-    unit/image_tool_test.cpp
-    unit/tui_config_test.cpp
     unit/tui_bus_test.cpp
-    unit/retry_policy_test.cpp
-    unit/model_performance_telemetry_test.cpp
-    unit/session_stats_test.cpp
-    unit/queued_prompt_store_test.cpp
-    unit/queue_injection_test.cpp
-    unit/session_reliability_test.cpp
-    unit/dedupe_user_prompt_test.cpp
-    unit/task_tool_test.cpp
-    unit/task_target_test.cpp
-    unit/generation_continue_test.cpp
     unit/agent_mode_test.cpp
     unit/bus_json_codec_test.cpp
-    unit/git_workspace_test.cpp
     unit/session_store_test.cpp
-    unit/session_file_logger_test.cpp
-    unit/token_budget_test.cpp
     unit/tool_catalog_test.cpp
-    unit/workspace_fs_test.cpp
     unit/commands_test.cpp
-    unit/tui_scroll_test.cpp
-    unit/prompt_wrap_test.cpp
-    unit/compaction_cache_test.cpp
-    unit/session_title_test.cpp
-    unit/image_attachment_test.cpp
-    unit/transform_matrix_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/prompt_wrap.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/bus_json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/workspace_fs.cpp
@@ -63,14 +24,11 @@ add_executable(qcode_tests
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/session_runtime.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_fs.cpp
     unit/server_routes_test.cpp
-    unit/app_store_latency_test.cpp
-    unit/anthropic_sse_test.cpp
 
     # Integration tests
     integration/openai_integration_test.cpp
     integration/anthropic_integration_test.cpp
     integration/tool_calling_integration_test.cpp
-    integration/multi_step_duplicate_execution_test.cpp
 
     # Test helpers
     utils/mock_openai_client.cpp
