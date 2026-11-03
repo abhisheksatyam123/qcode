@@ -1581,7 +1581,7 @@ ftxui::Element render_view(
             std::map<std::string, int> counts;
             for (const auto& t : tasks) ++counts[t.status.empty() ? std::string("saved") : t.status];
             std::string summary;
-            for (const char* key : {"running", "error", "interrupted", "done", "saved"}) {
+            for (const char* key : {"running", "error", "interrupted", "killed", "done", "saved"}) {
                 auto it = counts.find(key);
                 if (it == counts.end()) continue;
                 const char* label = std::string_view(key) == "error" ? "failed"
@@ -1604,7 +1604,7 @@ ftxui::Element render_view(
                 Color status_col = Color::Default;
                 if (status == "running") status_col = Color::Yellow;
                 else if (status == "done") status_col = Color::Green;
-                else if (status == "error" || status == "interrupted") status_col = Color::Red;
+                else if (status == "error" || status == "interrupted" || status == "killed") status_col = Color::Red;
 
                 std::string marker = is_active_cursor ? "▶ " : (is_current ? "● " : "  ");
                 Element row = hbox(
