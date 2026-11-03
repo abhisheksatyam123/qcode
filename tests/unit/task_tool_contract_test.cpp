@@ -4,6 +4,7 @@
 #include <qcode/session/session_store.h>
 #include <qcode/tools/task_tool.h>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <atomic>

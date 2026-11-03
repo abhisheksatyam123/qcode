@@ -183,9 +183,12 @@ if(TARGET qcode)
             COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/perf_guard.py
                 --binary $<TARGET_FILE:qcode>
                 --baseline ${CMAKE_SOURCE_DIR}/scripts/perf_baseline.json
-                --turns 30 --tui)
+                --turns 30 --tui --tolerance 3.0)
+        # Timing and RSS are noisy on shared runners, so run it alone and allow
+        # 3x the dev-box baseline. Tighten once runner numbers are recorded.
         set_tests_properties(PerfGuardServe PROPERTIES
             LABELS perf
+            RUN_SERIAL TRUE
             TIMEOUT 120
         )
     endif()
