@@ -11,7 +11,7 @@ index 77d164ac..7eb2bc9b 100644
  #include <chrono>  // for operator-, milliseconds, operator>=, duration, common_type<>::type, time_point
  #include <csignal>  // for signal, SIGTSTP, SIGABRT, SIGWINCH, raise, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, __sighandler_t, size_t
  #include <cstdint>
-@@ -174,10 +176,18 @@ int CheckStdinReady(int usec_timeout) {
+@@ -174,10 +176,23 @@ int CheckStdinReady(int usec_timeout) {
  // Read char from the terminal.
  void EventListener(std::atomic<bool>* quit, Sender<Task> out) {
    auto parser = TerminalInputParser(std::move(out));
@@ -26,7 +26,12 @@ index 77d164ac..7eb2bc9b 100644
 -      parser.Timeout(timeout_milliseconds);
 +    if (!CheckStdinReady(pending ? timeout_microseconds : idle_microseconds)) {
 +      if (pending) {
-+        parser.Timeout(timeout_milliseconds);
++        // The parser flushes a lone Escape only after 50 ms of Timeout() calls
++        // (it adds up each 20 ms step). Give it enough steps in one go, or the
++        // Escape key waits for the next keystroke.
++        for (int step = 0; step < 3; ++step) {
++          parser.Timeout(timeout_milliseconds);
++        }
 +        pending = false;
 +      }
        continue;
