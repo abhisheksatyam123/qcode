@@ -71,6 +71,54 @@ std::optional<std::string> plain_content_delta(std::string_view data) {
   return std::nullopt;
 }
 
+// Fast path for the OpenAI Responses API text delta. The full parse for this
+// event type pushes `delta` and returns, so a line with a single top-level
+// string `delta` and no other `delta` key gives the same event.
+std::optional<std::string> plain_responses_text_delta(std::string_view data) {
+  if (!data.starts_with(R"({"type":"response.output_text.delta",)") &&
+      !data.starts_with(R"({"type": "response.output_text.delta",)")) {
+    return std::nullopt;
+  }
+  // Exactly one "delta" key in the line.
+  const size_t key = data.find(R"("delta")");
+  if (key == std::string_view::npos ||
+      data.find(R"("delta")", key + 1) != std::string_view::npos) {
+    return std::nullopt;
+  }
+  size_t i = key + 7;  // after "delta"
+  if (i < data.size() && data[i] == ':') ++i;
+  if (i < data.size() && data[i] == ' ') ++i;
+  if (i >= data.size() || data[i] != '"') return std::nullopt;
+  ++i;
+  std::string text;
+  if (!sse_fast::decode_json_string(data, i, text)) return std::nullopt;
+  return text;
+}
+
+// Fast path for a Gemini text chunk: one part with text and nothing else. The
+// full parse pushes that text and nothing more for this shape.
+std::optional<std::string> plain_gemini_text_delta(std::string_view data) {
+  static constexpr std::string_view kCompactHead =
+      R"({"candidates":[{"content":{"parts":[{"text":")";
+  static constexpr std::string_view kSpacedHead =
+      R"({"candidates": [{"content": {"parts": [{"text": ")";
+  size_t i = 0;
+  if (data.starts_with(kCompactHead)) {
+    i = kCompactHead.size();
+  } else if (data.starts_with(kSpacedHead)) {
+    i = kSpacedHead.size();
+  } else {
+    return std::nullopt;
+  }
+  std::string text;
+  if (!sse_fast::decode_json_string(data, i, text)) return std::nullopt;
+  if (sse_fast::tail_equals(data, i + 1, R"("}],"role":"model"},"index":0}]})") ||
+      sse_fast::tail_equals(data, i + 1, R"("}]},"index":0}]})")) {
+    return text;
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
@@ -88,6 +136,14 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
 
     if (fast_delta_path_) {
       if (auto text = plain_content_delta(data)) {
+        push_event(StreamEvent(std::move(*text)));
+        return;
+      }
+      if (auto text = plain_responses_text_delta(data)) {
+        push_event(StreamEvent(std::move(*text)));
+        return;
+      }
+      if (auto text = plain_gemini_text_delta(data)) {
         push_event(StreamEvent(std::move(*text)));
         return;
       }

@@ -87,6 +87,30 @@ TEST(OpenAISseFastPathTest, UnicodeEscapeFallsBackAndStillDecodes) {
   });
 }
 
+TEST(OpenAISseFastPathTest, ResponsesTextDeltasMatchFullParse) {
+  expect_same({
+      R"(data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"Hello","sequence_number":4})",
+      R"(data: {"type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": " wor\"ld\n", "sequence_number": 5})",
+      R"(data: {"type":"response.output_text.delta","delta":"","sequence_number":6})",
+  });
+}
+
+TEST(OpenAISseFastPathTest, ResponsesDeltaWithExtraDeltaKeyFallsBack) {
+  // Two "delta" keys: the fast path declines, and the full parse decides.
+  expect_same({
+      R"(data: {"type":"response.output_text.delta","delta":"x","logprobs":[{"delta":"y"}]})",
+  });
+}
+
+TEST(OpenAISseFastPathTest, GeminiTextChunksMatchFullParse) {
+  expect_same({
+      R"(data: {"candidates":[{"content":{"parts":[{"text":"Hi there"}],"role":"model"},"index":0}]})",
+      R"(data: {"candidates": [{"content": {"parts": [{"text": "spaced \"q\""}], "role": "model"}, "index": 0}]})",
+      R"(data: {"candidates":[{"content":{"parts":[{"text":"thought","thought":true}],"role":"model"},"index":0}]})",
+      R"(data: {"candidates":[{"content":{"parts":[{"text":"end"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1,"totalTokenCount":4}})",
+  });
+}
+
 TEST(OpenAISseFastPathTest, PlainDeltaDecodesToItsText) {
   // A plain delta decodes to its text on the default path.
   const std::vector<std::string> lines = {
