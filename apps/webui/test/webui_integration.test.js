@@ -434,5 +434,9 @@ test('WebUI agent modes and model capability badges', () => {
   assert.match(appJs, /formatModelDropdownLabel/, 'app.js should format model dropdown with badges');
   assert.match(styleCss, /\.item-badges/, 'style.css should style .item-badges');
   assert.match(styleCss, /\.item-badge\.badge-reasoning/, 'style.css should style reasoning badge');
-  assert.match(styleCss, /\.agent-mode-btn\.autonomous/, 'style.css should style autonomous agent mode button');
+  assert.match(styleCss, /\.agent-mode-btn\.orchestrator/, 'style.css should style orchestrator agent mode button');
+  // Exactly two agent modes: normal and orchestrator.
+  assert.match(appJs, /id: 'normal'/, 'agent mode picker should offer normal');
+  assert.match(appJs, /id: 'orchestrator'/, 'agent mode picker should offer orchestrator');
+  assert.doesNotMatch(appJs, /id: 'autonomous'|id: 'plan'/, 'retired agent modes should be gone');
 });

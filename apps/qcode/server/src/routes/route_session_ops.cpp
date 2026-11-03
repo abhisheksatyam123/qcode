@@ -2,6 +2,7 @@
 #include "session_runtime.h"
 #include "http_utils.h"
 
+#include <qcode/generation/agent_mode.h>
 #include <qcode/config/config.h>
 #include <qcode/config/provider_info.h>
 #include <qcode/providers/authenticated_providers.h>
@@ -120,12 +121,6 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         !body["system_prompt"].get<std::string>().empty()) {
         system_prompt = body["system_prompt"].get<std::string>();
     }
-    if (system_prompt.empty()) {
-        system_prompt = qcode::SystemPrompt::build_default(
-            qcode::ToolConfig::orchestrator(
-                selected_model != nullptr && selected_model->vision));
-    }
-
     // The generate route stores the modes of each turn (set_session_modes).
     const auto stored_modes = qcode::session::get_session_modes(sid);
     std::string agent_mode = body.value("agent_mode", "");
@@ -137,7 +132,17 @@ svr.Post("/session/([^/]+)/compact", [providers_list](const httplib::Request& re
         reasoning_mode = stored_modes.second;
     }
     if (agent_mode.empty()) {
-        agent_mode = (sid.rfind("ses_", 0) == 0) ? "subagent" : "orchestrator";
+        agent_mode = (sid.rfind("ses_", 0) == 0) ? std::string(qcode::kAgentRoleSubagent)
+                                                 : std::string(qcode::kDefaultAgentMode);
+    }
+    agent_mode = qcode::normalize_agent_mode(agent_mode);
+    // Same system prompt the generate route used for this mode.
+    if (system_prompt.empty()) {
+        const bool vision = selected_model != nullptr && selected_model->vision;
+        system_prompt = agent_mode == qcode::kAgentRoleSubagent
+                            ? qcode::SystemPrompt::build_default(
+                                  qcode::ToolConfig::subagent(vision))
+                            : qcode::SystemPrompt::build_for_mode(agent_mode, vision);
     }
 
     qcode::compaction::CacheReplayInput replay;

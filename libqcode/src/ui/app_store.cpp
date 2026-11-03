@@ -1,4 +1,5 @@
 #include <qcode/ui/app_store.h>
+#include <qcode/generation/agent_mode.h>
 #include <qcode/core/in_process_bus.h>
 #include <qcode/session/token_budget.h>
 #include <qcode/session/session_store.h>
@@ -250,11 +251,10 @@ void AppStore::set_session_id(const std::string& id) {
     {
         const auto [agent_mode, reasoning_mode] =
             qcode::session::get_session_modes(id);
-        // Only orchestrator/subagent exist; legacy values (e.g. "plan")
-        // fall back to orchestrator.
+        // normal / orchestrator / subagent; retired modes map onto them
+        // (normalize_agent_mode).
         if (!agent_mode.empty() && state_.agent_mode) {
-            *state_.agent_mode =
-                agent_mode == "subagent" ? agent_mode : "orchestrator";
+            *state_.agent_mode = normalize_agent_mode(agent_mode);
         }
         if (!reasoning_mode.empty() && state_.reasoning_mode) {
             *state_.reasoning_mode = reasoning_mode;

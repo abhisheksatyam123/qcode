@@ -38,8 +38,10 @@ std::optional<FallbackTarget> select_fallback_candidate(
 struct GenerationContext {
     std::string session_id;
     std::string reasoning_mode = "off";
-    // Agent mode: "orchestrator" (default) or "subagent" (delegated worker).
-    std::string agent_mode = "orchestrator";
+    // Agent mode: "normal" (default, works alone), "orchestrator"
+    // (delegates to subagents) or "subagent" (delegated worker).
+    // See generation/agent_mode.h.
+    std::string agent_mode = "normal";
     std::string workspace;
     std::shared_ptr<std::atomic<bool>> abort_flag = std::make_shared<std::atomic<bool>>(false);
 
