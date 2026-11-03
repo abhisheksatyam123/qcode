@@ -234,6 +234,10 @@ editing prices later never reprices earlier calls. Calls on models without a
 `cost` are counted but not costed; an explicit all-zero `cost` marks a free
 model, whose calls count as $0.
 
+### Agent modes, subagents and shortcuts
+
+qcode has two agent modes, `normal` and `orchestrator`. Orchestrator mode starts subagents to split up work. See [docs/user-guide.md](docs/user-guide.md) for how to switch modes, how subagents are spawned, killed and resumed, what the status counts mean, the keyboard shortcuts, and `qcode db compact`.
+
 ### Start the TUI
 
 ```bash
