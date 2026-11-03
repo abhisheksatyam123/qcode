@@ -106,7 +106,7 @@ jobs:
         CXX: clang++-18
       run: |
         cmake --preset host-debug-asan
-        cmake --build --preset host-debug-asan --parallel --target qcode_tests
+        cmake --build --preset host-debug-asan --parallel --target qcode_tests qcode
 
     - name: Run tests
       working-directory: build/host-debug-asan

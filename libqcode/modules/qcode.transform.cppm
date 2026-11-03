@@ -15,13 +15,11 @@ using ::qcode::VariantInfo;
 }  // namespace qcode
 
 export namespace qcode::ProviderTransform {
-using ::qcode::ProviderTransform::OUTPUT_TOKEN_MAX;
 using ::qcode::ProviderTransform::ChatTransport;
 using ::qcode::ProviderTransform::apply_reasoning_defaults;
 using ::qcode::ProviderTransform::apply_reasoning_options;
 using ::qcode::ProviderTransform::apply_stream_options;
 using ::qcode::ProviderTransform::build_options;
-using ::qcode::ProviderTransform::build_small_options;
 using ::qcode::ProviderTransform::chat_transport_for;
 using ::qcode::ProviderTransform::chat_wire_model_id;
 using ::qcode::ProviderTransform::clamp_variant;
@@ -44,12 +42,10 @@ using ::qcode::ProviderTransform::opencode_go_wire_model_id;
 using ::qcode::ProviderTransform::openrouter_wire_model_id;
 using ::qcode::ProviderTransform::reasoning_variants;
 using ::qcode::ProviderTransform::resolve_session_variant;
-using ::qcode::ProviderTransform::sdk_key;
 using ::qcode::ProviderTransform::temperature;
 using ::qcode::ProviderTransform::top_k;
 using ::qcode::ProviderTransform::top_p;
 using ::qcode::ProviderTransform::variant_wire_effort;
-using ::qcode::ProviderTransform::wrap_provider_options;
 using ::qcode::ProviderTransform::zen_api_protocol;
 using ::qcode::ProviderTransform::zen_completions_path;
 using ::qcode::ProviderTransform::zen_wire_model_id;
