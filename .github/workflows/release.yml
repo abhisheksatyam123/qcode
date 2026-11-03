@@ -1,0 +1,100 @@
+name: Release
+
+# Builds the unified qcode binary for Linux x86_64 and macOS arm64 when a
+# version tag is pushed, then publishes both tarballs and SHA256SUMS to a
+# GitHub release. The tag name is the release version (e.g. v0.2.0).
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build (linux-x86_64)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0   # git describe needs the tags
+
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y ninja-build openssl libssl-dev libcurl4-openssl-dev pkg-config clang-18 clang-tools-18
+
+    - uses: lukka/get-cmake@latest
+
+    - name: Configure and build
+      env:
+        CC: clang-18
+        CXX: clang++-18
+      run: |
+        cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+        cmake --build build/release --parallel --target qcode
+
+    - name: Package
+      run: scripts/package_release.sh build/release/apps/qcode linux-x86_64 dist
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: qcode-linux-x86_64
+        path: dist/*.tar.gz
+        if-no-files-found: error
+
+  build-macos:
+    name: Build (macos-arm64)
+    runs-on: macos-14
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Install dependencies
+      run: brew install ninja pkg-config openssl@3 curl
+
+    - uses: lukka/get-cmake@latest
+
+    - name: Configure and build
+      run: |
+        cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF \
+          -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+        cmake --build build/release --parallel --target qcode
+
+    - name: Package
+      run: scripts/package_release.sh build/release/apps/qcode macos-arm64 dist
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: qcode-macos-arm64
+        path: dist/*.tar.gz
+        if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [ build-linux, build-macos ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: dist
+        merge-multiple: true
+
+    - name: Checksums
+      working-directory: dist
+      run: sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS
+
+    - name: Create GitHub release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.ref_name }}
+        generate_release_notes: true
+        files: |
+          dist/*.tar.gz
+          dist/SHA256SUMS

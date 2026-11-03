@@ -179,13 +179,17 @@ void GenerationController::maybe_start_queued(GenerationRequest request) {
         return;
     }
     auto next = store_.dequeue_prompt();
+    if (!next) {
+        queue_resume_at_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        return;
+    }
     const auto remaining = static_cast<int>(store_.queue_size());
     store_.add_toast(
         "Running queued prompt (" + std::to_string(remaining) + " left)",
         "info", 1500);
     // request.append_user_message remains true (default) so spawn_unlocked appends
     // the user message to history and session DB when execution actually begins.
-    spawn_unlocked(std::move(next), std::move(request));
+    spawn_unlocked(std::move(*next), std::move(request));
 }
 
 void GenerationController::spawn_unlocked(std::string prompt,

@@ -7,6 +7,7 @@
  *   qcode prompt <text>   one-shot HTTP client
  */
 #include <qcode_app/frontends.h>
+#include <qcode/config/config.h>
 #include <qcode/session/session_store.h>
 
 #include <cstdlib>
@@ -43,7 +44,12 @@ void print_help() {
         << "  qcode prompt --help\n"
         << "\n"
         << "The TUI runs generation in-process. The prompt mode is an HTTP\n"
-        << "client and requires a running `qcode serve` process.\n";
+        << "client and requires a running `qcode serve` process.\n"
+        << "\n"
+        << "First run: add a provider with at least one model to\n"
+        << "  " << qcode::config_path() << "\n"
+        << "Its API key can go in that file or come from the environment, for\n"
+        << "example OPENAI_API_KEY.\n";
 }
 
 // Keep argv[0] from the real process, then append the mode's arguments.

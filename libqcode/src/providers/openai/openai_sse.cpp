@@ -236,7 +236,10 @@ void OpenAIStreamImpl::parse_sse_line(const std::string& line) {
               msg.find("Rate limit") != std::string::npos ||
               msg.find("quota") != std::string::npos ||
               msg.find("RESOURCE_EXHAUSTED") != std::string::npos) {
-            msg += "\n\n💡 Tip: Rate limit hit. Switch model via `/model minimax-m3.1-flash-free`, `/model nemotron-3.5-lightning-free`, or `/model big-pickle`.";
+            msg +=
+                "\n\n💡 Tip: Rate limit hit. Switch model via "
+                "`/model big-pickle`, `/model flint-40b-free`, or "
+                "`/model nemotron-3.5-lightning-free`.";
           }
           push_event(create_error_event(msg));
           return;

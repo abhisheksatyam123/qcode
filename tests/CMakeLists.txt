@@ -10,11 +10,13 @@ add_executable(qcode_tests
     unit/tui_bus_test.cpp
     unit/agent_mode_test.cpp
     unit/openai_sse_fast_path_test.cpp
+    unit/task_tool_contract_test.cpp
     unit/bus_json_codec_test.cpp
     unit/session_store_test.cpp
     unit/tool_catalog_test.cpp
     unit/commands_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/prompt_wrap.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/clipboard.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/bus_json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/workspace_fs.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/http_utils.cpp
@@ -171,5 +173,30 @@ if(TARGET qcode)
     set_tests_properties(QcodeNoTtyExits PROPERTIES
         TIMEOUT 5
         WILL_FAIL TRUE
+    )
+
+    # Headless perf guard: startup latency and RSS of `qcode serve` and the TUI,
+    # with generation turns against a local stub provider. Gated by
+    # scripts/perf_baseline.json. Linux only (reads /proc). Filter with -L perf.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME PerfGuardServe
+            COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/perf_guard.py
+                --binary $<TARGET_FILE:qcode>
+                --baseline ${CMAKE_SOURCE_DIR}/scripts/perf_baseline.json
+                --turns 30 --tui)
+        set_tests_properties(PerfGuardServe PROPERTIES
+            LABELS perf
+            TIMEOUT 120
+        )
+    endif()
+endif()
+
+# Headless TUI frame benchmark (not a test): qcode_tui_bench [messages] [frames]
+if(TARGET qcode-frontend-tui)
+    add_executable(qcode_tui_bench bench/tui_render_bench.cpp)
+    target_link_libraries(qcode_tui_bench PRIVATE qcode-frontend-tui)
+    set_target_properties(qcode_tui_bench PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
     )
 endif()

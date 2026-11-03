@@ -4,6 +4,7 @@
 
 #include <uuid.h>
 #include <climits>
+#include <deque>
 #include <cstdlib>
 #include <random>
 #include <sstream>
@@ -50,7 +51,10 @@ public:
     MessageWriterConnection(const MessageWriterConnection&) = delete;
     MessageWriterConnection& operator=(const MessageWriterConnection&) = delete;
 
-    void write(const std::string& session_id, const std::string& sender,
+    // Returns false when the row could not be written now. A row that failed on
+    // busy/locked stays queued and is retried, in order, before the next write.
+    // Other failures (for example a constraint error) drop only that row.
+    bool write(const std::string& session_id, const std::string& sender,
                const std::string& content, long long created_at) {
         std::lock_guard<std::mutex> lock(mutex_);
         const std::string expected_path = get_db_path();
@@ -62,7 +66,10 @@ public:
         if (!db_) {
             std::string actual_path;
             db_ = open_database(actual_path);
-            if (!db_) return;
+            if (!db_) {
+                enqueue_pending(session_id, sender, content, created_at);
+                return false;
+            }
             current_path_ = expected_path;
             // 10s (was 2s): parallel subagents writing large tool results
             // used to hit SQLITE_BUSY and silently DROP messages. Matches
@@ -74,37 +81,73 @@ public:
             if (!prepare_stmt(db_, kInsertSql, &insert_)) {
                 sqlite3_close(db_);
                 db_ = nullptr;
-                return;
+                enqueue_pending(session_id, sender, content, created_at);
+                return false;
             }
         }
-        if (!insert_) return;
-        sqlite3_reset(insert_);
-        sqlite3_clear_bindings(insert_);
-        sqlite3_bind_text(
-            insert_, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(insert_, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(insert_, 3, content.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int64(insert_, 4, created_at);
-        int rc = sqlite3_step(insert_);
-        // SQLITE_BUSY/LOCKED can still outlive the busy timeout under heavy
-        // parallel writes; retry a couple of times before dropping the row.
-        for (int attempt = 0; (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) &&
-                              attempt < 2;
-             ++attempt) {
-            sqlite3_reset(insert_);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            rc = sqlite3_step(insert_);
+        if (!insert_) return false;
+        enqueue_pending(session_id, sender, content, created_at);
+        while (!pending_.empty()) {
+            const int rc = insert_row(pending_.front());
+            if (rc == SQLITE_DONE) {
+                pending_.pop_front();
+                continue;
+            }
+            if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) break;  // keep, retry later
+            LOG_ERROR("SQLite: message insert dropped for session '{}' (sender '{}') rc={}: {}",
+                      pending_.front().session_id, pending_.front().sender, rc,
+                      sqlite3_errmsg(db_));
+            pending_.pop_front();
         }
-        if (rc != SQLITE_DONE) {
-            LOG_ERROR("SQLite: message insert failed for session '{}' (sender '{}') rc={}: {}",
-                      session_id, sender, rc, sqlite3_errmsg(db_));
+        if (!pending_.empty()) {
+            LOG_ERROR("SQLite: {} message(s) still pending after busy retries", pending_.size());
+            return false;
         }
+        return true;
     }
 
 private:
+    struct PendingRow {
+        std::string session_id;
+        std::string sender;
+        std::string content;
+        long long created_at = 0;
+    };
+    // Bounded so a database that stays locked cannot grow memory without limit.
+    static constexpr size_t kMaxPending = 512;
+
+    void enqueue_pending(const std::string& session_id, const std::string& sender,
+                         const std::string& content, long long created_at) {
+        if (pending_.size() >= kMaxPending) {
+            LOG_ERROR("SQLite: pending message queue full; dropping oldest row (session '{}')",
+                      pending_.front().session_id);
+            pending_.pop_front();
+        }
+        pending_.push_back(PendingRow{session_id, sender, content, created_at});
+    }
+
+    // Binds and steps one row. Returns the final sqlite3_step result.
+    int insert_row(const PendingRow& row) {
+        int rc = SQLITE_ERROR;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            sqlite3_reset(insert_);
+            sqlite3_clear_bindings(insert_);
+            sqlite3_bind_text(insert_, 1, row.session_id.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(insert_, 2, row.sender.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(insert_, 3, row.content.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(insert_, 4, row.created_at);
+            rc = sqlite3_step(insert_);
+            if (rc != SQLITE_BUSY && rc != SQLITE_LOCKED) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        sqlite3_reset(insert_);
+        return rc;
+    }
+
     sqlite3* db_ = nullptr;
     std::string current_path_;
     sqlite3_stmt* insert_ = nullptr;
+    std::deque<PendingRow> pending_;
     std::mutex mutex_;
 };
 
@@ -116,13 +159,26 @@ static std::string generate_uuid() {
     return uuids::to_string(gen());
 }
 
-void init_database() {
-    PERF_SCOPE("init_database");
-    auto db_lock = SharedDbHandle::instance().acquire();
-    sqlite3* db = db_lock.db;
-    if (!db) return;
+// Runs one schema statement inside the migration transaction. A duplicate
+// column means an earlier step (or an older build) already added it, which is
+// expected for the ALTERs below, so it counts as success. Any other error
+// fails the whole migration, which is then rolled back.
+static bool migration_step(sqlite3* db, const char* sql) {
+    char* err = nullptr;
+    if (sqlite3_exec(db, sql, nullptr, nullptr, &err) == SQLITE_OK) {
+        sqlite3_free(err);
+        return true;
+    }
+    const std::string msg = err ? err : "unknown error";
+    sqlite3_free(err);
+    if (msg.find("duplicate column name") != std::string::npos) return true;
+    LOG_ERROR("SQLite: schema migration step failed: {} ({})", msg, sql);
+    return false;
+}
 
-    // Idempotent schema migrations, guarded by PRAGMA user_version.
+static bool run_migrations(sqlite3* db) {
+    // Runs inside the transaction opened by init_database(), so this read sees
+    // the same state the steps below act on.
     int user_version = 0;
     {
         sqlite3_stmt* vstmt = nullptr;
@@ -133,12 +189,6 @@ void init_database() {
     }
     const int kSchemaVersion = 5;
     if (user_version < 3) {
-        char* err_msg = nullptr;
-        if (sqlite3_exec(db, "BEGIN;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
-            LOG_ERROR("SQLite: failed to begin schema transaction: {}", err_msg ? err_msg : "unknown");
-            sqlite3_free(err_msg); err_msg = nullptr;
-        }
-
         const char* schema_sessions =
             "CREATE TABLE IF NOT EXISTS sessions ("
             "  id TEXT PRIMARY KEY,"
@@ -149,10 +199,7 @@ void init_database() {
             "  workspace TEXT DEFAULT '',"
             "  parent_session_id TEXT DEFAULT ''"
             ");";
-        if (sqlite3_exec(db, schema_sessions, nullptr, nullptr, &err_msg) != SQLITE_OK) {
-            LOG_ERROR("SQLite: create sessions table error: {}", err_msg ? err_msg : "unknown");
-            sqlite3_free(err_msg); err_msg = nullptr;
-        }
+        if (!migration_step(db, schema_sessions)) return false;
 
         const char* schema_messages =
             "CREATE TABLE IF NOT EXISTS messages ("
@@ -163,33 +210,19 @@ void init_database() {
             "  created_at INTEGER,"
             "  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE"
             ");";
-        if (sqlite3_exec(db, schema_messages, nullptr, nullptr, &err_msg) != SQLITE_OK) {
-            LOG_ERROR("SQLite: create messages table error: {}", err_msg ? err_msg : "unknown");
-            sqlite3_free(err_msg); err_msg = nullptr;
-        }
+        if (!migration_step(db, schema_messages)) return false;
 
-        if (sqlite3_exec(db, "PRAGMA user_version = 1;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
-            LOG_ERROR("SQLite: failed to set schema version: {}", err_msg ? err_msg : "unknown");
-            sqlite3_free(err_msg); err_msg = nullptr;
-        }
-        if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
-            LOG_ERROR("SQLite: failed to commit schema transaction: {}", err_msg ? err_msg : "unknown");
-            sqlite3_free(err_msg); err_msg = nullptr;
-        }
+        if (!migration_step(db, "PRAGMA user_version = 1;")) return false;
     }
 
     // ── Migration v1 → v2: add workspace column ──
     if (user_version < 2) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN workspace TEXT DEFAULT '';",
-                     nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 2;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN workspace TEXT DEFAULT '';")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 2;")) return false;
     }
 
     // ── Migration v2 → v3: add model_capabilities and model_runtime_stats tables ──
     if (user_version < 3) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
         const char* schema_cap =
             "CREATE TABLE IF NOT EXISTS model_capabilities ("
             "  model_id TEXT PRIMARY KEY,"
@@ -203,7 +236,7 @@ void init_database() {
             "  verified_benchmark TEXT DEFAULT '',"
             "  recommended_for TEXT DEFAULT ''"
             ");";
-        sqlite3_exec(db, schema_cap, nullptr, nullptr, nullptr);
+        if (!migration_step(db, schema_cap)) return false;
 
         const char* schema_rt =
             "CREATE TABLE IF NOT EXISTS model_runtime_stats ("
@@ -217,23 +250,19 @@ void init_database() {
             "  negative_feedback_count INTEGER DEFAULT 0,"
             "  last_used INTEGER DEFAULT 0"
             ");";
-        sqlite3_exec(db, schema_rt, nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 3;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+        if (!migration_step(db, schema_rt)) return false;
+        if (!migration_step(db, "PRAGMA user_version = 3;")) return false;
     }
 
     // ── Migration v3 → v4: study buddy tables ──
     if (user_version < 4) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "CREATE TABLE IF NOT EXISTS study_courses ("
+        if (!migration_step(db, "CREATE TABLE IF NOT EXISTS study_courses ("
             "  id TEXT PRIMARY KEY,"
             "  title TEXT NOT NULL,"
             "  root_path TEXT NOT NULL,"
             "  created_at INTEGER"
-            ");", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "CREATE TABLE IF NOT EXISTS study_chapters ("
+            ");")) return false;
+        if (!migration_step(db, "CREATE TABLE IF NOT EXISTS study_chapters ("
             "  id TEXT PRIMARY KEY,"
             "  course_id TEXT NOT NULL,"
             "  slug TEXT NOT NULL,"
@@ -241,18 +270,16 @@ void init_database() {
             "  path TEXT NOT NULL,"
             "  order_index INTEGER DEFAULT 0,"
             "  FOREIGN KEY(course_id) REFERENCES study_courses(id) ON DELETE CASCADE"
-            ");", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "CREATE TABLE IF NOT EXISTS study_topics ("
+            ");")) return false;
+        if (!migration_step(db, "CREATE TABLE IF NOT EXISTS study_topics ("
             "  id TEXT PRIMARY KEY,"
             "  chapter_id TEXT NOT NULL,"
             "  name TEXT NOT NULL,"
             "  mastery REAL DEFAULT 0,"
             "  last_seen_at INTEGER DEFAULT 0,"
             "  FOREIGN KEY(chapter_id) REFERENCES study_chapters(id) ON DELETE CASCADE"
-            ");", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "CREATE TABLE IF NOT EXISTS study_questions ("
+            ");")) return false;
+        if (!migration_step(db, "CREATE TABLE IF NOT EXISTS study_questions ("
             "  id TEXT PRIMARY KEY,"
             "  chapter_id TEXT NOT NULL,"
             "  topic_id TEXT,"
@@ -263,9 +290,8 @@ void init_database() {
             "  difficulty INTEGER DEFAULT 1,"
             "  FOREIGN KEY(chapter_id) REFERENCES study_chapters(id) ON DELETE CASCADE,"
             "  FOREIGN KEY(topic_id) REFERENCES study_topics(id) ON DELETE SET NULL"
-            ");", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "CREATE TABLE IF NOT EXISTS study_attempts ("
+            ");")) return false;
+        if (!migration_step(db, "CREATE TABLE IF NOT EXISTS study_attempts ("
             "  id TEXT PRIMARY KEY,"
             "  question_id TEXT NOT NULL,"
             "  student_answer TEXT,"
@@ -274,76 +300,54 @@ void init_database() {
             "  feedback TEXT DEFAULT '',"
             "  created_at INTEGER,"
             "  FOREIGN KEY(question_id) REFERENCES study_questions(id) ON DELETE CASCADE"
-            ");", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 4;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+            ");")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 4;")) return false;
         (void)kSchemaVersion;
     }
 
     // ── Migration v4 → v5: persist cumulative token counts on sessions ──
     if (user_version < 5) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN prompt_tokens INTEGER DEFAULT 0;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN completion_tokens INTEGER DEFAULT 0;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN total_tokens INTEGER DEFAULT 0;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 5;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN prompt_tokens INTEGER DEFAULT 0;")) return false;
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN completion_tokens INTEGER DEFAULT 0;")) return false;
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN total_tokens INTEGER DEFAULT 0;")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 5;")) return false;
     }
 
     // ── Migration v5 → v6: persisted per-session prompt queue ──
     if (user_version < 6) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "CREATE TABLE IF NOT EXISTS queued_prompts ("
+        if (!migration_step(db, "CREATE TABLE IF NOT EXISTS queued_prompts ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "  session_id TEXT,"
             "  content TEXT,"
             "  created_at INTEGER,"
             "  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE"
-            ");", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 6;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+            ");")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 6;")) return false;
     }
 
     // ── Migration v6 → v7: persist agent/reasoning mode per session ──
     if (user_version < 7) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "ALTER TABLE sessions ADD COLUMN agent_mode TEXT DEFAULT '';",
-            nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "ALTER TABLE sessions ADD COLUMN reasoning_mode TEXT DEFAULT '';",
-            nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 7;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN agent_mode TEXT DEFAULT '';")) return false;
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN reasoning_mode TEXT DEFAULT '';")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 7;")) return false;
     }
 
     // ── Migration v7 → v8: track parent session ID for subagents ──
     if (user_version < 8) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT DEFAULT '';",
-            nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 8;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT DEFAULT '';")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 8;")) return false;
     }
 
     // ── Migration v8 → v9: persona column (unused since personas were removed; kept for schema history) ──
     if (user_version < 9) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "ALTER TABLE sessions ADD COLUMN persona TEXT DEFAULT '';",
-            nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 9;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN persona TEXT DEFAULT '';")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 9;")) return false;
     }
 
     // ── Migration v9 → v10: subagent_runs (unused since the router was removed; kept for schema history) ──
     // No foreign keys: runs are learning data and outlive their sessions.
     if (user_version < 10) {
-        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "CREATE TABLE IF NOT EXISTS subagent_runs ("
+        if (!migration_step(db, "CREATE TABLE IF NOT EXISTS subagent_runs ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "  task_id TEXT NOT NULL,"
             "  attempt INTEGER NOT NULL,"
@@ -360,14 +364,11 @@ void init_database() {
             "  rating_note TEXT DEFAULT '',"
             "  quality REAL DEFAULT -1,"
             "  UNIQUE(task_id, attempt)"
-            ");", nullptr, nullptr, nullptr);
+            ");")) return false;
         // UNIQUE(task_id, attempt) already indexes lookups by task_id.
-        sqlite3_exec(db,
-            "CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent "
-            "ON subagent_runs(parent_session_id, started_at);",
-            nullptr, nullptr, nullptr);
-        sqlite3_exec(db,
-            "CREATE TABLE IF NOT EXISTS subagent_arms ("
+        if (!migration_step(db, "CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent "
+            "ON subagent_runs(parent_session_id, started_at);")) return false;
+        if (!migration_step(db, "CREATE TABLE IF NOT EXISTS subagent_arms ("
             "  key TEXT PRIMARY KEY,"
             "  alpha REAL DEFAULT 0,"
             "  beta REAL DEFAULT 0,"
@@ -379,30 +380,43 @@ void init_database() {
             "  cooldown_until INTEGER DEFAULT 0,"
             "  consecutive_transient INTEGER DEFAULT 0,"
             "  updated_at INTEGER DEFAULT 0"
-            ");", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 10;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+            ");")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 10;")) return false;
     }
 
     // ── Migration v10 → v11: per-session model-call aggregate (usage_stats.h) ──
     if (user_version < 11) {
-        sqlite3_exec(db,
-            "ALTER TABLE sessions ADD COLUMN usage_stats TEXT DEFAULT '';",
-            nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "PRAGMA user_version = 11;", nullptr, nullptr, nullptr);
+        if (!migration_step(db, "ALTER TABLE sessions ADD COLUMN usage_stats TEXT DEFAULT '';")) return false;
+        if (!migration_step(db, "PRAGMA user_version = 11;")) return false;
     }
 
     // Ensure performance indexes exist on messages and sessions
-    sqlite3_exec(db,
-        "CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at);",
-        nullptr, nullptr, nullptr);
+    if (!migration_step(db, "CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at);")) return false;
     // Superseded by idx_messages_session_created (leading column is session_id).
-    sqlite3_exec(db,
-        "DROP INDEX IF EXISTS idx_messages_session_id;",
-        nullptr, nullptr, nullptr);
-    sqlite3_exec(db,
-        "CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);",
-        nullptr, nullptr, nullptr);
+    if (!migration_step(db, "DROP INDEX IF EXISTS idx_messages_session_id;")) return false;
+    if (!migration_step(db, "CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);")) return false;
+
+    return true;
+}
+
+void init_database() {
+    PERF_SCOPE("init_database");
+    auto db_lock = SharedDbHandle::instance().acquire();
+    sqlite3* db = db_lock.db;
+    if (!db) return;
+
+    // The TUI and the server can open the same file at once. BEGIN IMMEDIATE takes
+    // the write lock first, so one process migrates and the other waits, then
+    // sees the finished schema. Either the whole migration commits or none of it.
+    if (!migration_step(db, "BEGIN IMMEDIATE;")) {
+        LOG_ERROR("SQLite: could not start schema migration (database busy?)");
+        return;
+    }
+    if (!run_migrations(db) || !migration_step(db, "COMMIT;")) {
+        LOG_ERROR("SQLite: schema migration rolled back");
+        if (!sqlite3_get_autocommit(db)) sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return;
+    }
 
     LOG_INFO("SQLite: database opened successfully at {}", get_db_path());
 }
@@ -597,16 +611,16 @@ qcode::ReasoningContentPart decode_reasoning_row(const std::string& content) {
 }
 }  // namespace
 
-void save_message(const std::string& session_id, const std::string& sender, const std::string& content) {
+bool save_message(const std::string& session_id, const std::string& sender, const std::string& content) {
     if (session_id.empty() || !is_valid_session_id(session_id)) {
         LOG_WARN("SQLite: refusing operation with invalid session id '{}'", session_id);
-        return;
+        return false;
     }
 
     auto now = std::chrono::system_clock::now();
     long long created_at = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     static MessageWriterConnection writer;
-    writer.write(session_id, sender, content, created_at);
+    return writer.write(session_id, sender, content, created_at);
 }
 
 // ── Persisted prompt queue ──
@@ -676,25 +690,34 @@ std::vector<std::string> queued_prompt_load(const std::string& session_id) {
     return out;
 }
 
-void queued_prompt_pop(const std::string& session_id) {
-    if (session_id.empty() || !is_valid_session_id(session_id)) return;
+bool queued_prompt_pop(const std::string& session_id) {
+    if (session_id.empty() || !is_valid_session_id(session_id)) return false;
     auto db_lock = SharedDbHandle::instance().acquire();
     sqlite3* db = db_lock.db;
-    if (!db) return;
+    if (!db) return false;
 
-    // Delete only the oldest row for this session.
+    // Delete only the oldest row for this session. A failed delete leaves the
+    // row behind, so the prompt would run again after a restart: retry busy
+    // errors and report failure rather than dropping it silently.
     const std::string sql =
         "DELETE FROM queued_prompts WHERE id = ("
         "  SELECT id FROM queued_prompts WHERE session_id = ?"
         "  ORDER BY id ASC LIMIT 1);";
-    sqlite3_stmt* stmt = nullptr;
-    if (prepare_stmt(db, sql.c_str(), &stmt)) {
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        sqlite3_stmt* stmt = nullptr;
+        if (!prepare_stmt(db, sql.c_str(), &stmt)) return false;
         sqlite3_bind_text(stmt, 1, session_id.c_str(), -1, SQLITE_TRANSIENT);
-        if (sqlite3_step(stmt) != SQLITE_DONE) {
-            LOG_ERROR("SQLite: queued_prompt_pop failed: {}", sqlite3_errmsg(db));
-        }
+        const int rc = sqlite3_step(stmt);
         sqlite3_finalize(stmt);
+        if (rc == SQLITE_DONE) return true;
+        if (rc != SQLITE_BUSY && rc != SQLITE_LOCKED) {
+            LOG_ERROR("SQLite: queued_prompt_pop failed rc={}: {}", rc, sqlite3_errmsg(db));
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20 * (attempt + 1)));
     }
+    LOG_ERROR("SQLite: queued_prompt_pop gave up after busy retries for session '{}'", session_id);
+    return false;
 }
 
 void queued_prompt_remove_at(const std::string& session_id, size_t index_1based) {
@@ -1730,12 +1753,35 @@ CompactResult compact_database() {
         result.message = "could not open database at " + path;
         return result;
     }
+    // VACUUM needs the write lock with no other transaction open. Another qcode
+    // process that is writing holds it, and a busy wait would stall the command,
+    // so take the lock with a short wait and refuse with a clear message if
+    // another process has it. An open but idle process holds no lock and is fine.
+    const auto refuse = [&result, &path]() {
+        result.message = "another qcode process is using " + path +
+                         "; close it (or stop qcode serve) and run again";
+        return result;
+    };
+    sqlite3_busy_timeout(db, 2000);
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db, "BEGIN EXCLUSIVE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        const int rc = sqlite3_errcode(db) & 0xff;
+        sqlite3_free(err_msg);
+        if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) return refuse();
+        result.message = std::string("could not lock database: ") + sqlite3_errmsg(db);
+        return result;
+    }
+    sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     // Takes effect because VACUUM rebuilds the file with the new mode.
     sqlite3_exec(db, "PRAGMA auto_vacuum=INCREMENTAL;", nullptr, nullptr, nullptr);
-    char* err_msg = nullptr;
     if (sqlite3_exec(db, "VACUUM;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
-        result.message = std::string("VACUUM failed: ") + (err_msg ? err_msg : "unknown error");
+        const int rc = sqlite3_errcode(db) & 0xff;
+        const bool locked = rc == SQLITE_BUSY || rc == SQLITE_LOCKED;
+        if (!locked) {
+            result.message = std::string("VACUUM failed: ") + (err_msg ? err_msg : "unknown error");
+        }
         sqlite3_free(err_msg);
+        if (locked) return refuse();
         return result;
     }
     // VACUUM writes through the WAL; fold it back into the main file.

@@ -6,7 +6,10 @@
 
 #include <chrono>
 #include <filesystem>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <cstdlib>
+#include <vector>
 #include <string>
 
 namespace qcode {
@@ -315,6 +318,154 @@ TEST_F(SessionStoreTest, CompactConvertsLegacyFileToIncrementalVacuum) {
     auto msgs = load_session_messages(sid);
     ASSERT_EQ(msgs.size(), 1u);
     EXPECT_EQ(msgs[0].second, "hello");
+}
+
+// Two processes (TUI and server) share one database file. This runs the same
+// first-launch path in several processes at once: each one migrates a fresh
+// file and writes its own session. Every row must land and no process may fail.
+// The children are re-executions of this binary running only the child test
+// below, so they never inherit an open SQLite connection from the parent.
+TEST_F(SessionStoreTest, ConcurrentProcessesMigrateAndWriteOneDatabase) {
+    const std::string shared = db_path_ + ".shared";
+    std::error_code ec;
+    std::filesystem::remove(shared, ec);
+    std::filesystem::remove(shared + "-wal", ec);
+    std::filesystem::remove(shared + "-shm", ec);
+    // The global test environment rewrites QCODE_DB_PATH in every process, so
+    // children get the shared path through their own variable.
+    setenv("QCODE_CONCURRENT_DB", shared.c_str(), 1);
+    setenv("QCODE_CONCURRENT_CHILD", "1", 1);
+
+    constexpr int kChildren = 4;
+    constexpr int kRowsPerChild = 300;
+    std::vector<pid_t> pids;
+    for (int i = 0; i < kChildren; ++i) {
+        pid_t pid = fork();
+        ASSERT_GE(pid, 0);
+        if (pid == 0) {
+            execl("/proc/self/exe", "qcode_tests",
+                  "--gtest_filter=SessionStore.ConcurrentChildWriter", nullptr);
+            _exit(127);
+        }
+        pids.push_back(pid);
+    }
+
+    for (pid_t pid : pids) {
+        int status = 0;
+        ASSERT_EQ(waitpid(pid, &status, 0), pid);
+        EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0)
+            << "child " << pid << " failed (status " << status << ")";
+    }
+
+    // Read back through the parent's own connection, pointed at the shared file.
+    setenv("QCODE_DB_PATH", shared.c_str(), 1);
+    for (pid_t pid : pids) {
+        const std::string sid = "ses_child_" + std::to_string(pid);
+        EXPECT_EQ(load_session_messages(sid).size(), static_cast<size_t>(kRowsPerChild))
+            << "rows lost for " << sid;
+    }
+    EXPECT_EQ(list_sessions_full(true).size(), static_cast<size_t>(kChildren));
+
+    unsetenv("QCODE_CONCURRENT_CHILD");
+    unsetenv("QCODE_CONCURRENT_DB");
+    setenv("QCODE_DB_PATH", db_path_.c_str(), 1);
+    std::filesystem::remove(shared, ec);
+    std::filesystem::remove(shared + "-wal", ec);
+    std::filesystem::remove(shared + "-shm", ec);
+}
+
+// Runs only when re-executed by the test above (QCODE_CONCURRENT_CHILD set).
+// Plain TEST, not TEST_F: the fixture would point QCODE_DB_PATH somewhere else.
+TEST(SessionStore, ConcurrentChildWriter) {
+    if (!std::getenv("QCODE_CONCURRENT_CHILD")) GTEST_SKIP();
+    setenv("QCODE_DB_PATH", std::getenv("QCODE_CONCURRENT_DB"), 1);
+    constexpr int kRowsPerChild = 300;
+    const std::string sid = "ses_child_" + std::to_string(::getpid());
+    init_database();
+    ensure_session_row(sid, "child", "prov", "model", "/ws");
+    for (int k = 0; k < kRowsPerChild; ++k) {
+        save_message(sid, "User", "row " + std::to_string(k));
+    }
+    EXPECT_EQ(load_session_messages(sid).size(), static_cast<size_t>(kRowsPerChild));
+}
+
+TEST_F(SessionStoreTest, SaveAndQueuePopReportTheirResult) {
+    const std::string sid = create_new_session("prov", "model", "/ws", "Results");
+    EXPECT_TRUE(save_message(sid, "User", "ok"));
+    EXPECT_FALSE(save_message("bad/id", "User", "rejected"));
+
+    queued_prompt_add(sid, "first");
+    EXPECT_TRUE(queued_prompt_pop(sid));
+    EXPECT_TRUE(queued_prompt_load(sid).empty());
+    EXPECT_FALSE(queued_prompt_pop("bad/id"));
+}
+
+// A database last written by a version 4 build: the tables and columns that
+// existed before v5. Migrating it must keep its rows and add everything newer.
+TEST_F(SessionStoreTest, UpgradesAnOlderDatabaseInOneTransaction) {
+    const std::string old_path = db_path_ + ".v4";
+    std::error_code ec;
+    std::filesystem::remove(old_path, ec);
+    std::filesystem::remove(old_path + "-wal", ec);
+    std::filesystem::remove(old_path + "-shm", ec);
+
+    const char* sid = "11111111-1111-1111-1111-111111111111";
+    {
+        sqlite3* raw = nullptr;
+        ASSERT_EQ(sqlite3_open(old_path.c_str(), &raw), SQLITE_OK);
+        ASSERT_EQ(sqlite3_exec(raw,
+            "PRAGMA journal_mode=WAL;"
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, provider TEXT, model TEXT,"
+            "  created_at INTEGER, workspace TEXT DEFAULT '', parent_session_id TEXT DEFAULT '');"
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT,"
+            "  sender TEXT, content TEXT, created_at INTEGER,"
+            "  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE);"
+            "INSERT INTO sessions(id, title, created_at, workspace) VALUES("
+            "  '11111111-1111-1111-1111-111111111111', 'Old chat', 100, '/old');"
+            "INSERT INTO messages(session_id, sender, content, created_at) VALUES("
+            "  '11111111-1111-1111-1111-111111111111', 'User', 'hello from v4', 101);"
+            "PRAGMA user_version = 4;",
+            nullptr, nullptr, nullptr), SQLITE_OK);
+        sqlite3_close(raw);
+    }
+
+    setenv("QCODE_DB_PATH", old_path.c_str(), 1);
+    init_database();
+
+    // Existing rows survive the upgrade.
+    EXPECT_EQ(get_session_title(sid), "Old chat");
+    auto msgs = load_session_messages(sid);
+    ASSERT_EQ(msgs.size(), 1u);
+    EXPECT_EQ(msgs[0].second, "hello from v4");
+
+    // Version and every later column or table are in place.
+    sqlite3* raw = nullptr;
+    ASSERT_EQ(sqlite3_open(old_path.c_str(), &raw), SQLITE_OK);
+    auto pragma_int = [&](const char* sql) {
+        sqlite3_stmt* st = nullptr;
+        int value = -1;
+        if (sqlite3_prepare_v2(raw, sql, -1, &st, nullptr) == SQLITE_OK &&
+            sqlite3_step(st) == SQLITE_ROW) {
+            value = sqlite3_column_int(st, 0);
+        }
+        sqlite3_finalize(st);
+        return value;
+    };
+    EXPECT_EQ(pragma_int("PRAGMA user_version;"), 11);
+    EXPECT_EQ(pragma_int("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name IN "
+                         "('prompt_tokens','completion_tokens','total_tokens','agent_mode',"
+                         "'reasoning_mode','persona','usage_stats');"), 7);
+    EXPECT_EQ(pragma_int("SELECT COUNT(*) FROM sqlite_master WHERE name = 'queued_prompts';"), 1);
+
+    // Running it again on a current file changes nothing.
+    init_database();
+    EXPECT_EQ(pragma_int("PRAGMA user_version;"), 11);
+    sqlite3_close(raw);
+
+    setenv("QCODE_DB_PATH", db_path_.c_str(), 1);
+    std::filesystem::remove(old_path, ec);
+    std::filesystem::remove(old_path + "-wal", ec);
+    std::filesystem::remove(old_path + "-shm", ec);
 }
 
 TEST_F(SessionStoreTest, LoadLastSessionMessage) {

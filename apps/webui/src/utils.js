@@ -605,3 +605,14 @@ export function findStableMarkdownCut(text, from = 0) {
   }
   return cut;
 }
+
+// Delay before the next /api/health probe while the server is unreachable:
+// 2 s, 4 s, 8 s, then 10 s.
+export function healthRetryDelayMs(failures) {
+  return Math.min(2000 * Math.pow(2, Math.max(0, failures - 1)), 10000);
+}
+
+// Proxies answer 502-504 while the server restarts; those are retried.
+export function isRetryableHttpStatus(status) {
+  return status === 502 || status === 503 || status === 504;
+}

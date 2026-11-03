@@ -89,7 +89,7 @@ window.copyPlantUmlCode = function(diagramId, btn) {
   });
 };
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, isRetryableHttpStatus } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -1272,9 +1272,9 @@ function setupEventListeners() {
       const res = await fetch('/session/' + state.sessionId + '/clear', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
       });
-      if (!res.ok) { showToast('Failed: ' + await res.text()); return; }
+      if (!res.ok) { showToast('Could not clear chat: ' + await responseError(res), 'error'); return; }
     } catch (e) {
-      showToast('Failed: ' + e.message);
+      showToast('Could not clear chat: ' + e.message, 'error');
       return;
     }
     const session = state.openSessions.find(s => s.id === state.sessionId);
@@ -1629,21 +1629,59 @@ function updateStatusBar() {
   syncThinkingToggleBtn();
 }
 
-async function updateConnectionStatus() {
-  const status = document.getElementById('connection-status');
-  if (!status) return;
+// The 30 s health check is the happy-path heartbeat. While the server is
+// unreachable the check retries with backoff so a restart is noticed within
+// seconds; each outage shows one toast, and recovery resyncs open sessions.
+const kHealthTimeoutMs = 4000;
+let connOnline = true;
+let connFailures = 0;
+let connTimer = null;
+let connProbe = null;
+
+function fetchWithTimeout(url, opts, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { ...(opts || {}), signal: ctrl.signal }).finally(() => clearTimeout(timer));
+}
+
+function updateConnectionStatus() {
+  if (!connProbe) connProbe = probeConnection().finally(() => { connProbe = null; });
+  return connProbe;
+}
+
+async function probeConnection() {
   let online = navigator.onLine;
   if (online) {
     try {
-      const res = await fetch('/api/health');
+      const res = await fetchWithTimeout('/api/health', { cache: 'no-store' }, kHealthTimeoutMs);
       online = res.ok;
     } catch (_) {
       online = false;
     }
   }
-  status.classList.toggle('offline', !online);
-  const label = status.querySelector('.connection-label');
-  if (label) label.textContent = online ? 'Connected' : 'Offline';
+  setConnectionOnline(online);
+}
+
+function setConnectionOnline(online) {
+  const was = connOnline;
+  connOnline = online;
+  clearTimeout(connTimer);
+  connTimer = null;
+  connFailures = online ? 0 : connFailures + 1;
+  const status = document.getElementById('connection-status');
+  if (status) {
+    status.classList.toggle('offline', !online);
+    const label = status.querySelector('.connection-label');
+    if (label) label.textContent = online ? 'Connected' : 'Offline';
+  }
+  if (!online) {
+    connTimer = setTimeout(updateConnectionStatus, healthRetryDelayMs(connFailures));
+    if (was) showToast('Connection lost — retrying', 'warning');
+  } else if (!was) {
+    showToast('Connection restored', 'success');
+    // Catch up on whatever changed while the server was away.
+    for (const s of state.openSessions) refreshSession(s);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1789,7 +1827,9 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
     if (cursorIdx >= filtered.length) cursorIdx = Math.max(0, filtered.length - 1);
     if (cursorIdx < 0) cursorIdx = 0;
     if (filtered.length === 0) {
-      body.innerHTML = '<div class="picker-empty">No matches</div>';
+      body.innerHTML = '<div class="picker-empty">' + (query.trim()
+        ? 'No matches for “' + esc(query.trim()) + '”'
+        : 'Nothing to show') + '</div>';
       return;
     }
     let html = '';
@@ -1866,7 +1906,7 @@ function showRenameModal(targetSessionId, currentTitle) {
   input.select();
   async function doRename() {
     const title = input.value.trim();
-    if (!title) { showToast('Enter a title'); return; }
+    if (!title) { showToast('Enter a title', 'warning'); return; }
     try {
       const res = await fetch('/rename', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1884,8 +1924,8 @@ function showRenameModal(targetSessionId, currentTitle) {
         renderSessionTabs();
         showToast('Renamed to: ' + title);
       }
-      else showToast('Failed: ' + await res.text());
-    } catch (e) { showToast('Failed: ' + e.message); }
+      else showToast('Could not rename session: ' + await responseError(res), 'error');
+    } catch (e) { showToast('Could not rename session: ' + e.message, 'error'); }
     closeModal();
   }
   document.getElementById('rename-ok-btn').addEventListener('click', doRename);
@@ -2338,7 +2378,11 @@ function selectModel(provider, model) {
 // ── /session ──
 async function handleSessionCommand(args) {
   let sessions;
-  try { const res = await fetch('/sessions'); sessions = await res.json(); } catch (e) { showToast('Failed: ' + e.message); return; }
+  try {
+    const res = await fetch('/sessions');
+    if (!res.ok) throw new Error(await responseError(res));
+    sessions = await res.json();
+  } catch (e) { showToast('Could not load sessions: ' + e.message, 'error'); return; }
   if (!sessions || sessions.length === 0) { showToast('No saved sessions'); return; }
   const items = sessions.map(s => ({
     id: s.id, label: s.title || '(untitled)',
@@ -2691,7 +2735,9 @@ async function refreshSession(session, opts) {
     session.serverRev = rev;
     await syncSessionMessages(session);
   } catch (_) {
-    // Offline or server restarting: the next trigger retries.
+    // Offline or server restarting: probe now so the indicator and backoff
+    // react without waiting for the 30 s health tick.
+    updateConnectionStatus();
   } finally {
     session.refreshing = false;
     const again = session.refreshAgain;
@@ -2701,7 +2747,7 @@ async function refreshSession(session, opts) {
 }
 
 function refreshActiveSession() {
-  if (document.hidden) return;
+  if (document.hidden || !connOnline) return;
   refreshSession(state.openSessions.find(s => s.id === state.sessionId));
 }
 
@@ -2750,8 +2796,8 @@ async function doRenameDirect(title) {
   try {
     const res = await fetch('/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: state.sessionId, title }) });
     if (res.ok) { state.sessionTitle = title; updateStatusBar(); showToast('Renamed to: ' + title); }
-    else showToast('Failed: ' + await res.text());
-  } catch (e) { showToast('Failed: ' + e.message); }
+    else showToast('Could not rename session: ' + await responseError(res), 'error');
+  } catch (e) { showToast('Could not rename session: ' + e.message, 'error'); }
 }
 async function handleCompactCommand() {
   if (!state.sessionId) {
@@ -2806,7 +2852,7 @@ async function handleCompactCommand() {
 // reattaches with {resume: true}: the server replays a snapshot (history
 // plus the turn's unsaved text) and continues with the turn's later events.
 
-const kMaxStreamRetries = 5;
+const kMaxStreamRetries = 8;
 // The server writes a heartbeat every 2.5 s while a turn is idle; this much
 // silence means the connection died without closing (sleep, proxy, network
 // switch), so drop it and resume from the server's event log.
@@ -2851,12 +2897,13 @@ function postGenerate(session, text) {
   });
 }
 
+const kResumeTimeoutMs = 10000;
 function postResume(session) {
-  return fetch(`/session/${session.id}/generate`, {
+  return fetchWithTimeout(`/session/${session.id}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ resume: true, session_id: session.id })
-  });
+  }, kResumeTimeoutMs);
 }
 
 function postCancel(sessionId) {
@@ -2981,6 +3028,10 @@ function applyTurnEvent(session, stream, evt) {
     return;
   }
   handleEvent(evt, stream.msg, session);
+  if (evt.type === 'generation.complete' && evt.turn == null && !evt.error && stream.msg.content) {
+    stream.msg.streamError = 'Connection lost before the reply finished. Click Retry to regenerate it.';
+    stream.msg.stoppedEarly = true;
+  }
 }
 
 // Read one NDJSON response into `stream` until it ends, completes or stops.
@@ -3041,11 +3092,15 @@ async function followTurn(session, stream, res) {
       stream.receivedData = false;
       try {
         if (!res) res = await postResume(session);
-        if (!res.ok) throw new Error(await responseError(res));
+        if (!res.ok) {
+          if (isRetryableHttpStatus(res.status)) throw new TypeError('Server unavailable (HTTP ' + res.status + ')');
+          throw new Error(await responseError(res));
+        }
         if (!res.body) throw new Error('The server returned an empty response stream');
         await readTurnStream(session, stream, res);
       } catch (e) {
         error = e;
+        if (isNetworkError(e)) updateConnectionStatus();
       }
       res = null;
       if (stream.stopped || stream.complete) return;
@@ -3061,7 +3116,7 @@ async function followTurn(session, stream, res) {
         return;
       }
       retries++;
-      if (retries > 1) showToast(`Connection dropped — reconnecting (attempt ${retries}/${kMaxStreamRetries})…`, 'warning');
+      if (retries === 1) showToast('Connection dropped — reconnecting…', 'warning');
       await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(1.5, retries - 1), 5000)));
       if (stream.stopped) return;
     }
@@ -3501,17 +3556,17 @@ async function loadFilesTab() {
 async function loadGitChanges() {
   if (!filesGit) return;
   if (!state.sessionId) {
-    filesGit.innerHTML = '<div class="files-empty">No active session.</div>';
+    filesGit.innerHTML = '<div class="files-empty">No active session. Select or create one to see its working-tree changes.</div>';
     return;
   }
   filesGit.innerHTML = '<div class="files-empty">Loading working tree…</div>';
   try {
     const res = await fetch('/session/' + state.sessionId + '/files');
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await responseError(res));
     const data = await res.json();
     renderGitChanges(data);
   } catch (e) {
-    filesGit.innerHTML = '<div class="files-empty">Failed to load files: ' + esc(e.message) + '</div>';
+    filesGit.innerHTML = '<div class="files-empty">Could not load changes: ' + esc(e.message) + '</div>';
   }
 }
 
@@ -3705,7 +3760,7 @@ function renderFsBreadcrumb(relPath) {
 async function loadFsListing(relPath) {
   if (!fsListing) return;
   if (!state.sessionId) {
-    fsListing.innerHTML = '<div class="files-empty">No active session.</div>';
+    fsListing.innerHTML = '<div class="files-empty">No active session. Select or create one to browse its files.</div>';
     if (fsBreadcrumb) fsBreadcrumb.innerHTML = '';
     return;
   }
@@ -3760,7 +3815,9 @@ function renderFsListingEntries() {
   }
 
   if (entries.length === 0) {
-    html += '<div class="files-empty">' + (filter ? 'No matching files.' : 'Empty directory.') + '</div>';
+    html += '<div class="files-empty">' + (filter
+      ? 'No files match “' + esc((state.fsFilterText || '').trim()) + '”. Clear the filter to show all files.'
+      : 'This folder is empty.') + '</div>';
   } else {
     for (const e of entries) {
       const isDir = e.type === 'dir';
@@ -4437,7 +4494,7 @@ async function loadStatsTab(opts) {
   const requested = state.sessionId;
   try {
     const res = await fetch('/session/' + state.sessionId + '/stats');
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await responseError(res));
     const data = await res.json();
     if (requested !== state.sessionId) return;  // switched sessions meanwhile
     lastStatsData = data;
@@ -5816,7 +5873,8 @@ async function createNewSession(title = '', workspace = '') {
         custom_id: title
       })
     });
-    if (res.ok) {
+    if (!res.ok) throw new Error(await responseError(res));
+    {
       const data = await res.json();
       const resolvedTitle = (data.title && data.title !== data.id)
         ? data.title
@@ -5837,7 +5895,8 @@ async function createNewSession(title = '', workspace = '') {
       showToast('New session created');
     }
   } catch (e) {
-    showToast('Failed to create session: ' + e.message);
+    showToast('Could not create session: ' + e.message, 'error');
+    renderSessionTabs();
   }
 }
 
@@ -5992,7 +6051,7 @@ async function deleteSessionPermanently(id) {
   try {
     const res = await fetch(`/session/${id}`, { method: 'DELETE' });
     if (!res.ok) {
-      throw new Error(await res.text());
+      throw new Error(await responseError(res));
     }
     // Remove deleted session and any child sessions linked to it
     const removedIds = new Set([id]);
@@ -6022,7 +6081,7 @@ async function deleteSessionPermanently(id) {
     }
     showToast("Session and child subagents deleted.");
   } catch (e) {
-    showToast("Failed to delete session: " + e.message);
+    showToast("Could not delete session: " + e.message, 'error');
   }
 }
 
@@ -6041,7 +6100,9 @@ function renderSessionTabs() {
   if (q) list = list.filter(x => ((x.title||'') + ' ' + (x.workspace||'') + ' ' + x.id).toLowerCase().includes(q));
   list.sort((a, b) => ((state.pinned.includes(b.id)?1:0) - (state.pinned.includes(a.id)?1:0)));
   if (list.length === 0) {
-    sessionTabsContainer.innerHTML = '<div class="session-list-empty">No sessions yet</div>';
+    sessionTabsContainer.innerHTML = q
+      ? '<div class="session-list-empty">No sessions match “' + esc(q) + '”.</div>'
+      : '<div class="session-list-empty">No sessions yet. Click + to start one.</div>';
     return;
   }
   const pinIcon = (on) => `<svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;

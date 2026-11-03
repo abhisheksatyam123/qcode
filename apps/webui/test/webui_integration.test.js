@@ -326,7 +326,7 @@ test('WebUI session refresh heals stale lists without clobbering streams', () =>
   assert.match(appJs, /window\.addEventListener\('focus', refreshActiveSession\)/, 'missing focus trigger');
   assert.match(appJs, /window\.addEventListener\('online', refreshActiveSession\)/, 'missing online trigger');
   assert.match(appJs, /setInterval\(refreshActiveSession, 5000\)/, 'missing light poll');
-  assert.match(appJs, /function refreshActiveSession\(\) \{\s*if \(document\.hidden\) return;/, 'poll must skip hidden tabs');
+  assert.match(appJs, /function refreshActiveSession\(\) \{\s*if \(document\.hidden \|\| !connOnline\) return;/, 'poll must skip hidden tabs and known-offline servers');
 
   // Post-stream reconciliation: a finished turn forces one refresh.
   assert.match(appJs, /setTimeout\(\(\) => refreshSession\(session, \{ force: true \}\), 300\)/, 'missing post-stream reconcile');

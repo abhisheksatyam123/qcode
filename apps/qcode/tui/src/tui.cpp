@@ -52,6 +52,8 @@
 #include "picker_helpers.h"
 #include "overlays.h"
 #include "git_monitor.h"
+#include "frame_pacer.h"
+#include "clipboard.h"
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -125,13 +127,20 @@ int qcode::app::run_tui(int argc, char* argv[]) {
     auto app_running = std::make_shared<std::atomic<bool>>(true);
     auto compaction_thread = std::make_shared<qcode::compat::jthread>();
     auto screen = ScreenInteractive::Fullscreen();
+    // Redraws asked for by worker threads (bus events, store changes, the
+    // spinner) go through the pacer, which caps them at $QCODE_TUI_FPS
+    // (default 60) instead of drawing a full frame per streamed token.
+    // Shared so a late worker callback can never outlive it.
+    auto frame_pacer = std::make_shared<qcode::tui::FramePacer>(
+        [&screen]() { screen.Post(Event::Custom); },
+        qcode::tui::frame_interval_from_env(std::getenv("QCODE_TUI_FPS")));
 
     // ═══════════════════════════════════════════════════════════
     //  1. Initialize the message bus + store
     // ═══════════════════════════════════════════════════════════
     auto bus = std::make_shared<qcode::bus::BusRuntime>();
     register_all_events(*bus);
-    bus->set_wake_callback([&screen]() { screen.Post(Event::Custom); });
+    bus->set_wake_callback([frame_pacer]() { frame_pacer->request(); });
     // Populate the provider registry once, before any generation thread starts,
     // so resolve() only ever reads a fully-initialized registry.
     qcode::providers::register_authenticated_providers();
@@ -153,10 +162,10 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         std::atomic<bool> running{false};
     };
     auto subagent_refresh = std::make_shared<SubagentRefresh>();
-    auto refresh_subagents = [&state, &screen, subagent_refresh, app_running]() {
+    auto refresh_subagents = [&state, frame_pacer, subagent_refresh, app_running]() {
         if (subagent_refresh->running.exchange(true)) return;
         const std::string sid = state.session_id ? *state.session_id : "";
-        std::thread([sid, subagent_refresh, app_running, &screen] {
+        std::thread([sid, subagent_refresh, app_running, frame_pacer] {
             auto subagent_data = qcode::TaskTool::list_tasks(sid);
             std::vector<qcode::SubagentEntry> entries;
             if (subagent_data.contains("metadata") &&
@@ -176,7 +185,7 @@ int qcode::app::run_tui(int argc, char* argv[]) {
                 subagent_refresh->ready = std::move(entries);
             }
             subagent_refresh->running = false;
-            if (app_running->load()) screen.Post(Event::Custom);
+            if (app_running->load()) frame_pacer->request();
         }).detach();
     };
     auto apply_subagent_refresh = [&state, subagent_refresh]() {
@@ -196,11 +205,11 @@ int qcode::app::run_tui(int argc, char* argv[]) {
     qcode::GenerationController generation(store, bus, app_running);
     // A background subagent finished: redraw, so an idle session picks up
     // its report (see the queue start below).
-    qcode::TaskTool::set_notice_listener([&screen]() { screen.Post(Event::Custom); });
+    qcode::TaskTool::set_notice_listener([frame_pacer]() { frame_pacer->request(); });
     qcode::tui::TuiGitMonitor git_monitor;
 
     // ── Spinner: advance frame periodically + queue watchdog ──
-    std::thread spinner_thread([&store, &generation, app_running, &screen]() {
+    std::thread spinner_thread([&store, &generation, app_running, frame_pacer]() {
         qcode::logger::set_thread_name("spinner");
         try {
             while (app_running->load()) {
@@ -212,7 +221,7 @@ int qcode::app::run_tui(int argc, char* argv[]) {
                     store.advance_frame();
                 } else if (queued && !generation.is_busy() && st != "error") {
                     // Fail-safe watchdog: wake the UI to process pending queued prompts.
-                    screen.Post(Event::Custom);
+                    frame_pacer->request();
                 }
                 // 10 Hz only while a spinner or queue needs it; an idle TUI
                 // wakes 4 times a second instead of 10.
@@ -299,7 +308,9 @@ int qcode::app::run_tui(int argc, char* argv[]) {
             }
         }
     }
-    qcode::update_modified_files(state);
+    // Git status runs off the first-paint path: `git diff` and `git status`
+    // can take seconds in a large repo, so the Files tab fills in on a worker.
+    git_monitor.request_refresh(screen);
     refresh_subagents();
 
     // ── Popups state ──
@@ -1169,6 +1180,9 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         input
     });
 
+    int selection_press_x = -1;
+    int selection_press_y = -1;
+    int copy_selection_in_frames = 0;
     main_container |= CatchEvent([&](Event e) {
         if (qcode::tui::handle_variant_select_keys(e, overlays, [&](const std::string& vid) { apply_variant(vid); })) return true;
         // Shift+Tab: switch agent mode (normal <-> orchestrator).
@@ -1183,9 +1197,11 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         // emulator can do native text selection (clean copy/paste).
         if (e == Event::F3) {
             *state.copy_mode = !*state.copy_mode;
+            // TrackMouse() only takes effect when FTXUI next (re)installs the
+            // terminal (after Ctrl+Z); the renderer switches reporting now.
             screen.TrackMouse(!*state.copy_mode);
             if (*state.copy_mode) {
-                store.add_toast("Copy mode ON - select text with mouse, press F3 to return",
+                store.add_toast("Copy mode ON - native terminal selection, F3 to return",
                                 "info", 4000);
             } else {
                 store.add_toast("Copy mode OFF", "info", 1500);
@@ -1246,6 +1262,26 @@ int qcode::app::run_tui(int argc, char* argv[]) {
 
 
         constexpr int kLinesPerWheel = 3;
+        if (e.is_mouse() && e.mouse().button == Mouse::Left) {
+            const auto& m = e.mouse();
+            if (m.motion == Mouse::Pressed) {
+                selection_press_x = m.x;
+                selection_press_y = m.y;
+            } else if (m.motion == Mouse::Released) {
+                const bool dragged =
+                    m.x != selection_press_x || m.y != selection_press_y;
+                selection_press_x = selection_press_y = -1;
+                if (!dragged) {
+                    // A plain click: report it handled so FTXUI drops the
+                    // one-cell selection it started on press.
+                    return true;
+                }
+                // The selection's text is collected while a frame paints, so
+                // read it two frames on, after the release frame is drawn.
+                copy_selection_in_frames = 2;
+                screen.Post(Event::Custom);
+            }
+        }
         if (e.is_mouse()) {
             // ── Click-to-position in the wrapped chat input ──
             // FTXUI's Input maps clicks with logical lines (and its private
@@ -1414,9 +1450,9 @@ int qcode::app::run_tui(int argc, char* argv[]) {
     // the UI thread (bus drain inside the Renderer, event handlers) are already
     // followed by a redraw, so only worker-thread notifications need a Post.
     const std::thread::id ui_thread_id = std::this_thread::get_id();
-    auto render_trigger = store.on_change([&screen, ui_thread_id]() {
+    auto render_trigger = store.on_change([frame_pacer, ui_thread_id]() {
         if (std::this_thread::get_id() != ui_thread_id) {
-            screen.Post(Event::Custom);
+            frame_pacer->request();
         }
     });
 
@@ -1425,6 +1461,27 @@ int qcode::app::run_tui(int argc, char* argv[]) {
     qcode::perf::RollingTimer frame_timer("tui_frame");
     auto renderer = Renderer(main_container, [&] {
         const qcode::perf::RollingTimer::Scope frame_scope(frame_timer);
+        // Mouse reporting, re-asserted every frame (a few bytes) so it also
+        // survives FTXUI re-installing the terminal after Ctrl+Z: button-event
+        // tracking normally, nothing in copy mode (native selection).
+        std::cout << (*state.copy_mode ? qcode::tui::kMouseTrackingOff
+                                       : qcode::tui::kMouseTrackingOn);
+        if (copy_selection_in_frames > 0 && --copy_selection_in_frames == 0) {
+            const std::string selected = screen.GetSelection();
+            if (!selected.empty()) {
+                std::string osc52;
+                qcode::tui::copy_to_clipboard(selected, osc52);
+                std::cout << osc52;
+                const auto lines =
+                    1 + std::count(selected.begin(), selected.end(), '\n');
+                store.add_toast(
+                    "Copied " + std::to_string(selected.size()) + " chars" +
+                        (lines > 1 ? " (" + std::to_string(lines) + " lines)" : ""),
+                    "success", 1200);
+            }
+        } else if (copy_selection_in_frames > 0) {
+            screen.Post(Event::Custom);
+        }
         // Track terminal height for mouse selection calculations. Use the
         // debounced stable size so transient PTY size churn during long bash
         // tool runs does not flip FTXUI's resize detection / force clears.
@@ -1555,6 +1612,10 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         LOG_ERROR("Main: uncaught exception in screen.Loop: {}", e.what());
         std::cerr << "\n[qcode tui error] " << e.what() << "\n";
     }
+    frame_pacer->stop();
+    // FTXUI resets the modes it set (1000/1003/1006/1015) on exit; 1002 is
+    // ours, so turn it off too or the shell would keep receiving drags.
+    std::cout << "\033[?1002l" << std::flush;
 
     // ═══════════════════════════════════════════════════════════
     //  7. Cleanup

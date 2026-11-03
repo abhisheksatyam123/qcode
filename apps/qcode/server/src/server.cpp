@@ -101,9 +101,10 @@ int qcode::app::run_server(int argc, char* argv[]) {
         LOG_ERROR("No providers configured. Add them to {}",
                   qcode::config_path());
         // Logs go to a file, so also tell the terminal user what to do.
-        std::cerr << "Error: no providers configured. Add them to "
-                  << qcode::config_path()
-                  << " or set an API key such as OPENAI_API_KEY.\n";
+        std::cerr << "Error: no providers configured. Add a provider with at least one "
+                     "model to " << qcode::config_path() << ".\n"
+                     "Its API key can go in the file or come from the environment, "
+                     "for example OPENAI_API_KEY.\n";
         return 1;
     }
     LOG_INFO("Loaded {} provider(s)", providers_list->size());

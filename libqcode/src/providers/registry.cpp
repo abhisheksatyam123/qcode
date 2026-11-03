@@ -46,7 +46,9 @@ openai::CompatibleOptions to_openai(const ProviderOptions& options,
 ClientResolution resolve_openrouter(const ProviderOptions& options) {
   const auto api_key = first_key(options.api_key, "OPENROUTER_API_KEY");
   if (api_key.empty())
-    return ClientResolution::fail("OPENROUTER_API_KEY not set.");
+    return ClientResolution::fail(
+        "OPENROUTER_API_KEY is not set. Export it, or add the key as "
+        "options.apiKey for openrouter in opencode.json.");
   return ClientResolution{openai::create_client(
       api_key, to_openai(options, "https://openrouter.ai/api"))};
 }
@@ -150,7 +152,9 @@ ClientResolution resolve_anthropic(const ProviderOptions& options) {
 ClientResolution resolve_openai(const ProviderOptions& options) {
   const auto api_key = first_key(options.api_key, "OPENAI_API_KEY");
   if (api_key.empty() && (options.base_url.empty() || !allows_keyless_zen(options.base_url))) {
-    return ClientResolution::fail("OPENAI_API_KEY not set.");
+    return ClientResolution::fail(
+        "OPENAI_API_KEY is not set. Export it, or add the key as "
+        "options.apiKey for openai in opencode.json.");
   }
   const auto base_url =
       options.base_url.empty() ? "https://api.openai.com/v1" : options.base_url;

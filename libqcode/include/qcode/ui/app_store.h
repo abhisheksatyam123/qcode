@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 #include <utility>
@@ -44,7 +45,10 @@ public:
     // Memory-only enqueue for prompts already persisted (session restore).
     void restore_queued_prompt(const std::string& prompt);
     bool has_queued_prompt();
-    std::string dequeue_prompt();
+    // Takes the next queued prompt off the queue and its persisted row. Returns
+    // nullopt, with the prompt still queued, if the row could not be deleted: the
+    // prompt must not run while a restart could run it again.
+    std::optional<std::string> dequeue_prompt();
     void append_to_last_queued_prompt(const std::string& text);
     size_t queue_size() const;
     void clear_prompt_queue();
