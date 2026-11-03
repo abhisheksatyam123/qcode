@@ -615,9 +615,15 @@ void AppStore::wire() {
         bus_.publish<ContextSizeUpdated>({.context_tokens = reset_tokens});
 
         // Overwrite history in SQLite database to persist the compact set
-        qcode::session::overwrite_session_history(*state_.session_id, *state_.messages_history);
-
-        add_toast("Compaction complete", "success", 3000);
+        if (qcode::session::overwrite_session_history(*state_.session_id, *state_.messages_history)) {
+            add_toast("Compaction complete", "success", 3000);
+        } else {
+            // Another process wrote to this session, so the compacted copy
+            // would drop its rows. Show what is stored instead.
+            state_.messages_history = std::make_shared<qcode::Messages>(
+                qcode::session::load_session_history_parsed(*state_.session_id));
+            add_toast("Compaction skipped: session changed elsewhere", "warning", 4000);
+        }
         set_status("idle");
         notify();
     }));
