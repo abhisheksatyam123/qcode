@@ -63,5 +63,40 @@ TEST(TaskToolContractTest, BackgroundSubagentGoesFromRunningToDone) {
   EXPECT_THAT(done.value("output", ""), testing::HasSubstr("contract report"));
 }
 
+
+TEST(TaskToolContractTest, KillBeforeTheRunReturnsReportsKilledWithPartialOutput) {
+  const std::string lead = "contract_kill_lead";
+  session::ensure_session_row(lead, "Lead", "p", "m", "/ws");
+  ToolExecutionContext context;
+  context.session_id = lead;
+  context.subagent_runner = [](const JsonValue&, std::shared_ptr<std::atomic<bool>> flag) {
+    while (!flag->load()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    return JsonValue{{"output", "half done"}};  // returns after the kill
+  };
+
+  const JsonValue spawned = TaskTool::execute(
+      JsonValue{{"prompt", "work"}, {"description", "contract"}, {"background", true}}, context);
+  const std::string id = spawned["metadata"].value("task_id", "");
+  ASSERT_FALSE(id.empty());
+  EXPECT_TRUE(TaskTool::is_session_running(id));
+
+  EXPECT_FALSE(TaskTool::execute(JsonValue{{"action", "kill"}, {"task_id", id}}, context)
+                   .contains("error"));
+  for (int i = 0; i < 2000 && TaskTool::is_session_running(id); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_FALSE(TaskTool::is_session_running(id));
+
+  const auto notices = TaskTool::take_notices(lead);
+  ASSERT_EQ(notices.size(), 1u);
+  EXPECT_THAT(notices[0], testing::StartsWith("[Background task " + id + " (contract) killed]"));
+  EXPECT_THAT(notices[0], testing::HasSubstr("half done"));
+
+  const JsonValue status = TaskTool::execute(
+      JsonValue{{"action", "status"}, {"task_id", id}}, context);
+  EXPECT_THAT(status.value("output", ""), testing::StartsWith("Task " + id + ": killed"));
+  EXPECT_THAT(status.value("output", ""), testing::HasSubstr("half done"));
+}
+
 }  // namespace
 }  // namespace qcode
