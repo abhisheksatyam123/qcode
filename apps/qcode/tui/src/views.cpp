@@ -1016,6 +1016,7 @@ ftxui::Element render_view(
             static std::unordered_map<std::string, bool> cached_collapse;
             static std::unordered_map<unsigned long, bool> cached_expand;
             static std::unordered_map<size_t, Element> message_cache;
+            static std::unordered_map<size_t, int> height_cache;
             static ToolPairing tool_pairing;
 
             // Cached trees hold HitBox& into these maps and fill
@@ -1023,6 +1024,7 @@ ftxui::Element render_view(
             // only together with the trees (boxes are parked per frame).
             auto reset_message_cache = [&] {
                 message_cache.clear();
+                height_cache.clear();
                 if (state.tool_arrow_boxes) state.tool_arrow_boxes->clear();
                 if (state.tool_task_boxes) state.tool_task_boxes->clear();
                 if (state.tool_task_sessions) state.tool_task_sessions->clear();
@@ -1037,17 +1039,26 @@ ftxui::Element render_view(
             const bool history_changed =
                 history_replaced || history_size != cached_history_size;
 
+            // A collapse/expand click changes one message: drop only that
+            // message's tree instead of re-rendering the whole history.
+            auto invalidate_message = [&](size_t i) {
+                message_cache.erase(i);
+                height_cache.erase(i);
+            };
+            const bool collapse_changed =
+                state.tool_collapse_state &&
+                cached_collapse != *state.tool_collapse_state;
+            const bool expand_changed =
+                state.thinking_expand_state &&
+                cached_expand != *state.thinking_expand_state;
+
             if (history_replaced ||
                 terminal_width != cached_width ||
                 cached_provider != selected_provider ||
                 cached_model != selected_model ||
                 cached_theme != *state.theme ||
                 cached_session != *state.session_id ||
-                cached_thinking != *state.show_thinking ||
-                (state.tool_collapse_state &&
-                 cached_collapse != *state.tool_collapse_state) ||
-                (state.thinking_expand_state &&
-                 cached_expand != *state.thinking_expand_state)) {
+                cached_thinking != *state.show_thinking) {
                 reset_message_cache();
                 cached_width = terminal_width;
                 cached_provider = selected_provider;
@@ -1059,63 +1070,129 @@ ftxui::Element render_view(
                     cached_collapse = *state.tool_collapse_state;
                 if (state.thinking_expand_state)
                     cached_expand = *state.thinking_expand_state;
+            } else {
+                if (collapse_changed) {
+                    std::unordered_set<std::string> changed;
+                    for (const auto& [id, v] : *state.tool_collapse_state) {
+                        auto it = cached_collapse.find(id);
+                        if (it == cached_collapse.end() || it->second != v)
+                            changed.insert(id);
+                    }
+                    for (const auto& [id, v] : cached_collapse) {
+                        if (!state.tool_collapse_state->count(id))
+                            changed.insert(id);
+                    }
+                    const auto& hist = *state.messages_history;
+                    for (size_t i = 0; i < hist.size() && !changed.empty(); ++i) {
+                        for (const auto& part : hist[i].content) {
+                            const auto* call =
+                                std::get_if<qcode::ToolCallContentPart>(&part);
+                            if (call && changed.count(call->id)) {
+                                invalidate_message(i);
+                                break;
+                            }
+                        }
+                    }
+                    cached_collapse = *state.tool_collapse_state;
+                }
+                if (expand_changed) {
+                    for (const auto& [key, v] : *state.thinking_expand_state) {
+                        auto it = cached_expand.find(key);
+                        if (it == cached_expand.end() || it->second != v)
+                            invalidate_message(static_cast<size_t>(key));
+                    }
+                    for (const auto& [key, v] : cached_expand) {
+                        if (!state.thinking_expand_state->count(key))
+                            invalidate_message(static_cast<size_t>(key));
+                    }
+                    cached_expand = *state.thinking_expand_state;
+                }
             }
             cache_owner = state.messages_history;
             cached_history_size = history_size;
-
-            if (message_cache.size() > 1000) {
-                reset_message_cache();
-            }
 
             if (history_changed) {
                 build_tool_pairing(*state.messages_history, tool_pairing);
             }
 
+            // Every row of the chat column with its height in terminal lines.
+            // Heights of finished messages are cached with their trees, so a
+            // frame only measures the rows it actually (re)renders.
+            Elements rows;
+            std::vector<int> row_heights;
+            std::vector<long> row_message;  // history index, -1 = not a message
+            auto add_row = [&](Element el, long message_index, int height = -1) {
+                if (height < 0) {
+                    el->ComputeRequirement();
+                    height = std::max(0, el->requirement().min_y);
+                }
+                rows.push_back(std::move(el));
+                row_heights.push_back(height);
+                row_message.push_back(message_index);
+            };
+
             if (first > 0) {
-                msgs.push_back(
-                    text(" " + std::to_string(first) +
-                         " earlier messages · scroll up to view ") |
-                    dim | hcenter);
-                msgs.push_back(separatorLight() | color(dim_gray()));
+                add_row(text(" " + std::to_string(first) +
+                             " earlier messages · scroll up to view ") |
+                            dim | hcenter,
+                        -1);
+                add_row(separatorLight() | color(dim_gray()), -1);
             }
+            // Renders history row `i` (and caches it when finished).
             std::vector<const qcode::Message*> paired_results;
-            for (size_t i = first; i < last; ++i) {
-                // Result rows are drawn inside their call's tool block.
-                if (tool_pairing.consumed[i]) continue;
+            auto render_row = [&](size_t i) -> Element {
+                const bool cacheable =
+                    i + 1 < history_size && !tool_pairing.pending[i];
                 const auto& msg = (*state.messages_history)[i];
                 paired_results.clear();
-                if (auto rows = tool_pairing.result_rows.find(i);
-                    rows != tool_pairing.result_rows.end()) {
-                    for (size_t r : rows->second) {
+                if (auto result_rows = tool_pairing.result_rows.find(i);
+                    result_rows != tool_pairing.result_rows.end()) {
+                    for (size_t r : result_rows->second) {
                         paired_results.push_back(&(*state.messages_history)[r]);
                     }
                 }
+                const bool in_flight =
+                    !cacheable && state.is_generating->load();
+                auto rendered = render_message(
+                    msg, state, providers_list, selected_provider,
+                    selected_model, *state.theme, nullptr,
+                    static_cast<int>(i), terminal_width, in_flight,
+                    paired_results);
+                rendered->ComputeRequirement();
+                if (cacheable) {
+                    message_cache[i] = rendered;
+                    height_cache[i] = std::max(0, rendered->requirement().min_y);
+                }
+                return rendered;
+            };
+            for (size_t i = first; i < last; ++i) {
+                // Result rows are drawn inside their call's tool block.
+                if (tool_pairing.consumed[i]) continue;
                 // A call still running re-renders until its result lands.
                 const bool cacheable =
                     i + 1 < history_size && !tool_pairing.pending[i];
-                auto cached = cacheable ? message_cache.find(i)
-                                        : message_cache.end();
-                if (cached != message_cache.end()) {
-                    msgs.push_back(cached->second);
-                } else {
-                    const bool in_flight =
-                        !cacheable && state.is_generating->load();
-                    auto rendered = render_message(
-                        msg, state, providers_list, selected_provider,
-                        selected_model, *state.theme, nullptr,
-                        static_cast<int>(i), terminal_width, in_flight,
-                        paired_results);
-                    if (cacheable) message_cache[i] = rendered;
-                    msgs.push_back(std::move(rendered));
+                if (cacheable) {
+                    if (auto h = height_cache.find(i); h != height_cache.end()) {
+                        // Height known: the tree (possibly evicted) is only
+                        // needed if the row turns out to be on screen.
+                        auto cached = message_cache.find(i);
+                        add_row(cached != message_cache.end() ? cached->second
+                                                              : Element(),
+                                static_cast<long>(i), h->second);
+                        continue;
+                    }
                 }
+                auto rendered = render_row(i);
+                const int height = std::max(0, rendered->requirement().min_y);
+                add_row(std::move(rendered), static_cast<long>(i), height);
                 // No separator line between messages: the role header
                 // ("❯ You" / "❯ Assistant") is delimiter enough.
             }
             if (last < history_size) {
-                msgs.push_back(
-                    text(" " + std::to_string(history_size - last) +
-                         " later messages · scroll down to view ") |
-                    dim | hcenter);
+                add_row(text(" " + std::to_string(history_size - last) +
+                             " later messages · scroll down to view ") |
+                            dim | hcenter,
+                        -1);
             }
 
             // Queued prompts appear at the end of the message list (compact amber block)
@@ -1123,7 +1200,7 @@ ftxui::Element render_view(
                 state.queued_prompt_texts ? state.queued_prompt_texts.get()
                                           : nullptr;
             if (queue && !queue->empty() && last >= history_size) {
-                msgs.push_back(render_queued_block(*queue, theme));
+                add_row(render_queued_block(*queue, theme), -1);
             }
 
             const int input_height =
@@ -1137,14 +1214,10 @@ ftxui::Element render_view(
                     prompt_box
                 });
             }
-
-            // Measure chat content height (in rendered lines) and compute exact
-            // scroll position without dead zone.
-            Element chat_scroll = vbox(std::move(msgs));
-            chat_scroll->ComputeRequirement();
             prompt_box->ComputeRequirement();
 
-            const int content_height = std::max(0, chat_scroll->requirement().min_y);
+            int content_height = 0;
+            for (int h : row_heights) content_height += h;
             const int prompt_box_h = prompt_box->requirement().min_y;
             const int chrome_height = 2 + prompt_box_h;
             const int term_h = stable_terminal_size().dimy;
@@ -1162,6 +1235,54 @@ ftxui::Element render_view(
                 }
             }
 
+            // Lay out only the rows near the viewport; spacers stand in for
+            // the rest so the scroll math and the scrollbar see the full
+            // height. Layout and paint cost now follow the screen size, not
+            // the length of the conversation.
+            const auto slice = qcode::tui::visible_rows(
+                row_heights, *state.scroll_line, viewport_height,
+                /*overscan=*/viewport_height);
+            Elements visible;
+            visible.reserve(slice.end - slice.begin + 2);
+            if (slice.top_pad > 0) {
+                visible.push_back(emptyElement() |
+                                  size(HEIGHT, EQUAL, slice.top_pad));
+            }
+            for (size_t k = slice.begin; k < slice.end; ++k) {
+                if (!rows[k]) rows[k] = render_row(static_cast<size_t>(row_message[k]));
+                visible.push_back(rows[k]);
+            }
+            if (slice.bottom_pad > 0) {
+                visible.push_back(emptyElement() |
+                                  size(HEIGHT, EQUAL, slice.bottom_pad));
+            }
+
+            // Bound memory: keep rendered trees only for messages near the
+            // viewport. Heights stay cached, so a dropped tree is rebuilt
+            // only if the user scrolls back to it.
+            constexpr size_t kMaxCachedTrees = 160;
+            if (message_cache.size() > kMaxCachedTrees && slice.begin < slice.end) {
+                long lo = LONG_MAX;
+                long hi = -1;
+                for (size_t k = slice.begin; k < slice.end; ++k) {
+                    if (row_message[k] < 0) continue;
+                    lo = std::min(lo, row_message[k]);
+                    hi = std::max(hi, row_message[k]);
+                }
+                if (hi >= 0) {
+                    constexpr long kKeepAround = 60;
+                    for (auto it = message_cache.begin(); it != message_cache.end();) {
+                        const long idx = static_cast<long>(it->first);
+                        if (idx < lo - kKeepAround || idx > hi + kKeepAround) {
+                            it = message_cache.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
+                }
+            }
+
+            Element chat_scroll = vbox(std::move(visible));
             const int focus_y = qcode::tui::compute_focus_y(*state.scroll_line, viewport_height);
 
             body = vbox({

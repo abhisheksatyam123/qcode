@@ -18,6 +18,7 @@ add_library(qcode-frontend-tui STATIC
     tui/src/git_monitor.cpp
     tui/src/views.cpp
     tui/src/prompt_wrap.cpp
+    tui/src/clipboard.cpp
     tui/src/pickers.cpp
     tui/src/views_toast.cpp
     tui/src/file_diff_preview.cpp

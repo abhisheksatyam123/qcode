@@ -46,12 +46,15 @@ add_executable(qcode_tests
     unit/workspace_fs_test.cpp
     unit/commands_test.cpp
     unit/tui_scroll_test.cpp
+    unit/tui_frame_pacer_test.cpp
+    unit/tui_clipboard_test.cpp
     unit/prompt_wrap_test.cpp
     unit/compaction_cache_test.cpp
     unit/session_title_test.cpp
     unit/image_attachment_test.cpp
     unit/transform_matrix_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/prompt_wrap.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/clipboard.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/bus_json_codec.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/workspace_fs.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/http_utils.cpp
@@ -211,5 +214,15 @@ if(TARGET qcode)
     set_tests_properties(QcodeNoTtyExits PROPERTIES
         TIMEOUT 5
         WILL_FAIL TRUE
+    )
+endif()
+
+# Headless TUI frame benchmark (not a test): qcode_tui_bench [messages] [frames]
+if(TARGET qcode-frontend-tui)
+    add_executable(qcode_tui_bench bench/tui_render_bench.cpp)
+    target_link_libraries(qcode_tui_bench PRIVATE qcode-frontend-tui)
+    set_target_properties(qcode_tui_bench PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
     )
 endif()
