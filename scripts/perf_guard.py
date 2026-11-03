@@ -30,6 +30,7 @@ import os
 import pty
 import select
 import socket
+import statistics
 import struct
 import subprocess
 import sys
@@ -332,15 +333,31 @@ def main() -> int:
     ap.add_argument("--baseline", type=Path, help="JSON from --write-baseline")
     ap.add_argument("--write-baseline", type=Path, help="write measured numbers here and exit 0")
     ap.add_argument("--tolerance", type=float, default=1.5, help="allowed multiple of the baseline")
+    ap.add_argument("--samples", type=int, default=3,
+                    help="measure this many times; gated numbers use the median")
     args = ap.parse_args()
 
     if not args.binary.exists():
         print(f"binary not found: {args.binary}", file=sys.stderr)
         return 2
 
-    result = measure_serve(args.binary, args.turns, args.startup_deadline)
-    if args.tui:
-        result.update(measure_tui(args.binary, args.tui_idle, args.startup_deadline))
+    # One sample can be skewed by a busy machine, so take several and gate on
+    # the median. Correctness counts use the worst sample.
+    samples = []
+    for _ in range(max(1, args.samples)):
+        sample = measure_serve(args.binary, args.turns, args.startup_deadline)
+        if args.tui:
+            sample.update(measure_tui(args.binary, args.tui_idle, args.startup_deadline))
+        samples.append(sample)
+    result = dict(samples[-1])
+    for key in GATED:
+        values = [s[key] for s in samples if key in s]
+        if values:
+            result[key] = statistics.median(values)
+    result["server_errors"] = max(s["server_errors"] for s in samples)
+    result["turns_generated"] = min(s["turns_generated"] for s in samples)
+    result["stub_hits"] = min(s["stub_hits"] for s in samples)
+    result["samples"] = len(samples)
     print(json.dumps(result, indent=2))
 
     if args.write_baseline:
