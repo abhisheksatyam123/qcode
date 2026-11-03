@@ -3397,6 +3397,40 @@ function rerenderRichContent() {
 }
 
 // Mermaid is ~3.5 MB; fetch it on the first diagram instead of at page load.
+
+// mermaid.render() is not safe to run concurrently: overlapping calls can clobber
+// each other's output. Diagrams render one at a time through this queue, each
+// with a unique element id, and a failure is logged and shown for that diagram
+// only.
+const mermaidQueue = [];
+let mermaidQueueBusy = false;
+let mermaidRenderSeq = 0;
+
+function queueMermaidRender(targetId, code) {
+  mermaidQueue.push({ targetId, code });
+  pumpMermaidQueue();
+}
+
+async function pumpMermaidQueue() {
+  if (mermaidQueueBusy) return;
+  mermaidQueueBusy = true;
+  while (mermaidQueue.length) {
+    const job = mermaidQueue.shift();
+    if (!document.getElementById(job.targetId)) continue;
+    try {
+      const m = await loadMermaid();
+      const { svg } = await m.render(`${job.targetId}-r${++mermaidRenderSeq}`, job.code);
+      const target = document.getElementById(job.targetId);
+      if (target) target.innerHTML = svg;
+    } catch (err) {
+      console.error('mermaid render failed for', job.targetId, err);
+      const target = document.getElementById(job.targetId);
+      if (target) target.innerHTML = '<div class="diagram-error">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
+    }
+  }
+  mermaidQueueBusy = false;
+}
+
 let mermaidLoadPromise = null;
 function loadMermaid() {
   if (typeof mermaid !== 'undefined' && mermaid.render) return Promise.resolve(mermaid);
@@ -5567,13 +5601,7 @@ function getMarkedRenderer() {
       const diagramId = 'mermaid-' + Math.random().toString(36).substring(2, 9);
       setTimeout(() => {
         if (!document.getElementById(diagramId)) return;
-        loadMermaid().then((m) => m.render(diagramId + '-svg', cleanCode)).then(({ svg }) => {
-          const el = document.getElementById(diagramId);
-          if (el) el.innerHTML = svg;
-        }).catch((err) => {
-          const el = document.getElementById(diagramId);
-          if (el) el.innerHTML = '<div class="diagram-error">Mermaid syntax error: ' + esc(err.message || err) + '</div>';
-        });
+        queueMermaidRender(diagramId, cleanCode);
       }, 50);
       return `<div class="mermaid-diagram-container"><div id="${diagramId}" class="mermaid-target">${esc(cleanCode)}</div></div>`;
     }
