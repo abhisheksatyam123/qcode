@@ -159,11 +159,17 @@ TEST_F(AnthropicClientTest, SupportsAnyNonEmptyModel) {
 
 // Text Generation Tests - Testing error handling without network calls
 TEST_F(AnthropicClientTest, GenerateTextWithInvalidApiKey) {
-  qcode::anthropic::AnthropicClient client("invalid-key",
-                                        "https://api.anthropic.com");
+  // Local stand-in for api.anthropic.com rejecting the key with a 401.
+  LocalStatusServer server(
+      401,
+      R"({"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}})");
+  ASSERT_FALSE(server.base_url().empty());
+  qcode::retry::RetryConfig retry_config;
+  retry_config.max_retries = 0;
+  qcode::anthropic::AnthropicClient client("invalid-key", server.base_url(),
+                                           retry_config);
   auto options = createBasicAnthropicOptions();
 
-  // This will attempt a real call and should fail gracefully
   auto result = client.generate_text(options);
 
   // We expect this to fail since we're using an invalid API key
@@ -174,11 +180,12 @@ TEST_F(AnthropicClientTest, GenerateTextWithInvalidApiKey) {
 TEST_F(AnthropicClientTest, GenerateTextWithBadUrl) {
   qcode::retry::RetryConfig retry_config;
   retry_config.max_retries = 0;
-  qcode::anthropic::AnthropicClient client(
-      "sk-ant-test", "http://invalid-url-that-does-not-exist.example", retry_config);
+  // Port 1 on loopback refuses immediately, so no DNS or network is involved.
+  qcode::anthropic::AnthropicClient client("sk-ant-test", "http://127.0.0.1:1",
+                                           retry_config);
   auto options = createBasicAnthropicOptions();
 
-  // This should fail due to network connectivity
+  // This should fail due to connection refusal
   auto result = client.generate_text(options);
 
   EXPECT_FALSE(result.is_success());

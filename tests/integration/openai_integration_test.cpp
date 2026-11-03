@@ -157,6 +157,7 @@ TEST_F(OpenAIIntegrationTest, DifferentModelSupport) {
 
 // Error Handling Tests
 TEST_F(OpenAIIntegrationTest, InvalidApiKey) {
+  if (!live_tests_enabled()) GTEST_SKIP() << "Set QCODE_LIVE_TESTS=1 to hit api.openai.com";
   // Test with invalid API key
   auto invalid_client = qcode::openai::create_client("sk-invalid123");
 

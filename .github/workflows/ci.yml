@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   webui:
@@ -79,9 +80,12 @@ jobs:
         [ -n "${OPENAI_API_KEY:-}" ] || unset OPENAI_API_KEY
         [ -n "${ANTHROPIC_API_KEY:-}" ] || unset ANTHROPIC_API_KEY
         ctest --build-config ${{ matrix.build_type == 'debug' && 'Debug' || 'Release' }} --output-on-failure --parallel
+      # Live provider tests (real APIs, flaky under network load) run only for
+      # manual dispatches or PRs labelled `live-tests`. Everything else is hermetic.
       env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        QCODE_LIVE_TESTS: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'live-tests')) && '1' || '' }}
+        OPENAI_API_KEY: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'live-tests')) && secrets.OPENAI_API_KEY || '' }}
+        ANTHROPIC_API_KEY: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'live-tests')) && secrets.ANTHROPIC_API_KEY || '' }}
 
   asan:
     name: ASan/UBSan
