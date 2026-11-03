@@ -112,7 +112,7 @@ class Stub:
 
     def respond(self, body: dict, handler) -> None:
         text = json.dumps(body.get("messages", []))
-        if LEAD_PROMPT in text or any(m in text for m in ("SMOKE TUI", "SMOKE CANCEL", "SMOKE MEM")):
+        if LEAD_PROMPT in text or any(m in text for m in ("SMOKE TUI", "SMOKE CANCEL", "SMOKE MEM", "SMOKE ESC")):
             self.respond_lead(body, handler)
         else:
             self.respond_subagent(body, handler)
@@ -167,6 +167,22 @@ class Stub:
         messages = body.get("messages", [])
         results = [m for m in messages if m.get("role") == "tool"]
         n = len(results)
+        last_user = next((m for m in reversed(messages) if m.get("role") == "user"), {})
+        if "SMOKE ESC" in json.dumps(last_user.get("content")):
+            # Esc scenario: count tool results of this turn only (the session keeps history).
+            start = len(messages) - 1 - messages[::-1].index(last_user)
+            n_turn = sum(1 for m in messages[start:] if m.get("role") == "tool")
+            if n_turn == 0:
+                self.tool_calls(handler, [("task", {"prompt": "job C", "description": "C",
+                                                    "background": True})])
+            elif n_turn == 1:
+                turn = messages[start:]
+                c_id = self.id_from(next(m for m in turn if m.get("role") == "tool"))
+                self.tool_calls(handler, [("task", {"action": "wait", "task_id": c_id, "timeout_s": 60})])
+            else:
+                self.send(handler, {"role": "assistant", "content": "SMOKE DONE"}, finish="stop")
+                self.finish(handler)
+            return
         if "SMOKE MEM bg" in json.dumps(messages):
             # Memory scenario, background: ten background subagents, then wait on each.
             if n == 0:

@@ -9,6 +9,8 @@ emulator (pyte), so it checks what a user sees:
   3. The Subagents tab shows C as running while it runs, live.
   4. Pressing k on C (empty prompt, Subagents tab) stops it: C shows killed,
      the header counts say so, and A stays done.
+  5. A second turn starts a background subagent C2 that runs. Esc interrupts
+     the turn: C2 shows killed within ESC_LIMIT_S, and the lead stops.
 
 Needs the `pyte` package (pip install pyte). Without it the test exits 77,
 which CTest treats as skipped.
@@ -39,7 +41,9 @@ except ImportError:  # pragma: no cover - environment dependent
     print("SKIP: pyte is not installed")
     sys.exit(77)
 
+ESC_LIMIT_S = 2.0  # the interrupt should land in about 1 s; this leaves room for the pty
 SHIFT_TAB = b"\x1b[Z"
+ESC = b"\x1b"
 DOWN = b"\x1b[B"
 UP = b"\x1b[A"
 TAB = b"\t"
@@ -93,8 +97,7 @@ class Terminal:
 def fail(msg: str, term: Terminal) -> None:
     print(f"FAIL: {msg}")
     print(term.text()[-2000:])
-    term.close()
-    sys.exit(1)
+    sys.exit(1)  # main's finally closes the terminal
 
 
 def main() -> int:
@@ -140,8 +143,27 @@ def main() -> int:
             if "[done]" not in term.text():
                 fail("A should still show done", term)
 
-            print("OK: mode switched to Orchestrator; the Subagents tab showed a running subagent, "
-                  "then killed after k; A stayed done; header counts updated.")
+            # Esc: a second turn starts a background subagent; Esc interrupts it.
+            term.send(DOWN)  # focus the prompt; the Subagents tab stays open
+            for ch in "SMOKE ESC":
+                term.send(ch.encode(), settle=0.02)
+            term.send(b"\r", settle=0.5)
+            if not term.wait_for("[running]", 30):
+                fail("the second turn's subagent never showed as running", term)
+            # Esc means "interrupt" once the lead is inside its turn, waiting on C.
+            term.pump(1.5)
+            t0 = time.monotonic()
+            term.send(ESC, settle=0.0)
+            if not term.wait_for("2 killed", ESC_LIMIT_S + 3):
+                fail("Esc did not stop the running subagent (header lacks 2 killed)", term)
+            esc_s = time.monotonic() - t0
+            if esc_s > ESC_LIMIT_S:
+                fail(f"Esc took {esc_s:.2f}s to stop the subagent (limit {ESC_LIMIT_S}s)", term)
+            if "[running]" in term.text():
+                fail("a subagent still shows running after Esc", term)
+
+            print(f"OK: mode switched to Orchestrator; k stopped C; Esc stopped the second subagent in "
+                  f"{esc_s * 1000:.0f} ms; A stayed done; header counts updated.")
             return 0
         finally:
             term.close()
