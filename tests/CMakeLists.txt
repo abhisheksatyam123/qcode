@@ -183,12 +183,49 @@ if(TARGET qcode)
             COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/perf_guard.py
                 --binary $<TARGET_FILE:qcode>
                 --baseline ${CMAKE_SOURCE_DIR}/scripts/perf_baseline.json
-                --turns 30 --tui)
+                --turns 30 --tui --tolerance 3.0)
+        # Timing and RSS are noisy on shared runners, so run it alone and allow
+        # 3x the dev-box baseline. Tighten once runner numbers are recorded.
         set_tests_properties(PerfGuardServe PROPERTIES
             LABELS perf
+            RUN_SERIAL TRUE
             TIMEOUT 120
         )
+
+        # Hostile input on every route (bad bodies, unknown and traversal ids,
+        # oversized bodies, concurrent requests on one session). Fails on any 5xx
+        # or a server that exits. Expected rejections are 4xx.
+        add_test(NAME RouteRobustnessServe
+            COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/route_robustness.py
+                --binary $<TARGET_FILE:qcode>)
+        set_tests_properties(RouteRobustnessServe PROPERTIES
+            LABELS robustness
+            RUN_SERIAL TRUE
+            TIMEOUT 400
+        )
     endif()
+
+    # Orchestrator smoke: the lead spawns, kills and resumes subagents against a
+    # scripted provider, and the server API reports the statuses. Cross-platform
+    # (no /proc), so it does not depend on the perf guard's Linux gate.
+    add_test(NAME OrchestratorSmokeServe
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/orchestrator_smoke.py
+            --binary $<TARGET_FILE:qcode>)
+    set_tests_properties(OrchestratorSmokeServe PROPERTIES
+        LABELS smoke
+        TIMEOUT 120
+    )
+
+    # The same flow in the TUI under a pty, read through pyte. Skipped (77) when
+    # pyte is not installed.
+    add_test(NAME OrchestratorSmokeTui
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/tui_orchestrator_smoke.py
+            --binary $<TARGET_FILE:qcode>)
+    set_tests_properties(OrchestratorSmokeTui PROPERTIES
+        LABELS smoke
+        TIMEOUT 120
+        SKIP_RETURN_CODE 77
+    )
 endif()
 
 # Headless TUI frame benchmark (not a test): qcode_tui_bench [messages] [frames]

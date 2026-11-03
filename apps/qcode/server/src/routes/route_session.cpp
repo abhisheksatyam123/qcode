@@ -620,6 +620,18 @@ svr.Get("/tasks", [](const httplib::Request& req, httplib::Response& res) {
     res.set_content(qcode::TaskTool::list_tasks(parent_sid).dump(2), "application/json");
 });
 
+// ── Stop a running background subagent (the web Stop button; the TUI's k) ──
+svr.Post("/tasks/([^/]+)/kill", [](const httplib::Request& req, httplib::Response& res) {
+    const std::string task_id = url_decode(req.matches[1]);
+    const bool stopped = qcode::TaskTool::kill_task(task_id);
+    nlohmann::json j = {{"task_id", task_id}, {"stopping", stopped}};
+    if (!stopped) {
+        res.status = 409;
+        j["error"] = "task " + task_id + " is not a running background subagent";
+    }
+    res.set_content(j.dump(), "application/json");
+});
+
 // ── Create session ──
 svr.Post("/sessions", [default_workspace, providers_list](const httplib::Request& req, httplib::Response& res) {
     nlohmann::json body;
@@ -885,7 +897,12 @@ svr.Post("/session/([^/]+)/clear", [](const httplib::Request& req, httplib::Resp
     }
 
     // Permanently truncate the persisted history in SQLite.
-    qcode::session::overwrite_session_history(sid, {});
+    if (!qcode::session::overwrite_session_history(sid, {})) {
+        res.status = 409;
+        res.set_content(R"({"error":"session changed in another process; reload and retry"})",
+                        "application/json");
+        return;
+    }
 
     res.set_content(R"({"ok":true})", "application/json");
 });

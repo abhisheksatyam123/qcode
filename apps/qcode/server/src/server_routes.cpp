@@ -1,6 +1,8 @@
 #include "server_routes.h"
 #include "routes/routes_internal.h"
 
+#include <nlohmann/json.hpp>
+
 #include <qcode/core/in_process_bus.h>
 #include <qcode/generation/generation_service.h>
 
@@ -34,6 +36,23 @@ void setup_server_routes(
   server.set_post_routing_handler([](const httplib::Request&, httplib::Response& res) {
     res.set_header("Access-Control-Allow-Origin", "*");
     res.set_header("Access-Control-Allow-Headers", "*");
+  });
+
+  // Handlers read request bodies with nlohmann accessors. A body that is not an
+  // object, or has a field of the wrong type, throws; that is the client's
+  // mistake, so answer 400 with the reason. Anything else stays a 500.
+  server.set_exception_handler([](const httplib::Request&, httplib::Response& res,
+                                  std::exception_ptr ep) {
+    try {
+      std::rethrow_exception(ep);
+    } catch (const nlohmann::json::exception& e) {
+      res.status = 400;
+      res.set_content(nlohmann::json({{"error", std::string("invalid request body: ") + e.what()}}).dump(),
+                      "application/json");
+    } catch (...) {
+      res.status = 500;
+      res.set_content(R"({"error":"internal error"})", "application/json");
+    }
   });
 
   register_system_routes(server, providers, options);

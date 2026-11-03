@@ -558,8 +558,14 @@ int qcode::app::run_tui(int argc, char* argv[]) {
                     }
                 }
             }
-            if (state.session_id && !state.session_id->empty()) {
-                qcode::session::overwrite_session_history(*state.session_id, hist);
+            if (state.session_id && !state.session_id->empty() &&
+                !qcode::session::overwrite_session_history(*state.session_id, hist)) {
+                // Another process wrote to this session; cancel the retry and
+                // show the stored history rather than drop its rows.
+                state.messages_history = std::make_shared<qcode::Messages>(
+                    qcode::session::load_session_history_parsed(*state.session_id));
+                store.add_toast("Retry cancelled: session changed elsewhere", "warning", 3000);
+                return false;
             }
         }
 
@@ -1195,6 +1201,25 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         }
         // Toggle COPY MODE (F3): disables mouse tracking so the terminal
         // emulator can do native text selection (clean copy/paste).
+        // Subagents tab: k stops the selected running background subagent. Only
+        // with an empty prompt, so typing a k still works.
+        if (e == Event::Character('k') && state.tab_selected == 3 && prompt_input.empty() &&
+            !overlays.any(state) && state.subagent_entries) {
+            const auto& tasks = *state.subagent_entries;
+            const int idx = state.selected_session_item;
+            if (idx >= 0 && idx < static_cast<int>(tasks.size()) &&
+                tasks[idx].status == "running") {
+                const std::string name = tasks[idx].description.empty() ? tasks[idx].task_id
+                                                                         : tasks[idx].description;
+                if (qcode::TaskTool::kill_task(tasks[idx].task_id)) {
+                    store.add_toast("Stopping subagent " + name, "warning", 2000);
+                } else {
+                    store.add_toast("Only background subagents can be stopped here",
+                                    "warning", 2000);
+                }
+            }
+            return true;
+        }
         if (e == Event::F3) {
             *state.copy_mode = !*state.copy_mode;
             // TrackMouse() only takes effect when FTXUI next (re)installs the

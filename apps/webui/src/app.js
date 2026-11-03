@@ -4401,7 +4401,25 @@ async function loadDelegatedSessionsTab() {
         +     (sid ? '<code class="agent-card-id">' + esc(sid.length > 14 ? sid.slice(0, 14) + '…' : sid) + '</code>' : '')
         +   '</span>'
         + '</span>'
+        + (status === 'running' && sid ? '<button type="button" class="agent-card-stop" title="Stop this subagent">Stop</button>' : '')
         + '<span class="agent-card-go">' + (isCurrent ? '<span class="status-chip current">Open</span>' : icon('chevron', 14)) + '</span>';
+
+      const stopBtn = row.querySelector('.agent-card-stop');
+      if (stopBtn) {
+        stopBtn.addEventListener('click', async (ev) => {
+          // Stop must not also open the subagent's row.
+          ev.stopPropagation();
+          ev.preventDefault();
+          stopBtn.disabled = true;
+          try {
+            const res = await fetch('/tasks/' + encodeURIComponent(sid) + '/kill', { method: 'POST' });
+            showToast(res.ok ? 'Stopping subagent' : 'That subagent is no longer running');
+          } catch (_) {
+            showToast('Could not stop the subagent');
+          }
+          loadDelegatedSessionsTab();
+        });
+      }
 
       if (sid) {
         row.setAttribute('role', 'button');

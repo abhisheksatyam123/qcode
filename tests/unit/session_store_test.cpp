@@ -83,6 +83,46 @@ TEST_F(SessionStoreTest, SaveAndLoadMessages) {
     EXPECT_EQ(parsed[0].get_text(), "only");
 }
 
+// Another process appends a row after this one loaded the history. An overwrite
+// from the stale copy must refuse and keep that row; after a reload it succeeds.
+TEST_F(SessionStoreTest, OverwriteRefusesStaleHistoryWrittenElsewhere) {
+    const std::string sid = create_new_session("prov", "model", "/ws");
+    save_message(sid, "User", "one");
+    save_message(sid, "Assistant", "two");
+    const auto stale = load_session_history_parsed(sid);
+    ASSERT_EQ(stale.size(), 2u);
+
+    // Second connection plays the other process.
+    const char* path = std::getenv("QCODE_DB_PATH");
+    ASSERT_NE(path, nullptr);
+    sqlite3* other = nullptr;
+    ASSERT_EQ(sqlite3_open(path, &other), SQLITE_OK);
+    sqlite3_busy_timeout(other, 5000);
+    sqlite3_stmt* stmt = nullptr;
+    ASSERT_EQ(sqlite3_prepare_v2(other,
+        "INSERT INTO messages (session_id, sender, content) VALUES (?, 'User', 'elsewhere');",
+        -1, &stmt, nullptr), SQLITE_OK);
+    sqlite3_bind_text(stmt, 1, sid.c_str(), -1, SQLITE_STATIC);
+    ASSERT_EQ(sqlite3_step(stmt), SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    sqlite3_close(other);
+
+    qcode::Messages compacted;
+    compacted.push_back(qcode::Message::user("summary"));
+    EXPECT_FALSE(overwrite_session_history(sid, compacted));
+
+    auto rows = load_session_messages(sid);
+    ASSERT_EQ(rows.size(), 3u);
+    EXPECT_EQ(rows[2].second, "elsewhere");
+
+    // Reloading records the new last id, so the overwrite is no longer stale.
+    load_session_history_parsed(sid);
+    EXPECT_TRUE(overwrite_session_history(sid, compacted));
+    auto after = load_session_history_parsed(sid);
+    ASSERT_EQ(after.size(), 1u);
+    EXPECT_EQ(after[0].get_text(), "summary");
+}
+
 TEST_F(SessionStoreTest, InvalidSessionIdRejected) {
     EXPECT_FALSE(is_valid_session_id(""));
     EXPECT_FALSE(is_valid_session_id(std::string(256, 'a')));

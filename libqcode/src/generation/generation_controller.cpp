@@ -264,8 +264,12 @@ void GenerationController::spawn_unlocked(std::string prompt,
             repaired.size() - hist_ptr->size());
         hist_ptr =
             std::make_shared<qcode::Messages>(std::move(repaired));
-        session::overwrite_session_history(store_.session_id(),
-                                           *hist_ptr);
+        if (!session::overwrite_session_history(store_.session_id(), *hist_ptr)) {
+            // The repair stays in memory for this turn; the database is
+            // repaired again on the next spawn.
+            LOG_WARN("GenerationController: unpaired tool-call repair not saved; "
+                     "session changed in another process");
+        }
     }
     LOG_INFO(
         "GenerationController: spawn prompt_len={} queue_remaining={} "

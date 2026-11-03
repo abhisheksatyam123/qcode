@@ -164,9 +164,9 @@ FetchContent_Declare(ftxui
     GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
     GIT_TAG v6.1.9
     GIT_SHALLOW TRUE
-    PATCH_COMMAND ${CMAKE_COMMAND}
-        -DPATCH_FILE=${CMAKE_SOURCE_DIR}/cmake/patches/ftxui-idle-loop.patch
-        -P ${CMAKE_SOURCE_DIR}/cmake/apply_patch_once.cmake
+    # Idempotent: a cached or re-patched source tree already has the patch, and a
+    # plain `git apply` would fail on it and break the configure step.
+    PATCH_COMMAND sh -c "git apply --reverse --check '${CMAKE_SOURCE_DIR}/cmake/patches/ftxui-idle-loop.patch' >/dev/null 2>&1 || git apply --whitespace=nowarn '${CMAKE_SOURCE_DIR}/cmake/patches/ftxui-idle-loop.patch'"
 )
 FetchContent_MakeAvailable(ftxui)
 

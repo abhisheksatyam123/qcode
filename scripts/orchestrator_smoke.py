@@ -111,7 +111,7 @@ class Stub:
 
     def respond(self, body: dict, handler) -> None:
         text = json.dumps(body.get("messages", []))
-        if LEAD_PROMPT in text:
+        if LEAD_PROMPT in text or "SMOKE TUI" in text:
             self.respond_lead(body, handler)
         else:
             self.respond_subagent(body, handler)
@@ -157,6 +157,21 @@ class Stub:
         messages = body.get("messages", [])
         results = [m for m in messages if m.get("role") == "tool"]
         n = len(results)
+        if "SMOKE TUI" in json.dumps(messages):
+            # TUI scenario: A finishes, C runs until someone stops it with k.
+            if n == 0:
+                self.tool_calls(handler, [
+                    ("task", {"prompt": "job A", "description": "A", "background": True}),
+                    ("task", {"prompt": "job C", "description": "C", "background": True})])
+            elif n == 2:
+                c_id = self.id_from(results[1])
+                self.lead_ids["C"] = c_id
+                self.tool_calls(handler, [("task", {"action": "wait", "task_id": c_id,
+                                                    "timeout_s": 60})])
+            else:
+                self.send(handler, {"role": "assistant", "content": "SMOKE DONE"}, finish="stop")
+                self.finish(handler)
+            return
         if n >= 4:
             self.kill_seen.set()  # the kill has come back to the lead
         if n == 0:
