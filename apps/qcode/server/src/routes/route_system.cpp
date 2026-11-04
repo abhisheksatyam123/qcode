@@ -131,7 +131,7 @@ void register_system_routes(
 
     svr.Get("/api/version", [](const httplib::Request&, httplib::Response& res) {
 #ifndef QCODE_VERSION
-#define QCODE_VERSION "0.1.0"
+#define QCODE_VERSION "0.2.0"
 #endif
         nlohmann::json j = {{"name", "qcode-server"}, {"version", QCODE_VERSION}};
         res.set_content(j.dump(), "application/json");

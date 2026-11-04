@@ -849,7 +849,7 @@ ftxui::Element render_view(
         footer_bits.push_back(text(" commands ") | dim | color(theme_text_muted(theme)));
     }
     if (is_home)
-        footer_bits.push_back(text("0.1.0 ") | dim | color(theme_text_muted(theme)));
+        footer_bits.push_back(text("0.2.0 ") | dim | color(theme_text_muted(theme)));
     auto footer = hbox(std::move(footer_bits));
 
     Element header = emptyElement();  // built below after prompt_status
