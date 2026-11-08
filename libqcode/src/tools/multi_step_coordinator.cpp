@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <map>
 #include <string_view>
+#include <variant>
 
 #include <qcode/compaction/compaction_request.h>
 #include <qcode/core/logger.h>
@@ -43,6 +44,62 @@ uint64_t fingerprint_step(const GenerateResult& r) {
   return h;
 }
 
+struct StepReasoning {
+  std::string text;
+  std::string signature;
+};
+
+// Thinking produced by one step. Provider parsers attach it (with its
+// signature) to the replay message; streaming OpenAI-compatible clients only
+// set GenerateResult::reasoning, so fall back to that.
+StepReasoning extract_step_reasoning(const GenerateResult& result) {
+  StepReasoning reasoning;
+  for (const auto& message : result.response_messages) {
+    if (message.role != kMessageRoleAssistant) continue;
+    for (const auto& part : message.content) {
+      const auto* rp = std::get_if<ReasoningContentPart>(&part);
+      if (rp == nullptr) continue;
+      reasoning.text += rp->text;
+      if (reasoning.signature.empty()) reasoning.signature = rp->signature;
+    }
+  }
+  if (reasoning.text.empty() && !result.reasoning.empty()) {
+    reasoning.text = result.reasoning;
+  }
+  return reasoning;
+}
+
+// Subagent transcripts keep thinking as its own row before the step's tool
+// rows (the tool callbacks fire after this), so reopening the child session
+// renders it and a resumed task replays signed blocks. Compaction summaries
+// never reach here: they call generate_func directly.
+void persist_step_reasoning(const std::string& session_id,
+                            const StepReasoning& reasoning) {
+  if (session_id.empty() || reasoning.text.empty()) return;
+  qcode::session::save_message(
+      session_id, "Reasoning",
+      qcode::session::encode_reasoning_row(reasoning.text, reasoning.signature));
+}
+
+// Assistant turn for the running history: thinking first, then text and tool
+// calls, keeping each call's provider thought signature.
+Message assistant_step_message(const GenerateResult& step,
+                               const StepReasoning& reasoning) {
+  std::vector<ToolCallContentPart> tool_call_contents;
+  tool_call_contents.reserve(step.tool_calls.size());
+  for (const auto& tc : step.tool_calls) {
+    tool_call_contents.emplace_back(tc.id, tc.tool_name, tc.arguments,
+                                    tc.thought_signature);
+  }
+  Message message = Message::assistant_with_tools(step.text, tool_call_contents);
+  if (!reasoning.text.empty()) {
+    message.content.insert(
+        message.content.begin(),
+        ReasoningContentPart{reasoning.text, reasoning.signature});
+  }
+  return message;
+}
+
 }  // namespace
 
 GenerateResult MultiStepCoordinator::execute_multi_step(
@@ -61,7 +118,12 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     // Single step - just execute normally.
     // max_steps <= 0 means uncapped: keep looping on tool calls until the
     // provider stops requesting them (user abort / provider error still stop).
-    return generate_func(initial_options);
+    GenerateResult result = generate_func(initial_options);
+    if (result.is_success()) {
+      persist_step_reasoning(initial_options.session_id,
+                             extract_step_reasoning(result));
+    }
+    return result;
   }
   // max_steps <= 0 used to mean "uncapped", which let a pathological tool
   // loop run forever (default max_steps is 0). Resolve an effective safety
@@ -294,6 +356,11 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     }
     step_retries = 0;
 
+    // Persist thinking now, before ToolExecutor fires the tool callbacks, so
+    // the reloaded transcript reads Reasoning -> ToolCall -> ToolResult.
+    const StepReasoning step_reasoning = extract_step_reasoning(step_result);
+    persist_step_reasoning(initial_options.session_id, step_reasoning);
+
     // Execute tool calls if the model requested tools and they haven't been executed yet
     if (step_result.has_tool_calls() && step_result.tool_results.empty() && initial_options.has_tools()) {
       step_result.tool_results =
@@ -368,16 +435,12 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
     if (step_result.has_tool_calls()) {
       const std::vector<ToolResult>& tool_results = step_result.tool_results;
 
-      // Append assistant turn (text + tool calls) and tool result messages to
-      // the running accumulator. Next iteration's input messages are rebuilt
-      // from `initial_messages + response_messages` at the top of the loop.
-      std::vector<ToolCallContentPart> tool_call_contents;
-      tool_call_contents.reserve(step_result.tool_calls.size());
-      for (const auto& tc : step_result.tool_calls) {
-        tool_call_contents.emplace_back(tc.id, tc.tool_name, tc.arguments, tc.thought_signature);
-      }
+      // Append assistant turn (thinking + text + tool calls) and tool result
+      // messages to the running accumulator. Next iteration's input messages
+      // are rebuilt from `initial_messages + response_messages` at the top of
+      // the loop.
       response_messages.push_back(
-          Message::assistant_with_tools(step_result.text, tool_call_contents));
+          assistant_step_message(step_result, step_reasoning));
 
       Messages tool_messages =
           tool_results_to_messages(step_result.tool_calls, tool_results);
@@ -422,6 +485,8 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
 
     GenerateResult synth = generate_func(synth_options);
     if (synth.is_success()) {
+      const StepReasoning synth_reasoning = extract_step_reasoning(synth);
+      persist_step_reasoning(initial_options.session_id, synth_reasoning);
       GenerateStep synth_step;
       synth_step.text = synth.text;
       synth_step.finish_reason = synth.finish_reason;
@@ -441,7 +506,12 @@ GenerateResult MultiStepCoordinator::execute_multi_step(
       final_result.created = synth.created;
       final_result.system_fingerprint = synth.system_fingerprint;
       final_result.provider_metadata = synth.provider_metadata;
-      response_messages.push_back(Message::assistant(synth.text));
+      if (synth_reasoning.text.empty()) {
+        response_messages.push_back(Message::assistant(synth.text));
+      } else {
+        response_messages.push_back(Message::assistant_with_reasoning(
+            synth.text, synth_reasoning.text, synth_reasoning.signature));
+      }
     } else {
       LOG_WARN("MultiStepCoordinator: synthesis step failed: {}",
                synth.error_message());
