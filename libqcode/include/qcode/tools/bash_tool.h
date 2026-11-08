@@ -112,7 +112,7 @@ inline JsonValue parameters() {
   };
   p["description"] = JsonValue{
     {"type", "string"},
-    {"description", "5-10 word purpose; do not echo command."}
+    {"description", "Optional 5-10 word purpose; derived from the command when omitted."}
   };
   p["id"] = JsonValue{
     {"type", "string"},

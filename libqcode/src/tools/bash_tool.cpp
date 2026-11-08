@@ -180,6 +180,38 @@ static std::string resolve_cwd(const std::string& workdir, const std::string& fa
   return p.string();
 }
 
+// Models sometimes omit the UI-only `description` argument. Deriving a short
+// one from the command keeps the call working instead of failing it with
+// "description is required ...", which weak tool callers then report as the
+// bash tool being unavailable for the rest of the turn.
+static std::string derive_bash_description(const std::string& command) {
+  constexpr size_t kMaxBytes = 60;
+  std::string text;
+  text.reserve(std::min(command.size(), kMaxBytes));
+  bool prev_space = false;
+  for (size_t i = 0; i < command.size() && text.size() < kMaxBytes;) {
+    const size_t len = qcode::utils::utf8_sequence_length(command, i);
+    if (len == 0) {
+      ++i;  // skip an invalid byte rather than splitting it
+      continue;
+    }
+    const std::string_view seq(command.data() + i, len);
+    const bool is_space =
+        len == 1 && std::isspace(static_cast<unsigned char>(seq[0])) != 0;
+    if (is_space) {
+      if (!text.empty() && !prev_space) text.push_back(' ');
+      prev_space = true;
+    } else {
+      if (text.size() + len > kMaxBytes) break;
+      text.append(seq);
+      prev_space = false;
+    }
+    i += len;
+  }
+  while (!text.empty() && text.back() == ' ') text.pop_back();
+  return text.empty() ? std::string("bash") : text;
+}
+
 // Prefer /bin/sh, then Android's /system/bin/sh.
 static const char* resolve_shell_path() {
   if (access("/bin/sh", X_OK) == 0) return "/bin/sh";
@@ -765,11 +797,7 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
     err["error"] = "mode=run requires command";
     return err;
   }
-  if (desc.empty()) {
-    JsonValue err;
-    err["error"] = "description is required for bash run (5-10 word purpose).";
-    return err;
-  }
+  if (desc.empty()) desc = derive_bash_description(command);
 
   // Safety checks
   std::string warning;
@@ -807,11 +835,7 @@ JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionCo
     return err;
   }
   std::string desc = args.value("description", "");
-  if (desc.empty()) {
-    JsonValue err;
-    err["error"] = "description is required for bash background (5-10 word purpose).";
-    return err;
-  }
+  if (desc.empty()) desc = derive_bash_description(command);
 
   // Safety checks
   std::string warning;
