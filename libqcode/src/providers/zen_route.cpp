@@ -51,8 +51,10 @@ ModelRoute zen_model_route(const std::string& model_id) {
   const std::string bare = bare_id(id);
   ModelRoute route;
 
+  // crouton-alpha is Responses-only upstream: on /chat/completions the
+  // gateway drops the reasoning summary, so the TUI shows no thinking.
   if (contains(id, "muse-spark") || contains(id, "grok") ||
-      bare.rfind("gpt-", 0) == 0) {
+      contains(id, "crouton") || bare.rfind("gpt-", 0) == 0) {
     route.protocol = WireProtocol::kResponses;
     route.path = "/responses";
     return route;
