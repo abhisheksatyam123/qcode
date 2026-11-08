@@ -904,6 +904,7 @@ static void run_tools_generation_bus(
         options.messages = qcode::prune_context(std::move(options.messages), compact_threshold);
         est_history_tokens.reset();
         live_context = estimate_system_tokens(options.system) + estimate_tokens(options.messages);
+        bus.publish<ContextSizeUpdated>({.context_tokens = static_cast<int>(live_context)});
       }
     }
 
@@ -1007,6 +1008,7 @@ static void run_tools_generation_bus(
             options.messages = qcode::prune_context(std::move(options.messages), target_budget);
             est_history_tokens.reset();
             live_context = estimate_system_tokens(options.system) + estimate_tokens(options.messages);
+            bus.publish<ContextSizeUpdated>({.context_tokens = static_cast<int>(live_context)});
             compacted = true;
           }
           if (compacted) {
@@ -1167,18 +1169,21 @@ static void run_tools_generation_bus(
 
       gen_result.usage.prompt_tokens = step_res.usage.prompt_tokens;
       if (step_res.usage.prompt_tokens > 0) {
-        // Exact size of the request just sent; the reply and tool results
-        // appended below are added by append_message.
-        live_context = static_cast<size_t>(step_res.usage.prompt_tokens);
+        // The provider's count is normally exact, but some OpenAI-compatible
+        // shims truncate the prompt to its tail (or report only uncached
+        // tokens) and return a tiny prompt_tokens for a huge request. Never
+        // let that shrink the local estimate: compaction and the TUI context
+        // bar must see the real request size, or a session silently grows
+        // past the model window without ever compacting.
+        live_context = std::max(
+            live_context, static_cast<size_t>(step_res.usage.prompt_tokens));
+        bus.publish<ContextSizeUpdated>({
+            .context_tokens = static_cast<int>(live_context),
+        });
       }
       gen_result.usage.completion_tokens += step_res.usage.completion_tokens;
       gen_result.usage.total_tokens =
           gen_result.usage.prompt_tokens + gen_result.usage.completion_tokens;
-      if (step_res.usage.prompt_tokens > 0) {
-        bus.publish<ContextSizeUpdated>({
-            .context_tokens = static_cast<int>(step_res.usage.prompt_tokens),
-        });
-      }
       // Prompt-cache accounting: keep the max seen (each step reports the
       // cached prefix of that request, not a delta).
       gen_result.usage.cached_prompt_tokens =
@@ -1270,7 +1275,7 @@ static void run_tools_generation_bus(
           result_parts.emplace_back(qcode::ToolResultContentPart{
               std::move(res.tool_call_id), std::move(res.result), is_error});
         }
-        const size_t tool_res_tok = append_message(
+        append_message(
             qcode::Message(qcode::kMessageRoleUser, std::move(result_parts)));
 
         constexpr int kNoProgressNudgeAfter = 2;
@@ -1294,18 +1299,20 @@ static void run_tools_generation_bus(
 
         // Re-publish the live context size after each tool call so the TUI's
         // context window updates dynamically as messages are appended.
+        // live_context already includes the tool result appended above; the
+        // heuristic fallback is only for an uninitialised/empty estimate.
         {
-            size_t live = 0;
-            if (step_res.usage.prompt_tokens > 0) {
-                live = step_res.usage.prompt_tokens + tool_res_tok;
-            } else {
+            if (live_context == 0) {
                 if (!est_history_tokens) {
                     est_history_tokens = estimate_tokens(options.messages);
                 }
-                live = estimate_system_tokens(options.system) + *est_history_tokens;
+                live_context = estimate_system_tokens(options.system) +
+                               *est_history_tokens;
             }
-            bus.publish<ContextSizeUpdated>({.context_tokens = static_cast<int>(live)});
-            LOG_INFO("run_tools_generation_bus: step={} live context={} tokens", step, live);
+            bus.publish<ContextSizeUpdated>(
+                {.context_tokens = static_cast<int>(live_context)});
+            LOG_INFO("run_tools_generation_bus: step={} live context={} tokens",
+                     step, live_context);
         }
 
         publish_step_text(std::move(step_res.text), streamed);
