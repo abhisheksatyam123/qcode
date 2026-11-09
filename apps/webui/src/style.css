@@ -831,13 +831,6 @@ kbd {
 
 .message { display: flex; flex-direction: column; min-width: 0; }
 .message.enter { animation: qc-fade-up var(--med) var(--ease) both; }
-/* Off-screen messages skip style, layout and paint; `auto` remembers each
-   one's last rendered height so the scrollbar stays stable. The newest
-   message is always fully rendered since it is the one that streams. */
-#messages > .message:not(:last-child) {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 160px;
-}
 /* Streamed markdown is split into chunks; keep them flowing as one block. */
 .md-stream-chunk, .md-stream-tail { display: contents; }
 .message-content { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -1225,6 +1218,7 @@ kbd {
 
 /* ── Markdown ── */
 .md-content, .markdown-body, .reasoning-text {
+  color: var(--text);
   overflow-wrap: anywhere;
   font-size: var(--text-lg);
   line-height: 1.7;

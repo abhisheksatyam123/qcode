@@ -1339,13 +1339,15 @@ async function loadProviders() {
       showToast('No providers configured on server');
       return;
     }
-    providerSelect.innerHTML = state.providers.map((p, i) =>
-      `<option value="${i}">${p.name}</option>`
-    ).join('');
+    if (providerSelect) {
+      providerSelect.innerHTML = state.providers.map((p, i) =>
+        `<option value="${i}">${p.name}</option>`
+      ).join('');
+      providerSelect.addEventListener('change', () => {
+        onProviderChange(parseInt(providerSelect.value));
+      });
+    }
     onProviderChange(0);
-    providerSelect.addEventListener('change', () => {
-      onProviderChange(parseInt(providerSelect.value));
-    });
   } catch (e) {
     showToast('Failed to load providers: ' + e.message);
   }
@@ -2865,7 +2867,7 @@ async function loadSessionData(id) {
   try {
     const [infoRes, msgsRes] = await Promise.all([
       fetch('/session/' + id).catch(() => null),
-      fetch('/session/' + id + '/messages').catch(() => null)
+      fetch('/session/' + id + '/messages?tail=100').catch(() => null)
     ]);
     if (infoRes && infoRes.ok) {
       const info = await infoRes.json();
@@ -3631,7 +3633,7 @@ function richVendorJobsForMessages(messages) {
 function rerenderRichContent() {
   const cur = state.openSessions.find(s => s.id === state.sessionId);
   if (cur && !cur.stream && !cur.stub) {
-    if (renderCache.nodeMap) renderCache.nodeMap = new WeakMap();
+    renderCache.nodes = [];
     renderMessages();
   }
 }
@@ -4179,6 +4181,7 @@ async function loadFsListing(relPath) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || res.statusText || 'list failed');
     if (runIndex !== state.fsListingRunIndex) return; // stale response
+    state.fsReady = true;
     state.fsRawEntries = Array.isArray(data.entries) ? data.entries : [];
     renderFsListingEntries();
   } catch (e) {
@@ -4536,7 +4539,7 @@ async function openFsFile(relPath, fragment = null) {
 
   if (fsEditorStatus) { fsEditorStatus.classList.add('loading-spinner'); fsEditorStatus.textContent = 'Loading…'; }
   try {
-    const readyState = await fetch('/session/' + state.sessionId + '/fs',
+    const readyState = await fetch('/session/' + state.sessionId + '/fs/list',
       { method: 'HEAD', cache: 'no-store' }).then(r => r.ok).catch(() => false);
     if (readyState) state.fsReady = true;
     else state.fsReady = false;
@@ -5143,8 +5146,6 @@ function renderMessages() {
   const total = session.messages.length;
   if (session._visibleCount === undefined) {
     session._visibleCount = Math.min(total, INITIAL_MESSAGE_WINDOW);
-  } else if (session.generating) {
-    session._visibleCount = Math.min(total, Math.max(session._visibleCount, session.messages.length));
   }
   const visibleCount = Math.min(total, Math.max(INITIAL_MESSAGE_WINDOW, session._visibleCount));
   session._visibleCount = visibleCount;
@@ -6491,21 +6492,51 @@ function cancelSession(id) {
 
 let pendingSwitchId = null;
 async function switchSession(id) {
-  if (state.layoutMode === 'tab') {
-    switchTab('chat');
-  }
-
   const session = state.openSessions.find(s => s.id === id);
   if (!session) return;
 
+  // Immediate state update on click for snappy feedback
+  pendingSwitchId = id;
+  state.sessionId = id;
+  state.sessionTitle = stripTags(session.title || '');
+  state.sessionWorkspace = stripTags(session.workspace || '');
+  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
+  if (session.reasoning) {
+    state.reasoning = session.reasoning;
+    if (reasoningSelect) reasoningSelect.value = session.reasoning;
+  }
+
+  // Reset file browser/editor when switching sessions (discard unsaved).
+  state.fsDir = '';
+  state.fsOpenPath = null;
+  state.fsSavedContent = '';
+  state.fsDirty = false;
+  state.fsReady = false;
+  state.fsListingRunIndex = 0;
+  if (state.fsCache && state.fsCache[id]) delete state.fsCache[id];
+  clearFsEditor();
+  if (fsEditorPath) fsEditorPath.textContent = 'No file open';
+  if (fsCloseBtn) fsCloseBtn.disabled = true;
+  if (fsSaveBtn) fsSaveBtn.disabled = true;
+  if (fsDirtyBadge) fsDirtyBadge.classList.add('hidden');
+  if (fsEditorStatus) fsEditorStatus.textContent = '';
+
+  updateStatusBar();
+  renderSessionTabs();
+  persistPrefs();
+
+  // Load files immediately if in files tab
+  if (state.activeTab === 'files') {
+    loadFilesTab();
+  }
+
   // Unloaded sessions (stubs from the startup list) fetch their history first.
   // Only the most recent switch request is applied once the fetch resolves.
-  pendingSwitchId = id;
   const isStub = session.stub || (!session.messages || (session.messages.length === 0 && session.message_count > 0));
   if (isStub) {
     state.loadingSessionId = id;
     renderSessionTabs();
-    if (messagesEl) {
+    if (messagesEl && state.activeTab === 'chat') {
       messagesEl.innerHTML = `
         <div class="session-loading-window">
           <div class="session-loading-card">
@@ -6541,28 +6572,13 @@ async function switchSession(id) {
     if (pendingSwitchId !== id) return;
   }
 
-  state.sessionId = id;
-  state.sessionTitle = stripTags(session.title || '');
-  state.sessionWorkspace = stripTags(session.workspace || '');
-  state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
+  if (session.title) state.sessionTitle = stripTags(session.title);
+  if (session.workspace) state.sessionWorkspace = stripTags(session.workspace);
   if (session.reasoning) {
     state.reasoning = session.reasoning;
     if (reasoningSelect) reasoningSelect.value = session.reasoning;
   }
-  // Reset file browser/editor when switching sessions (discard unsaved).
-  state.fsDir = '';
-  state.fsOpenPath = null;
-  state.fsSavedContent = '';
-  state.fsDirty = false;
-  state.fsReady = false;
-  state.fsListingRunIndex = 0;
-  if (state.fsCache && state.fsCache[id]) delete state.fsCache[id];
-  clearFsEditor();
-  if (fsEditorPath) fsEditorPath.textContent = 'No file open';
-  if (fsCloseBtn) fsCloseBtn.disabled = true;
-  if (fsSaveBtn) fsSaveBtn.disabled = true;
-  if (fsDirtyBadge) fsDirtyBadge.classList.add('hidden');
-  if (fsEditorStatus) fsEditorStatus.textContent = '';
+
   // Restore provider/model from the session, falling back to a valid
   // configured pair when the stored values are empty or stale.
   const resolved = resolveProviderModel(
@@ -6693,13 +6709,13 @@ function renderSessionTabs() {
     const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
     const isLoading = session.id === state.loadingSessionId;
     const isRunning = session.generating;
-    const lead = isLoading
-      ? '<span class="session-status-indicator loading" aria-label="loading session" title="Loading session…"><span class="qcode-spinner"></span></span>'
-      : (isRunning
-          ? '<span class="session-status-indicator running" aria-label="running session" title="Running…"><span class="session-active-dot"></span></span>'
+    const lead = isRunning
+      ? '<span class="session-status-indicator running" aria-label="running session" title="Running…"><span class="session-active-dot"></span></span>'
+      : (isLoading
+          ? '<span class="session-status-indicator loading" aria-label="loading session" title="Loading session…"><span class="qcode-spinner"></span></span>'
           : (isSub ? `<span class="session-icon sub">${icon('bot', 14)}</span>` : (isPinned ? `<span class="session-icon pin">${pinIcon(true)}</span>` : '')));
     return `
-      <div class="session-item-wrapper ${activeClass}${isLoading ? ' is-loading' : ''} ${isSub ? 'is-subagent' : ''}${isPinned ? ' pinned' : ''}" data-id="${session.id}">
+      <div class="session-item-wrapper ${activeClass}${isLoading && !isRunning ? ' is-loading' : ''} ${isSub ? 'is-subagent' : ''}${isPinned ? ' pinned' : ''}" data-id="${session.id}">
         <div class="session-item-main" data-id="${session.id}" role="button" tabindex="0">
           <div class="session-item-title-row">
             ${lead}
