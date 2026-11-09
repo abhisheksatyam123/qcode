@@ -306,10 +306,30 @@ TEST_F(ServerRoutesTest, SessionLifecycleAndStats) {
     EXPECT_EQ(j_usage["context"].value("window", -1), 0);  // no limit.context
 
     // GET /session/:id/messages
+    qcode::session::save_message(session_id, "user", "msg1");
+    qcode::session::save_message(session_id, "assistant", "msg2");
     auto res_msgs = client_->Get("/session/" + session_id + "/messages");
     ASSERT_TRUE(res_msgs != nullptr);
     EXPECT_EQ(res_msgs->status, 200);
     EXPECT_TRUE(nlohmann::json::parse(res_msgs->body).is_array());
+    EXPECT_EQ(res_msgs->body.find("[\n"), std::string::npos);  // compact JSON
+
+    // Query parameters: tail and limit
+    auto res_tail = client_->Get("/session/" + session_id + "/messages?tail=1");
+    ASSERT_TRUE(res_tail != nullptr);
+    EXPECT_EQ(res_tail->status, 200);
+    auto j_tail = nlohmann::json::parse(res_tail->body);
+    ASSERT_TRUE(j_tail.is_array());
+    EXPECT_EQ(j_tail.size(), 1u);
+    EXPECT_EQ(j_tail[0]["content"], "msg2");
+
+    auto res_limit = client_->Get("/session/" + session_id + "/messages?limit=1");
+    ASSERT_TRUE(res_limit != nullptr);
+    EXPECT_EQ(res_limit->status, 200);
+    auto j_limit = nlohmann::json::parse(res_limit->body);
+    ASSERT_TRUE(j_limit.is_array());
+    EXPECT_EQ(j_limit.size(), 1u);
+    EXPECT_EQ(j_limit[0]["content"], "msg1");
 
     // POST /session/:id/clear
     auto res_clear = client_->Post("/session/" + session_id + "/clear", "{}", "application/json");

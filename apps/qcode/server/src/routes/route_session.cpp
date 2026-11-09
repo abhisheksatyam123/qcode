@@ -76,10 +76,14 @@ uint64_t next_turn_id() {
     return ++next;
 }
 
-// Persisted history; with `limit`, only its first `limit` rows.
+// Persisted history; with `limit`, only its first `limit` rows; with `tail`, only its last `tail` rows.
 nlohmann::json session_messages_json(const std::string& sid,
-                                     size_t limit = std::numeric_limits<size_t>::max()) {
+                                     size_t limit = std::numeric_limits<size_t>::max(),
+                                     size_t tail = std::numeric_limits<size_t>::max()) {
     auto rows = qcode::session::load_session_messages(sid);
+    if (tail < rows.size()) {
+        rows.erase(rows.begin(), rows.end() - tail);
+    }
     if (rows.size() > limit) rows.resize(limit);
     nlohmann::json msgs = nlohmann::json::array();
     for (const auto& [sender, content] : rows) {
@@ -901,7 +905,15 @@ svr.Get("/session/([^/]+)/messages", [](const httplib::Request& req, httplib::Re
         res.set_content(R"({"error":"invalid session_id"})", "application/json");
         return;
     }
-    res.set_content(session_messages_json(sid).dump(2), "application/json");
+    size_t limit = std::numeric_limits<size_t>::max();
+    if (req.has_param("limit")) {
+        try { limit = std::stoul(req.get_param_value("limit")); } catch (...) {}
+    }
+    size_t tail = std::numeric_limits<size_t>::max();
+    if (req.has_param("tail")) {
+        try { tail = std::stoul(req.get_param_value("tail")); } catch (...) {}
+    }
+    res.set_content(session_messages_json(sid, limit, tail).dump(), "application/json");
 });
 
     // ── Get session logs ──

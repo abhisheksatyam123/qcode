@@ -1827,7 +1827,7 @@ function updateStatusBar() {
     const activeSession = state.openSessions.find(s => s.id === state.sessionId);
     if (activeSession && activeSession.generating) {
       statusSessionIndicator.className = 'header-session-status running';
-      statusSessionIndicator.innerHTML = '<span class="session-active-dot"></span><span class="qcode-spinner"></span>';
+      statusSessionIndicator.innerHTML = '<span class="session-active-dot"></span>';
       statusSessionIndicator.title = 'Session running: generating…';
       statusSessionIndicator.style.display = 'inline-flex';
     } else {
@@ -1988,7 +1988,7 @@ function updateLayoutUI() {
 
   // Exclusive tab mode: hide every pane, then show only the active one.
   if (mainEl) mainEl.classList.add('hidden');
-  if (filesPanel) filesPanel.classList.remove('hidden');
+  if (filesPanel) filesPanel.classList.add('hidden');
   if (statsPanel) statsPanel.classList.add('hidden');
   if (sessionsPanel) sessionsPanel.classList.add('hidden');
   [tabChatBtn, tabFilesBtn, tabSessionsBtn].forEach(b => {
@@ -2788,6 +2788,8 @@ function parseMessages(msgs, session) {
           status: 'running'
         };
         currentAssistantMsg.toolEvents.push(entry);
+        if (!currentAssistantMsg._toolsById) currentAssistantMsg._toolsById = {};
+        currentAssistantMsg._toolsById[tc.id] = entry;
         if (!currentAssistantMsg.timeline) currentAssistantMsg.timeline = [];
         currentAssistantMsg.timeline.push({ kind: 'tool', tool_call_id: tc.id });
       } catch (e) {}
@@ -2798,7 +2800,8 @@ function parseMessages(msgs, session) {
           currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
           session.messages.push(currentAssistantMsg);
         }
-        const tc = currentAssistantMsg.toolEvents.find(t => t.tool_call_id === tr.tool_call_id);
+        const tc = (currentAssistantMsg._toolsById && currentAssistantMsg._toolsById[tr.tool_call_id])
+          || currentAssistantMsg.toolEvents.find(t => t.tool_call_id === tr.tool_call_id);
         if (tc) {
           tc.status = tr.is_error ? 'error' : 'success';
           tc.result = tr.result;
@@ -2860,9 +2863,12 @@ async function loadSessionData(id) {
   };
 
   try {
-    const res = await fetch('/session/' + id);
-    if (res.ok) {
-      const info = await res.json();
+    const [infoRes, msgsRes] = await Promise.all([
+      fetch('/session/' + id).catch(() => null),
+      fetch('/session/' + id + '/messages').catch(() => null)
+    ]);
+    if (infoRes && infoRes.ok) {
+      const info = await infoRes.json();
       session.title = info.title || '';
       session.workspace = info.workspace || '';
       session.provider = info.provider || '';
@@ -2873,12 +2879,8 @@ async function loadSessionData(id) {
       // Taken before /messages, so a write in between still reads as a change.
       session.serverRev = sessionRev(info);
     }
-  } catch (e) {}
-
-  try {
-    const res = await fetch('/session/' + id + '/messages');
-    if (res.ok) {
-      const msgs = await res.json();
+    if (msgsRes && msgsRes.ok) {
+      const msgs = await msgsRes.json();
       if (Array.isArray(msgs)) {
         parseMessages(msgs, session);
       }
@@ -3589,15 +3591,49 @@ function loadRichVendor(kind) {
 function richVendorJobsFor(text) {
   const jobs = [];
   if (typeof text !== 'string') return jobs;
-  if (!RICH_VENDOR.katex.ready() && /\$|\\[([]/.test(text)) jobs.push(loadRichVendor('katex'));
-  if (!RICH_VENDOR.hljs.ready() && /```|~~~/.test(text)) jobs.push(loadRichVendor('hljs'));
+  const needKatex = !RICH_VENDOR.katex.ready();
+  const needHljs = !RICH_VENDOR.hljs.ready();
+  if (!needKatex && !needHljs) return jobs;
+  if (needKatex && (text.includes('$') || /\$|\\\[\(\)]/.test(text))) jobs.push(loadRichVendor('katex'));
+  if (needHljs && (text.includes('```') || text.includes('~~~'))) jobs.push(loadRichVendor('hljs'));
   return jobs;
 }
+
+// Efficient check across session messages without concatenating multi-MB strings.
+function richVendorJobsForMessages(messages) {
+  const jobs = [];
+  const needKatex = !RICH_VENDOR.katex.ready();
+  const needHljs = !RICH_VENDOR.hljs.ready();
+  if (!needKatex && !needHljs) return jobs;
+  if (!Array.isArray(messages) || messages.length === 0) return jobs;
+
+  let foundKatex = false;
+  let foundHljs = false;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const text = m ? (m.content || '') : '';
+    if (typeof text !== 'string' || !text) continue;
+    if (needKatex && !foundKatex && (text.includes('$') || /\$|\\\[\(\)]/.test(text))) {
+      foundKatex = true;
+    }
+    if (needHljs && !foundHljs && (text.includes('```') || text.includes('~~~'))) {
+      foundHljs = true;
+    }
+    if ((!needKatex || foundKatex) && (!needHljs || foundHljs)) break;
+  }
+  if (needKatex && foundKatex) jobs.push(loadRichVendor('katex'));
+  if (needHljs && foundHljs) jobs.push(loadRichVendor('hljs'));
+  return jobs;
+}
+
 // Re-draw the open transcript once a library lands. A live stream is left
 // alone; its final full render picks the library up.
 function rerenderRichContent() {
   const cur = state.openSessions.find(s => s.id === state.sessionId);
-  if (cur && !cur.stream && !cur.stub) renderMessages();
+  if (cur && !cur.stream && !cur.stub) {
+    if (renderCache.nodeMap) renderCache.nodeMap = new WeakMap();
+    renderMessages();
+  }
 }
 
 // Mermaid is ~3.5 MB; fetch it on the first diagram instead of at page load.
@@ -5024,6 +5060,9 @@ function renderStatsTab(data) {
   }
 }
 
+const INITIAL_MESSAGE_WINDOW = 40;
+const WINDOW_EXPAND_STEP = 40;
+const MAX_INLINE_TOOLS = 20;
 const renderCache = { sessionId: null, nodes: [] };
 
 function renderSignature(session, msg, index) {
@@ -5101,27 +5140,87 @@ function renderMessages() {
     reconcileChildren(messagesEl, out);
     return;
   }
+  const total = session.messages.length;
+  if (session._visibleCount === undefined) {
+    session._visibleCount = Math.min(total, INITIAL_MESSAGE_WINDOW);
+  } else if (session.generating) {
+    session._visibleCount = Math.min(total, Math.max(session._visibleCount, session.messages.length));
+  }
+  const visibleCount = Math.min(total, Math.max(INITIAL_MESSAGE_WINDOW, session._visibleCount));
+  session._visibleCount = visibleCount;
+  const startIndex = Math.max(0, total - visibleCount);
+  const hiddenCount = startIndex;
+
+  if (hiddenCount > 0) {
+    const topBar = document.createElement('div');
+    topBar.className = 'load-earlier-container';
+    topBar.innerHTML = `
+      <button type="button" class="load-earlier-btn" title="Show earlier messages">
+        ${icon('chevron', 12)} Show earlier messages (${hiddenCount} hidden)
+      </button>
+      <button type="button" class="load-all-btn" title="Show all messages in history">Show all (${total})</button>
+    `;
+    const loadEarlierBtn = topBar.querySelector('.load-earlier-btn');
+    if (loadEarlierBtn) {
+      loadEarlierBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const c = document.getElementById('chat-container');
+        const prevHeight = c ? c.scrollHeight : 0;
+        const prevTop = c ? c.scrollTop : 0;
+        session._visibleCount = Math.min(total, session._visibleCount + WINDOW_EXPAND_STEP);
+        renderMessages();
+        if (c) {
+          const heightDiff = c.scrollHeight - prevHeight;
+          c.scrollTop = prevTop + heightDiff;
+        }
+      });
+    }
+    const loadAllBtn = topBar.querySelector('.load-all-btn');
+    if (loadAllBtn) {
+      loadAllBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const c = document.getElementById('chat-container');
+        const prevHeight = c ? c.scrollHeight : 0;
+        const prevTop = c ? c.scrollTop : 0;
+        session._visibleCount = total;
+        renderMessages();
+        if (c) {
+          const heightDiff = c.scrollHeight - prevHeight;
+          c.scrollTop = prevTop + heightDiff;
+        }
+      });
+    }
+    out.push(topBar);
+  }
+
   // Reuse the DOM of messages that did not change since the last render so
   // full re-renders (tool events, refreshes) neither flicker nor lose
   // expanded tool/thought state; only messages new to this view animate in.
   const sameView = renderCache.sessionId === session.id;
-  const prev = sameView ? renderCache.nodes : [];
+  const prevNodes = sameView ? (renderCache.nodes || []) : [];
+  const prevMap = new Map();
+  for (const n of prevNodes) {
+    if (n && n.msg) prevMap.set(n.msg, n);
+  }
   const nodes = [];
-  session.messages.forEach((msg, i) => {
-    const sig = renderSignature(session, msg, i);
-    const cached = prev[i];
+  const visibleMessages = session.messages.slice(startIndex);
+  visibleMessages.forEach((msg, relIndex) => {
+    const absIndex = startIndex + relIndex;
+    const sig = renderSignature(session, msg, absIndex);
+    const cached = prevMap.get(msg);
     let el;
-    if (cached && cached.sig === sig && cached.msg === msg) {
+    if (cached && cached.sig === sig) {
       el = cached.el;
     } else {
       el = renderMessage(msg);
-      if (sameView && i >= prev.length) el.classList.add('enter');
+      if (sameView && absIndex >= (renderCache.lastTotal || 0)) el.classList.add('enter');
     }
     nodes.push({ sig, msg, el });
     out.push(el);
   });
   renderCache.sessionId = session.id;
   renderCache.nodes = nodes;
+  renderCache.lastTotal = total;
   if (queue.length > 0) out.push(renderQueuedBlock(queue));
   reconcileChildren(messagesEl, out);
 }
@@ -5227,25 +5326,64 @@ function renderMessage(msg) {
     else renderMarkdownInto(textEl, text);
     content.appendChild(textEl);
   };
-  let toolGroup = null;
-  const appendTool = (t) => {
-    if (!toolGroup) {
-      toolGroup = document.createElement('div'); toolGroup.className = 'tool-events';
-      content.appendChild(toolGroup);
+  const appendToolGroup = (tools) => {
+    if (!tools || tools.length === 0) return;
+    const toolGroup = document.createElement('div');
+    toolGroup.className = 'tool-events';
+
+    if (tools.length <= MAX_INLINE_TOOLS || isLive) {
+      for (const t of tools) {
+        toolGroup.appendChild(renderToolBlock(t));
+      }
+    } else {
+      const headCount = 5;
+      const tailCount = 10;
+      const hiddenTools = tools.slice(headCount, tools.length - tailCount);
+
+      for (let i = 0; i < headCount; i++) {
+        toolGroup.appendChild(renderToolBlock(tools[i]));
+      }
+
+      const expander = document.createElement('div');
+      expander.className = 'tool-group-expander';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tool-expand-btn';
+      btn.innerHTML = `${icon('chevron', 12)} Show ${hiddenTools.length} more tool calls (${tools.length} total)`;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const frag = document.createDocumentFragment();
+        for (const ht of hiddenTools) {
+          frag.appendChild(renderToolBlock(ht));
+        }
+        toolGroup.insertBefore(frag, expander);
+        expander.remove();
+      });
+      expander.appendChild(btn);
+      toolGroup.appendChild(expander);
+
+      for (let i = tools.length - tailCount; i < tools.length; i++) {
+        toolGroup.appendChild(renderToolBlock(tools[i]));
+      }
     }
-    toolGroup.appendChild(renderToolBlock(t));
+    content.appendChild(toolGroup);
   };
+
   if (timeline.length > 0) {
     const byId = {};
     if (msg.toolEvents) for (const t of msg.toolEvents) byId[t.tool_call_id] = t;
+    let pendingTools = [];
     for (let ti = 0; ti < timeline.length; ti++) {
       const entry = timeline[ti];
       if (entry.kind === 'tool') {
         const t = byId[entry.tool_call_id];
-        if (t) appendTool(t);
+        if (t) pendingTools.push(t);
         continue;
       }
-      toolGroup = null;
+      if (pendingTools.length > 0) {
+        appendToolGroup(pendingTools);
+        pendingTools = [];
+      }
       if (entry.kind === 'thought' && entry.text && state.showThinking) {
         const live = isLive && ti === lastThoughtIdx && entry === lastEntry;
         content.appendChild(renderThoughtBlock(entry.text, live ? { open: true, live: true } : undefined));
@@ -5253,8 +5391,14 @@ function renderMessage(msg) {
         appendText(entry.text, isLive && entry === lastEntry);
       }
     }
+    if (pendingTools.length > 0) {
+      appendToolGroup(pendingTools);
+      pendingTools = [];
+    }
   } else {
-    for (const t of (msg.toolEvents || [])) appendTool(t);
+    if (msg.toolEvents && msg.toolEvents.length > 0) {
+      appendToolGroup(msg.toolEvents);
+    }
     if (msg.reasoning && state.showThinking) {
       content.appendChild(renderThoughtBlock(msg.reasoning, isLive ? { open: true, live: true } : undefined));
     }
@@ -6391,7 +6535,7 @@ async function switchSession(id) {
   }
   // History waits for the rich libraries it needs, so it never draws unhighlighted first.
   const richJobs = session.messages && session.messages.length
-    ? richVendorJobsFor(session.messages.map(m => m.content || '').join('\n')) : [];
+    ? richVendorJobsForMessages(session.messages) : [];
   if (richJobs.length) {
     await Promise.all(richJobs);
     if (pendingSwitchId !== id) return;

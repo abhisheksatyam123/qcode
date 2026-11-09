@@ -465,6 +465,12 @@ test('WebUI collapsible sessions, header stats, loading indicator, and settings 
   assert.match(styleCss, /\.session-loading-window/, 'style.css should style .session-loading-window');
   assert.match(styleCss, /\.session-status-indicator\.loading/, 'style.css should style loading indicator in tabs');
 
+  // Exclusive view: files panel must be hidden by default in tab layout
+  assert.match(appJs, /if \(filesPanel\) filesPanel\.classList\.add\('hidden'\);/, 'filesPanel must be hidden initially in updateLayoutUI');
+
+  // Header session indicator: only green dot, no spinner alongside session title
+  assert.match(appJs, /statusSessionIndicator\.innerHTML\s*=\s*'<span class="session-active-dot"><\/span>';/, 'statusSessionIndicator must only show session-active-dot without spinner');
+
   // Green light only when running
   assert.match(appJs, /isRunning[\s\S]{1,120}session-active-dot/, 'green light dot should only appear for running sessions');
 
@@ -473,4 +479,36 @@ test('WebUI collapsible sessions, header stats, loading indicator, and settings 
   assert.match(indexHtml, /id="settings-clear-chat-btn"/, 'settings-clear-chat-btn should exist in settings modal');
   assert.match(indexHtml, /id="theme-select"/, 'theme-select should exist in settings modal');
   assert.match(appJs, /settingsClearChatBtn\.addEventListener/, 'settingsClearChatBtn should handle chat clear in settings');
+});
+
+test('WebUI large session virtualization and performance optimizations', () => {
+  const appJs = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(__dirname, '../src/style.css'), 'utf8');
+
+  // Parallel session info and messages fetch
+  assert.match(appJs, /Promise\.all\(\[\s*fetch\('\/session\/' \+ id\)/, 'loadSessionData must parallelize session and messages fetches');
+
+  // O(1) tool lookup during message parsing
+  assert.match(appJs, /_toolsById\[tc\.id\]\s*=\s*entry;/, 'parseMessages should index tools by ID');
+  assert.match(appJs, /_toolsById\[tr\.tool_call_id\]/, 'parseMessages should use _toolsById fast path');
+
+  // Fast message vendor check without joining full history strings
+  assert.match(appJs, /function richVendorJobsForMessages\(messages\)/, 'app.js should define richVendorJobsForMessages');
+  assert.match(appJs, /richVendorJobsForMessages\(session\.messages\)/, 'switchSession should use richVendorJobsForMessages');
+  assert.doesNotMatch(appJs, /session\.messages\.map\([^)]*\)\.join/, 'switchSession should not map-join full history into a single string');
+
+  // Windowed rendering in renderMessages
+  assert.match(appJs, /INITIAL_MESSAGE_WINDOW/, 'app.js should define INITIAL_MESSAGE_WINDOW');
+  assert.match(appJs, /load-earlier-container/, 'app.js should render load-earlier-container for hidden messages');
+  assert.match(appJs, /load-earlier-btn/, 'app.js should have load-earlier-btn button');
+  assert.match(appJs, /load-all-btn/, 'app.js should have load-all-btn button');
+  assert.match(styleCss, /\.load-earlier-container/, 'style.css should style .load-earlier-container');
+  assert.match(styleCss, /\.load-earlier-btn/, 'style.css should style .load-earlier-btn');
+
+  // Intra-message tool call collapsing
+  assert.match(appJs, /MAX_INLINE_TOOLS/, 'app.js should define MAX_INLINE_TOOLS');
+  assert.match(appJs, /tool-group-expander/, 'app.js should create tool-group-expander for large tool sequences');
+  assert.match(appJs, /tool-expand-btn/, 'app.js should create tool-expand-btn button');
+  assert.match(styleCss, /\.tool-group-expander/, 'style.css should style .tool-group-expander');
+  assert.match(styleCss, /\.tool-expand-btn/, 'style.css should style .tool-expand-btn');
 });
