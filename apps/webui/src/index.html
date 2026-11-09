@@ -29,9 +29,17 @@
     </div>
 
     <!-- Views Selection -->
-    <div class="sidebar-section">
-      <div class="sidebar-section-title">Views</div>
-      <nav class="sidebar-nav">
+    <div class="sidebar-section sidebar-views" id="sidebar-views-section">
+      <div class="sidebar-section-header views-header" id="views-toggle-btn" role="button" tabindex="0" aria-expanded="true" title="Toggle Views navigation">
+        <div class="sidebar-section-title">Views</div>
+        <div class="views-header-right">
+          <span class="active-view-badge" id="active-view-badge" title="Active view">Chat</span>
+          <button type="button" class="section-collapse-btn" id="views-collapse-arrow" aria-label="Toggle views navigation" tabindex="-1">
+            <svg class="ui-icon collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+      </div>
+      <nav class="sidebar-nav" id="sidebar-nav-list">
         <button class="sidebar-nav-btn active" id="tab-chat-btn" type="button">
           <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Chat
         </button>
@@ -56,43 +64,19 @@
       <div id="session-tabs-container" class="session-tabs-container"></div>
     </div>
 
-    <!-- Settings Section -->
-    <div class="sidebar-section sidebar-settings" id="sidebar-settings-section">
-      <div class="sidebar-section-header settings-header" id="settings-toggle-btn" role="button" tabindex="0" aria-expanded="true" title="Toggle Provider & Settings">
-        <div class="sidebar-section-title">Provider & Settings</div>
-        <div class="settings-header-right">
-          <span class="provider-badge-compact" id="provider-badge-compact" title="Active provider / model"></span>
-          <button type="button" class="section-collapse-btn" id="settings-collapse-arrow" aria-label="Toggle settings" tabindex="-1">
-            <svg class="ui-icon collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="sidebar-controls" id="sidebar-controls">
-        <div class="control-group">
-          <label for="provider-select">Provider</label>
-          <select id="provider-select"></select>
-        </div>
-        <div class="control-group">
-          <label for="model-select">Model</label>
-          <select id="model-select"></select>
-        </div>
-        <div class="control-group">
-          <label for="reasoning-select">Reasoning</label>
-          <select id="reasoning-select" title="Reasoning effort. Off hides the thinking trace.">
-            <option value="off">Off</option>
-            <option value="low" selected>Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </div>
-      </div>
-    </div>
-
     <div class="sidebar-footer">
-      <button id="clear-btn">Clear Chat</button>
-      <div class="connection-status" id="connection-status">
-        <span class="connection-dot"></span>
-        <span class="connection-label">Connected</span>
+      <div class="sidebar-footer-left">
+        <button id="settings-btn" class="sidebar-footer-btn settings-btn" title="Settings (Provider, Reasoning, Model)" aria-label="Settings" aria-expanded="false">
+          <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Settings</span>
+        </button>
+      </div>
+      <div class="sidebar-footer-right">
+        <button id="clear-btn" class="sidebar-footer-btn clear-btn" title="Clear chat history">Clear</button>
+        <div class="connection-status" id="connection-status">
+          <span class="connection-dot"></span>
+          <span class="connection-label">Connected</span>
+        </div>
       </div>
     </div>
   </aside>
@@ -104,7 +88,10 @@
       <div class="header-left">
         <button id="menu-toggle-btn" class="menu-toggle-btn" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar" aria-expanded="true"><svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
         <div class="header-session-info">
-          <div class="header-session-title" id="header-session-title">No session</div>
+          <div class="header-session-title-row">
+            <span id="header-session-status" class="header-session-status" aria-label="Session status" title="Session active"></span>
+            <div class="header-session-title" id="header-session-title">No session</div>
+          </div>
           <div class="header-session-workspace" id="header-session-workspace"></div>
         </div>
       </div>
@@ -272,6 +259,46 @@
           </div>
         </div>
         <div id="sessions-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal Dialog -->
+  <div id="settings-modal" class="settings-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+    <div class="picker-modal settings-modal-card">
+      <div class="picker-header">
+        <span id="settings-modal-title">Settings</span>
+        <button type="button" class="modal-close-btn" id="settings-modal-close" aria-label="Close settings">&times;</button>
+      </div>
+      <div class="picker-body settings-modal-body">
+        <div class="settings-field-group">
+          <div class="settings-field-header">
+            <span class="settings-field-label">Active Model</span>
+            <button type="button" class="settings-action-link" id="settings-switch-model-btn">Switch Model (/model)</button>
+          </div>
+          <div class="settings-active-model-display" id="settings-active-model-display">No model selected</div>
+          <div class="settings-field-hint">You can also switch models at any time by typing <code>/model &lt;name&gt;</code> in the prompt bar.</div>
+        </div>
+
+        <div class="settings-field-group">
+          <label for="provider-select" class="settings-field-label">Default Provider</label>
+          <div class="control-group">
+            <select id="provider-select"></select>
+          </div>
+        </div>
+
+        <div class="settings-field-group">
+          <label for="reasoning-select" class="settings-field-label">Reasoning Effort</label>
+          <div class="control-group">
+            <select id="reasoning-select" title="Reasoning effort. Off hides the thinking trace.">
+              <option value="off">Off</option>
+              <option value="low" selected>Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div class="settings-field-hint">Configures reasoning effort level for models with thinking capability.</div>
+        </div>
       </div>
     </div>
   </div>

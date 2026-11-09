@@ -236,28 +236,20 @@ function restoreSidebarState() {
   } catch (_) {}
 }
 
-function updateProviderBadgeCompact() {
-  const badge = document.getElementById('provider-badge-compact');
+function updateActiveViewBadge() {
+  const badge = document.getElementById('active-view-badge');
   if (!badge) return;
-  const p = (state.providers || []).find(x => x.id === state.provider);
-  const pName = p ? p.name : (state.provider || '');
-  let mName = state.model || '';
-  if (p && Array.isArray(p.models)) {
-    const m = p.models.find(x => x.id === state.model);
-    if (m && m.name) mName = m.name;
-  }
-  const label = mName ? `${pName ? pName + ' / ' : ''}${mName}` : (pName || 'No provider');
-  badge.textContent = label;
-  badge.title = `Provider: ${pName} · Model: ${mName}`;
+  const map = { chat: 'Chat', files: 'Files', stats: 'Stats', sessions: 'Subagents' };
+  badge.textContent = map[state.activeTab] || 'Chat';
 }
 
-function restoreSettingsCollapseState() {
-  const section = document.getElementById('sidebar-settings-section');
-  const toggleBtn = document.getElementById('settings-toggle-btn');
+function restoreViewsCollapseState() {
+  const section = document.getElementById('sidebar-views-section');
+  const toggleBtn = document.getElementById('views-toggle-btn');
   if (!section) return;
   let collapsed = false;
   try {
-    const saved = localStorage.getItem('qcode-settings-collapsed');
+    const saved = localStorage.getItem('qcode-views-collapsed');
     if (saved !== null) {
       collapsed = saved === 'true';
     } else if (isMobileLayout()) {
@@ -270,7 +262,42 @@ function restoreSettingsCollapseState() {
     section.classList.remove('collapsed');
   }
   if (toggleBtn) toggleBtn.setAttribute('aria-expanded', String(!collapsed));
-  updateProviderBadgeCompact();
+  updateActiveViewBadge();
+}
+
+function updateSettingsModalModelInfo() {
+  const display = document.getElementById('settings-active-model-display');
+  if (!display) return;
+  const p = (state.providers || []).find(x => x.id === state.provider);
+  const pName = p ? p.name : (state.provider || 'None');
+  let mName = state.model || '';
+  if (p && Array.isArray(p.models)) {
+    const m = p.models.find(x => x.id === state.model);
+    if (m && m.name) mName = m.name;
+  }
+  display.textContent = mName ? `${pName} / ${mName}` : (pName || 'No model selected');
+}
+
+function openSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  const btn = document.getElementById('settings-btn');
+  if (!modal) return;
+  updateSettingsModalModelInfo();
+  modal.classList.remove('hidden');
+  modal.classList.add('active');
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+  const closeBtn = document.getElementById('settings-modal-close');
+  if (closeBtn) closeBtn.focus();
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  const btn = document.getElementById('settings-btn');
+  if (!modal) return;
+  modal.classList.remove('active');
+  modal.classList.add('hidden');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  if (btn && typeof btn.focus === 'function') btn.focus();
 }
 
 function toggleFsTree() {
@@ -345,8 +372,15 @@ const pauseBtn = document.getElementById('pause-btn');
 const retryBtn = document.getElementById('retry-btn');
 const clearBtn = document.getElementById('clear-btn');
 const providerSelect = document.getElementById('provider-select');
-const modelSelect = document.getElementById('model-select');
 const reasoningSelect = document.getElementById('reasoning-select');
+const statusSessionIndicator = document.getElementById('header-session-status');
+const settingsBtn = document.getElementById('settings-btn');
+const settingsModal = document.getElementById('settings-modal');
+const settingsModalClose = document.getElementById('settings-modal-close');
+const settingsSwitchModelBtn = document.getElementById('settings-switch-model-btn');
+const settingsActiveModelDisplay = document.getElementById('settings-active-model-display');
+const viewsToggleBtn = document.getElementById('views-toggle-btn');
+const activeViewBadge = document.getElementById('active-view-badge');
 const modalOverlay = document.getElementById('modal-overlay');
 // One backdrop-click handler for every modal. Modals used to add their own
 // listener on each open and only remove it on a backdrop click, so every
@@ -362,11 +396,19 @@ document.addEventListener('focusin', (e) => {
 // close the modal from any control inside it, not only from its text input.
 // stopPropagation keeps the global Esc (pause generation) from firing too.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isModalOpen()) {
-    e.preventDefault();
-    e.stopPropagation();
-    closeModal();
-    return;
+  if (e.key === 'Escape') {
+    if (settingsModal && !settingsModal.classList.contains('hidden')) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSettingsModal();
+      return;
+    }
+    if (isModalOpen()) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeModal();
+      return;
+    }
   }
   if (e.key !== 'Tab' || !isModalOpen()) return;
   const focusables = [...modalOverlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')];
@@ -1204,8 +1246,9 @@ async function init() {
   await providersReady;
   setupEventListeners();
   restoreSidebarState();
-  restoreSettingsCollapseState();
+  restoreViewsCollapseState();
   restoreFsTreeState();
+  updateSettingsModalModelInfo();
   window.addEventListener('resize', () => {
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebar-overlay');
@@ -1288,11 +1331,10 @@ function onProviderChange(idx) {
   const p = state.providers[idx];
   if (!p) return;
   state.provider = p.id;
-  modelSelect.innerHTML = p.models.map(m =>
-    `<option value="${m.id}">${esc(formatModelDropdownLabel(m))}</option>`
-  ).join('');
-  if (p.models.length > 0) state.model = p.models[0].id;
-  updateProviderBadgeCompact();
+  if (p.models && p.models.length > 0 && !p.models.some(m => m.id === state.model)) {
+    state.model = p.models[0].id;
+  }
+  updateSettingsModalModelInfo();
 }
 
 // Resolve a provider/model pair against the loaded provider list.
@@ -1318,12 +1360,10 @@ function applyProviderModel(providerId, modelId) {
   if (!resolved.ok) return false;
   const pidx = state.providers.findIndex(p => p.id === resolved.provider);
   if (pidx < 0) return false;
-  providerSelect.value = pidx;
-  onProviderChange(pidx);
-  modelSelect.value = resolved.model;
+  if (providerSelect) providerSelect.value = pidx;
   state.provider = resolved.provider;
   state.model = resolved.model;
-  updateProviderBadgeCompact();
+  updateSettingsModalModelInfo();
   return resolved.provider === providerId ||
     state.providers[pidx].name === providerId;
 }
@@ -1353,21 +1393,16 @@ function setupEventListeners() {
     state.reasoning = reasoningSelect.value;
     persistPrefs();
   });
-  modelSelect.addEventListener('change', () => {
-    state.model = modelSelect.value;
-    const session = state.openSessions.find(s => s.id === state.sessionId);
-    if (session) {
-      session.model = state.model;
-    }
-    updateProviderBadgeCompact();
-  });
-  providerSelect.addEventListener('change', () => {
-    const session = state.openSessions.find(s => s.id === state.sessionId);
-    if (session) {
-      session.provider = state.provider;
-      session.model = state.model;
-    }
-  });
+  if (providerSelect) {
+    providerSelect.addEventListener('change', () => {
+      onProviderChange(parseInt(providerSelect.value, 10));
+      const session = state.openSessions.find(s => s.id === state.sessionId);
+      if (session) {
+        session.provider = state.provider;
+        session.model = state.model;
+      }
+    });
+  }
   promptInput.addEventListener('input', () => {
     updateSlashMenu();
     resizePromptInput();
@@ -1596,20 +1631,36 @@ function setupEventListeners() {
   if (sidebarOverlay) {
     sidebarOverlay.addEventListener('click', closeMobileSidebar);
   }
-  const settingsToggleBtn = document.getElementById('settings-toggle-btn');
-  if (settingsToggleBtn) {
-    settingsToggleBtn.addEventListener('click', () => {
-      const section = document.getElementById('sidebar-settings-section');
+  if (viewsToggleBtn) {
+    viewsToggleBtn.addEventListener('click', () => {
+      const section = document.getElementById('sidebar-views-section');
       if (!section) return;
       const isCollapsed = section.classList.toggle('collapsed');
-      settingsToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
-      try { localStorage.setItem('qcode-settings-collapsed', String(isCollapsed)); } catch (_) {}
+      viewsToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+      try { localStorage.setItem('qcode-views-collapsed', String(isCollapsed)); } catch (_) {}
     });
-    settingsToggleBtn.addEventListener('keydown', (e) => {
+    viewsToggleBtn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        settingsToggleBtn.click();
+        viewsToggleBtn.click();
       }
+    });
+  }
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', openSettingsModal);
+  }
+  if (settingsModalClose) {
+    settingsModalClose.addEventListener('click', closeSettingsModal);
+  }
+  if (settingsModal) {
+    settingsModal.addEventListener('click', (e) => {
+      if (e.target === settingsModal) closeSettingsModal();
+    });
+  }
+  if (settingsSwitchModelBtn) {
+    settingsSwitchModelBtn.addEventListener('click', () => {
+      closeSettingsModal();
+      handleModelCommand('');
     });
   }
   const headerSessionInfo = document.querySelector('.header-session-info');
@@ -1708,6 +1759,24 @@ function setupEventListeners() {
 function updateStatusBar() {
   const cleanTitle = stripTags(state.sessionTitle);
   statusSession.textContent = cleanTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
+  if (statusSessionIndicator) {
+    if (!state.sessionId) {
+      statusSessionIndicator.className = 'header-session-status idle';
+      statusSessionIndicator.innerHTML = '<span class="session-idle-dot"></span>';
+      statusSessionIndicator.title = 'No active session';
+    } else {
+      const activeSession = state.openSessions.find(s => s.id === state.sessionId);
+      if (activeSession && activeSession.generating) {
+        statusSessionIndicator.className = 'header-session-status generating';
+        statusSessionIndicator.innerHTML = '<span class="qcode-spinner"></span>';
+        statusSessionIndicator.title = 'Session active: generating…';
+      } else {
+        statusSessionIndicator.className = 'header-session-status active';
+        statusSessionIndicator.innerHTML = '<span class="session-active-dot"></span>';
+        statusSessionIndicator.title = 'Session active';
+      }
+    }
+  }
   if (statusWorkspace) {
     if (state.sessionWorkspace) {
       const cleanWs = stripTags(state.sessionWorkspace);
@@ -1849,6 +1918,7 @@ function switchTab(tab) {
   if (tab === 'stats') loadStatsTab();
   if (tab === 'sessions') loadDelegatedSessionsTab();
   updateLayoutUI();
+  updateActiveViewBadge();
   closeMobileSidebar();
 }
 
@@ -1892,7 +1962,7 @@ function updateLayoutUI() {
 // ═══════════════════════════════════════════════════════════════════
 
 function isModalOpen() {
-  return modalOverlay.classList.contains('active');
+  return modalOverlay.classList.contains('active') || Boolean(settingsModal && !settingsModal.classList.contains('hidden'));
 }
 
 // True when keystrokes would go into a text field, so single-key shortcuts must not fire.
@@ -5957,6 +6027,8 @@ function setGenerating(on) {
   sendBtn.setAttribute('aria-label', on ? 'Queue prompt' : 'Send message');
   if (pauseBtn) pauseBtn.classList.toggle('hidden', !on);
   if (typeof retryBtn !== 'undefined' && retryBtn) retryBtn.disabled = Boolean(on);
+  updateStatusBar();
+  renderSessionTabs();
 }
 function nearBottom() {
   const c = document.getElementById('chat-container');
@@ -6384,14 +6456,17 @@ function renderSessionTabs() {
     const ws = session.workspace ? shortPath(session.workspace) : '';
     const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
     const lead = session.generating
-      ? '<span class="session-gen-indicator" aria-label="generating"></span>'
-      : (isSub ? `<span class="session-icon sub">${icon('bot', 14)}</span>` : (isPinned ? `<span class="session-icon pin">${pinIcon(true)}</span>` : ''));
+      ? '<span class="session-status-indicator generating" aria-label="generating" title="Generating response…"><span class="qcode-spinner"></span></span>'
+      : (isActive
+          ? '<span class="session-status-indicator active" aria-label="active session" title="Active session"><span class="session-active-dot"></span></span>'
+          : (isSub ? `<span class="session-icon sub">${icon('bot', 14)}</span>` : (isPinned ? `<span class="session-icon pin">${pinIcon(true)}</span>` : '')));
     return `
       <div class="session-item-wrapper ${activeClass} ${isSub ? 'is-subagent' : ''}${isPinned ? ' pinned' : ''}" data-id="${session.id}">
         <div class="session-item-main" data-id="${session.id}" role="button" tabindex="0">
           <div class="session-item-title-row">
             ${lead}
             <span class="session-title-text" title="${esc(title)}">${esc(title)}</span>
+            ${isPinned && (isActive || session.generating) ? `<span class="session-icon pin" style="margin-left: auto; margin-right: 2px;">${pinIcon(true)}</span>` : ''}
           </div>
           ${ws ? `<div class="session-item-workspace" title="${esc(session.workspace)}">${esc(ws)}</div>` : ''}
         </div>

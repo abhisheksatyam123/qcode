@@ -101,92 +101,26 @@ def check_node():
 
 
 def build_webui(project_root: Path, build_dir: Path):
-    """Build the WebUI frontend."""
-    webui_src = project_root / "apps" / "webui"
-    webui_dist = build_dir / "webui" / "dist"
+    """Sync pure WebUI static assets to build directory."""
+    webui_src = project_root / "apps" / "webui" / "src"
+    app_webui = build_dir / "apps" / "qcode" / "webui"
     
-    if not (webui_src / "package.json").exists():
-        console.print("[yellow]WebUI package.json not found, skipping WebUI build[/yellow]")
+    if not webui_src.exists():
+        console.print("[yellow]WebUI src directory not found, skipping WebUI sync[/yellow]")
         return False
     
-    console.print("[bold blue]Building WebUI...[/bold blue]")
-    
-    # Install dependencies
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Installing npm dependencies...", total=None)
-        result = subprocess.run(["npm", "ci"], cwd=webui_src, capture_output=True, text=True)
-        if result.returncode != 0:
-            console.print(f"[red]npm ci failed:[/red] {result.stderr}")
-            return False
-        progress.update(task, completed=True)
-    
-    # Build
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Building WebUI...", total=None)
-        result = subprocess.run(["npm", "run", "build"], cwd=webui_src, capture_output=True, text=True)
-        if result.returncode != 0:
-            console.print(f"[red]npm build failed:[/red] {result.stderr}")
-            return False
-        progress.update(task, completed=True)
-
-    # Rebuild vendor IIFE bundles when npm packages are present. The committed
-    # src/vendor-*.min.js files are enough for a C++/server build.
-    marked_esm = webui_src / "node_modules" / "marked" / "lib" / "marked.esm.js"
-    yaml_mjs = webui_src / "node_modules" / "js-yaml" / "dist" / "js-yaml.mjs"
-    if marked_esm.exists() and yaml_mjs.exists():
-        subprocess.run(
-            [
-                "npx", "esbuild",
-                "--bundle", "--minify",
-                "--format=iife", "--global-name=marked",
-                "--outfile=" + str(webui_src / "src" / "vendor-marked.min.js"),
-                str(marked_esm),
-            ],
-            cwd=webui_src, check=True, capture_output=True, text=True,
-        )
-        subprocess.run(
-            [
-                "npx", "esbuild",
-                "--bundle", "--minify",
-                "--format=iife", "--global-name=jsyaml",
-                "--outfile=" + str(webui_src / "src" / "vendor-jsyaml.min.js"),
-                str(yaml_mjs),
-            ],
-            cwd=webui_src, check=True, capture_output=True, text=True,
-        )
-    else:
-        console.print(
-            "[yellow]marked/js-yaml not in node_modules; using committed vendor bundles[/yellow]"
-        )
-
-    # Copy to build directory + sync raw src (incl. vendor bundles) next to the app.
-    if (webui_src / "dist").exists():
-        webui_dist.parent.mkdir(parents=True, exist_ok=True)
-        if webui_dist.exists():
-            shutil.rmtree(webui_dist)
-        shutil.copytree(webui_src / "dist", webui_dist)
-        # Vendored bundles live outside the vite pipeline; copy into dist too.
-        for v in ("vendor-marked.min.js", "vendor-jsyaml.min.js"):
-            vp = webui_src / "src" / v
-            if vp.exists():
-                shutil.copy2(vp, webui_dist / v)
-        app_webui = build_dir / "apps" / "qcode" / "webui"
-        if (webui_src / "src").exists():
-            app_webui.mkdir(parents=True, exist_ok=True)
-            for item in (webui_src / "src").glob("*"):
-                if item.is_file():
-                    shutil.copy2(item, app_webui / item.name)
-        console.print(f"[green]✓[/green] WebUI built to {webui_dist}")
-        return True
-    return False
+    console.print("[bold blue]Syncing WebUI static assets (pure JS)...[/bold blue]")
+    app_webui.mkdir(parents=True, exist_ok=True)
+    for item in webui_src.glob("*"):
+        if item.is_file():
+            shutil.copy2(item, app_webui / item.name)
+        elif item.is_dir():
+            dest = app_webui / item.name
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(item, dest)
+    console.print(f"[green]✓[/green] WebUI synced to {app_webui}")
+    return True
 
 
 @click.command()
@@ -318,11 +252,9 @@ def main(mode: str, tests: bool, clean: bool, verbose: bool, export_compile_comm
     build_dir.mkdir(parents=True, exist_ok=True)
     
     # Build WebUI first (if requested)
-    if not no_webui and check_node():
+    if not no_webui:
         console.print()
         build_webui(project_root, build_dir)
-    elif not no_webui:
-        console.print("[yellow]Node.js not found, skipping WebUI build[/yellow]")
     
     # Configure CMake (mirrors CMakePresets.json so `cmake --preset <name>`
     # and this script share the same build/<preset>/ directory).

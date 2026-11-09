@@ -61,19 +61,11 @@ prefers `mold` or `lld` on Linux for faster links when available. Set
 `-DQCODE_USE_FAST_LINKER=OFF` to use the system linker. The scripted build
 strips Conda/cross-compiler flags for native builds.
 
-### 3. WebUI Build
-WebUI sources live in `apps/webui/src/`. The build bundles assets into `apps/webui/dist/` via Vite:
-```bash
-# Install dependencies
-cd apps/webui && npm install
-
-# Production build
-npm run build --prefix apps/webui
-
-# Development server with hot reload
-npm run dev --prefix apps/webui
-```
-*Note*: When `qcode` builds, WebUI assets are copied to `build/<preset>/apps/qcode/webui/` for immediate hosting by `qcode serve` at `http://localhost:9080`.
+### 3. WebUI (Pure Standard JavaScript)
+WebUI sources live in `apps/webui/src/`. The frontend is built with pure, standard ES-module JavaScript, CSS, and HTML with zero bundlers (no Vite or webpack required):
+- Served directly by `qcode serve` at `http://localhost:9080`.
+- When `qcode` builds, static assets are copied to `build/<preset>/apps/qcode/webui/` with optional pre-compression (`.gz`).
+- Tests run directly via Node.js built-in test runner: `node --test apps/webui/test/` (or `npm test --prefix apps/webui`).
 
 ### 4. Android Build
 Requires `ANDROID_NDK_HOME`:
