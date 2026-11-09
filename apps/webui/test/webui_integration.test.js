@@ -442,3 +442,35 @@ test('WebUI agent modes and model capability badges', () => {
   assert.match(appJs, /id: 'orchestrator'/, 'agent mode picker should offer orchestrator');
   assert.doesNotMatch(appJs, /id: 'autonomous'|id: 'plan'/, 'retired agent modes should be gone');
 });
+
+test('WebUI collapsible sessions, header stats, loading indicator, and settings polish', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // Header stats button alongside session title
+  assert.match(indexHtml, /id="header-stats-btn"/, 'header-stats-btn should exist in index.html');
+  assert.doesNotMatch(indexHtml, /id="tab-stats-btn"/, 'tab-stats-btn should be removed from left strip views');
+  assert.match(appJs, /headerStatsBtn\.addEventListener/, 'headerStatsBtn should toggle stats view');
+  assert.match(styleCss, /\.header-stats-btn/, 'style.css should style .header-stats-btn');
+
+  // Collapsible sessions section
+  assert.match(indexHtml, /id="sessions-toggle-btn"/, 'sessions-toggle-btn should exist in index.html');
+  assert.match(indexHtml, /id="active-session-count-badge"/, 'active-session-count-badge should exist in index.html');
+  assert.match(appJs, /restoreSessionsCollapseState/, 'app.js should restore sessions collapse state');
+  assert.match(styleCss, /\.sidebar-sessions\.collapsed/, 'style.css should style .sidebar-sessions.collapsed');
+
+  // Loading window and spinner on session switch
+  assert.match(appJs, /session-loading-window/, 'app.js should show session-loading-window on stub switch');
+  assert.match(styleCss, /\.session-loading-window/, 'style.css should style .session-loading-window');
+  assert.match(styleCss, /\.session-status-indicator\.loading/, 'style.css should style loading indicator in tabs');
+
+  // Green light only when running
+  assert.match(appJs, /isRunning[\s\S]{1,120}session-active-dot/, 'green light dot should only appear for running sessions');
+
+  // Settings modal enhancements & removal of footer clear button
+  assert.doesNotMatch(indexHtml, /id="clear-btn"/, 'clear-btn should be removed from footer');
+  assert.match(indexHtml, /id="settings-clear-chat-btn"/, 'settings-clear-chat-btn should exist in settings modal');
+  assert.match(indexHtml, /id="theme-select"/, 'theme-select should exist in settings modal');
+  assert.match(appJs, /settingsClearChatBtn\.addEventListener/, 'settingsClearChatBtn should handle chat clear in settings');
+});

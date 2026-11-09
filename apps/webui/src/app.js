@@ -265,6 +265,32 @@ function restoreViewsCollapseState() {
   updateActiveViewBadge();
 }
 
+function updateActiveSessionCountBadge() {
+  const badge = document.getElementById('active-session-count-badge');
+  if (!badge) return;
+  badge.textContent = String(state.openSessions.length || 0);
+}
+
+function restoreSessionsCollapseState() {
+  const section = document.getElementById('sidebar-sessions-section');
+  const toggleBtn = document.getElementById('sessions-toggle-btn');
+  if (!section) return;
+  let collapsed = false;
+  try {
+    const saved = localStorage.getItem('qcode-sessions-collapsed');
+    if (saved !== null) {
+      collapsed = saved === 'true';
+    }
+  } catch (_) {}
+  if (collapsed) {
+    section.classList.add('collapsed');
+  } else {
+    section.classList.remove('collapsed');
+  }
+  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+  updateActiveSessionCountBadge();
+}
+
 function updateSettingsModalModelInfo() {
   const display = document.getElementById('settings-active-model-display');
   if (!display) return;
@@ -283,6 +309,7 @@ function openSettingsModal() {
   const btn = document.getElementById('settings-btn');
   if (!modal) return;
   updateSettingsModalModelInfo();
+  if (themeSelect) themeSelect.value = state.theme || 'qcode';
   modal.classList.remove('hidden');
   modal.classList.add('active');
   if (btn) btn.setAttribute('aria-expanded', 'true');
@@ -370,7 +397,7 @@ const promptInput = document.getElementById('prompt-input');
 const sendBtn = document.getElementById('send-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const retryBtn = document.getElementById('retry-btn');
-const clearBtn = document.getElementById('clear-btn');
+const settingsClearChatBtn = document.getElementById('settings-clear-chat-btn');
 const providerSelect = document.getElementById('provider-select');
 const reasoningSelect = document.getElementById('reasoning-select');
 const statusSessionIndicator = document.getElementById('header-session-status');
@@ -381,6 +408,10 @@ const settingsSwitchModelBtn = document.getElementById('settings-switch-model-bt
 const settingsActiveModelDisplay = document.getElementById('settings-active-model-display');
 const viewsToggleBtn = document.getElementById('views-toggle-btn');
 const activeViewBadge = document.getElementById('active-view-badge');
+const sessionsToggleBtn = document.getElementById('sessions-toggle-btn');
+const activeSessionCountBadge = document.getElementById('active-session-count-badge');
+const headerStatsBtn = document.getElementById('header-stats-btn');
+const themeSelect = document.getElementById('theme-select');
 const modalOverlay = document.getElementById('modal-overlay');
 // One backdrop-click handler for every modal. Modals used to add their own
 // listener on each open and only remove it on a backdrop click, so every
@@ -475,7 +506,6 @@ const statsContent = document.getElementById('stats-content');
 const statsRefreshBtn = document.getElementById('stats-refresh-btn');
 const statsCopyBtn = document.getElementById('stats-copy-btn');
 const tabFilesBtn = document.getElementById('tab-files-btn');
-const tabStatsBtn = document.getElementById('tab-stats-btn');
 const tabSessionsBtn = document.getElementById('tab-sessions-btn');
 const sessionsPanel = document.getElementById('sessions-panel');
 const sessionsContent = document.getElementById('sessions-content');
@@ -1247,6 +1277,7 @@ async function init() {
   setupEventListeners();
   restoreSidebarState();
   restoreViewsCollapseState();
+  restoreSessionsCollapseState();
   restoreFsTreeState();
   updateSettingsModalModelInfo();
   window.addEventListener('resize', () => {
@@ -1372,23 +1403,36 @@ function setupEventListeners() {
 
   sendBtn.addEventListener('click', sendMessage);
   promptInput.addEventListener('keydown', handleInputKeydown);
-  clearBtn.addEventListener('click', async () => {
-    if (!state.sessionId) { showToast('No active session'); return; }
-    if (!confirm('Clear all messages in this session? This cannot be undone.')) return;
-    try {
-      const res = await fetch('/session/' + state.sessionId + '/clear', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
-      });
-      if (!res.ok) { showToast('Could not clear chat: ' + await responseError(res), 'error'); return; }
-    } catch (e) {
-      showToast('Could not clear chat: ' + e.message, 'error');
-      return;
-    }
-    const session = state.openSessions.find(s => s.id === state.sessionId);
-    if (session) { session.messages = []; }
-    renderMessages();
-    showToast('Chat cleared');
-  });
+  if (settingsClearChatBtn) {
+    settingsClearChatBtn.addEventListener('click', async () => {
+      if (!state.sessionId) { showToast('No active session'); return; }
+      if (!confirm('Clear all messages in this session? This cannot be undone.')) return;
+      try {
+        const res = await fetch('/session/' + state.sessionId + '/clear', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        });
+        if (!res.ok) { showToast('Could not clear chat: ' + await responseError(res), 'error'); return; }
+      } catch (e) {
+        showToast('Could not clear chat: ' + e.message, 'error');
+        return;
+      }
+      const session = state.openSessions.find(s => s.id === state.sessionId);
+      if (session) { session.messages = []; }
+      renderMessages();
+      closeSettingsModal();
+      showToast('Chat cleared');
+    });
+  }
+  if (themeSelect) {
+    themeSelect.value = state.theme || 'qcode';
+    themeSelect.addEventListener('change', () => {
+      const chosen = themeSelect.value;
+      if (THEMES[chosen]) {
+        applyTheme(chosen);
+        showToast('Theme: ' + THEMES[chosen].title);
+      }
+    });
+  }
   reasoningSelect.addEventListener('change', () => {
     state.reasoning = reasoningSelect.value;
     persistPrefs();
@@ -1457,11 +1501,31 @@ function setupEventListeners() {
   if (tabFilesBtn) {
     tabFilesBtn.addEventListener('click', () => switchTab('files'));
   }
-  if (tabStatsBtn) {
-    tabStatsBtn.addEventListener('click', () => switchTab('stats'));
+  if (headerStatsBtn) {
+    headerStatsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      switchTab(state.activeTab === 'stats' ? 'chat' : 'stats');
+    });
   }
   if (tabSessionsBtn) {
     tabSessionsBtn.addEventListener('click', () => switchTab('sessions'));
+  }
+  if (sessionsToggleBtn) {
+    sessionsToggleBtn.addEventListener('click', (e) => {
+      if (e.target.closest('#new-session-btn')) return;
+      const section = document.getElementById('sidebar-sessions-section');
+      if (!section) return;
+      const isCollapsed = section.classList.toggle('collapsed');
+      sessionsToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+      try { localStorage.setItem('qcode-sessions-collapsed', String(isCollapsed)); } catch (_) {}
+    });
+    sessionsToggleBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (e.target.closest('#new-session-btn')) return;
+        e.preventDefault();
+        sessionsToggleBtn.click();
+      }
+    });
   }
   if (sessionsRefreshBtn) {
     sessionsRefreshBtn.addEventListener('click', () => loadDelegatedSessionsTab());
@@ -1760,21 +1824,17 @@ function updateStatusBar() {
   const cleanTitle = stripTags(state.sessionTitle);
   statusSession.textContent = cleanTitle || (state.sessionId ? 'Session: ' + state.sessionId.substring(0,8) + '…' : 'No session');
   if (statusSessionIndicator) {
-    if (!state.sessionId) {
-      statusSessionIndicator.className = 'header-session-status idle';
-      statusSessionIndicator.innerHTML = '<span class="session-idle-dot"></span>';
-      statusSessionIndicator.title = 'No active session';
+    const activeSession = state.openSessions.find(s => s.id === state.sessionId);
+    if (activeSession && activeSession.generating) {
+      statusSessionIndicator.className = 'header-session-status running';
+      statusSessionIndicator.innerHTML = '<span class="session-active-dot"></span><span class="qcode-spinner"></span>';
+      statusSessionIndicator.title = 'Session running: generating…';
+      statusSessionIndicator.style.display = 'inline-flex';
     } else {
-      const activeSession = state.openSessions.find(s => s.id === state.sessionId);
-      if (activeSession && activeSession.generating) {
-        statusSessionIndicator.className = 'header-session-status generating';
-        statusSessionIndicator.innerHTML = '<span class="qcode-spinner"></span>';
-        statusSessionIndicator.title = 'Session active: generating…';
-      } else {
-        statusSessionIndicator.className = 'header-session-status active';
-        statusSessionIndicator.innerHTML = '<span class="session-active-dot"></span>';
-        statusSessionIndicator.title = 'Session active';
-      }
+      statusSessionIndicator.className = 'header-session-status idle';
+      statusSessionIndicator.innerHTML = '';
+      statusSessionIndicator.title = '';
+      statusSessionIndicator.style.display = 'none';
     }
   }
   if (statusWorkspace) {
@@ -1928,12 +1988,22 @@ function updateLayoutUI() {
 
   // Exclusive tab mode: hide every pane, then show only the active one.
   if (mainEl) mainEl.classList.add('hidden');
-  if (filesPanel) filesPanel.classList.add('hidden');
+  if (filesPanel) filesPanel.classList.remove('hidden');
   if (statsPanel) statsPanel.classList.add('hidden');
   if (sessionsPanel) sessionsPanel.classList.add('hidden');
-  [tabChatBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
+  [tabChatBtn, tabFilesBtn, tabSessionsBtn].forEach(b => {
     if (b) b.classList.remove('active');
   });
+
+  if (headerStatsBtn) {
+    if (state.activeTab === 'stats') {
+      headerStatsBtn.classList.add('active');
+      headerStatsBtn.setAttribute('aria-pressed', 'true');
+    } else {
+      headerStatsBtn.classList.remove('active');
+      headerStatsBtn.setAttribute('aria-pressed', 'false');
+    }
+  }
 
   if (state.activeTab === 'chat') {
     if (mainEl) mainEl.classList.remove('hidden');
@@ -1943,12 +2013,11 @@ function updateLayoutUI() {
     if (tabFilesBtn) tabFilesBtn.classList.add('active');
   } else if (state.activeTab === 'stats') {
     if (statsPanel) statsPanel.classList.remove('hidden');
-    if (tabStatsBtn) tabStatsBtn.classList.add('active');
   } else if (state.activeTab === 'sessions') {
     if (sessionsPanel) sessionsPanel.classList.remove('hidden');
     if (tabSessionsBtn) tabSessionsBtn.classList.add('active');
   }
-  [tabChatBtn, tabFilesBtn, tabStatsBtn, tabSessionsBtn].forEach(b => {
+  [tabChatBtn, tabFilesBtn, tabSessionsBtn].forEach(b => {
     if (!b) return;
     if (b.classList.contains('active')) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
@@ -6288,13 +6357,35 @@ async function switchSession(id) {
   // Unloaded sessions (stubs from the startup list) fetch their history first.
   // Only the most recent switch request is applied once the fetch resolves.
   pendingSwitchId = id;
-  if (session.stub) {
+  const isStub = session.stub || (!session.messages || (session.messages.length === 0 && session.message_count > 0));
+  if (isStub) {
+    state.loadingSessionId = id;
+    renderSessionTabs();
+    if (messagesEl) {
+      messagesEl.innerHTML = `
+        <div class="session-loading-window">
+          <div class="session-loading-card">
+            <div class="session-loading-spinner-wrap">
+              <span class="qcode-spinner session-loading-spinner"></span>
+            </div>
+            <div class="session-loading-title">Loading session…</div>
+            <div class="session-loading-sub">${esc(session.title || id)}</div>
+          </div>
+        </div>
+      `;
+    }
     try {
       await ensureSessionLoaded(session);
     } catch (e) {
       console.error('Failed to load session', id, e);
       if (pendingSwitchId === id) showToast('Could not load session — try again');
+      state.loadingSessionId = null;
+      renderSessionTabs();
       return;
+    } finally {
+      if (pendingSwitchId === id) {
+        state.loadingSessionId = null;
+      }
     }
     if (pendingSwitchId !== id) return;
   }
@@ -6448,6 +6539,7 @@ function renderSessionTabs() {
     return;
   }
   const pinIcon = (on) => `<svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+  updateActiveSessionCountBadge();
   sessionTabsContainer.innerHTML = list.map(session => {
     const isActive = session.id === state.sessionId;
     const isPinned = state.pinned.includes(session.id);
@@ -6455,13 +6547,15 @@ function renderSessionTabs() {
     const title = session.title || 'Session';
     const ws = session.workspace ? shortPath(session.workspace) : '';
     const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
-    const lead = session.generating
-      ? '<span class="session-status-indicator generating" aria-label="generating" title="Generating response…"><span class="qcode-spinner"></span></span>'
-      : (isActive
-          ? '<span class="session-status-indicator active" aria-label="active session" title="Active session"><span class="session-active-dot"></span></span>'
+    const isLoading = session.id === state.loadingSessionId;
+    const isRunning = session.generating;
+    const lead = isLoading
+      ? '<span class="session-status-indicator loading" aria-label="loading session" title="Loading session…"><span class="qcode-spinner"></span></span>'
+      : (isRunning
+          ? '<span class="session-status-indicator running" aria-label="running session" title="Running…"><span class="session-active-dot"></span></span>'
           : (isSub ? `<span class="session-icon sub">${icon('bot', 14)}</span>` : (isPinned ? `<span class="session-icon pin">${pinIcon(true)}</span>` : '')));
     return `
-      <div class="session-item-wrapper ${activeClass} ${isSub ? 'is-subagent' : ''}${isPinned ? ' pinned' : ''}" data-id="${session.id}">
+      <div class="session-item-wrapper ${activeClass}${isLoading ? ' is-loading' : ''} ${isSub ? 'is-subagent' : ''}${isPinned ? ' pinned' : ''}" data-id="${session.id}">
         <div class="session-item-main" data-id="${session.id}" role="button" tabindex="0">
           <div class="session-item-title-row">
             ${lead}
