@@ -3266,3 +3266,66 @@ kbd {
   letter-spacing: 0.04em;
 }
 .study-weak { margin-top: 8px; }
+
+/* Compressible Settings Header */
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.settings-header:hover { background: rgba(255,255,255,0.06); }
+.settings-header .sidebar-section-title {
+  padding: 0;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+.settings-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.provider-badge-compact {
+  display: none;
+  font-size: 11px;
+  color: #94a3b8;
+  max-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: #0f172a;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid #334155;
+}
+.sidebar-settings.collapsed .provider-badge-compact {
+  display: inline-block;
+}
+.section-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+}
+.collapse-chevron {
+  transition: transform 0.2s ease;
+}
+.sidebar-settings.collapsed .collapse-chevron {
+  transform: rotate(-90deg);
+}
+.sidebar-settings.collapsed .sidebar-controls {
+  display: none;
+}

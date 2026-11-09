@@ -35,9 +35,6 @@
         <button class="sidebar-nav-btn active" id="tab-chat-btn" type="button">
           <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Chat
         </button>
-        <a class="sidebar-nav-btn" href="/dashboard.html" style="text-decoration:none;" title="Life & Athletic Dashboard">
-          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></span> Life Dashboard
-        </a>
         <button class="sidebar-nav-btn" id="tab-files-btn" type="button">
           <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Files
         </button>
@@ -60,9 +57,17 @@
     </div>
 
     <!-- Settings Section -->
-    <div class="sidebar-section sidebar-settings">
-      <div class="sidebar-section-title">Settings</div>
-      <div class="sidebar-controls">
+    <div class="sidebar-section sidebar-settings" id="sidebar-settings-section">
+      <div class="sidebar-section-header settings-header" id="settings-toggle-btn" role="button" tabindex="0" aria-expanded="true" title="Toggle Provider & Settings">
+        <div class="sidebar-section-title">Provider & Settings</div>
+        <div class="settings-header-right">
+          <span class="provider-badge-compact" id="provider-badge-compact" title="Active provider / model"></span>
+          <button type="button" class="section-collapse-btn" id="settings-collapse-arrow" aria-label="Toggle settings" tabindex="-1">
+            <svg class="ui-icon collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="sidebar-controls" id="sidebar-controls">
         <div class="control-group">
           <label for="provider-select">Provider</label>
           <select id="provider-select"></select>

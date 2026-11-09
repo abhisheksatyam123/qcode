@@ -15,7 +15,7 @@ function copyStaticAssets(): Plugin {
     apply: 'build',
     closeBundle() {
       for (const name of readdirSync(srcDir)) {
-        if (name.startsWith('vendor-') || name === 'dashboard.html') {
+        if (name.startsWith('vendor-')) {
           cpSync(resolve(srcDir, name), resolve(outDir, name))
         }
       }

@@ -212,6 +212,7 @@ async function handleHashChange() {
 async function init() {
   await loadProviders();
   setupEventListeners();
+  restoreSettingsCollapseState();
   updateStatusBar();
   
   try {
@@ -309,6 +310,7 @@ function applyProviderModel(providerId, modelId) {
   modelSelect.value = resolved.model;
   state.provider = resolved.provider;
   state.model = resolved.model;
+  updateProviderBadgeCompact();
   return resolved.provider === providerId ||
     state.providers[pidx].name === providerId;
 }
@@ -540,6 +542,20 @@ function setupEventListeners() {
   const sidebarOverlay = document.getElementById('sidebar-overlay');
   if (sidebarOverlay) {
     sidebarOverlay.addEventListener('click', closeMobileSidebar);
+  }
+  const settingsToggleBtn = document.getElementById('settings-toggle-btn');
+  if (settingsToggleBtn) {
+    settingsToggleBtn.addEventListener('click', () => {
+      const section = document.getElementById('sidebar-settings-section');
+      if (!section) return;
+      const isCollapsed = section.classList.toggle('collapsed');
+      settingsToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+      try { localStorage.setItem('qcode-settings-collapsed', String(isCollapsed)); } catch (_) {}
+    });
+  }
+  const headerSessionInfo = document.querySelector('.header-session-info');
+  if (headerSessionInfo) {
+    headerSessionInfo.addEventListener('click', openMobileSidebar);
   }
 
   // Escape key pauses/cancels the active generation from anywhere
@@ -2854,3 +2870,40 @@ window.addEventListener('resize', () => {
     } catch (e) {}
   }
 });
+
+function updateProviderBadgeCompact() {
+  const badge = document.getElementById('provider-badge-compact');
+  if (!badge) return;
+  const p = (state.providers || []).find(x => x.id === state.provider);
+  const pName = p ? p.name : (state.provider || '');
+  let mName = state.model || '';
+  if (p && Array.isArray(p.models)) {
+    const m = p.models.find(x => x.id === state.model);
+    if (m && m.name) mName = m.name;
+  }
+  const label = mName ? `${pName ? pName + ' / ' : ''}${mName}` : (pName || 'No provider');
+  badge.textContent = label;
+  badge.title = `Provider: ${pName} · Model: ${mName}`;
+}
+
+function restoreSettingsCollapseState() {
+  const section = document.getElementById('sidebar-settings-section');
+  const toggleBtn = document.getElementById('settings-toggle-btn');
+  if (!section) return;
+  let collapsed = false;
+  try {
+    const saved = localStorage.getItem('qcode-settings-collapsed');
+    if (saved !== null) {
+      collapsed = saved === 'true';
+    } else {
+      collapsed = true;
+    }
+  } catch (_) {}
+  if (collapsed) {
+    section.classList.add('collapsed');
+  } else {
+    section.classList.remove('collapsed');
+  }
+  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+  updateProviderBadgeCompact();
+}

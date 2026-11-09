@@ -298,7 +298,7 @@ kbd {
 }
 
 .sidebar-section { display: flex; flex-direction: column; gap: 2px; min-height: 0; }
-.sidebar-section.flex-grow { flex: 1; overflow: hidden; }
+.sidebar-section.flex-grow { flex: 1 1 auto; min-height: 120px; display: flex; flex-direction: column; overflow: hidden; }
 .sidebar-section-header { display: flex; align-items: center; justify-content: space-between; padding-right: 2px; }
 .sidebar-section-title {
   padding: 0 8px 6px;
@@ -345,13 +345,15 @@ kbd {
 
 /* Session list */
 .session-tabs-container {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 80px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 1px;
   margin: 0 -4px;
   padding: 0 4px 8px;
+  -webkit-overflow-scrolling: touch;
 }
 .session-list-empty { padding: 8px; color: var(--muted); font-size: var(--text-sm); line-height: 1.45; }
 .session-item-wrapper {
@@ -439,9 +441,69 @@ kbd {
 .delete-session-btn:hover { color: var(--danger); background: var(--danger-soft); }
 .close-session-tab-btn:hover { color: var(--text); background: var(--active); }
 
-/* Sidebar settings */
-.sidebar-settings { gap: 8px; }
-.sidebar-settings .sidebar-section-title { padding-bottom: 0; }
+/* Sidebar settings (compressible) */
+.sidebar-settings { gap: 6px; }
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 6px;
+  border-radius: var(--radius-xs);
+  transition: background var(--fast);
+}
+.settings-header:hover { background: var(--hover); }
+.settings-header .sidebar-section-title {
+  padding: 0;
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--faint);
+}
+.settings-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.provider-badge-compact {
+  display: none;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+}
+.sidebar-settings.collapsed .provider-badge-compact {
+  display: inline-block;
+}
+.section-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.collapse-chevron {
+  transition: transform var(--fast) var(--ease);
+}
+.sidebar-settings.collapsed .collapse-chevron {
+  transform: rotate(-90deg);
+}
+.sidebar-settings.collapsed .sidebar-controls {
+  display: none;
+}
 .sidebar-controls { display: flex; flex-direction: column; gap: 8px; padding: 0 2px; }
 .control-group { display: flex; flex-direction: column; gap: 4px; }
 .control-group label { padding-left: 6px; font-size: var(--text-xs); color: var(--faint); }
@@ -1853,8 +1915,24 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
     left: 0;
     width: min(300px, 86vw);
     padding-top: max(14px, env(safe-area-inset-top));
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
     transform: translateX(-102%);
     box-shadow: var(--shadow-lg);
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sidebar-section.flex-grow {
+    min-height: 140px;
+  }
+  .session-tabs-container {
+    min-height: 100px;
+  }
+  .header-session-info {
+    cursor: pointer;
+  }
+  .header-session-info:active {
+    opacity: 0.7;
   }
   /* Hidden drawer leaves the tab order and the a11y tree; the slide-out still animates */
   #sidebar { visibility: hidden; transition: transform var(--med) var(--ease), visibility 0s linear var(--med); }

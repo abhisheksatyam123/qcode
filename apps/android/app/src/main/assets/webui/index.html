@@ -61,9 +61,17 @@
     </div>
 
     <!-- Settings Section -->
-    <div class="sidebar-section sidebar-settings">
-      <div class="sidebar-section-title">Settings</div>
-      <div class="sidebar-controls">
+    <div class="sidebar-section sidebar-settings" id="sidebar-settings-section">
+      <div class="sidebar-section-header settings-header" id="settings-toggle-btn" role="button" tabindex="0" aria-expanded="true" title="Toggle Provider & Settings">
+        <div class="sidebar-section-title">Provider & Settings</div>
+        <div class="settings-header-right">
+          <span class="provider-badge-compact" id="provider-badge-compact" title="Active provider / model"></span>
+          <button type="button" class="section-collapse-btn" id="settings-collapse-arrow" aria-label="Toggle settings" tabindex="-1">
+            <svg class="ui-icon collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="sidebar-controls" id="sidebar-controls">
         <div class="control-group">
           <label for="provider-select">Provider</label>
           <select id="provider-select"></select>
