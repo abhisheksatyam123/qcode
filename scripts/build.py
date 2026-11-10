@@ -100,8 +100,32 @@ def check_node():
         return False
 
 
+def precompress_webui_assets(target_dir: Path):
+    """Generate .gz pre-compressed copies for web static assets (gzip -9 -n -c)."""
+    exts = {".js", ".css", ".html", ".svg", ".json", ".ttf"}
+    count = 0
+    for root, _, files in os.walk(target_dir):
+        for f in files:
+            path = Path(root) / f
+            if path.suffix.lower() in exts and not f.endswith(".gz"):
+                gz_path = path.with_name(path.name + ".gz")
+                try:
+                    if shutil.which("gzip"):
+                        with open(gz_path, "wb") as out_f:
+                            subprocess.run(["gzip", "-9", "-n", "-f", "-c", str(path)],
+                                           stdout=out_f, check=True)
+                    else:
+                        import gzip
+                        with open(path, "rb") as f_in, gzip.GzipFile(str(gz_path), "wb", compresslevel=9, mtime=0) as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                    count += 1
+                except Exception as e:
+                    console.print(f"[yellow]Warning compressing {path}: {e}[/yellow]")
+    return count
+
+
 def build_webui(project_root: Path, build_dir: Path):
-    """Sync pure WebUI static assets to build directory."""
+    """Sync pure WebUI static assets to build directory and precompress."""
     webui_src = project_root / "apps" / "webui" / "src"
     app_webui = build_dir / "apps" / "qcode" / "webui"
     
@@ -109,6 +133,11 @@ def build_webui(project_root: Path, build_dir: Path):
         console.print("[yellow]WebUI src directory not found, skipping WebUI sync[/yellow]")
         return False
     
+    # Pre-compress static files in apps/webui/src/
+    console.print("[bold blue]Pre-compressing WebUI source assets...[/bold blue]")
+    src_gz_count = precompress_webui_assets(webui_src)
+    console.print(f"[green]✓[/green] Pre-compressed {src_gz_count} assets in {webui_src}")
+
     console.print("[bold blue]Syncing WebUI static assets (pure JS)...[/bold blue]")
     app_webui.mkdir(parents=True, exist_ok=True)
     for item in webui_src.glob("*"):
@@ -119,7 +148,10 @@ def build_webui(project_root: Path, build_dir: Path):
             if dest.exists():
                 shutil.rmtree(dest)
             shutil.copytree(item, dest)
-    console.print(f"[green]✓[/green] WebUI synced to {app_webui}")
+    
+    # Also ensure build directory copies have .gz
+    precompress_webui_assets(app_webui)
+    console.print(f"[green]✓[/green] WebUI synced and pre-compressed at {app_webui}")
     return True
 
 

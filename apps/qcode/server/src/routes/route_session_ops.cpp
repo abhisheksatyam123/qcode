@@ -338,9 +338,30 @@ svr.Get("/session/([^/]+)/stats", [providers_list](const httplib::Request& req, 
     }
     // Context in use = the prompt of the latest call; the window comes only
     // from opencode.json limit.context (0 = unknown).
-    const int used_context = usage.last_input_tokens > 0 ? usage.last_input_tokens : st.prompt_tokens;
+    // last_context_tokens is max(local estimate, provider count): a gateway
+    // that reports a tiny prompt_tokens must not make the meter under-report.
+    const int used_context = std::max(usage.last_context_tokens, usage.last_input_tokens) > 0
+                                 ? std::max(usage.last_context_tokens, usage.last_input_tokens)
+                                 : st.prompt_tokens;
+    // The window belongs to the model that served the latest call, which can
+    // differ from the session's stored model after a mid-session switch.
+    const qcode::ModelInfo* window_model = model;
+    if (providers_list && !usage.last_model.empty()) {
+        const qcode::ModelInfo* last = nullptr;
+        for (const auto& p : *providers_list) {
+            if (!usage.last_provider.empty() && p.id != usage.last_provider) continue;
+            for (const auto& m : p.models) {
+                if (m.id == usage.last_model) {
+                    last = &m;
+                    break;
+                }
+            }
+            if (last != nullptr) break;
+        }
+        if (last != nullptr) window_model = last;
+    }
     j["context"] = {{"used", used_context},
-                    {"window", model != nullptr ? model->context_window : 0}};
+                    {"window", window_model != nullptr ? window_model->context_window : 0}};
     // Delegated work is billed in the child sessions; roll it up here.
     const auto subagents = qcode::session::get_subagent_usage(sid);
     j["subagents"] = qcode::session::usage_summary_json(subagents.usage, nullptr);

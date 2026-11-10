@@ -59,6 +59,11 @@ httplib::Server::HandlerResponse serve_precompressed(
     }
     const auto size = fs::file_size(gz_path, ec);
     if (ec) return httplib::Server::HandlerResponse::Unhandled;
+    // A source edited after its .gz was made must win, or clients keep the old file.
+    const auto gz_time = fs::last_write_time(gz_path, ec);
+    const auto src_time = fs::last_write_time(webui_dir + rel, ec);
+    if (!ec && src_time > gz_time) return httplib::Server::HandlerResponse::Unhandled;
+    ec.clear();
 
     res.set_header("Content-Encoding", "gzip");
     res.set_header("Vary", "Accept-Encoding");

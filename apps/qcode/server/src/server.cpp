@@ -54,8 +54,8 @@ void handle_signal(int sig) {
 int qcode::app::run_server(int argc, char* argv[]) {
     constexpr const char* kUsage =
         "Usage: qcode serve [--port PORT] [--host ADDR] [--log-dir DIR]\n"
-        "  --host ADDR  address to listen on (default 127.0.0.1). A non-loopback\n"
-        "               address requires QCODE_SERVER_TOKEN to be set.\n";
+        "  --host ADDR  address to listen on (default 127.0.0.1). Optional\n"
+        "               bearer token via QCODE_SERVER_TOKEN.\n";
     int port = 9080;
     std::string host = "127.0.0.1";
     std::string custom_log_dir;
@@ -94,16 +94,10 @@ int qcode::app::run_server(int argc, char* argv[]) {
         return 2;
     }
 
-    // Loopback is the default. Anything wider needs a token; the token itself is
-    // never logged or printed.
+    // Loopback is the default. Setting QCODE_SERVER_TOKEN gates requests with a bearer token.
     const bool loopback_bind = host == "127.0.0.1" || host == "localhost" || host == "::1";
     const char* token_env = std::getenv("QCODE_SERVER_TOKEN");
     const std::string api_token = token_env ? token_env : "";
-    if (!loopback_bind && api_token.empty()) {
-        std::cerr << "Error: --host " << host << " is not a loopback address. Set QCODE_SERVER_TOKEN "
-                  << "to require a bearer token on every request, or keep the default 127.0.0.1.\n";
-        return 2;
-    }
     // The token goes into the startup URL unescaped, so keep it to URL-safe characters.
     const bool url_safe = std::all_of(api_token.begin(), api_token.end(), [](unsigned char c) {
         return std::isalnum(c) || c == '-' || c == '.' || c == '_' || c == '~';
@@ -162,7 +156,7 @@ int qcode::app::run_server(int argc, char* argv[]) {
 
     qcode::server::ServerSetupOptions options;
     options.security.loopback_bind = loopback_bind;
-    options.security.token = loopback_bind ? "" : api_token;
+    options.security.token = api_token;
     if (!options.security.token.empty()) {
         // The session cookie is random, not the token: a 128-bit value from the OS.
         std::random_device rd;

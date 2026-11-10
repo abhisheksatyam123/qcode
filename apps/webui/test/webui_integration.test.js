@@ -512,3 +512,33 @@ test('WebUI large session virtualization and performance optimizations', () => {
   assert.match(styleCss, /\.tool-group-expander/, 'style.css should style .tool-group-expander');
   assert.match(styleCss, /\.tool-expand-btn/, 'style.css should style .tool-expand-btn');
 });
+
+
+test('WebUI instant session switching and batched tool expander', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+
+  // Instant session switching cache
+  assert.match(appJs, /hasCachedMessages\s*=\s*(isSessionSwitchCached\(session\)|session\.messages\s*&&\s*session\.messages\.length\s*>\s*0)/, 'app.js should detect cached messages for instant switching');
+  assert.match(appJs, /renderMessages\(\)/, 'app.js should immediately render cached messages');
+
+  // Batched tool expansion using requestAnimationFrame
+  assert.match(appJs, /requestAnimationFrame\(renderNextChunk\)/, 'app.js should batch tool group expansion using requestAnimationFrame');
+  assert.match(appJs, /chunkSize\s*=\s*20/, 'tool group expander should render in chunks of 20');
+});
+
+test('WebUI file explorer resilience and tree collapse restore', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // Subtab synchronization in switchTab
+  assert.match(appJs, /switchFilesSubtab\(state\.filesSubtab/, 'switchTab should synchronize files subtab');
+
+  // Tree collapsed restore button
+  assert.match(indexHtml, /id="fs-placeholder-tree-btn"/, 'index.html should have tree restore button');
+  assert.match(appJs, /fsPlaceholderTreeBtn/, 'app.js should bind fsPlaceholderTreeBtn');
+  assert.match(styleCss, /\.fs-placeholder-tree-btn/, 'style.css should style .fs-placeholder-tree-btn');
+
+  // 404 missing workspace resilience
+  assert.match(appJs, /fs-workspace-missing/, 'app.js should handle missing workspace with friendly empty state');
+});

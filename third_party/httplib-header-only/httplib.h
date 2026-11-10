@@ -4313,6 +4313,9 @@ inline bool gzip_decompressor::decompress(const char *data, size_t data_length,
 #ifdef CPPHTTPLIB_BROTLI_SUPPORT
 inline brotli_compressor::brotli_compressor() {
   state_ = BrotliEncoderCreateInstance(nullptr, nullptr, nullptr);
+  // The default quality (11) takes seconds for a ~1 MB JSON body, which stalls
+  // the web UI on large sessions. Quality 4 is ~100x faster with a similar ratio.
+  if (state_) { BrotliEncoderSetParameter(state_, BROTLI_PARAM_QUALITY, 4); }
 }
 
 inline brotli_compressor::~brotli_compressor() {

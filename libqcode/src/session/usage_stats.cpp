@@ -130,6 +130,11 @@ void SessionUsageStats::add(const ModelCallUsage& call) {
     output_tokens += std::max(0, call.output_tokens);
     reasoning_tokens += std::max(0, call.reasoning_tokens);
     last_input_tokens = std::max(0, call.input_tokens);
+    last_context_tokens = std::max(std::max(0, call.context_tokens), last_input_tokens);
+    if (!call.model.empty()) {
+        last_provider = call.provider;
+        last_model = call.model;
+    }
     last_effort = call.effort;
     if (!call.variant.empty()) last_variant = call.variant;
     if (call.cost.priced) {
@@ -200,6 +205,9 @@ nlohmann::json SessionUsageStats::to_json() const {
         {"output_tokens", output_tokens},
         {"reasoning_tokens", reasoning_tokens},
         {"last_input_tokens", last_input_tokens},
+        {"last_context_tokens", last_context_tokens},
+        {"last_provider", last_provider},
+        {"last_model", last_model},
         {"last_effort", last_effort},
         {"last_variant", last_variant},
         {"cost", cost.to_json()},
@@ -226,6 +234,9 @@ SessionUsageStats SessionUsageStats::from_json(const nlohmann::json& j) {
     s.output_tokens = count_at(j, "output_tokens");
     s.reasoning_tokens = count_at(j, "reasoning_tokens");
     s.last_input_tokens = static_cast<int>(number_at(j, "last_input_tokens"));
+    s.last_context_tokens = static_cast<int>(number_at(j, "last_context_tokens"));
+    s.last_provider = string_at(j, "last_provider");
+    s.last_model = string_at(j, "last_model");
     s.last_effort = string_at(j, "last_effort");
     s.last_variant = string_at(j, "last_variant");
     if (const auto it = j.find("cost"); it != j.end() && it->is_object()) {

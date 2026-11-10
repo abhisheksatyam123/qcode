@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, usageModelRows, detectFsLanguage, extractChildSessionId, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from '../src/utils.js';
-import { healthRetryDelayMs, isRetryableHttpStatus } from '../src/utils.js';
+import { healthRetryDelayMs, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading } from '../src/utils.js';
 
 test('healthRetryDelayMs: backs off while offline and caps at 10 s', () => {
   assert.equal(healthRetryDelayMs(1), 2000);
@@ -333,4 +333,31 @@ test('keepInterruptedPartials: leaves history alone when the server has the repl
   ];
   keepInterruptedPartials(local, fresh);
   assert.equal(fresh.length, 3);
+});
+
+test('isSessionSwitchCached: identifies cached sessions with loaded messages', () => {
+  assert.equal(isSessionSwitchCached(null), false);
+  assert.equal(isSessionSwitchCached(undefined), false);
+  assert.equal(isSessionSwitchCached({}), false);
+  assert.equal(isSessionSwitchCached({ messages: [] }), false);
+  assert.equal(isSessionSwitchCached({ stub: true, message_count: 5 }), false);
+  assert.equal(isSessionSwitchCached({ messages: [{ role: 'user', content: 'hi' }] }), true);
+});
+
+test('shouldShowSessionLoading: only activates for stubs and unloaded histories', () => {
+  assert.equal(shouldShowSessionLoading(null), false);
+  assert.equal(shouldShowSessionLoading(undefined), false);
+
+  // Cached messages should never trigger loading window or wipe chat
+  assert.equal(shouldShowSessionLoading({ messages: [{ role: 'user', content: 'hi' }] }), false);
+  assert.equal(shouldShowSessionLoading({ stub: false, messages: [{ role: 'user', content: 'hi' }], message_count: 1 }), false);
+
+  // Stubs and pending loads must show loading
+  assert.equal(shouldShowSessionLoading({ stub: true }), true);
+  assert.equal(shouldShowSessionLoading({ stub: true, message_count: 10 }), true);
+  assert.equal(shouldShowSessionLoading({ messages: null, message_count: 4 }), true);
+  assert.equal(shouldShowSessionLoading({ messages: [], message_count: 4 }), true);
+
+  // Brand new fresh session with 0 messages: empty chat, no loading spinner
+  assert.equal(shouldShowSessionLoading({ stub: false, messages: [], message_count: 0 }), false);
 });

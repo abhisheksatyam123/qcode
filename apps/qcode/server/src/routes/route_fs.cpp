@@ -236,8 +236,12 @@ svr.Get("/session/([^/]+)/fs/list", [](const httplib::Request& req, httplib::Res
     std::error_code ec;
     if (!fs::exists(abs, ec) || !fs::is_directory(abs, ec)) {
         res.status = 404;
-        res.set_content(nlohmann::json({{"error", "not a directory"}, {"path", rel_norm}}).dump(),
-                        "application/json");
+        res.set_content(nlohmann::json({
+            {"error", "directory not found"},
+            {"workspace", ws},
+            {"path", rel_norm},
+            {"exists", false}
+        }).dump(), "application/json");
         return;
     }
 

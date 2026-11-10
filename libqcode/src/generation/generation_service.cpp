@@ -940,7 +940,11 @@ static void run_tools_generation_bus(
                            .variant = variant,
                            .provider = provider_id,
                            .model = usage_model_id(model_info, options.model),
-                           .cost = {}},  // priced by record_model_call
+                           .cost = {},  // priced by record_model_call
+                           .context_tokens = static_cast<int>(std::max(
+                               live_context,
+                               static_cast<size_t>(
+                                   std::max(0, step_res.usage.prompt_tokens))))},
                           step, streamed, step_res.is_success());
         const double tok_per_s =
             step_model_ms > 0 ? step_res.usage.completion_tokens / (step_model_ms / 1000.0) : 0.0;

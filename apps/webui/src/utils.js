@@ -637,3 +637,15 @@ export function keepInterruptedPartials(local, fresh) {
   }
 }
 
+
+// Session switching cache helpers: determine whether a session has cached messages
+// ready for instant rendering (0ms latency) or needs to display a loading state.
+export function isSessionSwitchCached(session) {
+  return !!(session && session.messages && session.messages.length > 0);
+}
+
+export function shouldShowSessionLoading(session) {
+  if (!session) return false;
+  if (isSessionSwitchCached(session)) return false;
+  return !!(session.stub || !session.messages || (session.message_count && session.message_count > 0));
+}

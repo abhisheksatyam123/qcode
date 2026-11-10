@@ -235,14 +235,27 @@ def non_loopback_checks(binary: Path, stub, check, ensure) -> None:
         port = free_port()
         serve = [str(binary), "serve", "--host", "0.0.0.0", "--port", str(port), "--log-dir", str(logs)]
 
-        p = subprocess.Popen(serve, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        stdout_open_path = Path(tmp) / "stdout_open.txt"
+        with open(stdout_open_path, "w") as out:
+            p = subprocess.Popen(serve, env=env, stdout=out, stderr=subprocess.DEVNULL)
         try:
-            _, err = p.communicate(timeout=15)
-        except subprocess.TimeoutExpired:
-            p.kill()
-            _, err = p.communicate()
-        check("sec 0.0.0.0 without a token refuses to start", p.returncode, 2)
-        ensure("sec refusal names QCODE_SERVER_TOKEN", b"QCODE_SERVER_TOKEN" in err)
+            try:
+                wait_ready(f"http://127.0.0.1:{port}", p, 20.0)
+            except RuntimeError as e:
+                ensure(f"sec non-token run starts: {e}", False)
+                return
+            check("sec no token: /health open", request_raw(port, "GET", "/health")[0], 200)
+            check("sec no token: /api/version open without auth", request_raw(port, "GET", "/api/version")[0], 200)
+        finally:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+
+        port = free_port()
+        serve = [str(binary), "serve", "--host", "0.0.0.0", "--port", str(port), "--log-dir", str(logs)]
 
         stdout_path = Path(tmp) / "stdout.txt"
         with open(stdout_path, "w") as out:

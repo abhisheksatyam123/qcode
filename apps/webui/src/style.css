@@ -1280,6 +1280,7 @@ code.md-inline-code, .md-content :not(pre) > code, .markdown-body :not(pre) > co
   background: var(--surface-raised);
   border: 1px solid var(--border);
   font-size: 0.86em;
+  overflow-wrap: anywhere;
   color: color-mix(in srgb, var(--text) 92%, var(--accent));
 }
 .md-content img, .markdown-body img, img.md-image { max-width: 100%; height: auto; border-radius: var(--radius-sm); margin: 6px 0; }
@@ -2135,7 +2136,7 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
   #prompt-input { font-size: 16px; } /* prevents iOS zoom on focus */
   .message.user .message-content { max-width: 92%; }
   .tool-subtitle { display: none; }
-  .tool-title { max-width: none; }
+  .tool-title { max-width: none; flex-shrink: 1; min-width: 0; }
   .msg-actions { opacity: 1; }
   .toast-region { left: 12px; right: 12px; width: auto; align-items: stretch; }
   .picker-modal { max-height: 80vh; }
@@ -2164,6 +2165,9 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
   .agent-mode-btn, .parent-back-btn { min-height: 36px; }
   .msg-actions, .session-item-actions { opacity: 1; }
   .copy-code-btn.floating { opacity: 1; }
+  .header-stats-btn { min-height: 32px; }
+  .msg-action-btn { min-width: 32px; min-height: 32px; }
+  .reasoning-label { min-height: 32px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2360,4 +2364,25 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
 .settings-danger-btn:hover {
   background: var(--danger);
   color: #fff;
+}
+
+.fs-placeholder-tree-btn {
+  display: none;
+  margin-top: 12px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+.fs-placeholder-tree-btn:hover {
+  background: var(--hover);
+}
+.files-explorer.tree-collapsed .fs-placeholder-tree-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }

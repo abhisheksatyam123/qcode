@@ -47,6 +47,10 @@ struct ModelCallUsage {
     std::string provider;         // provider id that served the call
     std::string model;            // model id (opencode.json key)
     UsageCost cost;               // at the model's prices when the call ran
+    // Size of the request as sent (max of local estimate and provider count);
+    // 0 = unknown, fall back to input_tokens. Some gateways report a tiny
+    // prompt_tokens for a huge request, so input_tokens alone under-reports.
+    int context_tokens = 0;
 };
 
 // This call's tokens at `model`'s prices.
@@ -79,7 +83,10 @@ struct SessionUsageStats {
     long long cache_write_tokens = 0;
     long long output_tokens = 0;
     long long reasoning_tokens = 0;
-    int last_input_tokens = 0;    // prompt of the latest call = context in use
+    int last_input_tokens = 0;    // provider-reported prompt of the latest call
+    int last_context_tokens = 0;  // context in use: max(estimate, provider)
+    std::string last_provider;    // provider/model that served the latest call
+    std::string last_model;
     std::string last_effort;
     std::string last_variant;
     // Cost is fixed when each call runs, at that call's model prices, so a

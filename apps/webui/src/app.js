@@ -89,7 +89,7 @@ window.copyPlantUmlCode = function(diagramId, btn) {
   });
 };
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, keepInterruptedPartials, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, isRetryableHttpStatus } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, keepInterruptedPartials, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -480,6 +480,7 @@ const fsEditBtn = document.getElementById('fs-edit-btn');
 const fsRawBtn = document.getElementById('fs-raw-btn');
 const fsSaveBtn = document.getElementById('fs-save-btn');
 const fsCloseBtn = document.getElementById('fs-close-btn');
+const fsPlaceholderTreeBtn = document.getElementById('fs-placeholder-tree-btn');
 const fsDirtyBadge = document.getElementById('fs-dirty-badge');
 
 const fsViewPlaceholder = document.getElementById('fs-view-placeholder');
@@ -1580,6 +1581,9 @@ function setupEventListeners() {
       renderFsListingEntries();
     });
   }
+  if (fsPlaceholderTreeBtn) {
+    fsPlaceholderTreeBtn.addEventListener("click", () => toggleFsTree());
+  }
   if (fsBackBtn) {
     fsBackBtn.addEventListener('click', () => {
       if (window.innerWidth <= 768) {
@@ -1976,7 +1980,7 @@ function switchTab(tab) {
   state.activeTab = tab;
   state.layoutMode = 'tab';
   persistPrefs();
-  if (tab === 'files') loadFilesTab();
+  if (tab === 'files') switchFilesSubtab(state.filesSubtab || 'explorer');
   if (tab === 'stats') loadStatsTab();
   if (tab === 'sessions') loadDelegatedSessionsTab();
   updateLayoutUI();
@@ -2480,6 +2484,8 @@ function applyTheme(name, { persist = true } = {}) {
   const worst = fg => Math.min(...accentEnds.map(c => contrastRatio(fg, c)));
   const onAccent = worst('#000000') >= worst('#ffffff') ? '#000000' : '#ffffff';
   set('--on-accent', onAccent);
+  // Code surfaces: slightly darker than the page; a 30% black mix turns light themes muddy grey.
+  set('--code-bg', mixHex(t.bg, '#000000', t.scheme === 'light' ? 0.04 : 0.3));
   if (persist) {
     try { localStorage.setItem('qcode-theme', name); } catch (_) {}
   }
@@ -4179,7 +4185,21 @@ async function loadFsListing(relPath) {
     const q = state.fsDir ? ('?path=' + encodeURIComponent(state.fsDir)) : '';
     const res = await fetch('/session/' + state.sessionId + '/fs/list' + q);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || res.statusText || 'list failed');
+    if (!res.ok) {
+      if (res.status === 404 && (data.error === 'directory not found' || data.error === 'not a directory')) {
+        if (runIndex !== state.fsListingRunIndex) return;
+        state.fsReady = true;
+        state.fsRawEntries = [];
+        const wsDisplay = data.workspace || state.sessionWorkspace || 'workspace';
+        fsListing.innerHTML = `
+          <div class="files-empty fs-workspace-missing">
+            <div class="files-empty-title" style="font-weight:600;margin-bottom:6px;">Folder not found</div>
+            <div class="files-empty-desc" style="font-size:var(--text-sm);color:var(--muted);line-height:1.4;">The directory <code style="font-family:var(--font-mono);background:var(--surface);padding:2px 6px;border-radius:4px;">${esc(wsDisplay)}</code> does not exist on disk.</div>
+          </div>`;
+        return;
+      }
+      throw new Error(data.error || res.statusText || 'list failed');
+    }
     if (runIndex !== state.fsListingRunIndex) return; // stale response
     state.fsReady = true;
     state.fsRawEntries = Array.isArray(data.entries) ? data.entries : [];
@@ -5353,12 +5373,40 @@ function renderMessage(msg) {
       btn.innerHTML = `${icon('chevron', 12)} Show ${hiddenTools.length} more tool calls (${tools.length} total)`;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const frag = document.createDocumentFragment();
-        for (const ht of hiddenTools) {
-          frag.appendChild(renderToolBlock(ht));
+        if (hiddenTools.length <= 20) {
+          const frag = document.createDocumentFragment();
+          for (const ht of hiddenTools) {
+            frag.appendChild(renderToolBlock(ht));
+          }
+          toolGroup.insertBefore(frag, expander);
+          expander.remove();
+          return;
         }
-        toolGroup.insertBefore(frag, expander);
-        expander.remove();
+
+        // Batched expansion using requestAnimationFrame to prevent main UI thread freeze
+        btn.disabled = true;
+        btn.innerHTML = `<span class="qcode-spinner" style="display:inline-block;width:12px;height:12px;border-width:2px;margin-right:6px;vertical-align:middle;"></span>Expanding ${hiddenTools.length} tools…`;
+        let curIdx = 0;
+        const chunkSize = 20;
+
+        function renderNextChunk() {
+          const end = Math.min(curIdx + chunkSize, hiddenTools.length);
+          const frag = document.createDocumentFragment();
+          for (let i = curIdx; i < end; i++) {
+            frag.appendChild(renderToolBlock(hiddenTools[i]));
+          }
+          toolGroup.insertBefore(frag, expander);
+          curIdx = end;
+
+          if (curIdx < hiddenTools.length) {
+            btn.innerHTML = `<span class="qcode-spinner" style="display:inline-block;width:12px;height:12px;border-width:2px;margin-right:6px;vertical-align:middle;"></span>Loading… (${curIdx}/${hiddenTools.length})`;
+            requestAnimationFrame(renderNextChunk);
+          } else {
+            expander.remove();
+          }
+        }
+
+        requestAnimationFrame(renderNextChunk);
       });
       expander.appendChild(btn);
       toolGroup.appendChild(expander);
@@ -6494,6 +6542,9 @@ let pendingSwitchId = null;
 async function switchSession(id) {
   const session = state.openSessions.find(s => s.id === id);
   if (!session) return;
+  // Close the drawer afterwards only if the user had it open for this switch; the
+  // startup load can finish seconds later and must not shut a drawer opened meanwhile.
+  const drawerWasOpen = !!document.getElementById('sidebar')?.classList.contains('active');
 
   // Immediate state update on click for snappy feedback
   pendingSwitchId = id;
@@ -6530,9 +6581,59 @@ async function switchSession(id) {
     loadFilesTab();
   }
 
-  // Unloaded sessions (stubs from the startup list) fetch their history first.
-  // Only the most recent switch request is applied once the fetch resolves.
-  const isStub = session.stub || (!session.messages || (session.messages.length === 0 && session.message_count > 0));
+  // Instant Session Switching: If session already has cached messages, render
+  // immediately without wiping chat or showing the loading spinner.
+  const hasCachedMessages = isSessionSwitchCached(session);
+  const isStub = shouldShowSessionLoading(session);
+
+  if (!isStub && hasCachedMessages) {
+    if (session.title) state.sessionTitle = stripTags(session.title);
+    if (session.workspace) state.sessionWorkspace = stripTags(session.workspace);
+    if (session.reasoning) {
+      state.reasoning = session.reasoning;
+      if (reasoningSelect) reasoningSelect.value = session.reasoning;
+    }
+    const resolved = resolveProviderModel(
+      session.provider || state.provider,
+      session.model || state.model
+    );
+    if (resolved.ok) {
+      applyProviderModel(resolved.provider, resolved.model);
+      session.provider = resolved.provider;
+      session.model = resolved.model;
+    }
+    const expectedHash = `#/session/${id}`;
+    if (window.location.hash !== expectedHash) {
+      window.location.hash = `/session/${id}`;
+    }
+    persistPrefs();
+    setGenerating(session.generating);
+    if (state.activeTab === 'chat') {
+      renderMessages();
+      scrollToBottom(true);
+    }
+    updateStatusBar();
+    if (drawerWasOpen) closeMobileSidebar();
+    updateQueueIndicator();
+    restoreDraft();
+
+    if (state.activeTab === 'files') loadFilesTab();
+    else if (state.activeTab === 'stats') loadStatsTab();
+    else if (state.activeTab === 'sessions') loadDelegatedSessionsTab();
+
+    // Async background refresh: check for updates/tail and vendor jobs
+    const richJobs = richVendorJobsForMessages(session.messages);
+    if (richJobs.length) {
+      Promise.all(richJobs).then(() => {
+        if (state.sessionId === id && state.activeTab === 'chat') {
+          renderMessages();
+        }
+      });
+    }
+    refreshSession(session);
+    return;
+  }
+
   if (isStub) {
     state.loadingSessionId = id;
     renderSessionTabs();
@@ -6564,7 +6665,8 @@ async function switchSession(id) {
     }
     if (pendingSwitchId !== id) return;
   }
-  // History waits for the rich libraries it needs, so it never draws unhighlighted first.
+
+  // Rich libraries (marked, highlight.js) load in the background if not ready yet
   const richJobs = session.messages && session.messages.length
     ? richVendorJobsForMessages(session.messages) : [];
   if (richJobs.length) {
@@ -6602,7 +6704,7 @@ async function switchSession(id) {
   scrollToBottom(true);
   renderSessionTabs();
   updateStatusBar();
-  closeMobileSidebar();
+  if (drawerWasOpen) closeMobileSidebar();
   updateQueueIndicator();
   restoreDraft();
 
