@@ -1174,6 +1174,12 @@ int qcode::app::run_tui(int argc, char* argv[]) {
             submit();
             return true;
         }
+        // Return on an empty prompt must not reach the input: FTXUI's
+        // multiline input would insert a newline and leave the prompt looking
+        // like it holds text.
+        if (e == Event::Return) {
+            return true;
+        }
 
         return false;
     });
@@ -1185,12 +1191,31 @@ int qcode::app::run_tui(int argc, char* argv[]) {
         tab_toggle,
         input
     });
+    // Hand the keyboard to the chat input. A vertical container routes events
+    // to its FIRST child, so with the tab menu in front every keystroke went
+    // to the menu: h/j/k/l flipped tabs and the rest vanished, and Enter was
+    // swallowed by the menu instead of submitting the prompt. The input only
+    // got focus when the user clicked into it (FTXUI's Input takes focus on
+    // click), so a freshly started TUI looked dead until the prompt box was
+    // clicked. Taking focus here makes it active from the first keystroke.
+    // The visual order is unaffected: the frame is drawn by render_view(),
+    // not by the container's children.
+    input->TakeFocus();
 
     int selection_press_x = -1;
     int selection_press_y = -1;
     int copy_selection_in_frames = 0;
     main_container |= CatchEvent([&](Event e) {
         if (qcode::tui::handle_variant_select_keys(e, overlays, [&](const std::string& vid) { apply_variant(vid); })) return true;
+        // Tab cycles the header tabs. The tab menu used to own this key, but
+        // it only reacts while it holds the focus, and the focus now belongs
+        // to the chat input (which has no use for Tab). A prompt starting with
+        // '/' keeps Tab for the slash-command completion popup.
+        if (e == Event::Tab && !overlays.any(state) &&
+            !(prompt_input.size() >= 1 && prompt_input[0] == '/')) {
+            state.tab_selected = (state.tab_selected + 1) % 4;
+            return true;
+        }
         // Shift+Tab: switch agent mode (normal <-> orchestrator).
         if (e == Event::TabReverse && !overlays.any(state)) {
             const std::string current =
