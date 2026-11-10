@@ -109,3 +109,31 @@ Export compile commands for `clangd` / `clang-tidy`:
 uv run scripts/build.py --export-compile-commands
 ```
 This generates and links `compile_commands.json` at the project root.
+
+## Running builds as a service
+
+`scripts/qcode-server.sh {start|stop|restart|status}` controls the `qcode-server.service`
+systemd user unit that serves a build. The unit restarts itself after any stop that was
+not deliberate (an agent stopping it, a crashed tool call), so the web server does not
+silently stay down; `stop` writes a marker first, so a deliberate stop stays stopped.
+
+`scripts/deploy_server.sh` installs a build and restarts the service, with a health check
+and an automatic rollback to the previous binary:
+
+```bash
+uv run scripts/build.py --mode release
+scripts/deploy_server.sh --binary build/host-release/apps/qcode/qcode
+```
+
+It is safe to run from inside the server itself (the WebUI bash tool, `qcode prompt`, or
+any qcode session). A plain `systemctl --user stop qcode-server.service` issued from such
+a call SIGTERMs the server that is running the call: the server aborts its tool calls and
+exits, so the rest of the command — the binary copy and the restart — never runs and the
+server stays down. `deploy_server.sh` runs the stop/copy/start sequence in a detached
+transient systemd unit (a sibling of the server unit, outside its cgroup), so the restart
+still happens, and it verifies `/health` before it reports success.
+
+Note that `/tmp` is a tmpfs on most desktop systems, so scratch files there are RAM (and
+swap) usage. `scripts/clean_tmp_scratch.sh` (installed as a user timer) trims scratch
+older than a day and keeps `/tmp` under a 1 GB budget.
+
