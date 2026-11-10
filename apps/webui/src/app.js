@@ -320,7 +320,7 @@ function openSettingsModal() {
   const btn = document.getElementById('settings-btn');
   if (!modal) return;
   updateSettingsModalModelInfo();
-  if (themeSelect) themeSelect.value = state.theme || 'qcode';
+  syncThemeSelectLabel();
   modal.classList.remove('hidden');
   modal.classList.add('active');
   if (btn) btn.setAttribute('aria-expanded', 'true');
@@ -424,6 +424,12 @@ const sessionsToggleBtn = document.getElementById('sessions-toggle-btn');
 const activeSessionCountBadge = document.getElementById('active-session-count-badge');
 const headerStatsBtn = document.getElementById('header-stats-btn');
 const themeSelect = document.getElementById('theme-select');
+const themeSelectLabel = document.getElementById('theme-select-label');
+function syncThemeSelectLabel() {
+  if (!themeSelectLabel) return;
+  const t = THEMES[state.theme];
+  themeSelectLabel.textContent = t ? t.title : (state.theme || 'qcode');
+}
 const modalOverlay = document.getElementById('modal-overlay');
 // One backdrop-click handler for every modal. Modals used to add their own
 // listener on each open and only remove it on a backdrop click, so every
@@ -1508,14 +1514,9 @@ function setupEventListeners() {
     });
   }
   if (themeSelect) {
-    themeSelect.value = state.theme || 'qcode';
-    themeSelect.addEventListener('change', () => {
-      const chosen = themeSelect.value;
-      if (THEMES[chosen]) {
-        applyTheme(chosen);
-        showToast('Theme: ' + THEMES[chosen].title);
-      }
-    });
+    syncThemeSelectLabel();
+    // Opens the same previewing picker as /theme, after closing Settings.
+    themeSelect.addEventListener('click', () => { closeSettingsModal(); handleThemeCommand(''); });
   }
   reasoningSelect.addEventListener('change', () => {
     state.reasoning = reasoningSelect.value;
@@ -2249,11 +2250,17 @@ function closeModal() {
 
 
 // Command-palette style picker with live fuzzy filtering via a text input.
-function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQuery) {
+// opts (optional):
+//   onPreview(item): runs when the highlighted item changes (arrows, filtering, hover).
+//   onCancel():      runs if the picker closes without a choice (Escape, backdrop),
+//                    so a previewed state can be undone.
+function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQuery, opts = {}) {
   let query = initialQuery || '';
   let filtered = fuzzyFilter(query, items);
   let cursorIdx = Math.max(0, filtered.findIndex(i => i.id === activeId));
   if (cursorIdx < 0) cursorIdx = 0;
+  let committed = false;
+  let previewedId = activeId; // the state already on screen is not a preview
 
   modalOverlay.innerHTML = `
     <div class="picker-modal fuzzy-picker">
@@ -2267,6 +2274,28 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
   modalOverlay.classList.add('active');
   const input = document.getElementById('fuzzy-input');
   const body = document.getElementById('fuzzy-body');
+
+  function preview(item) {
+    if (!opts.onPreview || !item || item.id === previewedId) return;
+    previewedId = item.id;
+    opts.onPreview(item);
+  }
+  function choose(item) {
+    committed = true;
+    closeModal();
+    onSelect(item);
+  }
+  if (opts.onCancel) {
+    pickerCleanup = () => { if (!committed) opts.onCancel(); };
+  }
+  function markCursor() {
+    body.querySelectorAll('.picker-item').forEach(el => {
+      const on = parseInt(el.dataset.idx, 10) === cursorIdx;
+      el.classList.toggle('selected', on);
+      el.setAttribute('aria-selected', String(on));
+    });
+    input.setAttribute('aria-activedescendant', filtered.length ? 'fuzzy-opt-' + cursorIdx : '');
+  }
 
   function renderBody() {
     filtered = fuzzyFilter(query, items);
@@ -2303,8 +2332,18 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
     if (sel) sel.scrollIntoView({ block: 'nearest' });
     input.setAttribute('aria-activedescendant', filtered.length ? 'fuzzy-opt-' + cursorIdx : '');
     body.querySelectorAll('.picker-item').forEach(el => {
-      el.addEventListener('click', () => { const idx = parseInt(el.dataset.idx); closeModal(); onSelect(filtered[idx]); });
+      const idx = parseInt(el.dataset.idx, 10);
+      el.addEventListener('click', () => choose(filtered[idx]));
+      // mousemove, not mouseenter: a resting pointer gets mouseenter when the list
+      // re-renders under it, which would override the keyboard cursor.
+      el.addEventListener('mousemove', () => {
+        if (idx === cursorIdx) return;
+        cursorIdx = idx;
+        markCursor();
+        preview(filtered[idx]);
+      });
     });
+    preview(filtered[cursorIdx]);
   }
 
   renderBody();
@@ -2313,7 +2352,7 @@ function showFuzzyPicker(title, items, activeId, onSelect, placeholder, initialQ
   input.addEventListener('keydown', (ev) => {
     if (ev.key === 'ArrowDown') { ev.preventDefault(); cursorIdx = Math.min(cursorIdx + 1, Math.max(0, filtered.length - 1)); renderBody(); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); cursorIdx = Math.max(cursorIdx - 1, 0); renderBody(); }
-    else if (ev.key === 'Enter') { ev.preventDefault(); if (filtered[cursorIdx]) { closeModal(); onSelect(filtered[cursorIdx]); } }
+    else if (ev.key === 'Enter') { ev.preventDefault(); if (filtered[cursorIdx]) choose(filtered[cursorIdx]); }
     else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeModal(); }
   });
   input.focus();
@@ -2677,6 +2716,7 @@ function applyTheme(name, { persist = true } = {}) {
   }
   persistPrefs();
   syncThemeToggle();
+  syncThemeSelectLabel();
   return true;
 }
 
@@ -2687,6 +2727,7 @@ function handleThemeCommand(args) {
     showToast('Theme: ' + THEMES[q].title);
     return;
   }
+  const original = state.theme;
   const items = Object.keys(THEMES).map((id) => ({
     id,
     label: THEMES[id].title,
@@ -2697,7 +2738,10 @@ function handleThemeCommand(args) {
   showFuzzyPicker('Select Theme', items, state.theme, (chosen) => {
     applyTheme(chosen.id);
     showToast('Theme: ' + chosen.label);
-  }, 'Type a theme name…', q);
+  }, 'Type a theme name…', q, {
+    onPreview: (item) => applyTheme(item.id, { persist: false }),
+    onCancel: () => applyTheme(original, { persist: false }),
+  });
 }
 
 function handleQueueCommand(args) {

@@ -312,20 +312,10 @@
           <div class="settings-field-group">
             <label for="theme-select" class="settings-field-label">Theme</label>
             <div class="control-group">
-              <select id="theme-select" title="Choose color theme">
-                <option value="qcode">QCode Dark</option>
-                <option value="qcode-light">QCode Light</option>
-                <option value="tokyonight">Tokyo Night</option>
-                <option value="catppuccin">Catppuccin Mocha</option>
-                <option value="nord">Nord</option>
-                <option value="gruvbox">Gruvbox</option>
-                <option value="dracula">Dracula</option>
-                <option value="rosepine">Rosé Pine</option>
-                <option value="one-dark">One Dark</option>
-                <option value="github">GitHub Dark</option>
-                <option value="monokai">Monokai</option>
-                <option value="vesper">Vesper</option>
-              </select>
+              <button type="button" id="theme-select" class="theme-select-btn" title="Choose color theme" aria-haspopup="listbox">
+                <span id="theme-select-label">QCode Dark</span>
+                <svg class="theme-select-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
             </div>
             <div class="settings-field-hint">Changes UI colors and syntax highlighting.</div>
           </div>

@@ -576,6 +576,36 @@ kbd {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .control-group select option { background: var(--surface-raised); color: var(--text); }
+.theme-select-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color var(--fast), box-shadow var(--fast);
+}
+.theme-select-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.theme-select-caret { flex-shrink: 0; color: var(--muted); }
+.theme-select-btn:hover { border-color: var(--border-strong); }
+.theme-select-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 
 .sidebar-footer {
   display: flex;
@@ -2245,7 +2275,7 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
   #main-header { gap: 6px; padding: 0 var(--gutter); }
   /* Primary controls get a 40px hit area on phones */
   .menu-toggle-btn, .sidebar-close-btn, .session-add-btn { width: 40px; height: 40px; }
-  .sidebar-nav-btn, .control-group select, #clear-btn { height: 40px; }
+  .sidebar-nav-btn, .control-group select, .theme-select-btn, #clear-btn { height: 40px; }
   .tool-header { min-height: 40px; }
   #send-btn, .pause-btn, .retry-btn { height: 40px; }
   #send-btn { min-width: 40px; }

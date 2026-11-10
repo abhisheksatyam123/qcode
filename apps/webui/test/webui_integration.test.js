@@ -586,6 +586,29 @@ test('WebUI new session modal browses child folders of the chosen directory', ()
   assert.match(styleCss, /\.fb-item:hover/, 'style.css must give .fb-item a hover state');
 });
 
+test('WebUI theme picker previews the highlighted theme and reverts on cancel', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // The shared picker takes preview/cancel hooks and calls them on arrows, filtering and hover.
+  assert.match(appJs, /function showFuzzyPicker\(title, items, activeId, onSelect, placeholder, initialQuery, opts = \{\}\)/, 'showFuzzyPicker should accept opts');
+  assert.match(appJs, /function preview\(item\) \{[\s\S]*?opts\.onPreview\(item\);/, 'picker should call onPreview when the highlighted item changes');
+  assert.match(appJs, /el\.addEventListener\('mousemove'/, 'picker should preview on real pointer movement (not mouseenter)');
+  assert.match(appJs, /pickerCleanup = \(\) => \{ if \(!committed\) opts\.onCancel\(\); \};/, 'closing without a choice should run onCancel');
+
+  // /theme previews while moving the cursor and restores the original theme on cancel.
+  assert.match(appJs, /const original = state\.theme;/, '/theme should remember the original theme');
+  assert.match(appJs, /onPreview: \(item\) => applyTheme\(item\.id, \{ persist: false \}\),/, '/theme should preview without pinning');
+  assert.match(appJs, /onCancel: \(\) => applyTheme\(original, \{ persist: false \}\),/, '/theme should restore the original theme on cancel');
+
+  // Settings uses the same picker: the field is a button, not a native select.
+  assert.match(indexHtml, /<button type="button" id="theme-select" class="theme-select-btn"/, 'Settings theme field should be a button');
+  assert.doesNotMatch(indexHtml, /<select id="theme-select"/, 'native theme select should be gone');
+  assert.match(appJs, /themeSelect\.addEventListener\('click', \(\) => \{ closeSettingsModal\(\); handleThemeCommand\(''\); \}\);/, 'Settings theme button should open the theme picker');
+  assert.match(styleCss, /\.theme-select-btn\s*\{/, 'style.css must style .theme-select-btn');
+});
+
 test('WebUI new session modal has one folder picker, no suggestions dropdown', () => {
   const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
   const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
