@@ -1,6 +1,7 @@
 #include <qcode/config/config.h>
 #include <qcode/core/ssl_config.h>
 #include <qcode/transform/provider_transform.h>
+#include "core/http_client.h"
 #include "providers/anthropic/anthropic_oauth.h"
 #include "providers/internal/opencode_zen_headers.h"
 
@@ -300,6 +301,8 @@ std::string get_antigravity_token(bool force_refresh) {
     }
     httplib::Client client("https://oauth2.googleapis.com");
     qcode::http::configure_client_tls(client, true);
+    qcode::http::pin_working_address_family(client, "oauth2.googleapis.com",
+                                             443);
     client.set_connection_timeout(5);
     client.set_read_timeout(10);
     const auto response =

@@ -82,6 +82,8 @@ add_library(qcode-frontend-cli STATIC
 target_include_directories(qcode-frontend-cli
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/libqcode/src
 )
 target_link_libraries(qcode-frontend-cli PUBLIC qcode::engine)
 

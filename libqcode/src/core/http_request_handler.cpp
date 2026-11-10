@@ -6,6 +6,7 @@
 #include <qcode/core/retry_policy.h>
 #include "providers/internal/opencode_zen_headers.h"
 #include "core/http_client.h"
+#include "core/net_dial.h"
 #include "core/response_utils.h"
 
 #include <algorithm>
@@ -92,14 +93,24 @@ std::unique_ptr<HttpClient> new_client(bool use_ssl, const std::string& host,
                                        int port, bool verify_ssl_cert,
                                        int connection_timeout_sec,
                                        int read_timeout_sec) {
+  const int resolved_port = port != 0 ? port : (use_ssl ? 443 : 80);
+  // Find the family that actually reaches this host before httplib connects.
+  // httplib takes the first address getaddrinfo returns and abandons the whole
+  // list when that connect times out, so on a machine whose IPv6 route is
+  // black-holed every provider request would stall for the full connect
+  // timeout instead of using IPv4. The probe answer is cached per host:port,
+  // so this costs one short TCP handshake per provider, once.
+  const int address_family = net::probe_address_family(host, resolved_port);
   if (use_ssl && qcode::providers::is_opencode_zen_url(host)) {
     // Zen's free-tier gate fingerprints the TLS stack. BoringSSL's
     // ClientHello is accepted where OpenSSL's is not.
     return make_zen_http_client(host, port, verify_ssl_cert,
-                                connection_timeout_sec, read_timeout_sec);
+                                connection_timeout_sec, read_timeout_sec,
+                                address_family);
   }
   return make_httplib_http_client(use_ssl, host, port, verify_ssl_cert,
-                                  connection_timeout_sec, read_timeout_sec);
+                                  connection_timeout_sec, read_timeout_sec,
+                                  address_family);
 }
 
 // Keep-alive pools: idle clients keyed by "scheme://host:port". They are

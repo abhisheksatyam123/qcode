@@ -42,11 +42,13 @@ int on_content(void* user, const char* data, size_t length, uint64_t offset,
 class ZenHttpClient final : public HttpClient {
  public:
   ZenHttpClient(const std::string& host, int port, bool verify_ssl_cert,
-                int connection_timeout_sec, int read_timeout_sec)
+                int connection_timeout_sec, int read_timeout_sec,
+                int address_family)
       : host_(host),
         port_(port != 0 ? port : 443),
         cli_(qcode_zen_client_new(host.c_str(), port_, verify_ssl_cert ? 1 : 0,
-                                  connection_timeout_sec, read_timeout_sec)) {}
+                                  connection_timeout_sec, read_timeout_sec,
+                                  address_family)) {}
 
   ~ZenHttpClient() override { qcode_zen_client_free(cli_); }
 
@@ -140,10 +142,10 @@ class ZenHttpClient final : public HttpClient {
 
 std::unique_ptr<HttpClient> make_zen_http_client(
     const std::string& host, int port, bool verify_ssl_cert,
-    int connection_timeout_sec, int read_timeout_sec) {
+    int connection_timeout_sec, int read_timeout_sec, int address_family) {
   return std::make_unique<ZenHttpClient>(host, port, verify_ssl_cert,
                                          connection_timeout_sec,
-                                         read_timeout_sec);
+                                         read_timeout_sec, address_family);
 }
 
 }  // namespace http

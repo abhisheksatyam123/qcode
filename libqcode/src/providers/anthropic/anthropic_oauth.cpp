@@ -3,6 +3,8 @@
 #include <qcode/core/logger.h>
 #include <qcode/core/ssl_config.h>
 
+#include "core/http_client.h"
+
 #include <chrono>
 #include <cerrno>
 #include <cstdint>
@@ -209,6 +211,7 @@ std::optional<ClaudeCredentials> refresh_claude_token(
 
   httplib::Client client(kClaudeTokenHost);
   qcode::http::configure_client_tls(client, true);
+  qcode::http::pin_working_address_family(client, "platform.claude.com", 443);
   client.set_connection_timeout(10);
   client.set_read_timeout(15);
 
@@ -262,6 +265,7 @@ std::optional<ClaudeCredentials> exchange_code_for_tokens(
     const std::string& redirect_uri) {
   httplib::Client client(kClaudeTokenHost);
   qcode::http::configure_client_tls(client, true);
+  qcode::http::pin_working_address_family(client, "platform.claude.com", 443);
   client.set_connection_timeout(10);
   client.set_read_timeout(15);
 

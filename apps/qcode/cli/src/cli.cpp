@@ -17,6 +17,8 @@
 #include <iostream>
 #include <string>
 
+#include "core/http_client.h"
+
 struct Config {
     std::string server = "http://localhost:9080";
     std::string provider;
@@ -70,6 +72,9 @@ int qcode::app::run_cli(int argc, char* argv[]) {
     Config cfg = parse_args(argc, argv);
 
     httplib::Client cli(cfg.server);
+    // Reach the server over the address family that actually answers; a
+    // black-holed IPv6 route would otherwise stall every call.
+    qcode::http::pin_working_address_family(cli, cfg.server);
 
     // Fetch providers if needed
     if (cfg.provider.empty() || cfg.model.empty()) {

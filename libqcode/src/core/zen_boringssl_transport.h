@@ -49,7 +49,8 @@ typedef enum QcodeZenError {
 QcodeZenClient* qcode_zen_client_new(const char* host, int port,
                                      int verify_ssl_cert,
                                      int connection_timeout_sec,
-                                     int read_timeout_sec);
+                                     int read_timeout_sec,
+                                     int address_family);
 void qcode_zen_client_free(QcodeZenClient* client);
 void qcode_zen_client_stop(QcodeZenClient* client);
 void qcode_zen_client_set_timeouts(QcodeZenClient* client,

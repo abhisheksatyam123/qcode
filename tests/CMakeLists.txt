@@ -15,6 +15,7 @@ add_executable(qcode_tests
     unit/bus_json_codec_test.cpp
     unit/session_store_test.cpp
     unit/multi_step_coordinator_test.cpp
+    unit/net_dial_test.cpp
     unit/tool_catalog_test.cpp
     unit/commands_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/prompt_wrap.cpp

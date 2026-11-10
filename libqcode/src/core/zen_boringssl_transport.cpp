@@ -32,12 +32,18 @@ extern "C" {
 QcodeZenClient* qcode_zen_client_new(const char* host, int port,
                                      int verify_ssl_cert,
                                      int connection_timeout_sec,
-                                     int read_timeout_sec) {
+                                     int read_timeout_sec,
+                                     int address_family) {
   if (!host || !*host) return nullptr;
   auto client = std::make_unique<QcodeZenClient>();
   client->cli = std::make_unique<qcode_bssl::SSLClient>(
       host, port != 0 ? port : 443);
   client->cli->enable_server_certificate_verification(verify_ssl_cert != 0);
+  // Pin the family that a probe showed to answer, so a machine whose IPv6
+  // route is black-holed uses IPv4 instead of stalling on every request.
+  if (address_family != AF_UNSPEC) {
+    client->cli->set_address_family(address_family);
+  }
   const char* cert_file = std::getenv("SSL_CERT_FILE");
   const char* cert_dir = std::getenv("SSL_CERT_DIR");
   if ((cert_file && *cert_file) || (cert_dir && *cert_dir)) {

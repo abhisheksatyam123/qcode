@@ -33,6 +33,7 @@ target_sources(qcode-engine PRIVATE
     src/core/in_process_bus.cpp
     src/core/http_request_handler.cpp
     src/core/http_client.cpp
+    src/core/net_dial.cpp
     src/core/zen_http_client.cpp
     src/core/zen_boringssl_transport.cpp
     src/core/ssl_config.cpp
