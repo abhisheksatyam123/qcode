@@ -13,6 +13,8 @@
 #include "routes/session_runtime.h"
 
 #include <httplib.h>
+#include <execinfo.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <algorithm>
 #include <atomic>
@@ -46,9 +48,51 @@ std::string log_dir() {
     return "/tmp/qcode-logs";
 }
 
+static std::atomic<int> g_shutdown_signal{0};
+static int g_crash_fd = -1;
+
+// Runs in signal context: only an atomic store. Logging here (mutex, malloc)
+// can deadlock or corrupt the heap if the signal lands inside the logger; the
+// shutdown watcher thread reports the signal instead.
 void handle_signal(int sig) {
-    LOG_INFO("Caught signal {}, requesting server shutdown...", sig);
-    g_shutdown_requested = true;
+    g_shutdown_signal.store(sig, std::memory_order_relaxed);
+    g_shutdown_requested.store(true, std::memory_order_relaxed);
+}
+
+// A SIGSEGV/SIGABRT/SIGBUS leaves no core when the system hands cores to apport
+// (it skips a new report while an older one is pending), so write the stack
+// ourselves: to stderr (journald) and to <log-dir>/qcode-crash.log.
+void crash_handler(int sig) {
+    static const char kHead[] = "\n*** qcode fatal signal, backtrace:\n";
+    void* frames[64];
+    const int n = backtrace(frames, 64);
+    for (int fd : {2, g_crash_fd}) {
+        if (fd < 0) continue;
+        (void)!write(fd, kHead, sizeof kHead - 1);
+        backtrace_symbols_fd(frames, n, fd);
+    }
+    signal(sig, SIG_DFL);  // keep the default exit status and any core dump
+    raise(sig);
+}
+
+void install_crash_handler(const std::string& dir) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    g_crash_fd = open((dir + "/qcode-crash.log").c_str(),
+                      O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    // Handle a stack overflow too: it needs its own stack.
+    static char alt_stack[64 * 1024];
+    stack_t ss{};
+    ss.ss_sp = alt_stack;
+    ss.ss_size = sizeof alt_stack;
+    sigaltstack(&ss, nullptr);
+    struct sigaction sa{};
+    sa.sa_handler = crash_handler;
+    sa.sa_flags = SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL}) sigaction(sig, &sa, nullptr);
+    void* warm[1];
+    backtrace(warm, 1);  // load libgcc now, not inside the handler
 }
 
 int qcode::app::run_server(int argc, char* argv[]) {
@@ -112,6 +156,7 @@ int qcode::app::run_server(int argc, char* argv[]) {
     qcode::server::g_session_logger = qcode::install_session_file_logger(
         active_log_dir, "qcode-server", qcode::logger::LogLevel::kLogLevelDebug);
     qcode::logger::set_thread_name("server");
+    install_crash_handler(active_log_dir);
     LOG_INFO("QCode server starting... (logs in {})", active_log_dir);
 
     g_bus = std::make_shared<qcode::bus::BusRuntime>();
@@ -188,7 +233,7 @@ int qcode::app::run_server(int argc, char* argv[]) {
         while (!g_shutdown_requested.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        LOG_INFO("Shutdown requested, stopping server...");
+        LOG_INFO("Caught signal {}, shutting down...", g_shutdown_signal.load());
         svr.stop();
     });
 
@@ -218,6 +263,23 @@ int qcode::app::run_server(int argc, char* argv[]) {
     // Release session log handles after all workers have joined.
     if (qcode::server::g_session_logger) qcode::server::g_session_logger->close_all();
 
+    // Drop the sessions (and their bus subscriptions) now, while the bus is alive.
+    {
+        std::unordered_map<std::string, std::shared_ptr<qcode::server::GenSession>> dying;
+        {
+            std::lock_guard<std::mutex> lock(qcode::server::g_sessions_mutex);
+            dying.swap(qcode::server::g_sessions);
+        }
+    }
+
     LOG_INFO("Server shutdown complete");
-    return 0;
+    if (qcode::server::g_session_logger) qcode::server::g_session_logger->flush();
+    std::cout.flush();
+    std::cerr.flush();
+    // Skip static destruction. Generation, tool and title threads are detached and
+    // may still be unwinding after the grace period above; running the global
+    // destructors (logger, bus, DB connections) under them is a use-after-free
+    // that crashes the process during exit. Everything durable is already written.
+    std::fflush(nullptr);
+    _exit(0);
 }
