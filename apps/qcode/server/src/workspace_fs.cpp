@@ -55,6 +55,26 @@ std::vector<std::string> split_lines(const std::string& s) {
 std::string resolve_session_workspace(const std::string& sid) {
     std::string ws = qcode::session::get_session_workspace(sid);
     if (!ws.empty()) ws = expand_tilde(ws);
+    if (!ws.empty()) {
+        std::error_code ec;
+        if (!std::filesystem::exists(ws, ec)) {
+            std::string alt = ws;
+            size_t pos = alt.find("/projects/");
+            if (pos != std::string::npos) {
+                alt.replace(pos, 10, "/project/");
+                if (std::filesystem::exists(alt, ec)) ws = alt;
+            } else if ((pos = alt.rfind("/projects")) != std::string::npos && pos + 9 == alt.size()) {
+                alt.replace(pos, 9, "/project");
+                if (std::filesystem::exists(alt, ec)) ws = alt;
+            } else if ((pos = alt.find("/project/")) != std::string::npos) {
+                alt.replace(pos, 9, "/projects/");
+                if (std::filesystem::exists(alt, ec)) ws = alt;
+            } else if ((pos = alt.rfind("/project")) != std::string::npos && pos + 8 == alt.size()) {
+                alt.replace(pos, 8, "/projects");
+                if (std::filesystem::exists(alt, ec)) ws = alt;
+            }
+        }
+    }
     if (ws.empty()) {
 #ifdef __ANDROID__
         if (const char* home = std::getenv("HOME"); home && *home) {

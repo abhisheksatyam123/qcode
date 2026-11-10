@@ -542,3 +542,22 @@ test('WebUI file explorer resilience and tree collapse restore', () => {
   // 404 missing workspace resilience
   assert.match(appJs, /fs-workspace-missing/, 'app.js should handle missing workspace with friendly empty state');
 });
+
+test('WebUI mobile viewport virtual keyboard and flex layout resilience', () => {
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+
+  // Viewport meta tag handles virtual keyboards smoothly
+  assert.match(indexHtml, /interactive-widget=resizes-content/, 'index.html viewport meta must include interactive-widget=resizes-content');
+
+  // App shell supports dynamic visual viewport height
+  assert.match(styleCss, /--app-height/, 'style.css should support --app-height variable');
+  assert.match(styleCss, /#main\s*\{[^}]*min-height:\s*0;/, '#main should have min-height: 0 for flex column shrink');
+  assert.match(styleCss, /#chat-container\s*\{[^}]*min-height:\s*0;/, '#chat-container should have min-height: 0 for flex column shrink');
+
+  // app.js registers visualViewport and focus handlers
+  assert.match(appJs, /setupViewportHandler/, 'app.js should define setupViewportHandler');
+  assert.match(appJs, /visualViewport/, 'app.js should listen to visualViewport');
+  assert.match(appJs, /promptInput\.addEventListener\('focus'/, 'promptInput should have focus listener for scroll adjustment');
+});

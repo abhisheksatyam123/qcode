@@ -59,6 +59,7 @@ public class MainActivity extends AppCompatActivity {
   }
 
   private void setupWebView() {
+    webView.setOverScrollMode(android.view.View.OVER_SCROLL_NEVER);
     WebSettings settings = webView.getSettings();
     settings.setJavaScriptEnabled(true);
     settings.setDomStorageEnabled(true);

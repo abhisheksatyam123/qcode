@@ -237,11 +237,15 @@ kbd {
 /* ═══════════════════════ App shell ═══════════════════════ */
 #app {
   display: flex;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
   height: 100vh;
   height: 100dvh;
+  height: var(--app-height, 100dvh);
   width: 100%;
   overflow: hidden;
-  position: relative;
   padding-top: env(safe-area-inset-top);
 }
 
@@ -618,6 +622,7 @@ kbd {
 #main-area {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -785,6 +790,7 @@ kbd {
 #main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -794,6 +800,7 @@ kbd {
 /* ═══════════════════════ Chat ═══════════════════════ */
 #chat-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
@@ -2146,7 +2153,13 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
   .parent-back-btn { padding: 0 8px; }
   .input-info { display: none; }
   .input-actions { justify-content: flex-end; }
-  #prompt-input { font-size: 16px; } /* prevents iOS zoom on focus */
+  #input-area { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  #prompt-input {
+    font-size: 16px; /* prevents iOS zoom on focus */
+    min-height: 42px;
+    max-height: 120px;
+    padding: 10px 14px 6px;
+  }
   .message.user .message-content { max-width: 92%; }
   .tool-subtitle { display: none; }
   .tool-title { max-width: none; flex-shrink: 1; min-width: 0; }

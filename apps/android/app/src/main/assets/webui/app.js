@@ -211,6 +211,7 @@ async function handleHashChange() {
 // ── Init ──
 async function init() {
   await loadProviders();
+  setupViewportHandler();
   setupEventListeners();
   restoreSettingsCollapseState();
   updateStatusBar();
@@ -315,9 +316,59 @@ function applyProviderModel(providerId, modelId) {
     state.providers[pidx].name === providerId;
 }
 
+function setupViewportHandler() {
+  const update = () => {
+    const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', `${h}px`);
+    if (window.scrollY !== 0 || window.scrollX !== 0) {
+      window.scrollTo(0, 0);
+    }
+    if (document.documentElement.scrollTop !== 0) {
+      document.documentElement.scrollTop = 0;
+    }
+    if (document.body.scrollTop !== 0) {
+      document.body.scrollTop = 0;
+    }
+  };
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      update();
+      if (document.activeElement === promptInput && typeof scrollToBottom === 'function') {
+        scrollToBottom(true);
+      }
+    });
+    window.visualViewport.addEventListener('scroll', () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+    });
+  }
+  window.addEventListener('resize', update);
+  window.addEventListener('orientationchange', () => {
+    setTimeout(update, 100);
+    setTimeout(update, 300);
+  });
+  update();
+}
+
 function setupEventListeners() {
   sendBtn.addEventListener('click', sendMessage);
   promptInput.addEventListener('keydown', handleInputKeydown);
+  promptInput.addEventListener('focus', () => {
+    setTimeout(() => {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+      if (typeof scrollToBottom === 'function') scrollToBottom(true);
+    }, 120);
+    setTimeout(() => {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+      if (typeof scrollToBottom === 'function') scrollToBottom(true);
+    }, 300);
+  });
+  promptInput.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+    }, 100);
+  });
   clearBtn.addEventListener('click', async () => {
     if (!state.sessionId) { showToast('No active session'); return; }
     if (!confirm('Clear all messages in this session? This cannot be undone.')) return;
