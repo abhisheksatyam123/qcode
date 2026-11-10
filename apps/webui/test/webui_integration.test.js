@@ -561,3 +561,24 @@ test('WebUI mobile viewport virtual keyboard and flex layout resilience', () => 
   assert.match(appJs, /visualViewport/, 'app.js should listen to visualViewport');
   assert.match(appJs, /promptInput\.addEventListener\('focus'/, 'promptInput should have focus listener for scroll adjustment');
 });
+
+test('WebUI workspace suggestions in new session modal only matches user input directory', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // New session modal contains workspace suggestions container & list
+  assert.match(appJs, /id="ns-suggestions-container"/, 'app.js should contain suggestions container');
+  assert.match(appJs, /id="ns-suggestions-list"/, 'app.js should contain suggestions list');
+
+  // Filter only matches user input directory
+  assert.match(appJs, /p\.includes\(q\)\s*\|\|\s*n\.includes\(q\)/, 'suggestions must be filtered to match user input directory');
+  assert.match(appJs, /fetch\(url\)/, 'app.js queries /api/workspaces for discovered folders');
+
+  // Keyboard navigation & selection
+  assert.match(appJs, /ArrowDown/, 'app.js should handle ArrowDown for suggestion selection');
+  assert.match(appJs, /workspace-suggestion-item/, 'app.js should render workspace-suggestion-item');
+
+  // CSS contains suggestion styles
+  assert.match(styleCss, /\.workspace-suggestions-container/, 'style.css must style .workspace-suggestions-container');
+  assert.match(styleCss, /\.workspace-suggestion-item/, 'style.css must style .workspace-suggestion-item');
+});

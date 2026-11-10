@@ -317,9 +317,16 @@ function applyProviderModel(providerId, modelId) {
 }
 
 function setupViewportHandler() {
+  let lastH = 0;
   const update = () => {
-    const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    document.documentElement.style.setProperty('--app-height', `${h}px`);
+    let h = window.innerHeight;
+    if (window.visualViewport) {
+      h = Math.round(window.visualViewport.height);
+    }
+    if (h !== lastH) {
+      lastH = h;
+      document.documentElement.style.setProperty('--app-height', `${h}px`);
+    }
     if (window.scrollY !== 0 || window.scrollX !== 0) {
       window.scrollTo(0, 0);
     }
@@ -333,13 +340,19 @@ function setupViewportHandler() {
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', () => {
       update();
-      if (document.activeElement === promptInput && typeof scrollToBottom === 'function') {
+      if (document.activeElement === promptInput) {
         scrollToBottom(true);
       }
     });
     window.visualViewport.addEventListener('scroll', () => {
       if (window.scrollY !== 0 || window.scrollX !== 0) {
         window.scrollTo(0, 0);
+      }
+      if (document.documentElement.scrollTop !== 0) {
+        document.documentElement.scrollTop = 0;
+      }
+      if (document.body.scrollTop !== 0) {
+        document.body.scrollTop = 0;
       }
     });
   }
@@ -352,21 +365,27 @@ function setupViewportHandler() {
 }
 
 function setupEventListeners() {
+
   sendBtn.addEventListener('click', sendMessage);
   promptInput.addEventListener('keydown', handleInputKeydown);
   promptInput.addEventListener('focus', () => {
-    setTimeout(() => {
+    const keepInView = () => {
       if (window.scrollY !== 0) window.scrollTo(0, 0);
-      if (typeof scrollToBottom === 'function') scrollToBottom(true);
-    }, 120);
-    setTimeout(() => {
-      if (window.scrollY !== 0) window.scrollTo(0, 0);
-      if (typeof scrollToBottom === 'function') scrollToBottom(true);
-    }, 300);
+      if (document.documentElement.scrollTop !== 0) document.documentElement.scrollTop = 0;
+      if (document.body.scrollTop !== 0) document.body.scrollTop = 0;
+      scrollToBottom(true);
+    };
+    keepInView();
+    setTimeout(keepInView, 80);
+    setTimeout(keepInView, 200);
+    setTimeout(keepInView, 350);
   });
   promptInput.addEventListener('blur', () => {
     setTimeout(() => {
       if (window.scrollY !== 0) window.scrollTo(0, 0);
+      if (window.visualViewport) {
+        document.documentElement.style.setProperty('--app-height', `${Math.round(window.visualViewport.height)}px`);
+      }
     }, 100);
   });
   clearBtn.addEventListener('click', async () => {
@@ -659,18 +678,154 @@ function updateConnectionStatus() {
 // ═══════════════════════════════════════════════════════════════════
 
 function showNewSessionModal() {
+  const defaultWs = state.sessionWorkspace || '';
   modalOverlay.innerHTML = `
-    <div class="picker-modal">
+    <div class="picker-modal new-session-modal">
       <div class="picker-header">New Session</div>
-      <input class="rename-input" id="ns-title" type="text" placeholder="Session title (optional)" />
-      <input class="rename-input" id="ns-workspace" type="text" placeholder="Workspace directory (e.g. /home/user/project)" />
-      <div class="modal-actions">
+      <input class="rename-input" id="ns-title" type="text" placeholder="Session title (optional)" style="margin-bottom:10px;" />
+      <input class="rename-input" id="ns-workspace" type="text" placeholder="Workspace directory" value="${typeof esc === 'function' ? esc(defaultWs) : defaultWs}" autocomplete="off" />
+      <div class="workspace-suggestions-container" id="ns-suggestions-container" style="display:none;">
+        <div class="workspace-suggestions-header">
+          <span>Matching Workspaces</span>
+          <span class="workspace-suggestions-count" id="ns-suggestions-count"></span>
+        </div>
+        <div class="workspace-suggestions-list" id="ns-suggestions-list" role="listbox"></div>
+      </div>
+      <div class="modal-actions" style="margin-top:12px;">
         <button class="modal-btn secondary" id="ns-cancel">Cancel</button>
         <button class="modal-btn primary" id="ns-create">Create</button>
       </div>
     </div>`;
   modalOverlay.classList.add('active');
-  document.getElementById('ns-title').focus();
+
+  const titleInput = document.getElementById('ns-title');
+  const wsInput = document.getElementById('ns-workspace');
+  const suggestContainer = document.getElementById('ns-suggestions-container');
+  const suggestList = document.getElementById('ns-suggestions-list');
+  const suggestCount = document.getElementById('ns-suggestions-count');
+
+  let activeIndex = -1;
+  let currentMatches = [];
+
+  const localCandidates = new Map();
+  if (state.sessionWorkspace) {
+    localCandidates.set(state.sessionWorkspace, {
+      path: state.sessionWorkspace,
+      name: typeof shortPath === 'function' ? shortPath(state.sessionWorkspace) : state.sessionWorkspace,
+      source: 'current'
+    });
+  }
+  for (const s of (state.openSessions || [])) {
+    if (s.workspace && !localCandidates.has(s.workspace)) {
+      localCandidates.set(s.workspace, {
+        path: s.workspace,
+        name: typeof shortPath === 'function' ? shortPath(s.workspace) : s.workspace,
+        source: 'recent'
+      });
+    }
+  }
+
+  let serverCandidates = [];
+  function fetchServerWorkspaces(q = '') {
+    const url = q ? ('/api/workspaces?query=' + encodeURIComponent(q)) : '/api/workspaces';
+    fetch(url)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        if (Array.isArray(data)) {
+          serverCandidates = data;
+          filterAndRender(wsInput.value);
+        }
+      })
+      .catch(() => {});
+  }
+  fetchServerWorkspaces();
+
+  function getAllCandidates() {
+    const map = new Map(localCandidates);
+    for (const item of serverCandidates) {
+      if (item && item.path && !map.has(item.path)) {
+        map.set(item.path, item);
+      }
+    }
+    return Array.from(map.values());
+  }
+
+  function filterAndRender(rawInput) {
+    const input = (rawInput || '').trim();
+    if (!input) {
+      suggestContainer.style.display = 'none';
+      currentMatches = [];
+      activeIndex = -1;
+      return;
+    }
+
+    const q = input.toLowerCase();
+    const all = getAllCandidates();
+    currentMatches = all.filter(c => {
+      const p = (c.path || '').toLowerCase();
+      const n = (c.name || '').toLowerCase();
+      return p.includes(q) || n.includes(q);
+    });
+
+    if (currentMatches.length === 0) {
+      suggestContainer.style.display = 'none';
+      activeIndex = -1;
+      return;
+    }
+
+    suggestContainer.style.display = 'flex';
+    suggestCount.textContent = `${currentMatches.length} match${currentMatches.length === 1 ? '' : 'es'}`;
+    renderSuggestionItems();
+  }
+
+  function renderSuggestionItems() {
+    suggestList.innerHTML = currentMatches.map((item, idx) => {
+      const isSelected = item.path === wsInput.value.trim();
+      const isHighlighted = idx === activeIndex;
+      const classes = ['workspace-suggestion-item'];
+      if (isSelected) classes.push('selected');
+      if (isHighlighted) classes.push('highlighted');
+      const safeEsc = typeof esc === 'function' ? esc : (s => s);
+      return `
+        <div class="${classes.join(' ')}" data-index="${idx}" data-path="${safeEsc(item.path)}" role="option" aria-selected="${isSelected}">
+          <span class="ws-suggest-icon">📁</span>
+          <div class="ws-suggest-info">
+            <div class="ws-suggest-name">${safeEsc(item.name || item.path)}</div>
+            <div class="ws-suggest-path">${safeEsc(item.path)}</div>
+          </div>
+          ${item.source ? `<span class="ws-suggest-badge">${safeEsc(item.source)}</span>` : ''}
+        </div>`;
+    }).join('');
+
+    suggestList.querySelectorAll('.workspace-suggestion-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const path = el.getAttribute('data-path');
+        if (path) {
+          wsInput.value = path;
+          activeIndex = -1;
+          filterAndRender(path);
+          wsInput.focus();
+        }
+      });
+    });
+  }
+
+  let debounceTimer = null;
+  wsInput.addEventListener('input', () => {
+    activeIndex = -1;
+    filterAndRender(wsInput.value);
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      const v = wsInput.value.trim();
+      if (v) fetchServerWorkspaces(v);
+    }, 150);
+  });
+
+  wsInput.addEventListener('focus', () => {
+    filterAndRender(wsInput.value);
+  });
+
+  titleInput.focus();
 
   function close() { modalOverlay.classList.remove('active'); modalOverlay.innerHTML = ''; }
 
@@ -680,20 +835,48 @@ function showNewSessionModal() {
   });
 
   async function doCreate() {
-    const title = document.getElementById('ns-title').value.trim();
-    const workspace = document.getElementById('ns-workspace').value.trim();
+    const title = titleInput.value.trim();
+    const workspace = wsInput.value.trim();
     await createNewSession(title, workspace);
     close();
   }
 
   document.getElementById('ns-create').addEventListener('click', doCreate);
-  document.getElementById('ns-workspace').addEventListener('keydown', (e) => {
+  wsInput.addEventListener('keydown', (e) => {
+    if (suggestContainer.style.display !== 'none' && currentMatches.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activeIndex = (activeIndex + 1) % currentMatches.length;
+        renderSuggestionItems();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeIndex = (activeIndex - 1 + currentMatches.length) % currentMatches.length;
+        renderSuggestionItems();
+        return;
+      }
+      if (e.key === 'Enter' && activeIndex >= 0 && currentMatches[activeIndex]) {
+        e.preventDefault();
+        wsInput.value = currentMatches[activeIndex].path;
+        activeIndex = -1;
+        filterAndRender(wsInput.value);
+        return;
+      }
+    }
     if (e.key === 'Enter') { e.preventDefault(); doCreate(); }
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (suggestContainer.style.display !== 'none') {
+        suggestContainer.style.display = 'none';
+      } else {
+        close();
+      }
+    }
     e.stopPropagation();
   });
-  document.getElementById('ns-title').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('ns-workspace').focus(); }
+  titleInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); wsInput.focus(); }
     if (e.key === 'Escape') { e.preventDefault(); close(); }
     e.stopPropagation();
   });

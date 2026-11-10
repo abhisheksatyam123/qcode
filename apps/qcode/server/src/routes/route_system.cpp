@@ -1,6 +1,11 @@
 #include "routes_internal.h"
+#include "workspace_fs.h"
 
 #include <qcode/core/logger.h>
+#include <algorithm>
+#include <cctype>
+#include <set>
+#include <utility>
 #include <qcode/session/session_store.h>
 
 #include <filesystem>
@@ -169,6 +174,192 @@ void register_system_routes(
             }
         }
         res.set_content(j.dump(2), "application/json");
+    });
+
+    // Workspace Suggestions matching user input directory
+    std::string default_ws = options.default_workspace;
+    svr.Get("/api/workspaces", [default_ws](const httplib::Request& req, httplib::Response& res) {
+        std::string query = req.has_param("query") ? req.get_param_value("query") : "";
+        while (!query.empty() && (query[0] == ' ' || query[0] == '\t')) query.erase(0, 1);
+        while (!query.empty() && (query.back() == ' ' || query.back() == '\t')) query.pop_back();
+
+        std::string q_lower = query;
+        std::transform(q_lower.begin(), q_lower.end(), q_lower.begin(), [](unsigned char c) {
+            return std::tolower(c);
+        });
+
+        std::set<std::string> seen;
+        nlohmann::json list = nlohmann::json::array();
+
+        auto add_ws = [&](const std::string& path_str, const std::string& source) {
+            if (path_str.empty()) return;
+            std::string exp = expand_tilde(path_str);
+            std::error_code ec;
+            if (!fs::exists(exp, ec) || !fs::is_directory(exp, ec)) return;
+            if (seen.find(path_str) != seen.end()) return;
+
+            fs::path p(exp);
+            std::string name = p.filename().string();
+            if (name.empty()) name = path_str;
+
+            // Only suggest workspace names which match user input directory
+            if (!q_lower.empty()) {
+                std::string p_lower = path_str;
+                std::transform(p_lower.begin(), p_lower.end(), p_lower.begin(), [](unsigned char c) {
+                    return std::tolower(c);
+                });
+                std::string n_lower = name;
+                std::transform(n_lower.begin(), n_lower.end(), n_lower.begin(), [](unsigned char c) {
+                    return std::tolower(c);
+                });
+                std::string exp_lower = exp;
+                std::transform(exp_lower.begin(), exp_lower.end(), exp_lower.begin(), [](unsigned char c) {
+                    return std::tolower(c);
+                });
+
+                if (p_lower.find(q_lower) == std::string::npos &&
+                    n_lower.find(q_lower) == std::string::npos &&
+                    exp_lower.find(q_lower) == std::string::npos) {
+                    return;
+                }
+            }
+
+            seen.insert(path_str);
+            list.push_back({
+                {"path", path_str},
+                {"name", name},
+                {"source", source}
+            });
+        };
+
+        // 1. From existing sessions
+        auto sessions = qcode::session::list_sessions_full(false);
+        for (const auto& s : sessions) {
+            if (!s.workspace.empty()) {
+                add_ws(s.workspace, "recent");
+            }
+        }
+
+        // 2. Default workspace if configured
+        if (!default_ws.empty()) {
+            add_ws(default_ws, "default");
+        }
+
+        // 3. Scan project directories
+        const char* home = std::getenv("HOME");
+        std::vector<std::string> base_dirs;
+        if (home && *home) {
+            base_dirs.push_back(std::string(home) + "/project");
+            base_dirs.push_back(std::string(home) + "/projects");
+        }
+        char cwd[4096] = {0};
+        if (getcwd(cwd, sizeof(cwd))) {
+            fs::path cp(cwd);
+            if (cp.has_parent_path()) {
+                base_dirs.push_back(cp.parent_path().string());
+            }
+        }
+
+        // If user typed a directory path, scan children of that directory too
+        if (!query.empty()) {
+            std::string q_exp = expand_tilde(query);
+            std::error_code ec;
+            if (fs::is_directory(q_exp, ec)) {
+                base_dirs.push_back(q_exp);
+            } else {
+                fs::path qp(q_exp);
+                if (qp.has_parent_path() && fs::is_directory(qp.parent_path(), ec)) {
+                    base_dirs.push_back(qp.parent_path().string());
+                }
+            }
+        }
+
+        for (const auto& base : base_dirs) {
+            std::error_code ec;
+            if (fs::is_directory(base, ec)) {
+                for (const auto& entry : fs::directory_iterator(base, ec)) {
+                    if (ec) break;
+                    if (entry.is_directory(ec)) {
+                        std::string fn = entry.path().filename().string();
+                        if (!fn.empty() && fn[0] != '.') {
+                            std::string rel = entry.path().string();
+                            if (home && rel.rfind(home, 0) == 0) {
+                                rel = "~" + rel.substr(strlen(home));
+                            }
+                            add_ws(rel, "discovered");
+                        }
+                    }
+                }
+            }
+        }
+
+        res.set_content(list.dump(2), "application/json");
+    });
+
+    // Child folders of one directory, for the New Session folder picker.
+    // GET /api/dirs?path=<absolute or ~ path>. An empty path means the default
+    // workspace, else $HOME. Returns absolute paths so the client can pass the
+    // selection straight to POST /sessions. Hidden (dot) folders are skipped.
+    svr.Get("/api/dirs", [default_ws](const httplib::Request& req, httplib::Response& res) {
+        std::string raw = req.has_param("path") ? req.get_param_value("path") : "";
+        while (!raw.empty() && (raw.front() == ' ' || raw.front() == '\t')) raw.erase(0, 1);
+        while (!raw.empty() && (raw.back() == ' ' || raw.back() == '\t')) raw.pop_back();
+        const char* home_env = std::getenv("HOME");
+        std::string home = home_env ? home_env : "";
+        if (raw.empty()) raw = !default_ws.empty() ? default_ws : (home.empty() ? "/" : home);
+
+        std::string exp = expand_tilde(raw);
+        auto reply = [&res](int status, const nlohmann::json& body) {
+            res.status = status;
+            res.set_content(body.dump(2, ' ', false, nlohmann::json::error_handler_t::replace),
+                            "application/json");
+        };
+        if (exp.empty() || exp.front() != '/') {
+            reply(400, {{"error", "path must be absolute or start with ~/"}});
+            return;
+        }
+        std::error_code ec;
+        fs::path dir = fs::weakly_canonical(fs::path(exp), ec);
+        if (ec || !fs::is_directory(dir, ec)) {
+            reply(404, {{"error", "not a directory"}, {"path", exp}});
+            return;
+        }
+
+        struct Child { std::string lower, name, path; };
+        std::vector<Child> dirs;
+        bool truncated = false;
+        constexpr std::size_t kMaxDirs = 1000;
+        fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+        if (ec) {
+            reply(403, {{"error", "cannot read directory"}, {"path", dir.string()}});
+            return;
+        }
+        for (; it != fs::directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            const fs::path child = it->path();
+            std::string name = child.filename().string();
+            if (name.empty() || name[0] == '.') continue;
+            std::error_code dec;
+            if (!it->is_directory(dec) || dec) continue;
+            if (dirs.size() >= kMaxDirs) { truncated = true; break; }
+            std::string lower = name;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            dirs.push_back({std::move(lower), std::move(name), child.string()});
+        }
+        std::sort(dirs.begin(), dirs.end(),
+                  [](const Child& a, const Child& b) { return a.lower < b.lower; });
+
+        nlohmann::json list = nlohmann::json::array();
+        for (const auto& c : dirs) list.push_back({{"name", c.name}, {"path", c.path}});
+        nlohmann::json parent = nullptr;
+        if (dir.has_parent_path() && dir.parent_path() != dir) parent = dir.parent_path().string();
+
+        reply(200, {{"path", dir.string()},
+                    {"parent", parent},
+                    {"home", home},
+                    {"dirs", list},
+                    {"truncated", truncated}});
     });
 
     // Model Performance & Telemetry List
