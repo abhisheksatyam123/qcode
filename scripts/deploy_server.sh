@@ -22,7 +22,7 @@
 # Usage:
 #   scripts/deploy_server.sh [--binary PATH] [--install PATH] [--service NAME]
 #                            [--port N] [--host ADDR] [--backup-dir DIR]
-#                            [--no-wait]
+#                            [--no-wait] [--force]
 #
 # Examples:
 #   scripts/deploy_server.sh
@@ -38,6 +38,7 @@ PORT="9080"
 HOST="127.0.0.1"
 BACKUP_DIR="${HOME}/tmp"
 NO_WAIT=0
+FORCE=0
 
 usage() {
     sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
@@ -52,6 +53,7 @@ while [ $# -gt 0 ]; do
         --host) HOST="${2:?--host needs an address}"; shift 2 ;;
         --backup-dir) BACKUP_DIR="${2:?--backup-dir needs a path}"; shift 2 ;;
         --no-wait) NO_WAIT=1; shift ;;
+        --force) FORCE=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -69,7 +71,37 @@ if [ ! -x "$BINARY" ]; then
     exit 1
 fi
 
+VERSION="$("$BINARY" --version 2>/dev/null | head -1 || echo "unknown")"
+
+# Warn when a build does not match the checkout: the usual way to deploy the
+# wrong thing is a stale build/<preset> directory. Only build inputs count, so
+# a commit that touched docs or scripts does not make a binary stale.
+HEAD_COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || true)"
+BIN_COMMIT="$(printf '%s' "$VERSION" | sed -n 's/.*commit \([0-9a-f]\{7,\}\).*/\1/p')"
+STALE=0
+if [ -n "$BIN_COMMIT" ] && git -C "$REPO_ROOT" rev-parse --verify --quiet "${BIN_COMMIT}^{commit}" >/dev/null 2>&1; then
+    if ! git -C "$REPO_ROOT" diff --quiet "$BIN_COMMIT" HEAD -- \
+        apps libqcode cmake CMakeLists.txt 2>/dev/null; then
+        STALE=1
+        echo "Warning: build inputs changed between $BIN_COMMIT and HEAD ($HEAD_COMMIT)." >&2
+        echo "         Rebuild with: uv run scripts/build.py --mode release" >&2
+    fi
+elif [ -n "$BIN_COMMIT" ] && [ -n "$HEAD_COMMIT" ] && [ "$BIN_COMMIT" != "$HEAD_COMMIT" ]; then
+    echo "Warning: $BINARY reports commit $BIN_COMMIT, which is not in this checkout." >&2
+fi
+case "$VERSION" in
+    *-dirty*)
+        echo "Warning: $BINARY was built from a dirty working tree." >&2
+        ;;
+esac
+if [ "$STALE" -eq 1 ] && [ "$FORCE" -ne 1 ]; then
+    echo "Refusing to deploy a stale build; pass --force to deploy it anyway." >&2
+    exit 1
+fi
+
 mkdir -p "$BACKUP_DIR"
+# Each run keeps its own binary backup; drop all but the newest few.
+ls -1dt "${BACKUP_DIR}"/qcode-deploy.* 2>/dev/null | tail -n +6 | xargs -r rm -rf
 RUN_DIR="$(mktemp -d "${BACKUP_DIR}/qcode-deploy.XXXXXX")"
 WORKER="${RUN_DIR}/worker.sh"
 LOG_FILE="${RUN_DIR}/deploy.log"
@@ -78,8 +110,6 @@ UNIT="qcode-deploy-$(date +%s)-$$"
 # this stop is deliberate, so the deploy controls when the server comes back.
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 MARKER="${RUNTIME_DIR}/qcode-server.stopped"
-
-VERSION="$("$BINARY" --version 2>/dev/null | head -1 || echo "unknown")"
 BACKUP="${RUN_DIR}/$(basename "$INSTALL_PATH").before.bak"
 
 # The worker runs as its own systemd unit, outside the server's cgroup, so it
@@ -114,7 +144,7 @@ fi
 
 # Stop the old server, then swap the binary in. The marker keeps the unit from
 # scheduling its own restart while the new binary is being installed.
-touch "$MARKER"
+touch "$MARKER" || fail "marker"
 systemctl --user stop "$SERVICE" || true
 for _ in \$(seq 1 60); do
     systemctl --user is-active --quiet "$SERVICE" || break
@@ -129,7 +159,12 @@ if ! copy_binary "$BINARY"; then
 fi
 
 rm -f "$MARKER"
-systemctl --user start "$SERVICE" || fail "start"
+if ! systemctl --user start "$SERVICE"; then
+    echo "start failed, restoring the previous binary"
+    copy_binary "$BACKUP" || true
+    systemctl --user start "$SERVICE" || true
+    fail "start"
+fi
 
 # Health-check the new server; roll back if it does not come up.
 healthy=0
@@ -150,6 +185,8 @@ if [ "\$healthy" -ne 1 ]; then
 fi
 
 echo "installed: \$($INSTALL_PATH --version 2>/dev/null | head -1)"
+webui="\$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$HOST:$PORT/" 2>/dev/null || echo 000)"
+echo "webui:     HTTP \$webui"
 echo "backup:    $BACKUP"
 echo "RESULT: ok"
 EOF
@@ -169,7 +206,12 @@ fi
 # itself down mid-deploy), the worker still finishes on its own.
 deadline=$((SECONDS + 300))
 while [ $SECONDS -lt $deadline ]; do
-    if ! systemctl --user is-active --quiet "$UNIT"; then
+    if grep -qE '^RESULT:' "$LOG_FILE" 2>/dev/null; then
+        break
+    fi
+    if ! systemctl --user is-active --quiet "$UNIT" 2>/dev/null; then
+        # The worker may have just exited; let its last lines reach the log.
+        sleep 1
         break
     fi
     sleep 1

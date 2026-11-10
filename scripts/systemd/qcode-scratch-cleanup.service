@@ -1,0 +1,6 @@
+[Unit]
+Description=Trim qcode scratch (RAM-backed /tmp and the bash tool output cache)
+
+[Service]
+Type=oneshot
+ExecStart=/home/abhi/project/qcode/scripts/clean_scratch.sh

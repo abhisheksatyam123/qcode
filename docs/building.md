@@ -116,6 +116,8 @@ This generates and links `compile_commands.json` at the project root.
 systemd user unit that serves a build. The unit restarts itself after any stop that was
 not deliberate (an agent stopping it, a crashed tool call), so the web server does not
 silently stay down; `stop` writes a marker first, so a deliberate stop stays stopped.
+The unit files are checked in under `scripts/systemd/`; install them by copying to
+`~/.config/systemd/user/` and running `systemctl --user daemon-reload`.
 
 `scripts/deploy_server.sh` installs a build and restarts the service, with a health check
 and an automatic rollback to the previous binary:
@@ -131,9 +133,11 @@ a call SIGTERMs the server that is running the call: the server aborts its tool 
 exits, so the rest of the command — the binary copy and the restart — never runs and the
 server stays down. `deploy_server.sh` runs the stop/copy/start sequence in a detached
 transient systemd unit (a sibling of the server unit, outside its cgroup), so the restart
-still happens, and it verifies `/health` before it reports success.
+still happens, and it verifies `/health` before it reports success. It refuses to install a
+binary whose build inputs do not match the checkout; pass `--force` to override.
 
 Note that `/tmp` is a tmpfs on most desktop systems, so scratch files there are RAM (and
-swap) usage. `scripts/clean_tmp_scratch.sh` (installed as a user timer) trims scratch
-older than a day and keeps `/tmp` under a 1 GB budget.
+swap) usage. `scripts/clean_scratch.sh` (installed as a user timer) trims scratch older
+than a day, keeps `/tmp` under a 1 GB budget, and prunes bash tool output older than a
+week from `~/.cache/qcode/tool-output`.
 

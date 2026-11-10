@@ -1,0 +1,28 @@
+[Unit]
+Description=QCode Server
+After=network.target
+# Never give up on the server: a crash loop must not leave it stopped.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/abhi/project/qcode
+ExecStart=/usr/sbin/qcode serve --host 0.0.0.0 --port 9080 --log-dir /home/abhi/project/qcode/logs
+Restart=always
+RestartSec=3
+# Tool subprocesses write scratch files, and /tmp is tmpfs, so those pages are
+# charged to this unit: it peaked at 8.1 GB while the server process itself
+# used 15 MB. Keep them reclaimable instead of letting the unit balloon.
+MemoryHigh=1G
+MemoryMax=3G
+TimeoutStopSec=30
+# Tool subprocesses outlive a stop of the server, so only the server is killed.
+KillMode=process
+# The web server must not stay down. A stop that was not asked for on purpose
+# is followed by a restart; a deliberate stop drops the marker file first
+# (scripts/qcode-server.sh stop). A marker older than 10 minutes is ignored,
+# so a stale marker can never keep the server down.
+ExecStopPost=-/bin/bash -c 'f="$XDG_RUNTIME_DIR/qcode-server.stopped"; find "$f" -mmin +10 -delete 2>/dev/null; test -e "$f" && exit 0; systemd-run --user --on-active=2 --unit="qcode-server-restart-$(date +%%s)" /usr/bin/systemctl --user start qcode-server.service'
+
+[Install]
+WantedBy=default.target

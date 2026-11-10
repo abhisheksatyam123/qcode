@@ -132,15 +132,20 @@ other process (or stop `qcode serve`) and run the command again.
 machine can reach it, and a web page in your browser cannot, because requests
 from other sites are refused.
 
-To reach the server from another machine, bind a network address and set a
-token:
+To reach the server from another machine, bind a network address:
+
+```sh
+qcode serve --host 0.0.0.0 --port 9080
+```
+
+That bind is open: every program that can route to this machine can use the API
+and the WebUI. To require a token, set `QCODE_SERVER_TOKEN`:
 
 ```sh
 QCODE_SERVER_TOKEN=$(openssl rand -hex 24) qcode serve --host 0.0.0.0 --port 9080
 ```
 
-- The server refuses to start on a non-loopback address unless
-  `QCODE_SERVER_TOKEN` is set.
+- The token is optional, including on a non-loopback bind.
 - The token may use only letters, digits, `-`, `.`, `_` and `~`, because it goes
   into a URL.
 - At startup the server prints a sign-in line such as
