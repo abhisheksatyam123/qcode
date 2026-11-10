@@ -2015,6 +2015,9 @@ function setConnectionOnline(online) {
 //  NEW SESSION MODAL
 // ═══════════════════════════════════════════════════════════════════
 
+// New Session dialog. The folder browser is the only workspace picker: it lists
+// the child folders of the directory in the box. Tap a folder to select it and
+// list its children, Up goes to the parent, and Create uses the folder shown.
 function showNewSessionModal() {
   const defaultWs = state.sessionWorkspace || '';
   modalOverlay.innerHTML = `
@@ -2023,13 +2026,14 @@ function showNewSessionModal() {
       <div style="font-size:12px;color:var(--text-muted, #94a3b8);margin-bottom:4px;">Session Title</div>
       <input class="rename-input" id="ns-title" type="text" placeholder="Session title (optional)" style="margin-bottom:10px;" />
       <div style="font-size:12px;color:var(--text-muted, #94a3b8);margin-bottom:4px;">Workspace Directory</div>
-      <input class="rename-input" id="ns-workspace" type="text" placeholder="Workspace directory" value="${esc(defaultWs)}" autocomplete="off" />
-      <div class="workspace-suggestions-container" id="ns-suggestions-container" style="display:none;">
-        <div class="workspace-suggestions-header">
-          <span>Matching Workspaces</span>
-          <span class="workspace-suggestions-count" id="ns-suggestions-count"></span>
+      <input class="rename-input" id="ns-workspace" type="text" placeholder="Type a path, e.g. ~/notes" value="${esc(defaultWs)}" autocomplete="off" />
+      <div class="fb-browser" id="ns-browser" style="display:none;">
+        <div class="fb-head">
+          <button class="fb-up" id="ns-fb-up" type="button" title="Parent folder" aria-label="Parent folder">&uarr; Up</button>
+          <span class="fb-path" id="ns-fb-path"></span>
         </div>
-        <div class="workspace-suggestions-list" id="ns-suggestions-list" role="listbox"></div>
+        <div class="fb-error" id="ns-fb-error" style="display:none;"></div>
+        <div class="fb-list" id="ns-fb-list" aria-label="Subfolders"></div>
       </div>
       <div class="modal-actions" style="margin-top:12px;">
         <button class="modal-btn secondary" id="ns-cancel">Cancel</button>
@@ -2040,192 +2044,114 @@ function showNewSessionModal() {
 
   const titleInput = document.getElementById('ns-title');
   const wsInput = document.getElementById('ns-workspace');
-  const suggestContainer = document.getElementById('ns-suggestions-container');
-  const suggestList = document.getElementById('ns-suggestions-list');
-  const suggestCount = document.getElementById('ns-suggestions-count');
+  const fbBox = document.getElementById('ns-browser');
+  const fbUp = document.getElementById('ns-fb-up');
+  const fbPath = document.getElementById('ns-fb-path');
+  const fbError = document.getElementById('ns-fb-error');
+  const fbList = document.getElementById('ns-fb-list');
+  let fbSeq = 0;
+  let fbCurrent = null;
+  let fbAvailable = true;
 
-  let activeIndex = -1;
-  let currentMatches = [];
-
-  // Local candidate collection
-  const localCandidates = new Map();
-  if (state.sessionWorkspace) {
-    localCandidates.set(state.sessionWorkspace, {
-      path: state.sessionWorkspace,
-      name: shortPath(state.sessionWorkspace),
-      source: 'current'
-    });
+  function fbShowError(msg) {
+    fbError.textContent = msg || '';
+    fbError.style.display = msg ? 'block' : 'none';
   }
-  for (const s of (state.openSessions || [])) {
-    if (s.workspace && !localCandidates.has(s.workspace)) {
-      localCandidates.set(s.workspace, {
-        path: s.workspace,
-        name: shortPath(s.workspace),
-        source: 'recent'
-      });
+
+  function fbRender(data) {
+    fbCurrent = data;
+    fbPath.textContent = data.path;
+    fbPath.title = data.path;
+    fbUp.disabled = !data.parent;
+    const rows = (data.dirs || []).map(d => `
+      <button type="button" class="fb-item" data-path="${esc(d.path)}" title="${esc(d.path)}">
+        <span class="ws-suggest-icon">${SVG_ICONS.folder}</span>
+        <span class="fb-name">${esc(d.name)}</span>
+        <span class="fb-chevron" aria-hidden="true">&rsaquo;</span>
+      </button>`).join('');
+    const note = data.truncated ? '<div class="fb-empty">Showing the first 1000 folders</div>' : '';
+    fbList.innerHTML = rows ? rows + note : '<div class="fb-empty">No subfolders</div>';
+  }
+
+  // setBox: true when the user picked a folder (the box follows the listing).
+  // false when browsing from typed text, so the box is not rewritten mid-typing.
+  // silent: suppress error messages (used while typing partial paths).
+  async function fbBrowse(path, { setBox = true, silent = false } = {}) {
+    const seq = ++fbSeq;
+    let res;
+    let data = null;
+    try {
+      res = await fetch('/api/dirs' + (path ? '?path=' + encodeURIComponent(path) : ''));
+      try { data = await res.json(); } catch (_) { data = null; }
+    } catch (_) {
+      if (!silent && seq === fbSeq) fbShowError('Cannot reach the server');
+      return false;
+    }
+    if (seq !== fbSeq) return false;
+    if (!data || typeof data !== 'object') {
+      // Route not available on this server build: hide the browser, keep typing.
+      fbAvailable = false;
+      fbBox.style.display = 'none';
+      return false;
+    }
+    if (!res.ok) {
+      if (!silent) fbShowError(data.error || 'Cannot open this folder');
+      return false;
+    }
+    fbShowError('');
+    fbBox.style.display = 'flex';
+    fbRender(data);
+    if (setBox) wsInput.value = data.path;
+    return true;
+  }
+
+  // Typed absolute or ~ paths drive the listing (debounced).
+  let browseTimer = null;
+  function followBox() {
+    const v = wsInput.value.trim();
+    if (!fbAvailable) return;
+    if (v.startsWith('/') || v.startsWith('~')) {
+      fbBrowse(v, { setBox: false, silent: true });
+    } else if (v) {
+      fbShowError('Type a full path starting with / or ~');
+    } else {
+      fbShowError('');
     }
   }
-  try {
-    const saved = JSON.parse(localStorage.getItem('qcode-recent-workspaces') || '[]');
-    for (const w of saved) {
-      if (w && !localCandidates.has(w)) {
-        localCandidates.set(w, { path: w, name: shortPath(w), source: 'history' });
-      }
-    }
-  } catch (_) {}
 
-  let serverCandidates = [];
-  function fetchServerWorkspaces(q = '') {
-    const url = q ? ('/api/workspaces?query=' + encodeURIComponent(q)) : '/api/workspaces';
-    fetch(url)
-      .then(r => r.ok ? r.json() : [])
-      .then(data => {
-        if (Array.isArray(data)) {
-          serverCandidates = data;
-          filterAndRender(wsInput.value);
-        }
-      })
-      .catch(() => {});
-  }
-  fetchServerWorkspaces();
+  fbList.addEventListener('click', (e) => {
+    const btn = e.target.closest('.fb-item');
+    if (btn && btn.dataset.path) fbBrowse(btn.dataset.path, { setBox: true });
+  });
+  fbUp.addEventListener('click', () => {
+    if (fbCurrent && fbCurrent.parent) fbBrowse(fbCurrent.parent, { setBox: true });
+  });
 
-  function getAllCandidates() {
-    const map = new Map(localCandidates);
-    for (const item of serverCandidates) {
-      if (item && item.path && !map.has(item.path)) {
-        map.set(item.path, item);
-      }
-    }
-    return Array.from(map.values());
-  }
+  // Open on the folder already in the box (or the server default when empty).
+  // If that folder cannot be opened, fall back to the server default.
+  fbBrowse(wsInput.value.trim(), { setBox: true }).then((ok) => {
+    if (!ok && fbAvailable) fbBrowse('', { setBox: true });
+  });
 
-  function filterAndRender(rawInput) {
-    const input = (rawInput || '').trim();
-    if (!input) {
-      suggestContainer.style.display = 'none';
-      currentMatches = [];
-      activeIndex = -1;
-      return;
-    }
-
-    const q = input.toLowerCase();
-    const all = getAllCandidates();
-    // Only suggest workspace names which match user input directory
-    currentMatches = all.filter(c => {
-      const p = (c.path || '').toLowerCase();
-      const n = (c.name || '').toLowerCase();
-      return p.includes(q) || n.includes(q);
-    });
-
-    if (currentMatches.length === 0) {
-      suggestContainer.style.display = 'none';
-      activeIndex = -1;
-      return;
-    }
-
-    suggestContainer.style.display = 'flex';
-    suggestCount.textContent = `${currentMatches.length} match${currentMatches.length === 1 ? '' : 'es'}`;
-    renderSuggestionItems();
-  }
-
-  function renderSuggestionItems() {
-    suggestList.innerHTML = currentMatches.map((item, idx) => {
-      const isSelected = item.path === wsInput.value.trim();
-      const isHighlighted = idx === activeIndex;
-      const classes = ['workspace-suggestion-item'];
-      if (isSelected) classes.push('selected');
-      if (isHighlighted) classes.push('highlighted');
-      return `
-        <div class="${classes.join(' ')}" data-index="${idx}" data-path="${esc(item.path)}" role="option" aria-selected="${isSelected}">
-          <span class="ws-suggest-icon">${SVG_ICONS.folder}</span>
-          <div class="ws-suggest-info">
-            <div class="ws-suggest-name">${esc(item.name || shortPath(item.path))}</div>
-            <div class="ws-suggest-path">${esc(item.path)}</div>
-          </div>
-          ${item.source ? `<span class="ws-suggest-badge">${esc(item.source)}</span>` : ''}
-        </div>`;
-    }).join('');
-
-    suggestList.querySelectorAll('.workspace-suggestion-item').forEach(el => {
-      el.addEventListener('click', () => {
-        const path = el.getAttribute('data-path');
-        if (path) {
-          wsInput.value = path;
-          activeIndex = -1;
-          filterAndRender(path);
-          wsInput.focus();
-        }
-      });
-    });
-  }
-
-  let debounceTimer = null;
   wsInput.addEventListener('input', () => {
-    activeIndex = -1;
-    filterAndRender(wsInput.value);
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      const v = wsInput.value.trim();
-      if (v) fetchServerWorkspaces(v);
-    }, 150);
+    clearTimeout(browseTimer);
+    browseTimer = setTimeout(followBox, 250);
   });
-
-  wsInput.addEventListener('focus', () => {
-    filterAndRender(wsInput.value);
-  });
-
-  titleInput.focus();
 
   function close() { closeModal(); }
-
   document.getElementById('ns-cancel').addEventListener('click', close);
 
   async function doCreate() {
     const title = titleInput.value.trim();
     const workspace = wsInput.value.trim();
-    if (workspace) {
-      try {
-        const saved = JSON.parse(localStorage.getItem('qcode-recent-workspaces') || '[]');
-        const next = [workspace, ...saved.filter(x => x !== workspace)].slice(0, 20);
-        localStorage.setItem('qcode-recent-workspaces', JSON.stringify(next));
-      } catch (_) {}
-    }
     await createNewSession(title, workspace);
     close();
   }
 
   document.getElementById('ns-create').addEventListener('click', doCreate);
   wsInput.addEventListener('keydown', (e) => {
-    if (suggestContainer.style.display !== 'none' && currentMatches.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        activeIndex = (activeIndex + 1) % currentMatches.length;
-        renderSuggestionItems();
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        activeIndex = (activeIndex - 1 + currentMatches.length) % currentMatches.length;
-        renderSuggestionItems();
-        return;
-      }
-      if (e.key === 'Enter' && activeIndex >= 0 && currentMatches[activeIndex]) {
-        e.preventDefault();
-        wsInput.value = currentMatches[activeIndex].path;
-        activeIndex = -1;
-        filterAndRender(wsInput.value);
-        return;
-      }
-    }
     if (e.key === 'Enter') { e.preventDefault(); doCreate(); }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      if (suggestContainer.style.display !== 'none') {
-        suggestContainer.style.display = 'none';
-      } else {
-        close();
-      }
-    }
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
     e.stopPropagation();
   });
   titleInput.addEventListener('keydown', (e) => {
@@ -2233,6 +2159,7 @@ function showNewSessionModal() {
     if (e.key === 'Escape') { e.preventDefault(); close(); }
     e.stopPropagation();
   });
+  titleInput.focus();
 }
 
 function switchTab(tab) {

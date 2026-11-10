@@ -562,23 +562,38 @@ test('WebUI mobile viewport virtual keyboard and flex layout resilience', () => 
   assert.match(appJs, /promptInput\.addEventListener\('focus'/, 'promptInput should have focus listener for scroll adjustment');
 });
 
-test('WebUI workspace suggestions in new session modal only matches user input directory', () => {
+test('WebUI new session modal browses child folders of the chosen directory', () => {
   const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
   const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
 
-  // New session modal contains workspace suggestions container & list
-  assert.match(appJs, /id="ns-suggestions-container"/, 'app.js should contain suggestions container');
-  assert.match(appJs, /id="ns-suggestions-list"/, 'app.js should contain suggestions list');
+  // Folder browser markup and wiring
+  assert.match(appJs, /id="ns-browser"/, 'new session modal should contain the folder browser');
+  assert.match(appJs, /id="ns-fb-list"/, 'folder browser should contain a child folder list');
+  assert.match(appJs, /fetch\('\/api\/dirs'/, 'folder browser must query /api/dirs for child folders');
+  assert.match(appJs, /class="fb-item"/, 'child folders should render as tappable fb-item rows');
+  assert.match(appJs, /function fbBrowse\(path, \{ setBox = true, silent = false \} = \{\}\)/, 'fbBrowse should take setBox/silent options');
+  assert.match(appJs, /setBox: true/, 'tapping a folder should move the workspace box');
+  assert.match(appJs, /setBox: false, silent: true/, 'typed paths should browse without rewriting the box');
+  assert.match(appJs, /fbUp\.addEventListener\('click'/, 'Up button should navigate to the parent folder');
 
-  // Filter only matches user input directory
-  assert.match(appJs, /p\.includes\(q\)\s*\|\|\s*n\.includes\(q\)/, 'suggestions must be filtered to match user input directory');
-  assert.match(appJs, /fetch\(url\)/, 'app.js queries /api/workspaces for discovered folders');
+  // Degrades silently against an older server without /api/dirs
+  assert.match(appJs, /fbAvailable = false;/, 'browser should hide itself when /api/dirs is unavailable');
 
-  // Keyboard navigation & selection
-  assert.match(appJs, /ArrowDown/, 'app.js should handle ArrowDown for suggestion selection');
-  assert.match(appJs, /workspace-suggestion-item/, 'app.js should render workspace-suggestion-item');
 
-  // CSS contains suggestion styles
-  assert.match(styleCss, /\.workspace-suggestions-container/, 'style.css must style .workspace-suggestions-container');
-  assert.match(styleCss, /\.workspace-suggestion-item/, 'style.css must style .workspace-suggestion-item');
+  // CSS
+  assert.match(styleCss, /\.fb-browser\s*\{/, 'style.css must style .fb-browser');
+  assert.match(styleCss, /\.fb-item\s*\{/, 'style.css must style .fb-item');
+  assert.match(styleCss, /\.fb-item:hover/, 'style.css must give .fb-item a hover state');
+});
+
+test('WebUI new session modal has one folder picker, no suggestions dropdown', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+
+  // The folder browser is the only workspace selection window.
+  assert.match(appJs, /id="ns-browser"/, 'new session modal should contain the folder browser');
+  assert.doesNotMatch(appJs, /ns-suggestions-container|ns-suggestions-list|Matching Workspaces/, 'the matching-workspaces dropdown must be gone');
+  assert.doesNotMatch(appJs, /workspace-suggestion-item/, 'no suggestion rows should be rendered');
+  assert.doesNotMatch(appJs, /qcode-recent-workspaces/, 'recent-workspace history only fed the dropdown and must be gone');
+  assert.doesNotMatch(styleCss, /workspace-suggest/, 'dropdown CSS must be removed');
 });
