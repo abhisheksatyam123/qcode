@@ -298,6 +298,20 @@ kbd {
   color: var(--text);
 }
 
+.sidebar-header, .sidebar-footer { flex-shrink: 0; }
+/* Header and footer stay pinned; only this middle region scrolls when the
+   viewport is too short for both sections. */
+.sidebar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 .sidebar-section { display: flex; flex-direction: column; gap: 2px; min-height: 0; }
 .sidebar-section.flex-grow { flex: 1 1 auto; min-height: 120px; display: flex; flex-direction: column; overflow: hidden; }
 .sidebar-section-header { display: flex; align-items: center; justify-content: space-between; padding-right: 2px; }
@@ -2085,16 +2099,15 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
   #sidebar {
     position: fixed;
     top: 0;
-    bottom: 0;
     left: 0;
+    height: 100vh;
+    height: 100dvh;
     width: min(300px, 86vw);
     padding-top: max(14px, env(safe-area-inset-top));
     padding-bottom: max(14px, env(safe-area-inset-bottom));
     transform: translateX(-102%);
     box-shadow: var(--shadow-lg);
-    overflow-y: auto;
-    overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
+    overflow: hidden;
   }
   .sidebar-section.flex-grow {
     min-height: 140px;
@@ -2204,21 +2217,70 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
 }
 .settings-modal-overlay.hidden { display: none; }
 .settings-modal-card {
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  max-width: 440px;
+  max-width: 460px;
+  max-height: min(88vh, 720px);
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
   overflow: hidden;
   animation: qc-fade-up 0.15s ease-out;
 }
+.settings-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 12px 12px 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-modal-title { font-size: 15px; font-weight: 600; color: var(--text); }
 .settings-modal-body {
-  padding: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 20px 22px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 22px;
 }
+.settings-section { display: flex; flex-direction: column; gap: 14px; }
+.settings-section + .settings-section { padding-top: 20px; border-top: 1px solid var(--border); }
+.settings-section-title {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+.settings-model-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.settings-model-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings-model-name { font-size: 14px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.settings-model-provider { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.settings-model-card .settings-action-link {
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  padding: 5px 12px;
+  color: var(--text);
+}
+.settings-model-card .settings-action-link:hover { background: var(--hover); }
+.settings-danger-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.settings-danger-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.settings-danger-title { font-size: 13px; font-weight: 500; color: var(--text); }
+.settings-danger-btn { flex-shrink: 0; }
 .settings-field-group {
   display: flex;
   flex-direction: column;
@@ -2230,11 +2292,9 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
   justify-content: space-between;
 }
 .settings-field-label {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--faint);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
 }
 .settings-action-link {
   background: none;
@@ -2248,16 +2308,6 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
   transition: background var(--fast);
 }
 .settings-action-link:hover { background: var(--accent-soft); }
-.settings-active-model-display {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-  padding: 8px 10px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  font-family: var(--font-mono);
-}
 .settings-field-hint {
   font-size: 11.5px;
   color: var(--faint);

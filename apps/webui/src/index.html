@@ -28,43 +28,45 @@
       <button id="sidebar-close-btn" class="sidebar-close-btn" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar" aria-expanded="true">&times;</button>
     </div>
 
-    <!-- Views Selection -->
-    <div class="sidebar-section sidebar-views" id="sidebar-views-section">
-      <div class="sidebar-section-header views-header" id="views-toggle-btn" role="button" tabindex="0" aria-expanded="true" title="Toggle Views navigation">
-        <div class="sidebar-section-title">Views</div>
-        <div class="views-header-right">
-          <span class="active-view-badge" id="active-view-badge" title="Active view">Chat</span>
-          <button type="button" class="section-collapse-btn" id="views-collapse-arrow" aria-label="Toggle views navigation" tabindex="-1">
-            <svg class="ui-icon collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+    <div class="sidebar-body" id="sidebar-body">
+      <!-- Views Selection -->
+      <div class="sidebar-section sidebar-views" id="sidebar-views-section">
+        <div class="sidebar-section-header views-header" id="views-toggle-btn" role="button" tabindex="0" aria-expanded="true" title="Toggle Views navigation">
+          <div class="sidebar-section-title">Views</div>
+          <div class="views-header-right">
+            <span class="active-view-badge" id="active-view-badge" title="Active view">Chat</span>
+            <button type="button" class="section-collapse-btn" id="views-collapse-arrow" aria-label="Toggle views navigation" tabindex="-1">
+              <svg class="ui-icon collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
         </div>
+        <nav class="sidebar-nav" id="sidebar-nav-list">
+          <button class="sidebar-nav-btn active" id="tab-chat-btn" type="button">
+            <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Chat
+          </button>
+          <button class="sidebar-nav-btn" id="tab-files-btn" type="button">
+            <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Files
+          </button>
+          <button class="sidebar-nav-btn" id="tab-sessions-btn" type="button" title="Subagents for active session">
+            <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span> Subagents
+          </button>
+        </nav>
       </div>
-      <nav class="sidebar-nav" id="sidebar-nav-list">
-        <button class="sidebar-nav-btn active" id="tab-chat-btn" type="button">
-          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Chat
-        </button>
-        <button class="sidebar-nav-btn" id="tab-files-btn" type="button">
-          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Files
-        </button>
-        <button class="sidebar-nav-btn" id="tab-sessions-btn" type="button" title="Subagents for active session">
-          <span class="nav-icon"><svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span> Subagents
-        </button>
-      </nav>
-    </div>
 
-    <!-- Sessions Section -->
-    <div class="sidebar-section sidebar-sessions flex-grow" id="sidebar-sessions-section">
-      <div class="sidebar-section-header sessions-header" id="sessions-toggle-btn" role="button" tabindex="0" aria-expanded="true" title="Toggle Sessions list">
-        <div class="sidebar-section-title">Sessions</div>
-        <div class="sessions-header-right">
-          <span class="active-session-count-badge" id="active-session-count-badge" title="Open sessions count">0</span>
-          <button type="button" class="section-collapse-btn" id="sessions-collapse-arrow" aria-label="Toggle sessions list" tabindex="-1">
-            <svg class="ui-icon collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-          <button id="new-session-btn" class="session-add-btn" title="New session" aria-label="New session" type="button">+</button>
+      <!-- Sessions Section -->
+      <div class="sidebar-section sidebar-sessions flex-grow" id="sidebar-sessions-section">
+        <div class="sidebar-section-header sessions-header" id="sessions-toggle-btn" role="button" tabindex="0" aria-expanded="true" title="Toggle Sessions list">
+          <div class="sidebar-section-title">Sessions</div>
+          <div class="sessions-header-right">
+            <span class="active-session-count-badge" id="active-session-count-badge" title="Open sessions count">0</span>
+            <button type="button" class="section-collapse-btn" id="sessions-collapse-arrow" aria-label="Toggle sessions list" tabindex="-1">
+              <svg class="ui-icon collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <button id="new-session-btn" class="session-add-btn" title="New session" aria-label="New session" type="button">+</button>
+          </div>
         </div>
+        <div id="session-tabs-container" class="session-tabs-container"></div>
       </div>
-      <div id="session-tabs-container" class="session-tabs-container"></div>
     </div>
 
     <div class="sidebar-footer">
@@ -272,71 +274,73 @@
 
   <!-- Settings Modal Dialog -->
   <div id="settings-modal" class="settings-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
-    <div class="picker-modal settings-modal-card">
-      <div class="picker-header">
-        <span id="settings-modal-title">Settings</span>
+    <div class="settings-modal-card">
+      <div class="settings-modal-header">
+        <span id="settings-modal-title" class="settings-modal-title">Settings</span>
         <button type="button" class="modal-close-btn" id="settings-modal-close" aria-label="Close settings">&times;</button>
       </div>
-      <div class="picker-body settings-modal-body">
-        <div class="settings-field-group">
-          <div class="settings-field-header">
-            <span class="settings-field-label">Active Model</span>
-            <button type="button" class="settings-action-link" id="settings-switch-model-btn">Switch Model (/model)</button>
+      <div class="settings-modal-body">
+        <section class="settings-section" aria-labelledby="settings-sec-model">
+          <h3 class="settings-section-title" id="settings-sec-model">Model</h3>
+          <div class="settings-model-card">
+            <div class="settings-model-text" id="settings-active-model-display">No model selected</div>
+            <button type="button" class="settings-action-link" id="settings-switch-model-btn">Switch</button>
           </div>
-          <div class="settings-active-model-display" id="settings-active-model-display">No model selected</div>
-          <div class="settings-field-hint">You can also switch models at any time by typing <code>/model &lt;name&gt;</code> in the prompt bar.</div>
-        </div>
+          <div class="settings-field-hint">Type <code>/model &lt;name&gt;</code> in the prompt bar to switch at any time.</div>
 
-        <div class="settings-field-group">
-          <label for="provider-select" class="settings-field-label">Default Provider</label>
-          <div class="control-group">
-            <select id="provider-select"></select>
+          <div class="settings-field-group">
+            <label for="provider-select" class="settings-field-label">Provider</label>
+            <div class="control-group"><select id="provider-select"></select></div>
           </div>
-        </div>
 
-        <div class="settings-field-group">
-          <label for="reasoning-select" class="settings-field-label">Reasoning Effort</label>
-          <div class="control-group">
-            <select id="reasoning-select" title="Reasoning effort. Off hides the thinking trace.">
-              <option value="off">Off</option>
-              <option value="low" selected>Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+          <div class="settings-field-group">
+            <label for="reasoning-select" class="settings-field-label">Reasoning effort</label>
+            <div class="control-group">
+              <select id="reasoning-select" title="Reasoning effort. Off hides the thinking trace.">
+                <option value="off">Off</option>
+                <option value="low" selected>Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+            <div class="settings-field-hint">Applies to models with thinking capability.</div>
           </div>
-          <div class="settings-field-hint">Configures reasoning effort level for models with thinking capability.</div>
-        </div>
+        </section>
 
-        <div class="settings-field-group">
-          <label for="theme-select" class="settings-field-label">Interface Theme</label>
-          <div class="control-group">
-            <select id="theme-select" title="Choose color theme">
-              <option value="qcode">QCode Dark</option>
-              <option value="qcode-light">QCode Light</option>
-              <option value="tokyonight">Tokyo Night</option>
-              <option value="catppuccin">Catppuccin Mocha</option>
-              <option value="nord">Nord</option>
-              <option value="gruvbox">Gruvbox</option>
-              <option value="dracula">Dracula</option>
-              <option value="rosepine">Rosé Pine</option>
-              <option value="one-dark">One Dark</option>
-              <option value="github">GitHub Dark</option>
-              <option value="monokai">Monokai</option>
-              <option value="vesper">Vesper</option>
-            </select>
+        <section class="settings-section" aria-labelledby="settings-sec-appearance">
+          <h3 class="settings-section-title" id="settings-sec-appearance">Appearance</h3>
+          <div class="settings-field-group">
+            <label for="theme-select" class="settings-field-label">Theme</label>
+            <div class="control-group">
+              <select id="theme-select" title="Choose color theme">
+                <option value="qcode">QCode Dark</option>
+                <option value="qcode-light">QCode Light</option>
+                <option value="tokyonight">Tokyo Night</option>
+                <option value="catppuccin">Catppuccin Mocha</option>
+                <option value="nord">Nord</option>
+                <option value="gruvbox">Gruvbox</option>
+                <option value="dracula">Dracula</option>
+                <option value="rosepine">Rosé Pine</option>
+                <option value="one-dark">One Dark</option>
+                <option value="github">GitHub Dark</option>
+                <option value="monokai">Monokai</option>
+                <option value="vesper">Vesper</option>
+              </select>
+            </div>
+            <div class="settings-field-hint">Changes UI colors and syntax highlighting.</div>
           </div>
-          <div class="settings-field-hint">Switch UI appearance and syntax highlighting colors.</div>
-        </div>
+        </section>
 
-        <div class="settings-field-group">
-          <div class="settings-field-header">
-            <span class="settings-field-label">Session Actions</span>
+        <section class="settings-section settings-section-danger" aria-labelledby="settings-sec-session">
+          <h3 class="settings-section-title" id="settings-sec-session">Session</h3>
+          <div class="settings-danger-row">
+            <div class="settings-danger-text">
+              <div class="settings-danger-title">Clear chat history</div>
+              <div class="settings-field-hint">Empties this session's messages. Saved files remain intact.</div>
+            </div>
+            <button type="button" id="settings-clear-chat-btn" class="settings-danger-btn">Clear</button>
           </div>
-          <div class="settings-actions-row">
-            <button type="button" id="settings-clear-chat-btn" class="settings-danger-btn">Clear Chat History</button>
-          </div>
-          <div class="settings-field-hint">Empties the current session's chat messages. Saved files remain intact.</div>
-        </div>
+        </section>
       </div>
     </div>
   </div>

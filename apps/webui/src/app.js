@@ -301,7 +301,18 @@ function updateSettingsModalModelInfo() {
     const m = p.models.find(x => x.id === state.model);
     if (m && m.name) mName = m.name;
   }
-  display.textContent = mName ? `${pName} / ${mName}` : (pName || 'No model selected');
+  display.textContent = '';
+  if (!mName) {
+    display.textContent = pName || 'No model selected';
+    return;
+  }
+  const nameEl = document.createElement('span');
+  nameEl.className = 'settings-model-name';
+  nameEl.textContent = mName;
+  const provEl = document.createElement('span');
+  provEl.className = 'settings-model-provider';
+  provEl.textContent = pName;
+  display.append(nameEl, provEl);
 }
 
 function openSettingsModal() {
