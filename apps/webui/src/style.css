@@ -2515,6 +2515,17 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
   height: 22px;
   border-width: 2.5px;
 }
+.session-loading-retry {
+  margin-top: 4px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.session-loading-retry:hover { background: var(--hover); }
 .session-loading-title {
   font-size: 15px;
   font-weight: 600;
@@ -2577,6 +2588,9 @@ pre code.hljs, .md-code code { display: block; padding: 0 !important; background
 .fs-placeholder-tree-btn:hover {
   background: var(--hover);
 }
+/* T24: collapse button shows an active tint while the tree is hidden */
+.fs-collapse-btn[data-collapsed="true"] { color: var(--accent, currentColor); }
+
 .files-explorer.tree-collapsed .fs-placeholder-tree-btn {
   display: inline-flex;
   align-items: center;

@@ -72,6 +72,20 @@ svr.Get("/session/([^/]+)/files", [](const httplib::Request& req, httplib::Respo
         return;
     }
 
+    // A moved or deleted workspace is an error, not "not a git repo": answer
+    // with the same 404 the Explorer uses so both tabs report it the same way.
+    std::error_code dir_ec;
+    if (!fs::is_directory(ws, dir_ec)) {
+        res.status = 404;
+        res.set_content(nlohmann::json({
+            {"error", "directory not found"},
+            {"workspace", ws},
+            {"is_git_repo", false},
+            {"exists", false}
+        }).dump(), "application/json");
+        return;
+    }
+
     // Detect a git repository (walk up to find .git).
     bool is_git = false;
     std::string probe = ws;

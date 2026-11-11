@@ -405,6 +405,42 @@ TEST_F(ServerRoutesTest, WorkspaceFsOperations) {
     EXPECT_EQ(res_escape_write->status, 400);
 }
 
+// T24: a session whose workspace was moved/deleted must report "folder not
+// found" on the Changes endpoint (same as the Explorer), not "not a git repo".
+TEST_F(ServerRoutesTest, GitChangesReportsMissingWorkspaceAsNotFound) {
+    nlohmann::json req_create = {
+        {"provider", "mock-provider"},
+        {"model", "mock-model"},
+        {"workspace", test_workspace_dir_}
+    };
+    auto res_create = client_->Post("/sessions", req_create.dump(), "application/json");
+    ASSERT_TRUE(res_create != nullptr);
+    ASSERT_EQ(res_create->status, 200);
+    std::string sid = nlohmann::json::parse(res_create->body).value("id", "");
+    ASSERT_FALSE(sid.empty());
+
+    // Workspace exists: the Changes endpoint answers normally.
+    auto res_ok = client_->Get("/session/" + sid + "/files");
+    ASSERT_TRUE(res_ok != nullptr);
+    EXPECT_EQ(res_ok->status, 200);
+
+    // Simulate the workspace being moved away.
+    std::error_code ec;
+    fs::remove_all(test_workspace_dir_, ec);
+    ASSERT_FALSE(fs::exists(test_workspace_dir_));
+
+    auto res_missing = client_->Get("/session/" + sid + "/files");
+    ASSERT_TRUE(res_missing != nullptr);
+    EXPECT_EQ(res_missing->status, 404);
+    auto j = nlohmann::json::parse(res_missing->body);
+    EXPECT_EQ(j.value("error", ""), "directory not found");
+    EXPECT_EQ(j.value("workspace", ""), test_workspace_dir_);
+    EXPECT_FALSE(j.value("is_git_repo", true));
+
+    // Recreate for TearDown's cleanup symmetry.
+    fs::create_directories(test_workspace_dir_);
+}
+
 TEST_F(ServerRoutesTest, TasksAndSubagentSessionLookup) {
     auto res_tasks = client_->Get("/tasks");
     ASSERT_TRUE(res_tasks);

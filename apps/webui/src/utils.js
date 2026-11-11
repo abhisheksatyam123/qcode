@@ -612,6 +612,30 @@ export function healthRetryDelayMs(failures) {
   return Math.min(2000 * Math.pow(2, Math.max(0, failures - 1)), 10000);
 }
 
+// Per-request timeout for a session load. Early attempts fail fast on a dead
+// socket; later ones allow for a slow but working load (a long history).
+export function sessionLoadAttemptTimeoutMs(attempt) {
+  if (attempt <= 1) return 8000;
+  if (attempt === 2) return 15000;
+  return 30000;
+}
+
+// Runs attempt(n) until it returns a truthy value. Waits healthRetryDelayMs
+// between attempts and gives up with an Error once the next wait would pass
+// the budget. now() and sleep(ms) are injectable for tests.
+export async function retryWithBudget(attempt, budgetMs, opts = {}) {
+  const now = opts.now || (() => Date.now());
+  const sleep = opts.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + budgetMs;
+  for (let n = 1; ; n++) {
+    const value = await attempt(n);
+    if (value) return value;
+    const delay = healthRetryDelayMs(n);
+    if (now() + delay > deadline) throw new Error('retry budget exhausted');
+    await sleep(delay);
+  }
+}
+
 // Proxies answer 502-504 while the server restarts; those are retried.
 export function isRetryableHttpStatus(status) {
   return status === 502 || status === 503 || status === 504;
@@ -649,3 +673,43 @@ export function shouldShowSessionLoading(session) {
   if (isSessionSwitchCached(session)) return false;
   return !!(session.stub || !session.messages || (session.message_count && session.message_count > 0));
 }
+
+// T24: "Folder not found" block shared by the Explorer and Changes tabs so a
+// moved or deleted workspace reads the same in both.
+export function folderMissingHtml(wsDisplay) {
+  const shown = wsDisplay || 'workspace';
+  return `
+          <div class="files-empty fs-workspace-missing">
+            <div class="files-empty-title" style="font-weight:600;margin-bottom:6px;">Folder not found</div>
+            <div class="files-empty-desc" style="font-size:var(--text-sm);color:var(--muted);line-height:1.4;">The directory <code style="font-family:var(--font-mono);background:var(--surface);padding:2px 6px;border-radius:4px;">${escHtmlForFs(shown)}</code> does not exist on disk.</div>
+          </div>`;
+}
+
+// T24: accessible label + state for the file-tree collapse button.
+export function fsTreeToggleState(collapsed) {
+  return {
+    title: collapsed ? 'Show file tree (Alt+F)' : 'Hide file tree (Alt+F)',
+    ariaLabel: collapsed ? 'Show file tree' : 'Hide file tree',
+    ariaExpanded: collapsed ? 'false' : 'true',
+    collapsed: collapsed ? 'true' : 'false',
+  };
+}
+
+function escHtmlForFs(v) {
+  return String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// T25: bound the in-memory message history of open sessions. Returns the ids
+// whose loaded messages should be dropped (they reload on next switch). The
+// active session and sessions with a live stream/generation are never chosen.
+export function selectSessionsToEvict(sessions, activeId, maxLoaded) {
+  const list = Array.isArray(sessions) ? sessions : [];
+  const loaded = list.filter(s => s && s.loaded);
+  const excess = loaded.length - Math.max(1, maxLoaded | 0);
+  if (excess <= 0) return [];
+  const candidates = loaded
+    .filter(s => s.id !== activeId && !s.busy)
+    .sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0));
+  return candidates.slice(0, excess).map(s => s.id);
+}
+

@@ -89,7 +89,7 @@ window.copyPlantUmlCode = function(diagramId, btn) {
   });
 };
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, keepInterruptedPartials, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, keepInterruptedPartials, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, sessionLoadAttemptTimeoutMs, retryWithBudget, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading, folderMissingHtml, fsTreeToggleState, selectSessionsToEvict } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -345,9 +345,20 @@ function toggleFsTree() {
   }
   if (!filesExplorer) return;
   const isCollapsed = filesExplorer.classList.toggle('tree-collapsed');
+  syncFsTreeToggle(isCollapsed);
   try {
     localStorage.setItem('qcode-fs-tree-collapsed', isCollapsed ? 'true' : 'false');
   } catch (_) {}
+}
+
+function syncFsTreeToggle(collapsed) {
+  const btn = document.getElementById('fs-collapse-btn');
+  if (!btn) return;
+  const st = fsTreeToggleState(!!collapsed);
+  btn.title = st.title;
+  btn.setAttribute('aria-label', st.ariaLabel);
+  btn.setAttribute('aria-expanded', st.ariaExpanded);
+  btn.dataset.collapsed = st.collapsed;
 }
 
 function restoreFsTreeState() {
@@ -359,6 +370,7 @@ function restoreFsTreeState() {
       }
     } catch (_) {}
   }
+  syncFsTreeToggle(filesExplorer ? filesExplorer.classList.contains('tree-collapsed') : false);
 }
 
 function resizePromptInput() {
@@ -3088,7 +3100,9 @@ function parseMessages(msgs, session) {
   }
 }
 
-async function loadSessionData(id) {
+const kSessionLoadTimeoutMs = 15000;
+
+async function loadSessionData(id, timeoutMs = kSessionLoadTimeoutMs) {
   const session = {
     id: id,
     title: '',
@@ -3100,11 +3114,14 @@ async function loadSessionData(id) {
     model: ''
   };
 
+  let infoStatus = 0;
   try {
+    // Bounded: a LAN socket that stops answering must not leave the load hanging.
     const [infoRes, msgsRes] = await Promise.all([
-      fetch('/session/' + id).catch(() => null),
-      fetch('/session/' + id + '/messages?tail=100').catch(() => null)
+      fetchWithTimeout('/session/' + id, {}, timeoutMs).catch(() => null),
+      fetchWithTimeout('/session/' + id + '/messages?tail=100', {}, timeoutMs).catch(() => null)
     ]);
+    if (infoRes) infoStatus = infoRes.status;
     if (infoRes && infoRes.ok) {
       const info = await infoRes.json();
       session.title = info.title || '';
@@ -3128,7 +3145,27 @@ async function loadSessionData(id) {
   if (!session.title && session.id) {
     session.title = (session.agentMode === 'subagent' ? 'Subagent ' : 'Session ') + session.id.substring(0, 8);
   }
+  // Non-enumerable, so Object.assign into a stub never copies it.
+  Object.defineProperty(session, 'notFound', { value: infoStatus === 404, enumerable: false });
   return session;
+}
+
+// Keeps trying until the session info arrives or the budget runs out, so a
+// dead socket or a server restart on the LAN does not leave the spinner up.
+// Each attempt is bounded, and attempts back off like the health check.
+const kSessionLoadBudgetMs = 60000;
+function loadSessionWithRetry(id) {
+  return retryWithBudget(
+    (attempt) => loadSessionData(id, sessionLoadAttemptTimeoutMs(attempt))
+      // loadSessionData swallows fetch errors; serverRev is set only when GET /session/:id succeeded.
+      .then((full) => {
+        if (full.serverRev !== undefined) return full;
+        // The session is gone on the server: retrying cannot bring it back.
+        if (full.notFound) throw new Error('session not found');
+        return null;
+      }),
+    kSessionLoadBudgetMs
+  );
 }
 
 // Lightweight session built from a /sessions row. History is fetched on first open.
@@ -3157,10 +3194,7 @@ function makeSessionStub(row) {
 function ensureSessionLoaded(session) {
   if (!session.stub) return Promise.resolve();
   if (!session.loadPromise) {
-    session.loadPromise = loadSessionData(session.id).then(full => {
-      // loadSessionData swallows fetch errors; serverRev is set only when
-      // GET /session/:id succeeded, so keep the stub (and retry) otherwise.
-      if (full.serverRev === undefined) throw new Error('session info unavailable');
+    session.loadPromise = loadSessionWithRetry(session.id).then(full => {
       Object.assign(session, full, { stub: false });
     }).finally(() => {
       delete session.loadPromise;
@@ -3448,6 +3482,18 @@ function beginStream(session, msg) {
 }
 
 // Reset the UI when `stream` ends, unless Stop or a newer turn took over.
+// Stop reading the turn of a session the user left or closed. The server keeps
+// the turn running and reattaching on return replays it. An open reader holds
+// a browser connection for the whole turn, and browsers cap connections per
+// host, so a few of these queue every other request (session loads included).
+function detachStream(session) {
+  const stream = session && session.stream;
+  if (!stream) return;
+  stream.detached = true;
+  if (stream.reader) stream.reader.cancel().catch(() => {});
+  session.stream = null;
+}
+
 function endStream(session, stream) {
   if (session.stream !== stream) return;
   session.stream = null;
@@ -3566,6 +3612,7 @@ function applyTurnEvent(session, stream, evt) {
 async function readTurnStream(session, stream, res) {
   const reader = res.body.getReader();
   stream.reader = reader;
+  if (stream.detached) { reader.cancel().catch(() => {}); return; }
   const decoder = new TextDecoder();
   let buffer = '';
   const consume = (line) => {
@@ -3590,7 +3637,7 @@ async function readTurnStream(session, stream, res) {
       (e) => { clearTimeout(timer); reject(e); });
   });
   try {
-    while (!stream.stopped && !stream.complete) {
+    while (!stream.stopped && !stream.complete && !stream.detached) {
       const { done, value } = await readOrStall();
       if (done) break;
       stream.receivedData = true;
@@ -3631,7 +3678,7 @@ async function followTurn(session, stream, res) {
         if (isNetworkError(e)) updateConnectionStatus();
       }
       res = null;
-      if (stream.stopped || stream.complete) return;
+      if (stream.stopped || stream.complete || stream.detached) return;
       if (error && !isNetworkError(error)) {
         failStream(stream, 'Generation interrupted: ' + (error.message || 'unknown error'));
         return;
@@ -3646,7 +3693,7 @@ async function followTurn(session, stream, res) {
       retries++;
       if (retries === 1) showToast('Connection dropped — reconnecting…', 'warning');
       await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(1.5, retries - 1), 5000)));
-      if (stream.stopped) return;
+      if (stream.stopped || stream.detached) return;
     }
   } finally {
     endStream(session, stream);
@@ -4192,12 +4239,25 @@ async function loadGitChanges() {
     return;
   }
   filesGit.innerHTML = '<div class="files-empty">Loading working tree…</div>';
+  // T24: a slower response for a previous session/tab must not overwrite this one.
+  const runIndex = (state.gitRunIndex || 0) + 1;
+  state.gitRunIndex = runIndex;
+  const sid = state.sessionId;
   try {
-    const res = await fetch('/session/' + state.sessionId + '/files');
+    const res = await fetch('/session/' + sid + '/files');
+    if (runIndex !== state.gitRunIndex || sid !== state.sessionId) return;
+    if (res.status === 404) {
+      const missing = await res.json().catch(() => ({}));
+      if (missing.error === 'directory not found') {
+        filesGit.innerHTML = folderMissingHtml(missing.workspace || state.sessionWorkspace);
+        return;
+      }
+    }
     if (!res.ok) throw new Error(await responseError(res));
     const data = await res.json();
     renderGitChanges(data);
   } catch (e) {
+    if (runIndex !== state.gitRunIndex) return;
     filesGit.innerHTML = '<div class="files-empty">Could not load changes: ' + esc(e.message) + '</div>';
   }
 }
@@ -4421,11 +4481,7 @@ async function loadFsListing(relPath) {
         state.fsReady = true;
         state.fsRawEntries = [];
         const wsDisplay = data.workspace || state.sessionWorkspace || 'workspace';
-        fsListing.innerHTML = `
-          <div class="files-empty fs-workspace-missing">
-            <div class="files-empty-title" style="font-weight:600;margin-bottom:6px;">Folder not found</div>
-            <div class="files-empty-desc" style="font-size:var(--text-sm);color:var(--muted);line-height:1.4;">The directory <code style="font-family:var(--font-mono);background:var(--surface);padding:2px 6px;border-radius:4px;">${esc(wsDisplay)}</code> does not exist on disk.</div>
-          </div>`;
+        fsListing.innerHTML = folderMissingHtml(wsDisplay);
         return;
       }
       throw new Error(data.error || res.statusText || 'list failed');
@@ -6769,6 +6825,27 @@ function cancelSession(id) {
 }
 
 let pendingSwitchId = null;
+// T25: how many open sessions keep their full message history in memory.
+const MAX_LOADED_SESSIONS = 6;
+
+function evictCachedSessionMessages(activeId) {
+  const rows = state.openSessions.map(s => ({
+    id: s.id,
+    loaded: !s.stub && Array.isArray(s.messages) && s.messages.length > 0,
+    busy: !!(s.generating || s.stream),
+    lastActiveAt: s.lastActiveAt || 0,
+  }));
+  for (const id of selectSessionsToEvict(rows, activeId, MAX_LOADED_SESSIONS)) {
+    const s = state.openSessions.find(x => x.id === id);
+    if (!s) continue;
+    // Back to a stub: the next switch reloads history via ensureSessionLoaded().
+    s.messages = [];
+    s.stub = true;
+    s.serverRev = null;
+    s.loadPromise = null;
+  }
+}
+
 async function switchSession(id) {
   const session = state.openSessions.find(s => s.id === id);
   if (!session) return;
@@ -6778,7 +6855,12 @@ async function switchSession(id) {
 
   // Immediate state update on click for snappy feedback
   pendingSwitchId = id;
+  const leaving = state.openSessions.find(s => s.id === state.sessionId);
+  if (leaving) leaving.lastActiveAt = Date.now();
+  if (leaving && leaving !== session) detachStream(leaving);
+  session.lastActiveAt = Date.now();
   state.sessionId = id;
+  evictCachedSessionMessages(id);
   state.sessionTitle = stripTags(session.title || '');
   state.sessionWorkspace = stripTags(session.workspace || '');
   state.agentMode = session.agentMode || (id.indexOf('ses_') === 0 ? 'subagent' : 'normal');
@@ -6884,7 +6966,23 @@ async function switchSession(id) {
       await ensureSessionLoaded(session);
     } catch (e) {
       console.error('Failed to load session', id, e);
-      if (pendingSwitchId === id) showToast('Could not load session — try again');
+      if (pendingSwitchId === id) {
+        showToast('Could not load session — try again');
+        // Replace the spinner: it was the only thing on screen, and nothing else clears it.
+        if (messagesEl && state.activeTab === 'chat') {
+          messagesEl.innerHTML = `
+        <div class="session-loading-window">
+          <div class="session-loading-card">
+            <div class="session-loading-title">Could not load session</div>
+            <div class="session-loading-sub">${esc(session.title || id)}</div>
+            <button type="button" class="session-loading-retry">Retry</button>
+          </div>
+        </div>
+      `;
+          const retry = messagesEl.querySelector('.session-loading-retry');
+          if (retry) retry.addEventListener('click', () => switchSession(id));
+        }
+      }
       state.loadingSessionId = null;
       renderSessionTabs();
       return;
@@ -6951,6 +7049,7 @@ function closeSessionTab(id) {
   const index = state.openSessions.findIndex(s => s.id === id);
   if (index === -1) return;
   const wasActive = state.sessionId === id;
+  detachStream(state.openSessions[index]);
   state.openSessions.splice(index, 1);
   if (wasActive) {
     if (state.parentSessionId && state.openSessions.some(s => s.id === state.parentSessionId)) {

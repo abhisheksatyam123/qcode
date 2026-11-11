@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, usageModelRows, detectFsLanguage, extractChildSessionId, extractFrontmatter, stripFrontmatter, transformWikilinks, SLASH_COMMANDS, PALETTE_COMMANDS } from '../src/utils.js';
-import { healthRetryDelayMs, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading } from '../src/utils.js';
+import { healthRetryDelayMs, sessionLoadAttemptTimeoutMs, retryWithBudget, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading, folderMissingHtml, fsTreeToggleState, selectSessionsToEvict } from '../src/utils.js';
 
 test('healthRetryDelayMs: backs off while offline and caps at 10 s', () => {
   assert.equal(healthRetryDelayMs(1), 2000);
@@ -361,3 +361,82 @@ test('shouldShowSessionLoading: only activates for stubs and unloaded histories'
   // Brand new fresh session with 0 messages: empty chat, no loading spinner
   assert.equal(shouldShowSessionLoading({ stub: false, messages: [], message_count: 0 }), false);
 });
+
+test('folderMissingHtml: shows the missing path and is escaped', () => {
+  const html = folderMissingHtml('/srv/<moved>');
+  assert.match(html, /Folder not found/);
+  assert.match(html, /fs-workspace-missing/);
+  assert.ok(html.includes('/srv/&lt;moved&gt;'), 'path must be HTML-escaped');
+  assert.ok(!html.includes('/srv/<moved>'));
+  assert.match(folderMissingHtml(''), /<code[^>]*>workspace<\/code>/);
+});
+
+test('fsTreeToggleState: label and aria reflect collapsed state', () => {
+  const hidden = fsTreeToggleState(true);
+  assert.equal(hidden.title, 'Show file tree (Alt+F)');
+  assert.equal(hidden.ariaLabel, 'Show file tree');
+  assert.equal(hidden.ariaExpanded, 'false');
+  assert.equal(hidden.collapsed, 'true');
+  const shown = fsTreeToggleState(false);
+  assert.equal(shown.title, 'Hide file tree (Alt+F)');
+  assert.equal(shown.ariaExpanded, 'true');
+  assert.equal(shown.collapsed, 'false');
+});
+
+test('selectSessionsToEvict: keeps the active and busy sessions, drops the least recently used', () => {
+  const rows = [
+    { id: 'a', loaded: true, busy: false, lastActiveAt: 10 },
+    { id: 'b', loaded: true, busy: false, lastActiveAt: 50 },
+    { id: 'c', loaded: true, busy: true, lastActiveAt: 1 },   // streaming: never evicted
+    { id: 'd', loaded: true, busy: false, lastActiveAt: 90 }, // active
+    { id: 'e', loaded: false, busy: false, lastActiveAt: 0 },
+  ];
+  assert.deepEqual(selectSessionsToEvict(rows, 'd', 3), ['a']);
+  assert.deepEqual(selectSessionsToEvict(rows, 'd', 2), ['a', 'b']);
+  // Cap of 1 cannot evict the busy or active session, so only a and b can go.
+  assert.deepEqual(selectSessionsToEvict(rows, 'd', 1), ['a', 'b']);
+  assert.deepEqual(selectSessionsToEvict(rows, 'd', 10), []);
+});
+
+test('sessionLoadAttemptTimeoutMs: fast first attempts, longer for later ones', () => {
+  assert.equal(sessionLoadAttemptTimeoutMs(1), 8000);
+  assert.equal(sessionLoadAttemptTimeoutMs(2), 15000);
+  assert.equal(sessionLoadAttemptTimeoutMs(3), 30000);
+  assert.equal(sessionLoadAttemptTimeoutMs(9), 30000);
+});
+
+test('retryWithBudget: returns the first truthy attempt and backs off between tries', async () => {
+  let clock = 0;
+  const waits = [];
+  const got = await retryWithBudget(
+    async (n) => (n < 3 ? null : { ok: n }),
+    60000,
+    { now: () => clock, sleep: async (ms) => { waits.push(ms); clock += ms; } }
+  );
+  assert.deepEqual(got, { ok: 3 });
+  assert.deepEqual(waits, [2000, 4000]);
+});
+
+test('retryWithBudget: gives up once the next wait would pass the budget', async () => {
+  let clock = 0;
+  let calls = 0;
+  await assert.rejects(
+    retryWithBudget(async () => { calls++; return null; }, 10000,
+      { now: () => clock, sleep: async (ms) => { clock += ms; } }),
+    /budget exhausted/
+  );
+  // waits 2s then 4s (total 6s); the next 8s wait would reach 14s > 10s
+  assert.equal(calls, 3);
+  assert.ok(clock <= 10000);
+});
+
+test('retryWithBudget: an attempt that throws stops the loop immediately', async () => {
+  let calls = 0;
+  await assert.rejects(
+    retryWithBudget(async () => { calls++; throw new Error('session not found'); }, 60000,
+      { now: () => 0, sleep: async () => {} }),
+    /session not found/
+  );
+  assert.equal(calls, 1);
+});
+

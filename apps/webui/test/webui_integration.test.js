@@ -486,7 +486,14 @@ test('WebUI large session virtualization and performance optimizations', () => {
   const styleCss = fs.readFileSync(path.join(__dirname, '../src/style.css'), 'utf8');
 
   // Parallel session info and messages fetch
-  assert.match(appJs, /Promise\.all\(\[\s*fetch\('\/session\/' \+ id\)/, 'loadSessionData must parallelize session and messages fetches');
+  assert.match(appJs, /Promise\.all\(\[\s*fetchWithTimeout\('\/session\/' \+ id,/, 'loadSessionData must parallelize session and messages fetches');
+  assert.match(appJs, /const kSessionLoadTimeoutMs = \d+;/, 'session loads must be bounded by a timeout');
+  assert.match(appJs, /session-loading-retry/, 'a failed session load must replace the spinner with a retry control');
+  assert.match(appJs, /function detachStream\(session\)/, 'leaving a session must detach its stream');
+  assert.match(appJs, /if \(leaving && leaving !== session\) detachStream\(leaving\);/, 'switchSession must detach the session being left');
+  assert.match(appJs, /detachStream\(state\.openSessions\[index\]\);/, 'closing a tab must detach its stream');
+  assert.match(appJs, /if \(stream\.stopped \|\| stream\.complete \|\| stream\.detached\) return;/, 'followTurn must not reconnect a detached stream');
+  assert.match(appJs, /if \(full\.notFound\) throw new Error\('session not found'\);/, 'a 404 session load must not be retried');
 
   // O(1) tool lookup during message parsing
   assert.match(appJs, /_toolsById\[tc\.id\]\s*=\s*entry;/, 'parseMessages should index tools by ID');
@@ -530,6 +537,7 @@ test('WebUI file explorer resilience and tree collapse restore', () => {
   const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
   const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
   const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+  const utilsJs = fs.readFileSync(path.join(srcDir, 'utils.js'), 'utf8');
 
   // Subtab synchronization in switchTab
   assert.match(appJs, /switchFilesSubtab\(state\.filesSubtab/, 'switchTab should synchronize files subtab');
@@ -540,7 +548,13 @@ test('WebUI file explorer resilience and tree collapse restore', () => {
   assert.match(styleCss, /\.fs-placeholder-tree-btn/, 'style.css should style .fs-placeholder-tree-btn');
 
   // 404 missing workspace resilience
-  assert.match(appJs, /fs-workspace-missing/, 'app.js should handle missing workspace with friendly empty state');
+  assert.match(appJs, /folderMissingHtml\(/, 'app.js should use the shared missing-folder state');
+  assert.match(utilsJs, /fs-workspace-missing/, 'utils.js should define the missing-folder markup');
+  // Changes tab handles a missing workspace the same way and ignores stale responses
+  assert.match(appJs, /folderMissingHtml\(missing\.workspace/, 'Changes tab should show the missing-folder state');
+  assert.match(appJs, /state\.gitRunIndex/, 'Changes tab should drop stale responses');
+  // Collapse button reflects tree state
+  assert.match(appJs, /syncFsTreeToggle\(/, 'collapse button state should be synced');
 });
 
 test('WebUI mobile viewport virtual keyboard and flex layout resilience', () => {
