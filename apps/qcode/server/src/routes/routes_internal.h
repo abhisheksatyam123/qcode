@@ -114,5 +114,15 @@ void register_session_ops_routes(
 void register_fs_routes(
     httplib::Server& svr);
 
+// Razorpay Standard Checkout: GET /api/payments/config, POST /api/create-order,
+// POST /api/verify-payment. Reads RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET from
+// the environment on each request.
+void register_payment_routes(httplib::Server& svr);
+
+// True when signature == HMAC_SHA256(order_id + "|" + payment_id, key_secret),
+// compared in constant time.
+bool razorpay_signature_matches(const std::string& key_secret, const std::string& order_id,
+                                const std::string& payment_id, const std::string& signature);
+
 }  // namespace server
 }  // namespace qcode

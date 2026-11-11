@@ -25,6 +25,7 @@ add_executable(qcode_tests
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/http_utils.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/server_routes.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_system.cpp
+    ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_payments.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_session.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/route_session_ops.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/routes/session_runtime.cpp

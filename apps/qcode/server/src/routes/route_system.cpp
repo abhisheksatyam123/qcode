@@ -411,6 +411,8 @@ void register_system_routes(
             res.set_content(R"({"error":"invalid json"})", "application/json");
         }
     });
+
+    register_payment_routes(svr);
 }
 
 }  // namespace server

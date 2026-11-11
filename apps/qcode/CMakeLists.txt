@@ -45,6 +45,7 @@ add_library(qcode-frontend-server STATIC
     server/src/server.cpp
     server/src/server_routes.cpp
     server/src/routes/route_system.cpp
+    server/src/routes/route_payments.cpp
     server/src/routes/route_session.cpp
     server/src/routes/route_session_ops.cpp
     server/src/routes/session_runtime.cpp

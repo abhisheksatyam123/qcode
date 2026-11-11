@@ -1,6 +1,7 @@
 #include <qcode/core/session_file_logger.h>
 #include <qcode/core/logger.h>
 #include "routes/session_runtime.h"
+#include "routes/routes_internal.h"
 #include "session/session_db_internal.h"
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -671,4 +672,143 @@ TEST_F(ServerRoutesTest, UnknownModelIsRejectedInsteadOfSubstituted) {
     // The stored display name is kept verbatim in the title.
     EXPECT_EQ(nlohmann::json::parse(res_name->body).value("title", ""),
               "Session - Mock Model");
+}
+
+// ---- Razorpay Standard Checkout ------------------------------------------
+// The secret below is a fixed dummy used only by these tests. The signature is
+// HMAC_SHA256("order_TestOrder01|pay_TestPayment01", "unit-test-secret"),
+// computed independently of the implementation.
+
+namespace {
+constexpr const char* kTestKeySecret = "unit-test-secret";
+constexpr const char* kTestOrderId = "order_TestOrder01";
+constexpr const char* kTestPaymentId = "pay_TestPayment01";
+constexpr const char* kTestSignature = "f35683e148febf80ae3135b76a1c8358cf182fca8832f65cb7f6852c01a2205a";
+}  // namespace
+
+TEST(RazorpaySignatureTest, MatchesReferenceHmacAndRejectsOtherInputs) {
+    using qcode::server::razorpay_signature_matches;
+    EXPECT_TRUE(razorpay_signature_matches(kTestKeySecret, kTestOrderId, kTestPaymentId, kTestSignature));
+    EXPECT_FALSE(razorpay_signature_matches("other-secret", kTestOrderId, kTestPaymentId, kTestSignature));
+    EXPECT_FALSE(razorpay_signature_matches(kTestKeySecret, kTestOrderId, "pay_Other", kTestSignature));
+    EXPECT_FALSE(razorpay_signature_matches(kTestKeySecret, "order_Other", kTestPaymentId, kTestSignature));
+    EXPECT_FALSE(razorpay_signature_matches(kTestKeySecret, kTestOrderId, kTestPaymentId, ""));
+    EXPECT_FALSE(razorpay_signature_matches(kTestKeySecret, kTestOrderId, kTestPaymentId,
+                                            std::string(kTestSignature, 63)));
+}
+
+class PaymentRoutesTest : public ServerRoutesTest {
+protected:
+    void SetUp() override {
+        ServerRoutesTest::SetUp();
+        setenv("RAZORPAY_KEY_ID", "rzp_test_unit", 1);
+        setenv("RAZORPAY_KEY_SECRET", kTestKeySecret, 1);
+    }
+    void TearDown() override {
+        unsetenv("RAZORPAY_KEY_ID");
+        unsetenv("RAZORPAY_KEY_SECRET");
+        ServerRoutesTest::TearDown();
+    }
+
+    static std::string verify_body(const std::string& signature) {
+        return nlohmann::json({{"razorpay_order_id", kTestOrderId},
+                               {"razorpay_payment_id", kTestPaymentId},
+                               {"razorpay_signature", signature}})
+            .dump();
+    }
+};
+
+TEST_F(PaymentRoutesTest, ConfigExposesKeyIdButNeverTheSecret) {
+    auto res = client_->Get("/api/payments/config");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 200);
+    EXPECT_EQ(nlohmann::json::parse(res->body).at("key_id"), "rzp_test_unit");
+    EXPECT_EQ(res->body.find(kTestKeySecret), std::string::npos);
+}
+
+TEST_F(PaymentRoutesTest, ConfigFailsWhenKeyIdMissing) {
+    unsetenv("RAZORPAY_KEY_ID");
+    auto res = client_->Get("/api/payments/config");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 500);
+}
+
+TEST_F(PaymentRoutesTest, CreateOrderValidatesAmountBeforeCallingRazorpay) {
+    const std::vector<std::string> bad_bodies = {
+        "{\"amount\":99}",
+        "{\"amount\":0}",
+        "{\"amount\":-500}",
+        "{\"amount\":100.5}",
+        "{\"amount\":\"100\"}",
+        "{}",
+        "{\"amount\":100,\"currency\":\"inr\"}",
+        "{\"amount\":100,\"currency\":\"INRR\"}",
+        "{\"amount\":100,\"receipt\":\"" + std::string(41, 'r') + "\"}",
+    };
+    for (const auto& json_body : bad_bodies) {
+        SCOPED_TRACE(json_body);
+        auto res = client_->Post("/api/create-order", json_body, "application/json");
+        ASSERT_TRUE(res != nullptr);
+        EXPECT_EQ(res->status, 400);
+    }
+}
+
+TEST_F(PaymentRoutesTest, CreateOrderFailsWithoutCredentials) {
+    unsetenv("RAZORPAY_KEY_SECRET");
+    auto res = client_->Post("/api/create-order", "{\"amount\":100}", "application/json");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 500);
+    EXPECT_EQ(res->body.find(kTestKeySecret), std::string::npos);
+}
+
+TEST_F(PaymentRoutesTest, VerifyAcceptsMatchingSignature) {
+    auto res = client_->Post("/api/verify-payment", verify_body(kTestSignature), "application/json");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 200);
+    const auto parsed = nlohmann::json::parse(res->body);
+    EXPECT_EQ(parsed.at("status"), "verified");
+    EXPECT_EQ(parsed.at("payment_id"), kTestPaymentId);
+}
+
+TEST_F(PaymentRoutesTest, VerifyRejectsSignatureMismatchAsNotPaid) {
+    const std::string wrong = std::string(64, '0');
+    auto res = client_->Post("/api/verify-payment", verify_body(wrong), "application/json");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 400);
+    const auto parsed = nlohmann::json::parse(res->body);
+    EXPECT_TRUE(parsed.contains("error"));
+    EXPECT_FALSE(parsed.contains("status"));
+    EXPECT_EQ(res->body.find("verified"), std::string::npos);
+}
+
+TEST_F(PaymentRoutesTest, VerifyRejectsMissingOrEmptyFields) {
+    auto missing = client_->Post(
+        "/api/verify-payment",
+        nlohmann::json({{"razorpay_order_id", kTestOrderId}, {"razorpay_payment_id", kTestPaymentId}}).dump(),
+        "application/json");
+    ASSERT_TRUE(missing != nullptr);
+    EXPECT_EQ(missing->status, 400);
+
+    auto empty = client_->Post("/api/verify-payment", verify_body(""), "application/json");
+    ASSERT_TRUE(empty != nullptr);
+    EXPECT_EQ(empty->status, 400);
+}
+
+TEST_F(PaymentRoutesTest, VerifyFailsWithoutSecret) {
+    unsetenv("RAZORPAY_KEY_SECRET");
+    auto res = client_->Post("/api/verify-payment", verify_body(kTestSignature), "application/json");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 500);
+}
+
+TEST_F(PaymentRoutesTest, CheckoutPageAndScriptAreServed) {
+    auto page = client_->Get("/checkout.html");
+    ASSERT_TRUE(page != nullptr);
+    EXPECT_EQ(page->status, 200);
+    EXPECT_NE(page->body.find("https://checkout.razorpay.com/v1/checkout.js"), std::string::npos);
+    EXPECT_EQ(page->body.find(kTestKeySecret), std::string::npos);
+
+    auto script = client_->Get("/checkout.js");
+    ASSERT_TRUE(script != nullptr);
+    EXPECT_EQ(script->status, 200);
 }

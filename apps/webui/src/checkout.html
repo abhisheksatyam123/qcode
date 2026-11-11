@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QCode Checkout</title>
+<style>
+body { font: 16px system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0d12; color: #e6e8ee; }
+main { background: #161a22; padding: 24px; border-radius: 10px; width: min(90vw, 380px); box-sizing: border-box; box-shadow: 0 1px 6px rgba(0,0,0,.4); }
+h1 { font-size: 20px; margin: 0 0 16px; }
+label { display: block; font-size: 14px; margin-bottom: 6px; color: #aab1c0; }
+input { width: 100%; box-sizing: border-box; padding: 10px; font-size: 16px; margin-bottom: 16px; border-radius: 6px; border: 1px solid #2b3140; background: #0b0d12; color: inherit; }
+button { width: 100%; padding: 12px 16px; font-size: 16px; border: 0; border-radius: 6px; background: #3b82f6; color: #fff; cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
+#status { min-height: 1.4em; margin: 16px 0 0; font-size: 14px; }
+#status[data-kind="error"] { color: #f87171; }
+#status[data-kind="success"] { color: #4ade80; }
+#status[data-kind="warning"] { color: #facc15; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <form id="checkout-form" novalidate>
+    <label for="amount-input">Amount (INR)</label>
+    <input id="amount-input" type="number" min="1" step="0.01" value="1.00" inputmode="decimal">
+    <button id="pay-btn" type="submit">Pay now</button>
+  </form>
+  <p id="status" role="status" aria-live="polite"></p>
+</main>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script src="/checkout.js"></script>
+</body>
+</html>
