@@ -241,11 +241,11 @@ TEST(OpenAIRequestBuilderTest, ZenToolsUseStrictFalseAndImplicitAutoChoice) {
   qcode::GenerateOptions options;
   options.model = "mimo-v2.6-flash-free";
   options.prompt = "hello";
-  qcode::Tool tool("Read a file",
+  qcode::Tool tool("Look up a record",
                    {{"type", "object"},
                     {"properties", {{"path", {{"type", "string"}}}}},
                     {"required", {"path"}}});
-  options.tools.emplace("read", std::move(tool));
+  options.tools.emplace("lookup", std::move(tool));
   const auto req = builder.build_request_json(options);
   ASSERT_TRUE(req.contains("tools"));
   ASSERT_EQ(req["tools"].size(), 1u);

@@ -387,27 +387,6 @@ static std::string extract_shell_command(const qcode::ToolCallContentPart& part)
         if (!path.empty()) return "image " + path;
     }
 
-    if (part.tool_name == "read_file" || part.tool_name == "view_file" ||
-        part.tool_name == "write_file" || part.tool_name == "edit_file" ||
-        part.tool_name == "replace_file_content") {
-        auto path = json_string(args, {"AbsolutePath", "TargetFile", "path", "file", "file_path", "filename"});
-        if (!path.empty()) return part.tool_name + " " + path;
-    }
-
-    if (part.tool_name == "search" || part.tool_name == "grep" ||
-        part.tool_name == "ripgrep" || part.tool_name == "grep_search") {
-        auto query = json_string(args, {"Query", "query", "pattern"});
-        auto path = json_string(args, {"SearchPath", "path", "directory", "dir"});
-        if (!query.empty()) {
-            return "grep " + (path.empty() ? "" : path + " ") + "\"" + query + "\"";
-        }
-    }
-
-    if (part.tool_name == "list_dir" || part.tool_name == "list_files" || part.tool_name == "ls") {
-        auto dir = json_string(args, {"DirectoryPath", "path", "dir"});
-        if (!dir.empty()) return "ls " + dir;
-    }
-
     if (part.tool_name == "task" || part.tool_name == "dispatch_agent" || part.tool_name == "manage_task") {
         auto action = json_string(args, {"Action", "action"});
         auto desc = json_string(args, {"description", "prompt", "TaskId", "taskId"});

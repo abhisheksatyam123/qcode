@@ -5836,10 +5836,6 @@ function renderToolBlock(tc) {
     const args = parseToolValue(tc.arguments);
     if (toolName === 'bash' || toolName === 'shell' || toolName === 'run_command') {
       command = args.command || args.cmd || args.script || '';
-    } else if (['read_file', 'view_file', 'write_file', 'edit_file'].includes(toolName)) {
-      command = toolName + ' ' + (args.path || args.file || args.file_path || args.filename || '');
-    } else if (['search', 'grep', 'ripgrep'].includes(toolName)) {
-      command = toolName + ' "' + (args.query || args.pattern || '') + '"';
     } else if (toolName === 'task' || toolName === 'dispatch_agent') {
       command = 'task ' + (args.description || args.prompt || '');
     } else {
@@ -5885,13 +5881,10 @@ function renderToolBlock(tc) {
   const toolIcons = {
     bash: 'terminal', shell: 'terminal', run_command: 'terminal',
     task: 'bot', dispatch_agent: 'bot',
-    read_file: 'fileText', view_file: 'fileText',
-    write_file: 'pencil', edit_file: 'pencil',
-    search: 'search', grep: 'search', ripgrep: 'search', glob: 'search',
     webfetch: 'globe', web_fetch: 'globe', websearch: 'globe', web_search: 'globe'
   };
   const toolIcon = toolIcons[toolName] || 'wrench';
-  const displayNames = { bash: 'Bash', task: 'Task', read_file: 'Read File', write_file: 'Write File', view_file: 'Read File', edit_file: 'Edit File', search: 'Search' };
+  const displayNames = { bash: 'Bash', task: 'Task' };
   const displayName = displayNames[toolName] || capitalize(toolName);
 
   const block = document.createElement('div');
