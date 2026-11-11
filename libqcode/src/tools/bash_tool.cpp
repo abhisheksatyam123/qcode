@@ -293,6 +293,116 @@ static std::string android_shell_prelude() {
 }
 
 
+// ── Destructive-command guardrail ──
+// Splits the command into simple segments, then checks each segment's program
+// and arguments. Quotes are stripped, so 'rm' -rf "/" is caught too.
+
+namespace {
+
+std::vector<std::string> split_segments(const std::string& command) {
+  std::vector<std::string> segments;
+  std::string cur;
+  for (size_t i = 0; i < command.size(); ++i) {
+    char c = command[i];
+    bool sep = c == ';' || c == '\n' || c == '|' || c == '&' ||
+               (c == '(' || c == ')' || c == '`');
+    if (sep) {
+      segments.push_back(cur);
+      cur.clear();
+    } else {
+      cur += c;
+    }
+  }
+  segments.push_back(cur);
+  return segments;
+}
+
+std::vector<std::string> tokenize_segment(const std::string& segment) {
+  std::vector<std::string> tokens;
+  std::string cur;
+  for (char c : segment) {
+    if (c == '\'' || c == '"') continue;
+    if (std::isspace(static_cast<unsigned char>(c))) {
+      if (!cur.empty()) tokens.push_back(cur), cur.clear();
+    } else {
+      cur += c;
+    }
+  }
+  if (!cur.empty()) tokens.push_back(cur);
+  return tokens;
+}
+
+bool has_short_flag(const std::vector<std::string>& args, char flag) {
+  for (const auto& a : args) {
+    if (a.size() > 1 && a[0] == '-' && a[1] != '-' && a.find(flag) != std::string::npos) return true;
+  }
+  return false;
+}
+
+bool has_long_flag(const std::vector<std::string>& args, const std::string& name) {
+  for (const auto& a : args) {
+    if (a == name) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+std::string destructive_command_reason(const std::string& command) {
+  for (const auto& segment : split_segments(command)) {
+    auto tok = tokenize_segment(segment);
+    if (tok.empty()) continue;
+    // Drop leading assignments such as FOO=bar cmd.
+    size_t p = 0;
+    while (p < tok.size() && tok[p].find('=') != std::string::npos && tok[p][0] != '-') ++p;
+    if (p >= tok.size()) continue;
+    const std::string prog = tok[p].substr(tok[p].find_last_of('/') + 1);
+    std::vector<std::string> args(tok.begin() + p + 1, tok.end());
+
+    if (prog == "rm") {
+      const bool recursive = has_short_flag(args, 'r') || has_short_flag(args, 'R') ||
+                             has_long_flag(args, "--recursive");
+      const bool force = has_short_flag(args, 'f') || has_long_flag(args, "--force");
+      if (!(recursive && force)) continue;
+      for (const auto& a : args) {
+        if (a == "/" || a == "/*" || a == "~" || a == "~/" || a == "$HOME" || a == "$HOME/" ||
+            a == "${HOME}" || a == "~/*") {
+          return "blocked: recursive forced rm of '" + a + "' needs explicit user approval";
+        }
+      }
+    } else if (prog == "git") {
+      if (args.empty()) continue;
+      const std::string sub = args[0];
+      if (sub == "push") {
+        for (const auto& a : args) {
+          if (a == "--force" || a == "-f" || a == "--force-with-lease=" ||
+              (a.rfind("--force", 0) == 0 && a.rfind("--force-with-lease", 0) != 0)) {
+            return "blocked: git push --force needs explicit user approval";
+          }
+        }
+        // Short combined flags such as -fu.
+        for (const auto& a : args) {
+          if (a.size() > 1 && a[0] == '-' && a[1] != '-' && a.find('f') != std::string::npos) {
+            return "blocked: git push --force needs explicit user approval";
+          }
+        }
+      } else if (sub == "reset" && has_long_flag(args, "--hard")) {
+        return "blocked: git reset --hard discards uncommitted work; needs explicit user approval";
+      } else if (sub == "clean" && has_short_flag(args, 'f') && !has_short_flag(args, 'n')) {
+        return "blocked: git clean -f deletes untracked files; needs explicit user approval";
+      }
+    } else if (prog.rfind("mkfs", 0) == 0 || prog == "shutdown" || prog == "reboot" ||
+               prog == "poweroff" || prog == "halt") {
+      return "blocked: '" + prog + "' needs explicit user approval";
+    } else if (prog == "dd") {
+      for (const auto& a : args) {
+        if (a.rfind("of=/dev/", 0) == 0) return "blocked: dd writing to a device needs explicit user approval";
+      }
+    }
+  }
+  return "";
+}
+
 static bool is_safe_command(const std::string& command, std::string& warning) {
   bool in_single_quote = false;
   bool in_double_quote = false;
@@ -806,6 +916,13 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
     err["error"] = warning;
     return err;
   }
+  std::string denied = destructive_command_reason(command);
+  if (!denied.empty()) {
+    LOG_WARN("BashTool: {} | command: {}", denied, command);
+    JsonValue err;
+    err["error"] = denied;
+    return err;
+  }
 
   std::string cwd = resolve_cwd(args.value("workdir", ""), context.workspace);
   int timeout = args.value("timeout", 120000);
@@ -815,8 +932,10 @@ JsonValue BashTool::exec_run(const JsonValue& args, const ToolExecutionContext& 
   if (args.contains("max_output_lines")) max_lines = args["max_output_lines"].get<int>();
 
   int exit_code = 0;
+  LOG_INFO("BashTool: run cwd={} timeout={}ms command={}", cwd, timeout, command);
   auto output =
       run_shell(command, cwd, timeout, max_chars, max_lines, exit_code, context.abort_flag);
+  LOG_INFO("BashTool: exit={} cwd={}", exit_code, cwd);
 
   JsonValue result;
   result["title"] = desc;
@@ -842,6 +961,13 @@ JsonValue BashTool::exec_background(const JsonValue& args, const ToolExecutionCo
   if (!is_safe_command(command, warning)) {
     JsonValue err;
     err["error"] = warning;
+    return err;
+  }
+  std::string denied = destructive_command_reason(command);
+  if (!denied.empty()) {
+    LOG_WARN("BashTool: {} | command: {}", denied, command);
+    JsonValue err;
+    err["error"] = denied;
     return err;
   }
 

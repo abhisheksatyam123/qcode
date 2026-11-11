@@ -18,6 +18,7 @@ add_executable(qcode_tests
     unit/net_dial_test.cpp
     unit/tool_catalog_test.cpp
     unit/commands_test.cpp
+    unit/bash_guardrail_test.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/prompt_wrap.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/tui/src/clipboard.cpp
     ${CMAKE_SOURCE_DIR}/apps/qcode/server/src/bus_json_codec.cpp

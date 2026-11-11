@@ -128,6 +128,11 @@ inline JsonValue parameters() {
 
 }  // namespace BashToolSchema
 
+// Guardrail for destructive shell commands. Returns a human-readable reason when
+// the command matches a known destructive pattern, or an empty string otherwise.
+// This is a guardrail, not a sandbox: it inspects the command text only.
+std::string destructive_command_reason(const std::string& command);
+
 // ── BashTool executor ──
 // Direct port of opencode's BashTool (src/tool/bash/index.ts)
 
