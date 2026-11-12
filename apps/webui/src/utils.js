@@ -713,3 +713,103 @@ export function selectSessionsToEvict(sessions, activeId, maxLoaded) {
   return candidates.slice(0, excess).map(s => s.id);
 }
 
+
+// ── Composer attachments (pure; see todo/file-image-uploads.md) ──────────────
+// Images are sent inline as generate `attachments`; every other file is
+// uploaded to the session and referenced by path in the message text.
+export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const FILE_MAX_BYTES = 25 * 1024 * 1024;
+export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+
+// 'image' only for the four inline-safe raster types (svg is a file).
+export function classifyAttachment(file) {
+  const type = String((file && file.type) || '').toLowerCase();
+  return IMAGE_MIME_TYPES.includes(type) ? 'image' : 'file';
+}
+
+// Error text when a file is over its kind's size cap, else ''.
+export function attachmentSizeError(kind, size, name) {
+  const max = kind === 'image' ? IMAGE_MAX_BYTES : FILE_MAX_BYTES;
+  if (Number(size) <= max) return '';
+  const label = kind === 'image' ? 'Image' : 'File';
+  return label + ' "' + String(name || 'file') + '" is too large (max ' + formatBytes(max) + ')';
+}
+
+// Error text when a message already holds the maximum number of attachments.
+export function attachmentCountError(count) {
+  if (count < MAX_ATTACHMENTS_PER_MESSAGE) return '';
+  return 'At most ' + MAX_ATTACHMENTS_PER_MESSAGE + ' attachments per message';
+}
+
+// The base64 payload of a FileReader data URL ("data:<mime>;base64,<data>").
+export function stripDataUrlPrefix(dataUrl) {
+  const s = String(dataUrl || '');
+  const comma = s.indexOf(',');
+  return comma < 0 ? '' : s.slice(comma + 1);
+}
+
+// Lines that reference uploaded files in the user text. `files` items are
+// {path, mime_type, size}; entries without a path are skipped.
+export function buildFileReferenceLines(files) {
+  const lines = [];
+  for (const f of Array.isArray(files) ? files : []) {
+    if (!f || !f.path) continue;
+    const mime = f.mime_type || 'application/octet-stream';
+    const size = Number(f.size) >= 0 ? formatBytes(Number(f.size)) : '';
+    lines.push('Attached file: ' + f.path + ' (' + mime + (size ? ', ' + size : '') + ')');
+  }
+  return lines;
+}
+
+// A reloaded image larger than this (base64 chars, ~3 MB decoded) is shown as
+// a chip instead of a thumbnail: data URLs of that size in the DOM and in the
+// session cache cost more than the preview is worth.
+export const HISTORY_PREVIEW_MAX_B64 = 4 * 1024 * 1024;
+
+// Attachment meta for a stored image envelope, in the shape
+// renderMessageAttachments() expects ({kind, name, previewUrl, ...}).
+export function historyAttachmentMeta(images) {
+  const out = [];
+  for (const im of Array.isArray(images) ? images : []) {
+    if (!im || typeof im.data !== 'string' || typeof im.mime_type !== 'string') continue;
+    const meta = { kind: 'image', name: im.description || 'image', mime_type: im.mime_type };
+    if (im.data.length <= HISTORY_PREVIEW_MAX_B64) {
+      meta.previewUrl = 'data:' + im.mime_type + ';base64,' + im.data;
+    }
+    out.push(meta);
+  }
+  return out;
+}
+
+// User text followed by the file reference lines, separated by a blank line.
+export function appendFileReferences(text, files) {
+  const body = String(text == null ? '' : text);
+  const lines = buildFileReferenceLines(files);
+  if (!lines.length) return body;
+  return body ? body + '\n\n' + lines.join('\n') : lines.join('\n');
+}
+
+// A stored user row: plain text, or the image envelope {"text","images":[{mime_type,data,description}]}.
+// Anything that is not that envelope (including malformed JSON) is returned as text. Never throws.
+export function parseUserContent(raw) {
+  if (typeof raw !== 'string') return { text: '', images: [] };
+  const plain = { text: raw, images: [] };
+  // Cheap guard: only JSON-looking rows that mention "images" are parsed.
+  if (!raw.trimStart().startsWith('{') || raw.indexOf('"images"') < 0) return plain;
+  let env;
+  try { env = JSON.parse(raw); } catch (_) { return plain; }
+  if (!env || typeof env !== 'object' || typeof env.text !== 'string' || !Array.isArray(env.images)) return plain;
+  const images = [];
+  for (const im of env.images) {
+    if (!im || typeof im !== 'object') continue;
+    if (typeof im.data !== 'string' || typeof im.mime_type !== 'string') continue;
+    if (im.mime_type.toLowerCase().indexOf('image/') !== 0) continue;
+    images.push({
+      mime_type: im.mime_type,
+      data: im.data,
+      description: typeof im.description === 'string' ? im.description : ''
+    });
+  }
+  return { text: env.text, images };
+}

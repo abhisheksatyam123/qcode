@@ -89,7 +89,7 @@ window.copyPlantUmlCode = function(diagramId, btn) {
   });
 };
 
-import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, keepInterruptedPartials, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, sessionLoadAttemptTimeoutMs, retryWithBudget, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading, folderMissingHtml, fsTreeToggleState, selectSessionsToEvict } from './utils.js';
+import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, keepInterruptedPartials, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, sessionLoadAttemptTimeoutMs, retryWithBudget, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading, folderMissingHtml, fsTreeToggleState, selectSessionsToEvict, classifyAttachment, attachmentSizeError, attachmentCountError, stripDataUrlPrefix, appendFileReferences, MAX_ATTACHMENTS_PER_MESSAGE, parseUserContent, historyAttachmentMeta } from './utils.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -419,6 +419,12 @@ const state = {
 const messagesEl = document.getElementById('messages');
 const promptInput = document.getElementById('prompt-input');
 const sendBtn = document.getElementById('send-btn');
+const attachBtn = document.getElementById('attach-btn');
+const attachInput = document.getElementById('attach-input');
+const attachmentTray = document.getElementById('attachment-tray');
+const inputArea = document.getElementById('input-area');
+const composerAttachments = new Map(); // composer attachments per session id
+let composerAttachmentSeq = 0;
 const pauseBtn = document.getElementById('pause-btn');
 const retryBtn = document.getElementById('retry-btn');
 const settingsClearChatBtn = document.getElementById('settings-clear-chat-btn');
@@ -1484,6 +1490,7 @@ function setupViewportHandler() {
 function setupEventListeners() {
 
   sendBtn.addEventListener('click', sendMessage);
+  setupComposerAttachments();
   promptInput.addEventListener('keydown', handleInputKeydown);
   promptInput.addEventListener('focus', () => {
     const keepInView = () => {
@@ -2809,7 +2816,8 @@ async function handleRetryCommand() {
     }
   }
   if (!prompt) { showToast('No user prompt available to retry.'); return; }
-  await runGeneration(session, prompt);
+  const images = prompt === session.lastUserPrompt ? (session.lastUserImages || []) : [];
+  await runGeneration(session, prompt, null, images);
 }
 
 function toggleThinking() {
@@ -3010,7 +3018,11 @@ function parseMessages(msgs, session) {
   for (const m of msgs) {
     if (m.role === 'User' || m.role === 'user') {
       currentAssistantMsg = null;
-      session.messages.push({ role: 'user', content: m.content });
+      // Stored image rows are a JSON envelope: split it into text + thumbnails once here.
+      const parsed = parseUserContent(m.content);
+      const userMsg = { role: 'user', content: parsed.text };
+      if (parsed.images.length) userMsg.attachments = historyAttachmentMeta(parsed.images);
+      session.messages.push(userMsg);
     } else if (m.role === 'Assistant' || m.role === 'assistant') {
       if (!currentAssistantMsg) {
         currentAssistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [] };
@@ -3430,7 +3442,277 @@ async function responseError(res) {
   try { return JSON.parse(text).error || text; } catch (_) { return text || ('HTTP ' + res.status); }
 }
 
-function postGenerate(session, text) {
+// ═══════════════════════════════════════════════════════════════════
+//  COMPOSER ATTACHMENTS
+// ═══════════════════════════════════════════════════════════════════
+// Pending attachments are kept per session because file uploads are
+// session-scoped. Images are read in the browser and sent inline as generate
+// `attachments`; other files upload as soon as they are attached and are
+// referenced by path in the message text (see appendFileReferences).
+const ATTACH_FILE_SVG = '<svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+const ATTACH_REMOVE_SVG = '<svg class="ui-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+function currentAttachments() {
+  return composerAttachments.get(state.sessionId) || [];
+}
+
+// Files chosen from the picker, dropped, or pasted: classify, check limits,
+// then start reading (images) or uploading (files).
+function addComposerFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const session = state.openSessions.find(s => s.id === state.sessionId);
+  if (!session) { showToast('Open a session before attaching files'); return; }
+  let list = composerAttachments.get(session.id);
+  if (!list) { list = []; composerAttachments.set(session.id, list); }
+  for (const file of files) {
+    const countErr = attachmentCountError(list.length);
+    if (countErr) { showToast(countErr); break; }
+    const kind = classifyAttachment(file);
+    const sizeErr = attachmentSizeError(kind, file.size, file.name);
+    if (sizeErr) { showToast(sizeErr); continue; }
+    addComposerAttachment(session, file, kind, list);
+  }
+  renderAttachmentTray();
+}
+
+function addComposerAttachment(session, file, kind, list) {
+  const att = {
+    id: ++composerAttachmentSeq,
+    sessionId: session.id,
+    file,
+    name: file.name || 'attachment',
+    size: Number(file.size) || 0,
+    kind,
+    mime: file.type || 'application/octet-stream',
+    status: 'uploading',   // uploading | ready | error (images: reading -> ready)
+    error: '',
+    path: '',
+    data: '',              // images: base64 payload
+    dataUrl: '',           // images: data URL used for the sent bubble
+    thumbUrl: '',          // images: object URL for the tray thumbnail
+    controller: null
+  };
+  list.push(att);
+  if (kind === 'image') {
+    att.thumbUrl = URL.createObjectURL(file);
+    readImageAttachment(att);
+  } else {
+    uploadFileAttachment(att);
+  }
+  return att;
+}
+
+function readImageAttachment(att) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (!isAttachmentLive(att)) return;
+    att.dataUrl = String(reader.result || '');
+    att.data = stripDataUrlPrefix(att.dataUrl);
+    att.status = att.data ? 'ready' : 'error';
+    if (!att.data) att.error = 'Could not read image';
+    renderAttachmentTray();
+  };
+  reader.onerror = () => {
+    if (!isAttachmentLive(att)) return;
+    att.status = 'error';
+    att.error = 'Could not read image';
+    renderAttachmentTray();
+  };
+  reader.readAsDataURL(att.file);
+}
+
+// POST the raw file bytes to the session upload route. A removed attachment
+// aborts its request and its result is ignored.
+async function uploadFileAttachment(att) {
+  const controller = new AbortController();
+  att.controller = controller;
+  try {
+    // The server refuses image/* uploads; a non-raster image (svg, bmp) is
+    // sent as a generic byte stream.
+    const type = att.file.type || '';
+    const contentType = /^image\//i.test(type) ? 'application/octet-stream' : (type || 'application/octet-stream');
+    const url = '/session/' + att.sessionId + '/upload?name=' + encodeURIComponent(att.name);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': contentType },
+      body: att.file,
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(await responseError(res));
+    const info = await res.json();
+    if (!info || !info.path) throw new Error('Upload returned no path');
+    att.path = String(info.path);
+    att.size = Number(info.size) >= 0 ? Number(info.size) : att.size;
+    att.mime = info.mime_type || att.mime;
+    att.status = 'ready';
+  } catch (e) {
+    if (controller.signal.aborted || !isAttachmentLive(att)) return;
+    att.status = 'error';
+    att.error = (e && e.message) || 'Upload failed';
+  } finally {
+    att.controller = null;
+  }
+  renderAttachmentTray();
+}
+
+function isAttachmentLive(att) {
+  const list = composerAttachments.get(att.sessionId);
+  return !!list && list.indexOf(att) >= 0;
+}
+
+function releaseComposerAttachment(att) {
+  if (att.controller) att.controller.abort();
+  if (att.thumbUrl) { URL.revokeObjectURL(att.thumbUrl); att.thumbUrl = ''; }
+}
+
+function removeComposerAttachment(att) {
+  const list = composerAttachments.get(att.sessionId);
+  const i = list ? list.indexOf(att) : -1;
+  if (i >= 0) list.splice(i, 1);
+  releaseComposerAttachment(att);
+  renderAttachmentTray();
+}
+
+// Empties the tray for a session once its attachments are sent.
+function takeComposerAttachments(sessionId) {
+  const list = composerAttachments.get(sessionId) || [];
+  composerAttachments.delete(sessionId);
+  for (const att of list) releaseComposerAttachment(att);
+  renderAttachmentTray();
+  return list;
+}
+
+function renderAttachmentTray() {
+  if (!attachmentTray) return;
+  const list = currentAttachments();
+  attachmentTray.replaceChildren();
+  attachmentTray.classList.toggle('hidden', list.length === 0);
+  for (const att of list) {
+    const chip = document.createElement('div');
+    chip.className = 'attach-chip attach-' + att.status + (att.kind === 'image' ? ' attach-image' : ' attach-file');
+    if (att.kind === 'image' && att.thumbUrl) {
+      const img = document.createElement('img');
+      img.className = 'attach-thumb';
+      img.src = att.thumbUrl;
+      img.alt = '';
+      chip.appendChild(img);
+    } else {
+      const ic = document.createElement('span');
+      ic.className = 'attach-icon';
+      ic.innerHTML = ATTACH_FILE_SVG;
+      chip.appendChild(ic);
+    }
+    const body = document.createElement('div');
+    body.className = 'attach-body';
+    const name = document.createElement('span');
+    name.className = 'attach-name';
+    name.textContent = att.name;
+    name.title = att.name;
+    const meta = document.createElement('span');
+    meta.className = 'attach-status';
+    const pending = att.kind === 'image' ? 'Reading…' : 'Uploading…';
+    const statusText = att.status === 'uploading' ? pending
+      : att.status === 'error' ? (att.error || 'Failed')
+      : (formatBytes(att.size) + ' · Ready');
+    meta.textContent = statusText;
+    meta.title = statusText;
+    body.appendChild(name);
+    body.appendChild(meta);
+    chip.appendChild(body);
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'attach-remove';
+    rm.innerHTML = ATTACH_REMOVE_SVG;
+    rm.title = 'Remove attachment';
+    rm.setAttribute('aria-label', 'Remove ' + att.name);
+    rm.addEventListener('click', () => removeComposerAttachment(att));
+    chip.appendChild(rm);
+    attachmentTray.appendChild(chip);
+  }
+}
+
+// Message bubble chips: thumbnails for images, name/size chips for files.
+function renderMessageAttachments(list) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-attachments';
+  for (const a of list) {
+    if (a.kind === 'image' && typeof a.previewUrl === 'string' && a.previewUrl.indexOf('data:image/') === 0) {
+      const img = document.createElement('img');
+      img.className = 'msg-attach-thumb';
+      img.src = a.previewUrl;
+      img.alt = a.name || 'image';
+      img.title = a.name || 'image';
+      wrap.appendChild(img);
+    } else {
+      const chip = document.createElement('span');
+      chip.className = 'msg-attach-chip';
+      chip.textContent = (a.name || 'file') + (a.size ? ' · ' + formatBytes(a.size) : '');
+      chip.title = a.name || 'file';
+      wrap.appendChild(chip);
+    }
+  }
+  return wrap;
+}
+
+function setupComposerAttachments() {
+  if (attachBtn) attachBtn.addEventListener('click', () => { if (attachInput) attachInput.click(); });
+  if (attachInput) {
+    attachInput.addEventListener('change', () => {
+      // Copy the list first: resetting the input empties its FileList.
+      const files = Array.from(attachInput.files || []);
+      attachInput.value = '';
+      addComposerFiles(files);
+    });
+  }
+  // Clipboard images attach; text paste is left alone (no preventDefault).
+  promptInput.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const files = [];
+    for (const item of Array.from(items)) {
+      if (item.kind !== 'file' || !/^image\//i.test(item.type)) continue;
+      const f = item.getAsFile();
+      if (!f) continue;
+      const ext = (item.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '') || 'png';
+      files.push(f.name ? f : new File([f], 'pasted-image-' + Date.now() + '.' + ext, { type: f.type }));
+    }
+    if (!files.length) return;
+    e.preventDefault();
+    addComposerFiles(files);
+  });
+  if (!inputArea) return;
+  const hasFiles = (e) => !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+  let dragDepth = 0;
+  inputArea.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    inputArea.classList.add('drag-over');
+  });
+  inputArea.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  inputArea.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) inputArea.classList.remove('drag-over');
+  });
+  inputArea.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    inputArea.classList.remove('drag-over');
+    addComposerFiles(e.dataTransfer.files);
+  });
+  // A file dropped outside the composer must not navigate the page away.
+  window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', (e) => { if (hasFiles(e)) e.preventDefault(); });
+}
+
+function postGenerate(session, text, images) {
   // Prefer the live dropdown selection, then the session's stored pair.
   // Always resolve against /providers so stale/empty DB values cannot
   // produce "Unknown provider:".
@@ -3454,7 +3736,8 @@ function postGenerate(session, text) {
       model: resolved.model,
       agent_mode: normalizeAgentMode(session.agentMode || state.agentMode),
       reasoning_mode: state.reasoning,
-      session_id: session.id
+      session_id: session.id,
+      ...(images && images.length ? { attachments: images } : {})
     })
   });
 }
@@ -3702,9 +3985,11 @@ async function followTurn(session, stream, res) {
 
 // Start a turn for `text`. `res` is passed when the POST was already made
 // (a queued prompt that found the previous turn over).
-async function runGeneration(session, text, res) {
+async function runGeneration(session, text, res, images, attachmentMeta) {
   session.lastUserPrompt = text;
+  session.lastUserImages = images || [];
   const userMsg = { role: 'user', content: text, createdAt: Date.now() };
+  if (attachmentMeta && attachmentMeta.length) userMsg.attachments = attachmentMeta;
   const assistantMsg = { role: 'assistant', content: '', toolEvents: [], timeline: [], createdAt: Date.now() };
   session.messages.push(userMsg, assistantMsg);
   const stream = beginStream(session, assistantMsg);
@@ -3712,7 +3997,7 @@ async function runGeneration(session, text, res) {
 
   if (!res) {
     try {
-      res = await postGenerate(session, text);
+      res = await postGenerate(session, text, images);
     } catch (e) {
       failStream(stream, isNetworkError(e) ? 'Connection lost — click Retry to continue' : (e.message || 'Failed to send'));
       endStream(session, stream);
@@ -3746,7 +4031,7 @@ function attachToRunningTurn(session) {
 
 // Send a prompt while a turn runs: the server queues it and the running turn
 // takes it at its next model request (backend.user.message.injected).
-async function queuePrompt(session, text) {
+async function queuePrompt(session, text, attachmentMeta) {
   if (!session.promptQueue) session.promptQueue = [];
   session.promptQueue.push(text);
   updateQueueIndicator();
@@ -3775,7 +4060,7 @@ async function queuePrompt(session, text) {
   dropQueuedPrompt(session, text);
   if (res.ok && res.body) {
     // The turn ended meanwhile, so the prompt started a new one.
-    await runGeneration(session, text, res);
+    await runGeneration(session, text, res, [], attachmentMeta);
     return;
   }
   if (session.id === state.sessionId) renderMessages();
@@ -3810,27 +4095,53 @@ function updateQueueIndicator() {
 async function sendMessage() {
   if (isModalOpen()) return;
   clearDraft();
-  const text = promptInput.value.trim();
-  if (!text) return;
-  if (text.startsWith('/')) {
+  const typed = promptInput.value.trim();
+  const attachments = currentAttachments();
+  if (!typed && attachments.length === 0) return;
+  if (attachments.length === 0 && typed.startsWith('/')) {
     promptInput.value = '';
     resizePromptInput();
-    handleSlashCommand(text);
+    handleSlashCommand(typed);
     return;
   }
 
   const session = state.openSessions.find(s => s.id === state.sessionId);
   if (!session) return;
+  if (attachments.some(a => a.status === 'uploading')) {
+    showToast('Wait for attachments to finish uploading');
+    return;
+  }
+  if (attachments.some(a => a.status === 'error')) {
+    showToast('Remove the failed attachments before sending');
+    return;
+  }
+  const images = attachments.filter(a => a.kind === 'image');
+  // Images are not queued (the server queue stores text only): keep them in the tray.
+  if (images.length && session.generating) {
+    showToast('Wait for the current reply before sending images');
+    return;
+  }
+
+  const files = attachments.filter(a => a.kind === 'file');
+  const text = appendFileReferences(typed, files.map(a => ({ path: a.path, mime_type: a.mime, size: a.size })));
+  const imagePayload = images.map(a => ({ mime_type: a.mime, data: a.data, description: a.name }));
+  const meta = attachments.map(a => ({
+    name: a.name,
+    kind: a.kind,
+    mime_type: a.mime,
+    size: a.size,
+    previewUrl: a.kind === 'image' ? a.dataUrl : ''
+  }));
+  takeComposerAttachments(session.id);
 
   promptInput.value = '';
   resizePromptInput();
   if (session.generating) {
-    await queuePrompt(session, text);
+    await queuePrompt(session, text, meta);
     return;
   }
-  await runGeneration(session, text);
+  await runGeneration(session, text, null, imagePayload, meta);
 }
-
 
 // KaTeX (~300 KB) and highlight.js (~150 KB) are fetched on first use, not at
 // page load. renderMarkdown and the code viewers keep their typeof checks, so
@@ -5738,6 +6049,9 @@ function renderMessage(msg) {
       content.appendChild(renderThoughtBlock(msg.reasoning, isLive ? { open: true, live: true } : undefined));
     }
   }
+  if (msg.role === 'user' && Array.isArray(msg.attachments) && msg.attachments.length) {
+    content.appendChild(renderMessageAttachments(msg.attachments));
+  }
   if (msg.content && !hasTextSegments) appendText(msg.content, isLive);
   if (isLive && !msg.content && timeline.length === 0) {
     const pending = document.createElement('div'); pending.className = 'msg-pending';
@@ -6853,6 +7167,7 @@ async function switchSession(id) {
   if (leaving && leaving !== session) detachStream(leaving);
   session.lastActiveAt = Date.now();
   state.sessionId = id;
+  renderAttachmentTray();
   evictCachedSessionMessages(id);
   state.sessionTitle = stripTags(session.title || '');
   state.sessionWorkspace = stripTags(session.workspace || '');

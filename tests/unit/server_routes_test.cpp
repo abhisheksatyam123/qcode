@@ -15,6 +15,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -404,6 +406,162 @@ TEST_F(ServerRoutesTest, WorkspaceFsOperations) {
     auto res_escape_write = client_->Put("/session/" + sid + "/fs/write", req_escape_write.dump(), "application/json");
     ASSERT_TRUE(res_escape_write != nullptr);
     EXPECT_EQ(res_escape_write->status, 400);
+}
+
+namespace {
+
+// Creates a session on `workspace` and returns its id ("" on failure).
+std::string create_session_in(httplib::Client& client, const std::string& workspace) {
+    nlohmann::json req = {
+        {"provider", "mock-provider"},
+        {"model", "mock-model"},
+        {"workspace", workspace}
+    };
+    auto res = client.Post("/sessions", req.dump(), "application/json");
+    if (!res || res->status != 200) return "";
+    return nlohmann::json::parse(res->body).value("id", "");
+}
+
+std::string read_file_bytes(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+}  // namespace
+
+// POST /session/:id/upload stores non-image files under <workspace>/uploads/.
+TEST_F(ServerRoutesTest, FileUploadSavesBytesUnderWorkspaceUploads) {
+    const std::string sid = create_session_in(*client_, test_workspace_dir_);
+    ASSERT_FALSE(sid.empty());
+
+    const char raw[] = "%PDF-1.4\n\x00\xff binary\n";
+    const std::string bytes(raw, sizeof(raw) - 1);
+    auto res = client_->Post("/session/" + sid + "/upload?name=report.pdf", bytes, "application/pdf");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j.value("kind", ""), "file");
+    EXPECT_EQ(j.value("name", ""), "report.pdf");
+    EXPECT_EQ(j.value("path", ""), "uploads/report.pdf");
+    EXPECT_EQ(j.value("size", 0), static_cast<int>(bytes.size()));
+    EXPECT_EQ(j.value("mime_type", ""), "application/pdf");
+    EXPECT_EQ(read_file_bytes(fs::path(test_workspace_dir_) / "uploads" / "report.pdf"), bytes);
+
+    // Percent-encoded names are decoded; a missing Content-Type is octet-stream.
+    auto res_space = client_->Post("/session/" + sid + "/upload?name=my%20notes.txt", "hi", "");
+    ASSERT_TRUE(res_space != nullptr);
+    EXPECT_EQ(res_space->status, 200);
+    EXPECT_EQ(nlohmann::json::parse(res_space->body).value("path", ""), "uploads/my notes.txt");
+    EXPECT_TRUE(fs::exists(fs::path(test_workspace_dir_) / "uploads" / "my notes.txt"));
+}
+
+TEST_F(ServerRoutesTest, FileUploadSanitizesNames) {
+    const std::string sid = create_session_in(*client_, test_workspace_dir_);
+    ASSERT_FALSE(sid.empty());
+    const fs::path uploads = fs::path(test_workspace_dir_) / "uploads";
+
+    // Path separators are dropped: only the basename lands in uploads/.
+    auto res_escape = client_->Post("/session/" + sid + "/upload?name=..%2F..%2Fetc%2Fx", "a", "text/plain");
+    ASSERT_TRUE(res_escape != nullptr);
+    EXPECT_EQ(res_escape->status, 200);
+    EXPECT_EQ(nlohmann::json::parse(res_escape->body).value("path", ""), "uploads/x");
+    EXPECT_TRUE(fs::exists(uploads / "x"));
+
+    // Leading dots and control characters are removed.
+    auto res_dot = client_->Post("/session/" + sid + "/upload?name=.env%0Ab.txt", "b", "text/plain");
+    ASSERT_TRUE(res_dot != nullptr);
+    EXPECT_EQ(res_dot->status, 200);
+    EXPECT_EQ(nlohmann::json::parse(res_dot->body).value("name", ""), "envb.txt");
+
+    // Empty after sanitizing becomes "upload".
+    auto res_empty = client_->Post("/session/" + sid + "/upload?name=%2F", "c", "text/plain");
+    ASSERT_TRUE(res_empty != nullptr);
+    EXPECT_EQ(res_empty->status, 200);
+    EXPECT_EQ(nlohmann::json::parse(res_empty->body).value("name", ""), "upload");
+
+    // "." and ".." are never usable names.
+    auto res_dots = client_->Post("/session/" + sid + "/upload?name=..", "d", "text/plain");
+    ASSERT_TRUE(res_dots != nullptr);
+    EXPECT_EQ(res_dots->status, 400);
+    auto res_dot1 = client_->Post("/session/" + sid + "/upload?name=.", "d", "text/plain");
+    ASSERT_TRUE(res_dot1 != nullptr);
+    EXPECT_EQ(res_dot1->status, 400);
+
+    // Names are capped at 200 bytes.
+    const std::string long_name(300, 'n');
+    auto res_long = client_->Post("/session/" + sid + "/upload?name=" + long_name + ".txt", "e", "text/plain");
+    ASSERT_TRUE(res_long != nullptr);
+    EXPECT_EQ(res_long->status, 200);
+    EXPECT_LE(nlohmann::json::parse(res_long->body).value("name", "").size(), 200u);
+}
+
+TEST_F(ServerRoutesTest, FileUploadSuffixesCollidingNames) {
+    const std::string sid = create_session_in(*client_, test_workspace_dir_);
+    ASSERT_FALSE(sid.empty());
+
+    const std::vector<std::string> expected = {"dup.txt", "dup-2.txt", "dup-3.txt"};
+    for (size_t i = 0; i < expected.size(); ++i) {
+        const std::string body = "copy " + std::to_string(i);
+        auto res = client_->Post("/session/" + sid + "/upload?name=dup.txt", body, "text/plain");
+        ASSERT_TRUE(res != nullptr);
+        EXPECT_EQ(res->status, 200);
+        EXPECT_EQ(nlohmann::json::parse(res->body).value("path", ""), "uploads/" + expected[i]);
+        EXPECT_EQ(read_file_bytes(fs::path(test_workspace_dir_) / "uploads" / expected[i]), body);
+    }
+}
+
+TEST_F(ServerRoutesTest, FileUploadRejectsImagesAndOversizedBodies) {
+    const std::string sid = create_session_in(*client_, test_workspace_dir_);
+    ASSERT_FALSE(sid.empty());
+
+    // Images belong in generate attachments, not on disk.
+    auto res_image = client_->Post("/session/" + sid + "/upload?name=pic.png", "\x89PNG", "image/png");
+    ASSERT_TRUE(res_image != nullptr);
+    EXPECT_EQ(res_image->status, 415);
+    EXPECT_FALSE(fs::exists(fs::path(test_workspace_dir_) / "uploads" / "pic.png"));
+
+    // One byte over the 25 MiB cap.
+    const std::string too_big(25 * 1024 * 1024 + 1, 'x');
+    auto res_big = client_->Post("/session/" + sid + "/upload?name=big.bin", too_big, "application/octet-stream");
+    ASSERT_TRUE(res_big != nullptr);
+    EXPECT_EQ(res_big->status, 413);
+    EXPECT_FALSE(fs::exists(fs::path(test_workspace_dir_) / "uploads" / "big.bin"));
+}
+
+TEST_F(ServerRoutesTest, FileUploadChecksSessionAndNameArguments) {
+    auto res_unknown = client_->Post("/session/00000000000000000000000000000000/upload?name=a.txt", "a", "text/plain");
+    ASSERT_TRUE(res_unknown != nullptr);
+    EXPECT_EQ(res_unknown->status, 404);
+
+    auto res_invalid = client_->Post("/session/bad%2Aid/upload?name=a.txt", "a", "text/plain");
+    ASSERT_TRUE(res_invalid != nullptr);
+    EXPECT_EQ(res_invalid->status, 400);
+
+    const std::string sid = create_session_in(*client_, test_workspace_dir_);
+    ASSERT_FALSE(sid.empty());
+    auto res_no_name = client_->Post("/session/" + sid + "/upload", "a", "text/plain");
+    ASSERT_TRUE(res_no_name != nullptr);
+    EXPECT_EQ(res_no_name->status, 400);
+}
+
+// The empty-text check must not reject a generate that carries an attachment.
+TEST_F(ServerRoutesTest, GenerateAcceptsEmptyTextWithAttachment) {
+    const std::string sid = create_session_in(*client_, test_workspace_dir_);
+    ASSERT_FALSE(sid.empty());
+
+    nlohmann::json no_attachment = {{"text", ""}};
+    auto res_empty = client_->Post("/session/" + sid + "/generate", no_attachment.dump(), "application/json");
+    ASSERT_TRUE(res_empty != nullptr);
+    EXPECT_EQ(res_empty->status, 400);
+
+    nlohmann::json with_attachment = {
+        {"text", ""},
+        {"attachments", nlohmann::json::array({{{"mime_type", "image/png"}, {"data", "iVBORw0KGgo="}}})}
+    };
+    auto res = client_->Post("/session/" + sid + "/generate", with_attachment.dump(), "application/json");
+    if (res) {
+        EXPECT_EQ(res->body.find("'text' field is required"), std::string::npos);
+    }
 }
 
 // T24: a session whose workspace was moved/deleted must report "folder not

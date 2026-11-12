@@ -1,6 +1,7 @@
 #include "routes_internal.h"
 #include "session_runtime.h"
 #include "http_utils.h"
+#include "workspace_fs.h"
 
 #include <qcode/generation/agent_mode.h>
 #include <qcode/core/in_process_bus.h>
@@ -18,10 +19,13 @@
 #include <qcode/tools/image_tool.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <unistd.h>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -242,6 +246,60 @@ ResolvedModel resolve_provider_model(const std::vector<qcode::ProviderInfo>& pro
     return out;
 }
 
+// ── Non-image file uploads: POST /session/:id/upload ──
+namespace {
+
+constexpr std::uintmax_t kMaxUploadBytes = 25 * 1024 * 1024;
+constexpr size_t kMaxUploadNameBytes = 200;
+
+// Cuts `s` to at most `max_bytes` without splitting a UTF-8 sequence.
+void truncate_utf8(std::string& s, size_t max_bytes) {
+    if (s.size() <= max_bytes) return;
+    size_t cut = max_bytes;
+    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
+    s.resize(cut);
+}
+
+// Basename only, no control characters, no leading dot, at most 200 bytes.
+// Empty becomes "upload". Returns false for "." and "..".
+bool sanitize_upload_name(const std::string& raw, std::string& out) {
+    std::string name = raw.substr(raw.find_last_of("/\\") + 1);
+    if (name == "." || name == "..") return false;
+    std::string clean;
+    for (char c : name) {
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f) continue;
+        clean.push_back(c);
+    }
+    const size_t lead = clean.find_first_not_of('.');
+    clean = lead == std::string::npos ? std::string() : clean.substr(lead);
+    truncate_utf8(clean, kMaxUploadNameBytes);
+    out = clean.empty() ? std::string("upload") : clean;
+    return true;
+}
+
+// "report.pdf" with n = 2 -> "report-2.pdf"; the suffix is kept within 200 bytes.
+std::string numbered_upload_name(const std::string& name, int n) {
+    const size_t dot = name.rfind('.');
+    const std::string ext = dot == std::string::npos ? std::string() : name.substr(dot);
+    std::string stem = dot == std::string::npos ? name : name.substr(0, dot);
+    const std::string suffix = "-" + std::to_string(n);
+    truncate_utf8(stem, kMaxUploadNameBytes - suffix.size() - ext.size());
+    return stem + suffix + ext;
+}
+
+// Content-Type without parameters, trimmed and lower-cased; octet-stream when absent.
+std::string upload_mime_type(const httplib::Request& req) {
+    std::string mime = req.get_header_value("Content-Type");
+    mime = mime.substr(0, mime.find(';'));
+    const size_t first = mime.find_first_not_of(" \t");
+    mime = first == std::string::npos ? std::string()
+                                      : mime.substr(first, mime.find_last_not_of(" \t") - first + 1);
+    for (auto& c : mime) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return mime.empty() ? std::string("application/octet-stream") : mime;
+}
+
+}  // namespace
+
 void register_session_routes(
     httplib::Server& svr,
     std::shared_ptr<qcode::bus::BusRuntime> bus,
@@ -270,7 +328,11 @@ auto handle_generate = [bus, providers_list, default_workspace](const std::strin
 
     const bool is_resume = body.value("resume", false);
     std::string text = body.value("text", "");
-    if (text.empty() && !is_resume) {
+    // Attachments can carry the message on their own (images, or a file
+    // already uploaded and referenced by path).
+    const bool has_attachments = body.contains("attachments") && body["attachments"].is_array() &&
+                                 !body["attachments"].empty();
+    if (text.empty() && !is_resume && !has_attachments) {
         res.status = 400;
         res.set_content(R"({"error":"'text' field is required"})", "application/json");
         return;
@@ -595,6 +657,155 @@ svr.Post("/generate", [handle_generate](const httplib::Request& req, httplib::Re
 svr.Post("/session/([^/]+)/generate", [handle_generate](const httplib::Request& req, httplib::Response& res) {
     std::string session_id = url_decode(req.matches[1]);
     handle_generate(session_id, req.body, res);
+});
+
+// ── Non-image file upload into <workspace>/uploads/ ──
+// Body is the raw file; Content-Type is its mime type. Images go as generate
+// attachments instead, so they are refused here.
+svr.Post("/session/([^/]+)/upload", [default_workspace](const httplib::Request& req, httplib::Response& res,
+                                                       const httplib::ContentReader& content_reader) {
+    namespace fs = std::filesystem;
+    const std::string session_id = url_decode(req.matches[1]);
+    if (!qcode::session::is_valid_session_id(session_id)) {
+        send_error(res, 400, "invalid session_id");
+        return;
+    }
+    if (!qcode::session::session_exists(session_id)) {
+        send_error(res, 404, "session not found");
+        return;
+    }
+    if (!req.has_param("name")) {
+        send_error(res, 400, "name required");
+        return;
+    }
+    std::string name;
+    if (!sanitize_upload_name(req.get_param_value("name"), name)) {
+        send_error(res, 400, "invalid name");
+        return;
+    }
+    const std::string mime = upload_mime_type(req);
+    if (mime.rfind("image/", 0) == 0) {
+        send_error(res, 415, "send images as attachments on /generate");
+        return;
+    }
+    // Reject an oversized body up front. It is drained (discarded, not stored,
+    // bounded at twice the cap) so the client reads the 413 instead of a reset.
+    if (req.has_header("Content-Length") && req.get_header_value_u64("Content-Length") > kMaxUploadBytes) {
+        uint64_t drained = 0;
+        content_reader([&](const char*, size_t len) {
+            drained += len;
+            return drained <= 2 * kMaxUploadBytes;
+        });
+        send_error(res, 413, "file too large (max 25 MiB)");
+        return;
+    }
+
+    std::string ws = qcode::session::get_session_workspace(session_id);
+    if (ws.empty()) {
+        ws = default_workspace;
+    }
+    std::error_code ec;
+    if (!fs::is_directory(ws, ec)) {
+        send_error(res, 404, "workspace not found");
+        return;
+    }
+    std::string dir_abs, dir_rel;
+    if (const std::string err = resolve_workspace_path(ws, "uploads", dir_abs, dir_rel); !err.empty()) {
+        send_error(res, 400, err);
+        return;
+    }
+    fs::create_directories(dir_abs, ec);
+    if (ec) {
+        send_error(res, 500, "write failed");
+        return;
+    }
+
+    // Stream the body into a temp file next to the target, enforcing the cap
+    // while reading so a chunked upload cannot grow memory or disk without limit.
+    static std::atomic<uint64_t> upload_counter{0};
+    const fs::path tmp = fs::path(dir_abs) / (".upload-" + std::to_string(getpid()) + "-" +
+                                              std::to_string(upload_counter++) + ".tmp");
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        send_error(res, 500, "write failed");
+        return;
+    }
+    uint64_t total = 0;
+    bool too_large = false;
+    bool write_failed = false;
+    const bool received = content_reader([&](const char* data, size_t len) {
+        total += len;
+        if (total > kMaxUploadBytes) {
+            too_large = true;
+            return false;
+        }
+        if (!out.write(data, static_cast<std::streamsize>(len))) {
+            write_failed = true;
+            return false;
+        }
+        return true;
+    });
+    out.close();
+    if (too_large) {
+        fs::remove(tmp, ec);
+        send_error(res, 413, "file too large (max 25 MiB)");
+        return;
+    }
+    if (write_failed || out.fail()) {
+        fs::remove(tmp, ec);
+        send_error(res, 500, "write failed");
+        return;
+    }
+    if (!received) {
+        fs::remove(tmp, ec);
+        send_error(res, 400, "upload interrupted");
+        return;
+    }
+
+    // Keep the name when free; otherwise name-2.ext, name-3.ext, ...
+    // A symlink at the target is refused, never followed or replaced.
+    std::string final_name;
+    for (int n = 1; n <= 10000 && final_name.empty(); ++n) {
+        const std::string candidate = n == 1 ? name : numbered_upload_name(name, n);
+        const fs::path target = fs::path(dir_abs) / candidate;
+        const auto st = fs::symlink_status(target, ec);
+        if (fs::is_symlink(st)) {
+            fs::remove(tmp, ec);
+            send_error(res, 400, "target is a symlink");
+            return;
+        }
+        if (st.type() == fs::file_type::none) {
+            fs::remove(tmp, ec);
+            send_error(res, 500, "write failed");
+            return;
+        }
+        if (st.type() != fs::file_type::not_found) continue;
+        std::string abs, rel;
+        if (!resolve_workspace_path(ws, "uploads/" + candidate, abs, rel).empty()) {
+            fs::remove(tmp, ec);
+            send_error(res, 400, "invalid name");
+            return;
+        }
+        fs::rename(tmp, target, ec);
+        if (ec) {
+            fs::remove(tmp, ec);
+            send_error(res, 500, "write failed");
+            return;
+        }
+        final_name = candidate;
+    }
+    if (final_name.empty()) {
+        fs::remove(tmp, ec);
+        send_error(res, 500, "no free file name");
+        return;
+    }
+
+    nlohmann::json j{{"kind", "file"},
+                     {"name", final_name},
+                     {"path", "uploads/" + final_name},
+                     {"size", total},
+                     {"mime_type", mime}};
+    res.set_content(j.dump(), "application/json");
 });
 
 // ── List sessions ──
