@@ -99,6 +99,12 @@
               <svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
               <span>Stats</span>
             </button>
+            <button type="button" id="header-anim-btn" class="header-stats-btn hidden" title="Change Spiddy's animation" aria-label="Change Spiddy's animation">
+              <span>Anim</span>
+            </button>
+            <button type="button" id="header-anim-stop-btn" class="header-stats-btn hidden" title="Stop Spiddy's animation" aria-label="Stop Spiddy's animation" aria-pressed="false">
+              <span>Stop</span>
+            </button>
           </div>
           <div class="header-session-workspace" id="header-session-workspace"></div>
         </div>
@@ -117,6 +123,7 @@
         <div id="chat-container">
           <div id="messages" aria-live="polite" aria-label="Chat messages"></div>
         </div>
+        <div id="spiddy-roam" class="spiddy-roam-layer" aria-hidden="true"></div>
         <div id="input-area">
           <div class="queue-indicator hidden" id="queue-indicator">
             <span class="queue-dot"></span>
@@ -316,11 +323,22 @@
             <label for="theme-select" class="settings-field-label">Theme</label>
             <div class="control-group">
               <button type="button" id="theme-select" class="theme-select-btn" title="Choose color theme" aria-haspopup="listbox">
-                <span id="theme-select-label">QCode Dark</span>
+                <span id="theme-select-label">QCode Pop</span>
                 <svg class="theme-select-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
               </button>
             </div>
             <div class="settings-field-hint">Changes UI colors and syntax highlighting.</div>
+          </div>
+
+          <div class="settings-field-group">
+            <label for="mascot-style-select" class="settings-field-label">Mascot</label>
+            <div class="control-group">
+              <select id="mascot-style-select" title="How the roaming mascot is drawn">
+                <option value="3d">3D chibi (WebGL)</option>
+                <option value="classic">Classic CSS</option>
+              </select>
+            </div>
+            <div class="settings-field-hint">Shown on the five hero themes. 3D uses WebGL and animates the whole move set; classic is the lightweight fallback.</div>
           </div>
         </section>
 
@@ -344,6 +362,7 @@
 <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
 <script src="/vendor-marked.min.js"></script>
 <script src="/vendor-jsyaml.min.js"></script>
+<script src="/vendor-three.min.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

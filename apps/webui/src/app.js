@@ -90,6 +90,27 @@ window.copyPlantUmlCode = function(diagramId, btn) {
 };
 
 import { fuzzyScore, fuzzyFilter, shortPath, formatBytes, formatMs, formatNumber, formatUsd, usageCostSummary, renderUsageSections, detectFsLanguage, parseToolValue, sessionIdFromTaskResult, extractChildSessionId, esc, capitalize, relTime, extractFrontmatter, stripFrontmatter, transformWikilinks, findStableMarkdownCut, keepInterruptedPartials, formatContextTokens, modelTypeBadges, SLASH_COMMANDS, PALETTE_COMMANDS, healthRetryDelayMs, sessionLoadAttemptTimeoutMs, retryWithBudget, isRetryableHttpStatus, isSessionSwitchCached, shouldShowSessionLoading, folderMissingHtml, fsTreeToggleState, selectSessionsToEvict, classifyAttachment, attachmentSizeError, attachmentCountError, stripDataUrlPrefix, appendFileReferences, MAX_ATTACHMENTS_PER_MESSAGE, parseUserContent, historyAttachmentMeta } from './utils.js';
+import { heroMarkup, heroPoseForToolEvents } from './hero.js';
+import { classifySentiment, refineClip, getEndpoint, setEndpoint } from './sentiment-llm.js';
+import { describeImage, getMirageEndpoint, setMirageEndpoint, getMirageWasmBase, setMirageWasmBase } from './mirage.js';
+
+// Console handle for the optional model-backed sentiment (docs/spiddy-sentiment.md).
+// e.g. qcodeSpiddy.setSentimentEndpoint('http://127.0.0.1:9101/classify')
+try {
+  window.qcodeSpiddy = Object.assign(window.qcodeSpiddy || {}, {
+    setSentimentEndpoint: setEndpoint,
+    getSentimentEndpoint: getEndpoint,
+    setMirageEndpoint: setMirageEndpoint,
+    getMirageEndpoint: getMirageEndpoint,
+    setMirageWasmBase: setMirageWasmBase,
+    getMirageWasmBase: getMirageWasmBase,
+  });
+} catch (_) {}
+import { clipFor } from './emotions.js';
+import { lineFor } from './personality.js';
+import { attachMascot } from './mascot.js';
+import { attachHero3D, hero3dForTheme, hero3dAnimationFor, hero3dPoolFor, hero3dExpressionFor, hero3dLineFor, hero3dQuipFor, hero3dHasSearchTool } from './hero3d.js';
+import { roamModeFor, roamStateFor, planRoam, pickRoamAct, actPoolFor, ROAM_SIZE } from './roam.js';
 // ── SVG Icons ──
 const SVG_ICONS = {
   chat: `<svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
@@ -315,12 +336,18 @@ function updateSettingsModalModelInfo() {
   display.append(nameEl, provEl);
 }
 
+function syncMascotStyleSelect() {
+  if (!mascotStyleSelect) return;
+  mascotStyleSelect.value = (hero3dDisabled || mascotStyle === 'classic') ? 'classic' : '3d';
+}
+
 function openSettingsModal() {
   const modal = document.getElementById('settings-modal');
   const btn = document.getElementById('settings-btn');
   if (!modal) return;
   updateSettingsModalModelInfo();
   syncThemeSelectLabel();
+  syncMascotStyleSelect();
   modal.classList.remove('hidden');
   modal.classList.add('active');
   if (btn) btn.setAttribute('aria-expanded', 'true');
@@ -436,11 +463,14 @@ const settingsModal = document.getElementById('settings-modal');
 const settingsModalClose = document.getElementById('settings-modal-close');
 const settingsSwitchModelBtn = document.getElementById('settings-switch-model-btn');
 const settingsActiveModelDisplay = document.getElementById('settings-active-model-display');
+const mascotStyleSelect = document.getElementById('mascot-style-select');
 const viewsToggleBtn = document.getElementById('views-toggle-btn');
 const activeViewBadge = document.getElementById('active-view-badge');
 const sessionsToggleBtn = document.getElementById('sessions-toggle-btn');
 const activeSessionCountBadge = document.getElementById('active-session-count-badge');
 const headerStatsBtn = document.getElementById('header-stats-btn');
+const headerAnimBtn = document.getElementById('header-anim-btn');
+const headerAnimStopBtn = document.getElementById('header-anim-stop-btn');
 const themeSelect = document.getElementById('theme-select');
 const themeSelectLabel = document.getElementById('theme-select-label');
 function syncThemeSelectLabel() {
@@ -572,33 +602,58 @@ let pickerCleanup = null;
 
 
 
+// Roaming Spiddy state (see roamSync). Declared above THEMES because init() runs during
+// module evaluation, before the hero section below.
+let roamCtl = null;     // mascot controller for the roaming Spiddy
+let roamMode = null;    // 'idle' | 'think' | 'tools' at the last sync
+let roamKey = '';       // last rendered mode|pose|emotion|caption
+let roamNextAt = 0;     // ms timestamp of the next relocation
+let roamSpot = null;    // last spot, px relative to the chat box
+let roamAct = null;     // current act (null when stopped or none)
+let roamStill = false;  // user stopped Spiddy's acts (movement continues); persisted below
+try { roamStill = localStorage.getItem('qcode-spiddy-still') === '1'; } catch (_) {}
+let roamTicker = null;  // one-second sync while a Spiddy theme is on
+let roamCtlKind = null; // '3d' | 'classic', which renderer roamCtl is
+let roamExpressionIdx = 0; // advances each 3D tick so every expression is used
+const MASCOT_STYLE_KEY = 'qcode-mascot-style';
+let mascotStyle = '3d';
+try {
+  const savedStyle = localStorage.getItem(MASCOT_STYLE_KEY);
+  if (savedStyle === 'classic' || savedStyle === '3d') mascotStyle = savedStyle;
+} catch (_) {}
+let hero3dDisabled = false; // set once if WebGL/three.js is unavailable
+
 const THEMES = {
   "qcode": {
-    "title": "QCode Web",
-    "bg": "#0B0D12",
-    "surface": "#11141B",
-    "raised": "#181C25",
-    "text": "#E6E9F0",
-    "muted": "#9AA2B2",
-    "accent": "#8EA2FF",
-    "accent2": "#6D84FB",
-    "danger": "#F87171",
-    "warning": "#FBBF24",
-    "success": "#4ADE80"
+    "title": "QCode Pop",
+    "ui": "pop",
+    "bg": "#16131F",
+    "surface": "#201B2E",
+    "raised": "#2A2440",
+    "text": "#FFF8E7",
+    "muted": "#B7AFCB",
+    "accent": "#FF4D6D",
+    "accent2": "#3A86FF",
+    "danger": "#FF5C5C",
+    "warning": "#FFD23F",
+    "bubble": "#FFD23F",
+    "success": "#52E0A0"
   },
   "qcode-light": {
-    "title": "QCode Light",
+    "title": "QCode Paper",
     "scheme": "light",
-    "bg": "#F6F7FA",
+    "ui": "pop",
+    "bg": "#FFF6E0",
     "surface": "#FFFFFF",
-    "raised": "#EDF0F5",
-    "text": "#171B26",
-    "muted": "#545C70",
-    "accent": "#2F45C9",
-    "accent2": "#2437A8",
-    "danger": "#B42318",
-    "warning": "#92400E",
-    "success": "#166534"
+    "raised": "#FBEBC4",
+    "text": "#1B1530",
+    "muted": "#5B5275",
+    "accent": "#E63946",
+    "accent2": "#1D5FD1",
+    "danger": "#C1121F",
+    "warning": "#B07A00",
+    "bubble": "#FFD23F",
+    "success": "#1B8A5A"
   },
   "opencode": {
     "title": "OpenCode",
@@ -613,629 +668,95 @@ const THEMES = {
     "warning": "#F5A742",
     "success": "#7FD88F"
   },
-  "tokyonight": {
-    "title": "Tokyo Night",
-    "bg": "#1A1B26",
-    "surface": "#1E2030",
-    "raised": "#222436",
-    "text": "#C8D3F5",
-    "muted": "#828BB8",
-    "accent": "#82AAFF",
-    "accent2": "#C099FF",
-    "danger": "#FF757F",
-    "warning": "#FF966C",
-    "success": "#C3E88D"
+  "spiddy": {
+    "title": "Spider-Man",
+    "ui": "pop",
+    "hero": "spiddy",
+    "bg": "#0B1622",
+    "surface": "#10202F",
+    "raised": "#162B3F",
+    "text": "#F4F1EA",
+    "muted": "#9FB3C8",
+    "accent": "#E23636",
+    "accent2": "#2F80ED",
+    "danger": "#FF4D4D",
+    "warning": "#FCDC58",
+    "bubble": "#FCDC58",
+    "success": "#6FD39A",
+    "heroSuit": "#336687",
+    "heroChest": "#ff6d36"
   },
-  "nord": {
-    "title": "Nord",
-    "bg": "#2E3440",
-    "surface": "#3B4252",
-    "raised": "#434C5E",
-    "text": "#D8DEE9",
-    "muted": "#8B95A7",
-    "accent": "#88C0D0",
-    "accent2": "#81A1C1",
-    "danger": "#BF616A",
-    "warning": "#D08770",
-    "success": "#A3BE8C"
+  "spiddy-night": {
+    "title": "Batman",
+    "ui": "pop",
+    "hero": "spiddy",
+    "bg": "#0E1116",
+    "surface": "#161B24",
+    "raised": "#1F2630",
+    "text": "#E8ECF2",
+    "muted": "#98A2B3",
+    "accent": "#F5C518",
+    "accent2": "#5B6B82",
+    "danger": "#FF5C5C",
+    "warning": "#F5C518",
+    "bubble": "#F5C518",
+    "success": "#6FD39A",
+    "heroSuit": "#2A3140",
+    "heroChest": "#3B4A63"
   },
-  "gruvbox": {
-    "title": "Gruvbox",
-    "bg": "#282828",
-    "surface": "#3C3836",
-    "raised": "#504945",
-    "text": "#EBDBB2",
-    "muted": "#928374",
-    "accent": "#83A598",
-    "accent2": "#D3869B",
-    "danger": "#FB4934",
-    "warning": "#FE8019",
-    "success": "#B8BB26"
+  "spiddy-steel": {
+    "title": "Iron Man",
+    "ui": "pop",
+    "hero": "spiddy",
+    "bg": "#140E10",
+    "surface": "#1E1517",
+    "raised": "#2A1D21",
+    "text": "#F7EDE6",
+    "muted": "#B9A7A0",
+    "accent": "#C8262E",
+    "accent2": "#E8B53A",
+    "danger": "#FF4D4D",
+    "warning": "#E8B53A",
+    "bubble": "#F5C35A",
+    "success": "#6FD39A",
+    "heroSuit": "#C8262E",
+    "heroChest": "#E8B53A"
   },
-  "catppuccin": {
-    "title": "Catppuccin Mocha",
-    "bg": "#1E1E2E",
-    "surface": "#181825",
-    "raised": "#11111B",
-    "text": "#CDD6F4",
-    "muted": "#9399B2",
-    "accent": "#89B4FA",
-    "accent2": "#CBA6F7",
-    "danger": "#F38BA8",
-    "warning": "#F9E2AF",
-    "success": "#A6E3A1"
+  "spiddy-jade": {
+    "title": "Hulk",
+    "ui": "pop",
+    "hero": "spiddy",
+    "bg": "#0C1510",
+    "surface": "#132119",
+    "raised": "#1B2E23",
+    "text": "#EAF6EE",
+    "muted": "#9BB7A5",
+    "accent": "#3FA34D",
+    "accent2": "#7E3FD0",
+    "danger": "#FF5C5C",
+    "warning": "#E5C454",
+    "bubble": "#B8F0C4",
+    "success": "#6FD39A",
+    "heroSuit": "#3FA34D",
+    "heroChest": "#7E3FD0"
   },
-  "rosepine": {
-    "title": "Ros\u00e9 Pine",
-    "bg": "#191724",
-    "surface": "#1F1D2E",
-    "raised": "#26233A",
-    "text": "#E0DEF4",
-    "muted": "#6E6A86",
-    "accent": "#9CCFD8",
-    "accent2": "#C4A7E7",
-    "danger": "#EB6F92",
-    "warning": "#F6C177",
-    "success": "#31748F"
-  },
-  "vesper": {
-    "title": "Vesper",
-    "bg": "#101010",
-    "surface": "#101010",
-    "raised": "#101010",
-    "text": "#FFFFFF",
-    "muted": "#A0A0A0",
-    "accent": "#FFC799",
-    "accent2": "#99FFE4",
-    "danger": "#FF8080",
-    "warning": "#FFC799",
-    "success": "#99FFE4"
-  },
-  "one-dark": {
-    "title": "One Dark",
-    "bg": "#282C34",
-    "surface": "#21252B",
-    "raised": "#353B45",
-    "text": "#ABB2BF",
-    "muted": "#5C6370",
-    "accent": "#61AFEF",
-    "accent2": "#C678DD",
-    "danger": "#E06C75",
-    "warning": "#E5C07B",
-    "success": "#98C379"
-  },
-  "aura": {
-    "title": "Aura",
-    "bg": "#0F0F0F",
-    "surface": "#15141B",
-    "raised": "#15141B",
-    "text": "#EDECEE",
-    "muted": "#6D6D6D",
-    "accent": "#A277FF",
-    "accent2": "#F694FF",
-    "danger": "#FF6767",
-    "warning": "#FFCA85",
-    "success": "#61FFCA"
-  },
-  "zenburn": {
-    "title": "Zenburn",
-    "bg": "#3F3F3F",
-    "surface": "#4F4F4F",
-    "raised": "#5F5F5F",
-    "text": "#DCDCCC",
-    "muted": "#9F9F9F",
-    "accent": "#8CD0D3",
-    "accent2": "#DC8CC3",
-    "danger": "#CC9393",
-    "warning": "#F0DFAF",
-    "success": "#7F9F7F"
-  },
-  "cobalt2": {
-    "title": "Cobalt2",
-    "bg": "#193549",
-    "surface": "#122738",
-    "raised": "#1F4662",
-    "text": "#FFFFFF",
-    "muted": "#ADB7C9",
-    "accent": "#0088FF",
-    "accent2": "#9A5FEB",
-    "danger": "#FF0088",
-    "warning": "#FFC600",
-    "success": "#9EFF80"
-  },
-  "synthwave84": {
-    "title": "SynthWave '84",
-    "bg": "#262335",
-    "surface": "#1E1A29",
-    "raised": "#2A2139",
-    "text": "#FFFFFF",
-    "muted": "#848BBD",
-    "accent": "#36F9F6",
-    "accent2": "#FF7EDB",
-    "danger": "#FE4450",
-    "warning": "#FEDE5D",
-    "success": "#72F1B8"
-  },
-  "osaka-jade": {
-    "title": "Osaka Jade",
-    "bg": "#111C18",
-    "surface": "#1A2520",
-    "raised": "#23372B",
-    "text": "#C1C497",
-    "muted": "#53685B",
-    "accent": "#2DD5B7",
-    "accent2": "#D2689C",
-    "danger": "#FF5345",
-    "warning": "#E5C736",
-    "success": "#549E6A"
-  },
-  "matrix": {
-    "title": "Matrix",
-    "bg": "#0A0E0A",
-    "surface": "#0E130D",
-    "raised": "#141C12",
-    "text": "#62FF94",
-    "muted": "#8CA391",
-    "accent": "#2EFF6A",
-    "accent2": "#00EFFF",
-    "danger": "#FF4B4B",
-    "warning": "#E6FF57",
-    "success": "#62FF94"
-  },
-  "flexoki": {
-    "title": "Flexoki Dark",
-    "bg": "#100F0F",
-    "surface": "#1C1B1A",
-    "raised": "#282726",
-    "text": "#CECDC3",
-    "muted": "#6F6E69",
-    "accent": "#DA702C",
-    "accent2": "#4385BE",
-    "danger": "#D14D41",
-    "warning": "#DA702C",
-    "success": "#879A39"
-  },
-  "material": {
-    "title": "Material Ocean",
-    "bg": "#263238",
-    "surface": "#1E272C",
-    "raised": "#37474F",
-    "text": "#EEFFFF",
-    "muted": "#546E7A",
-    "accent": "#82AAFF",
-    "accent2": "#C792EA",
-    "danger": "#F07178",
-    "warning": "#FFCB6B",
-    "success": "#C3E88D"
-  },
-  "ayu": {
-    "title": "Ayu Dark",
-    "bg": "#0B0E14",
-    "surface": "#0F131A",
-    "raised": "#0D1017",
-    "text": "#BFBDB6",
-    "muted": "#565B66",
-    "accent": "#59C2FF",
-    "accent2": "#D2A6FF",
-    "danger": "#D95757",
-    "warning": "#E6B673",
-    "success": "#7FD962"
-  },
-  "everforest": {
-    "title": "Everforest",
-    "bg": "#2D353B",
-    "surface": "#333C43",
-    "raised": "#343F44",
-    "text": "#D3C6AA",
-    "muted": "#7A8478",
-    "accent": "#A7C080",
-    "accent2": "#7FBBB3",
-    "danger": "#E67E80",
-    "warning": "#E69875",
-    "success": "#A7C080"
-  },
-  "kanagawa": {
-    "title": "Kanagawa",
-    "bg": "#1F1F28",
-    "surface": "#2A2A37",
-    "raised": "#363646",
-    "text": "#DCD7BA",
-    "muted": "#727169",
-    "accent": "#7E9CD8",
-    "accent2": "#957FB8",
-    "danger": "#E82424",
-    "warning": "#D7A657",
-    "success": "#98BB6C"
-  },
-  "monokai": {
-    "title": "Monokai",
-    "bg": "#272822",
-    "surface": "#1E1F1C",
-    "raised": "#3E3D32",
-    "text": "#F8F8F2",
-    "muted": "#75715E",
-    "accent": "#66D9EF",
-    "accent2": "#AE81FF",
-    "danger": "#F92672",
-    "warning": "#E6DB74",
-    "success": "#A6E22E"
-  },
-  "github": {
-    "title": "GitHub Dark",
-    "bg": "#0D1117",
-    "surface": "#010409",
-    "raised": "#161B22",
-    "text": "#C9D1D9",
-    "muted": "#8B949E",
-    "accent": "#58A6FF",
-    "accent2": "#BC8CFF",
-    "danger": "#F85149",
-    "warning": "#E3B341",
-    "success": "#3FB950"
-  },
-  "solarized": {
-    "title": "Solarized Dark",
-    "bg": "#002B36",
-    "surface": "#073642",
-    "raised": "#073642",
-    "text": "#839496",
-    "muted": "#586E75",
-    "accent": "#268BD2",
-    "accent2": "#6C71C4",
-    "danger": "#DC322F",
-    "warning": "#B58900",
-    "success": "#859900"
-  },
-  "dracula": {
-    "title": "Dracula",
-    "bg": "#282A36",
-    "surface": "#21222C",
-    "raised": "#44475A",
-    "text": "#F8F8F2",
-    "muted": "#6272A4",
-    "accent": "#BD93F9",
-    "accent2": "#FF79C6",
-    "danger": "#FF5555",
-    "warning": "#F1FA8C",
-    "success": "#50FA7B"
-  },
-  "carbonfox": {
-    "title": "Carbonfox",
-    "bg": "#161616",
-    "surface": "#1A1A1A",
-    "raised": "#1E1E1E",
-    "text": "#F2F4F8",
-    "muted": "#7D848F",
-    "accent": "#33B1FF",
-    "accent2": "#78A9FF",
-    "danger": "#EE5396",
-    "warning": "#F1C21B",
-    "success": "#25BE6A"
-  },
-  "catppuccin-frappe": {
-    "title": "Catppuccin Frapp\\u00e9",
-    "bg": "#303446",
-    "surface": "#292C3C",
-    "raised": "#232634",
-    "text": "#C6D0F5",
-    "muted": "#949CB8",
-    "accent": "#8DA4E2",
-    "accent2": "#CA9EE6",
-    "danger": "#E78284",
-    "warning": "#E5C890",
-    "success": "#A6D189"
-  },
-  "catppuccin-macchiato": {
-    "title": "Catppuccin Macchiato",
-    "bg": "#24273A",
-    "surface": "#1E2030",
-    "raised": "#181926",
-    "text": "#CAD3F5",
-    "muted": "#939AB7",
-    "accent": "#8AADF4",
-    "accent2": "#C6A0F6",
-    "danger": "#ED8796",
-    "warning": "#EED49F",
-    "success": "#A6DA95"
-  },
-  "cursor": {
-    "title": "Cursor Dark",
-    "bg": "#181818",
-    "surface": "#141414",
-    "raised": "#262626",
-    "text": "#E4E4E4",
-    "muted": "#E4E4E4",
-    "accent": "#88C0D0",
-    "accent2": "#81A1C1",
-    "danger": "#E34671",
-    "warning": "#F1B467",
-    "success": "#3FA266"
-  },
-  "lucent-orng": {
-    "title": "Lucent Orange",
-    "bg": "#000000",
-    "surface": "#000000",
-    "raised": "#000000",
-    "text": "#EEEEEE",
-    "muted": "#808080",
-    "accent": "#EC5B2B",
-    "accent2": "#EE7948",
-    "danger": "#E06C75",
-    "warning": "#EC5B2B",
-    "success": "#6BA1E6"
-  },
-  "mercury": {
-    "title": "Mercury",
-    "bg": "#171721",
-    "surface": "#10101A",
-    "raised": "#272735",
-    "text": "#DDDDE5",
-    "muted": "#9D9DA8",
-    "accent": "#8DA4F5",
-    "accent2": "#A7B6F8",
-    "danger": "#FC92B4",
-    "warning": "#FC9B6F",
-    "success": "#77C599"
-  },
-  "nightowl": {
-    "title": "Night Owl",
-    "bg": "#011627",
-    "surface": "#0B253A",
-    "raised": "#0B253A",
-    "text": "#D6DEEB",
-    "muted": "#5F7E97",
-    "accent": "#82AAFF",
-    "accent2": "#7FDBCA",
-    "danger": "#EF5350",
-    "warning": "#ECC48D",
-    "success": "#C5E478"
-  },
-  "orng": {
-    "title": "Orange",
-    "bg": "#0A0A0A",
-    "surface": "#141414",
-    "raised": "#1E1E1E",
-    "text": "#EEEEEE",
-    "muted": "#808080",
-    "accent": "#EC5B2B",
-    "accent2": "#EE7948",
-    "danger": "#E06C75",
-    "warning": "#EC5B2B",
-    "success": "#6BA1E6"
-  },
-  "palenight": {
-    "title": "Palenight",
-    "bg": "#292D3E",
-    "surface": "#1E2132",
-    "raised": "#32364A",
-    "text": "#A6ACCD",
-    "muted": "#676E95",
-    "accent": "#82AAFF",
-    "accent2": "#C792EA",
-    "danger": "#F07178",
-    "warning": "#FFCB6B",
-    "success": "#C3E88D"
-  },
-  "vercel": {
-    "title": "Vercel",
-    "bg": "#000000",
-    "surface": "#1A1A1A",
-    "raised": "#292929",
-    "text": "#EDEDED",
-    "muted": "#878787",
-    "accent": "#0070F3",
-    "accent2": "#52A8FF",
-    "danger": "#E5484D",
-    "warning": "#FFB224",
-    "success": "#46A758"
-  },
-  "orange": {
-    "title": "Classic Orange",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#FAB283",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "green": {
-    "title": "Forest Green",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#7FD88F",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "blue": {
-    "title": "Deep Blue",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#5C9CF5",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "purple": {
-    "title": "Cyberpunk Purple",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#9D7CD8",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "monochrome": {
-    "title": "Monochrome",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#EEEEEE",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "pastel": {
-    "title": "Pastel Blush Pink",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#F5A9C0",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "mint": {
-    "title": "Pastel Mint",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#98E4C8",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "lavender": {
-    "title": "Pastel Lavender",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#C5B4E3",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "peach": {
-    "title": "Pastel Peach",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#F5C6A0",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "sky": {
-    "title": "Pastel Sky",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#A8D8F0",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "rose": {
-    "title": "Pastel Rose",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#E8A0B0",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "butter": {
-    "title": "Pastel Butter",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#F0E0A0",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "coral": {
-    "title": "Pastel Coral",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#F08070",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "lilac": {
-    "title": "Pastel Lilac",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#C8A8E0",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "sage": {
-    "title": "Pastel Sage",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#A8C8A0",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
-  },
-  "retro": {
-    "title": "Retro Terminal",
-    "bg": "#080B12",
-    "surface": "#0E131E",
-    "raised": "#141B28",
-    "text": "#E7EDF7",
-    "muted": "#8995A8",
-    "accent": "#00FF66",
-    "accent2": "#2DD4BF",
-    "danger": "#FB7185",
-    "warning": "#FBBF24",
-    "success": "#3ECF8E"
+  "spiddy-brick": {
+    "title": "Brick Batman",
+    "ui": "pop",
+    "hero": "spiddy",
+    "bg": "#14161B",
+    "surface": "#1C1F26",
+    "raised": "#272B35",
+    "text": "#F6F3E8",
+    "muted": "#A9AEBA",
+    "accent": "#FACC15",
+    "accent2": "#3B82F6",
+    "danger": "#FF5C5C",
+    "warning": "#FACC15",
+    "bubble": "#FACC15",
+    "success": "#6FD39A",
+    "heroSuit": "#1E2430",
+    "heroChest": "#FACC15"
   }
 };
 
@@ -1614,6 +1135,12 @@ function setupEventListeners() {
       switchTab(state.activeTab === 'stats' ? 'chat' : 'stats');
     });
   }
+  if (headerAnimBtn) {
+    headerAnimBtn.addEventListener('click', (e) => { e.stopPropagation(); roamChangeAct(); });
+  }
+  if (headerAnimStopBtn) {
+    headerAnimStopBtn.addEventListener('click', (e) => { e.stopPropagation(); roamToggleStill(); });
+  }
   if (tabSessionsBtn) {
     tabSessionsBtn.addEventListener('click', () => switchTab('sessions'));
   }
@@ -1835,6 +1362,17 @@ function setupEventListeners() {
     settingsSwitchModelBtn.addEventListener('click', () => {
       closeSettingsModal();
       handleModelCommand('');
+    });
+  }
+  if (mascotStyleSelect) {
+    mascotStyleSelect.addEventListener('change', () => {
+      mascotStyle = mascotStyleSelect.value === 'classic' ? 'classic' : '3d';
+      if (mascotStyle === '3d') hero3dDisabled = false;
+      try { localStorage.setItem(MASCOT_STYLE_KEY, mascotStyle); } catch (_) {}
+      if (roamCtl) { roamCtl.destroy(); roamCtl = null; roamCtlKind = null; }
+      roamKey = '';
+      roamSync();
+      syncMascotStyleSelect();
     });
   }
   const headerSessionInfo = document.querySelector('.header-session-info');
@@ -2702,6 +2240,9 @@ function applyTheme(name, { persist = true } = {}) {
   state.theme = name;
   const root = document.documentElement;
   root.dataset.theme = name;
+  // UI identity: "pop" enables the comic styling in style.css; everything else stays classic.
+  root.dataset.ui = t.ui || 'classic';
+  if (t.hero) root.dataset.hero = t.hero; else delete root.dataset.hero;
   const set = (k, v) => root.style.setProperty(k, v);
   root.style.colorScheme = t.scheme === 'light' ? 'light' : 'dark';
   const meta = document.querySelector('meta[name="theme-color"]');
@@ -2722,6 +2263,9 @@ function applyTheme(name, { persist = true } = {}) {
   set('--danger', t.danger);
   set('--warning', t.warning);
   set('--success', t.success);
+  set('--pop-bubble', t.bubble || t.warning);
+  set('--hero-suit', t.heroSuit || '#336687');
+  set('--hero-chest', t.heroChest || '#ff6d36');
   // Text on accent buttons: pick black or white, whichever contrasts more with the accent.
   // Buttons and the logo use a gradient that starts 20% lighter than the accent, so check both ends.
   const accentEnds = [t.accent, mixHex(t.accent, '#ffffff', 0.2)];
@@ -2736,6 +2280,10 @@ function applyTheme(name, { persist = true } = {}) {
   persistPrefs();
   syncThemeToggle();
   syncThemeSelectLabel();
+  // The Spiddy greeting/stage is rendered by renderMessages. Defer to a microtask: init() runs
+  // before later module-level consts (renderCache, HERO_VOICE_SEED) are initialised, and a
+  // synchronous render here would hit a TDZ error that init's try/catch silently swallows.
+  if (messagesEl) queueMicrotask(() => renderMessages());
   return true;
 }
 
@@ -2751,7 +2299,7 @@ function handleThemeCommand(args) {
     id,
     label: THEMES[id].title,
     sublabel: id,
-    category: id === 'qcode' ? 'Web' : 'TUI',
+    category: THEMES[id].hero ? 'Heroes' : ((id === 'qcode' || id === 'qcode-light') ? 'Web' : 'Classic'),
     isActive: id === state.theme
   }));
   showFuzzyPicker('Select Theme', items, state.theme, (chosen) => {
@@ -3633,17 +3181,51 @@ function renderAttachmentTray() {
 }
 
 // Message bubble chips: thumbnails for images, name/size chips for files.
+// "Spiddy look": send an attached image to the local Cactus Mirage bridge and print what
+// Spiddy saw. Optional: with no endpoint the button explains how to start the bridge.
+async function runSpiddyLook(btn, out, attachment) {
+  btn.disabled = true;
+  out.hidden = false;
+  out.textContent = lineFor('look', (attachment && attachment.name) || 'image') + ' …';
+  const res = await describeImage(attachment && attachment.previewUrl);
+  if (!res) {
+    out.textContent = getMirageEndpoint()
+      ? 'Mirage did not answer. Is tools/cactus_mirage_bridge.py still running?'
+      : 'Mirage is off. Run tools/cactus_mirage_bridge.py, then qcodeSpiddy.setMirageEndpoint("http://127.0.0.1:9102/describe")';
+    btn.disabled = false;
+    return;
+  }
+  out.innerHTML = '<span class="spiddy-look-name">Spiddy</span> ' + esc(res.summary);
+  out.title = res.tookMs ? 'Cactus Mirage · ' + (res.tookMs / 1000).toFixed(1) + 's' : 'Cactus Mirage';
+  btn.textContent = '👁 Look again';
+  btn.disabled = false;
+}
+
 function renderMessageAttachments(list) {
   const wrap = document.createElement('div');
   wrap.className = 'msg-attachments';
   for (const a of list) {
     if (a.kind === 'image' && typeof a.previewUrl === 'string' && a.previewUrl.indexOf('data:image/') === 0) {
+      const fig = document.createElement('figure');
+      fig.className = 'msg-attach-figure';
       const img = document.createElement('img');
       img.className = 'msg-attach-thumb';
       img.src = a.previewUrl;
       img.alt = a.name || 'image';
       img.title = a.name || 'image';
-      wrap.appendChild(img);
+      fig.appendChild(img);
+      const lookBtn = document.createElement('button');
+      lookBtn.type = 'button';
+      lookBtn.className = 'msg-attach-look';
+      lookBtn.textContent = '👁 Spiddy look';
+      lookBtn.title = 'Ask Spiddy to look at this image (Cactus Mirage)';
+      const lookOut = document.createElement('div');
+      lookOut.className = 'spiddy-look';
+      lookOut.hidden = true;
+      lookBtn.addEventListener('click', () => { runSpiddyLook(lookBtn, lookOut, a); });
+      fig.appendChild(lookBtn);
+      fig.appendChild(lookOut);
+      wrap.appendChild(fig);
     } else {
       const chip = document.createElement('span');
       chip.className = 'msg-attach-chip';
@@ -5707,9 +5289,261 @@ function reconcileChildren(parent, nodes) {
   while (cur) { const next = cur.nextSibling; parent.removeChild(cur); cur = next; }
 }
 
+function heroThemeActive() { return document.documentElement.dataset.hero === 'spiddy'; }
+// The 3D renderer replaces the CSS Spiddy entirely; keep the old markup only as a fallback.
+function hero3dActive() { return heroThemeActive() && mascotStyle === '3d' && !hero3dDisabled; }
+
+// ── Roaming Spiddy ─────────────────────────────────────────────────────────
+// With the Spiddy theme on and a chat open, one Spiddy wanders the chat pane. It thinks
+// while the model works, shows tool poses while tools run, and does random acts when
+// idle. The planning is in roam.js; this block owns the element and a one-second sync.
+function roamActive() { return !!roamCtl && !!roamCtl.el && roamCtl.el.isConnected; }
+function roamReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+function roamTeardown() {
+  if (roamTicker) { clearInterval(roamTicker); roamTicker = null; }
+  if (roamCtl) { roamCtl.destroy(); roamCtl = null; }
+  roamMode = null; roamKey = ''; roamNextAt = 0; roamSpot = null; roamAct = null;
+  roamCtlKind = null;
+  if (headerAnimBtn) headerAnimBtn.classList.add('hidden');
+  if (headerAnimStopBtn) headerAnimStopBtn.classList.add('hidden');
+}
+function roamSetStill(on) {
+  roamStill = !!on;
+  try { localStorage.setItem('qcode-spiddy-still', roamStill ? '1' : '0'); } catch (_) {}
+}
+// The act pool for the renderer in use: 3D heroes have their own larger, mode-specific pools.
+function roamPool(mode = 'idle') {
+  return roamCtlKind === '3d'
+    ? hero3dPoolFor(mode, state.theme)
+    : actPoolFor(mode, state.theme);
+}
+// Pick a different act from the current pool (the pool for the mode Spiddy is in).
+// Changing the act also resumes a stopped Spiddy.
+function roamChangeAct() {
+  if (!roamCtl || !roamCtl.el) return;
+  if (roamStill) roamSetStill(false);
+  const pool = roamPool(roamMode || 'idle');
+  const next = pickRoamAct(Math.random, roamAct, pool);
+  if (!next) return;
+  roamAct = next;
+  if (roamCtlKind === '3d') {
+    roamExpressionIdx += 1;
+    roamCtl.update({
+      animation: roamAct || 'idle',
+      expression: hero3dExpressionFor({ mode: roamMode || 'idle', index: roamExpressionIdx }),
+    });
+  } else {
+    roamCtl.update({ act: roamAct });
+  }
+  roamSync();
+}
+function roamToggleStill() {
+  if (!roamCtl || !roamCtl.el) return;
+  roamSetStill(!roamStill);
+  if (roamStill) {
+    roamAct = null;
+    if (roamCtlKind === '3d') roamCtl.update({ animation: 'idle' });
+    else roamCtl.update({ act: null });
+  } else {
+    roamAct = pickRoamAct(Math.random, null, roamPool(roamMode || 'idle'));
+    if (roamCtlKind === '3d') roamCtl.update({ animation: roamAct || 'idle' });
+    else roamCtl.update({ act: roamAct });
+  }
+  roamSync();
+}
+// The header buttons show only while a Spiddy theme is on and Spiddy is roaming.
+function roamSyncHeaderButtons() {
+  if (headerAnimBtn) headerAnimBtn.classList.remove('hidden');
+  if (headerAnimStopBtn) {
+    headerAnimStopBtn.classList.remove('hidden');
+    headerAnimStopBtn.classList.toggle('active', roamStill);
+    headerAnimStopBtn.setAttribute('aria-pressed', roamStill ? 'true' : 'false');
+    const label = roamStill ? 'Resume Spiddy\'s animation' : 'Stop Spiddy\'s animation';
+    headerAnimStopBtn.title = label;
+    headerAnimStopBtn.setAttribute('aria-label', label);
+    headerAnimStopBtn.querySelector('span').textContent = roamStill ? 'Play' : 'Stop';
+  }
+}
+function roamLayer() { return document.getElementById('spiddy-roam'); }
+// The 3D mascot is pinned in the right gutter beside the message column, just above the
+// composer. It is small enough to sit outside the text without covering it.
+const HERO3D_ANCHOR = { right: 22, lift: 38 };
+function hero3dAnchor(box) {
+  const right = box.x + box.width;
+  const main = document.getElementById('main');
+  const input = document.getElementById('input-area');
+  const messages = document.getElementById('messages');
+  let composerTop = box.y + box.height;
+  if (main && input) {
+    composerTop = input.getBoundingClientRect().top - main.getBoundingClientRect().top;
+  }
+  // Centre the mascot in the gutter between the message column and the pane edge.
+  let left = right - HERO3D_ANCHOR.right;
+  if (main && messages) {
+    const mainLeft = main.getBoundingClientRect().left;
+    const columnRight = messages.getBoundingClientRect().right - mainLeft;
+    const gutter = Math.max(0, right - columnRight);
+    left = Math.min(right - HERO3D_ANCHOR.right, Math.max(columnRight + 6, columnRight + gutter / 2));
+  }
+  return {
+    left: Math.max(box.x + 20, left),
+    top: Math.max(70, composerTop - HERO3D_ANCHOR.lift),
+  };
+}
+// The chat pane's box inside #main (the composer is outside it, so Spiddy never sits on the input).
+function roamBox() {
+  const cc = document.getElementById('chat-container');
+  const main = document.getElementById('main');
+  if (!cc || !main) return null;
+  const a = cc.getBoundingClientRect();
+  const b = main.getBoundingClientRect();
+  return { x: a.left - b.left, y: a.top - b.top, width: a.width, height: a.height };
+}
+function attachRoamCtl() {
+  const layer = roamLayer();
+  if (!layer) return null;
+  if (mascotStyle === '3d' && !hero3dDisabled) {
+    try {
+      roamCtl = attachHero3D(layer, {
+        hero: hero3dForTheme(state.theme),
+        expression: 'neutral',
+        animation: 'idle',
+        reducedMotion: roamReducedMotion(),
+      });
+      roamCtlKind = '3d';
+      return roamCtl;
+    } catch (err) {
+      // No WebGL, no three.js, or a driver failure: keep the theme usable with the CSS mascot.
+      hero3dDisabled = true;
+      console.warn('3D mascot unavailable; using the classic CSS mascot.', err);
+      try { localStorage.setItem(MASCOT_STYLE_KEY, 'classic'); } catch (_) {}
+      syncMascotStyleSelect();
+    }
+  }
+  roamCtl = attachMascot(layer, { className: 'mascot-roam', state: { pose: 'think' } });
+  roamCtlKind = 'classic';
+  return roamCtl;
+}
+
+function roamSync() {
+  const session = heroThemeActive() ? state.openSessions.find(s => s.id === state.sessionId) : null;
+  if (!session || !document.getElementById('main')) { roamTeardown(); return; }
+  const last = session.messages && session.messages[session.messages.length - 1];
+  const toolEvents = last && last.role === 'assistant' ? (last.toolEvents || []) : [];
+  const mode = roamModeFor({ generating: !!session.generating, toolEvents });
+  const wantKind = (mascotStyle === '3d' && !hero3dDisabled) ? '3d' : 'classic';
+  if (roamCtl && roamCtlKind !== wantKind) {
+    roamCtl.destroy();
+    roamCtl = null;
+    roamCtlKind = null;
+  }
+  if (!roamCtl) attachRoamCtl();
+  if (!roamCtl) { roamTeardown(); return; }
+  const is3d = roamCtlKind === '3d';
+
+  const now = Date.now();
+  const box = roamBox();
+  // Relocate on schedule, and straight away when the mode changes so the new act starts at once.
+  const relocate = !!box && box.width > 0 && (now >= roamNextAt || !roamSpot || mode !== roamMode);
+  roamMode = mode;
+  if (relocate) {
+    const reduced = roamReducedMotion();
+    const plan = planRoam({
+      mode,
+      box: { width: box.width, height: box.height, mascotWidth: ROAM_SIZE.mascotWidth, mascotHeight: ROAM_SIZE.mascotHeight },
+      theme: state.theme,
+      prev: roamSpot,
+      prevAct: roamAct,
+      reduced,
+      // 3D picks its own (hero-specific) act below; skip the CSS act pool.
+      pool: is3d ? [] : undefined,
+    });
+    roamSpot = plan.spot;
+    if (is3d) {
+      roamExpressionIdx += 1;
+      roamAct = (roamStill || reduced)
+        ? null
+        : hero3dAnimationFor({ mode, theme: state.theme, toolEvents, rand: Math.random, prev: roamAct });
+    } else {
+      roamAct = roamStill ? null : plan.act;
+    }
+    roamNextAt = now + plan.delayMs;
+  }
+  const act = roamStill ? null : roamAct;
+  roamSyncHeaderButtons();
+  const st = roamStateFor({ mode, toolEvents, seed: String(session.id || '') });
+  const themeHero = is3d ? hero3dForTheme(state.theme) : '';
+  // File/web lookups get their own search dialogue and expression.
+  const voiceMode = mode === 'tools' && hero3dHasSearchTool(toolEvents) ? 'search' : mode;
+  const expression = is3d ? hero3dExpressionFor({ mode: voiceMode, index: roamExpressionIdx }) : '';
+  // Every hero speaks only its own lines, in both the 3D and classic renderers.
+  const caption = hero3dLineFor(state.theme, voiceMode, String(session.id || '') + ':' + voiceMode + ':' + roamExpressionIdx);
+  const key = (is3d ? '3d|' + themeHero : 'css') + '|' + mode + '|' + st.pose + '|' + st.emotion + '|' + caption + '|' + expression;
+  if (relocate || key !== roamKey) {
+    roamKey = key;
+    if (is3d) {
+      roamCtl.update({
+        hero: themeHero,
+        expression,
+        animation: act || 'idle',
+        caption,
+      });
+    } else {
+      roamCtl.update({ pose: st.pose, emotion: st.emotion, motion: st.motion, caption, act });
+    }
+  }
+  if (is3d) roamCtl.setReducedMotion(roamReducedMotion());
+  if (box) {
+    if (is3d) {
+      // Pinned below the thinking button, top-right of the chat area.
+      const anchor = hero3dAnchor(box);
+      roamCtl.moveTo({ left: anchor.left, top: anchor.top, width: 0, height: 0 });
+    } else if (roamSpot) {
+      roamCtl.el.style.left = (box.x + roamSpot.left) + 'px';
+      roamCtl.el.style.top = (box.y + roamSpot.top) + 'px';
+    }
+  }
+  if (!roamTicker) roamTicker = setInterval(roamSync, 1000);
+}
+// One seed per page load: Spiddy varies between visits, not between re-renders.
+const HERO_VOICE_SEED = String(Date.now());
+function heroIntroNode() {
+  const node = document.createElement('div');
+  node.className = 'hero-intro-wrap';
+  node.innerHTML = heroMarkup('intro', { bubble: hero3dLineFor(state.theme, 'greeting', HERO_VOICE_SEED) });
+  return node;
+}
+// The rule-based clip is drawn immediately so the hero never waits on a network call.
+// If a small-model endpoint is configured, its label refines the clip once it arrives.
+// The stage is re-rendered in place; stale results are ignored because the element is
+// checked for connectivity. Results are cached per text by sentiment-llm.js.
+const heroRefineCache = new Map();
+function refineHeroStage(stage, clip, msg) {
+  const text = msg && msg.content ? String(msg.content) : '';
+  if (!text.trim() || !stage) return;
+  const key = text.slice(0, 4000);
+  const apply = (label) => {
+    if (!stage.isConnected || !label) return;
+    const refined = refineClip(clip, label, text);
+    if (refined.emotion === clip.emotion && refined.intensity === clip.intensity && refined.motion === clip.motion) return;
+    const say = hero3dQuipFor(state.theme, { ...refined, text, toolEvents: msg.toolEvents });
+    stage.innerHTML = heroMarkup(refined.pose, { ...refined, caption: say });
+  };
+  if (heroRefineCache.has(key)) { apply(heroRefineCache.get(key)); return; }
+  Promise.resolve(classifySentiment(text, msg.toolEvents)).then(label => {
+    if (!label) return;
+    if (heroRefineCache.size > 120) heroRefineCache.clear();
+    heroRefineCache.set(key, label);
+    apply(label);
+  }).catch(() => {});
+}
+
 function renderMessages() {
+  roamSync();
   const session = state.openSessions.find(s => s.id === state.sessionId);
-  if (!session) { reconcileChildren(messagesEl, []); return; }
+  if (!session) { reconcileChildren(messagesEl, hero3dActive() ? [] : heroThemeActive() ? [heroIntroNode()] : []); return; }
   const out = [];
 
   const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
@@ -5750,7 +5584,12 @@ function renderMessages() {
   if (session.messages.length === 0 && queue.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-chat';
-    empty.innerHTML = '<div class="empty-chat-mark">Q</div>'
+    const emptyMark = hero3dActive()
+      ? ''
+      : heroThemeActive()
+        ? heroMarkup('intro', { bubble: hero3dLineFor(state.theme, 'greeting', HERO_VOICE_SEED) })
+        : '<div class="empty-chat-mark">Q</div>';
+    empty.innerHTML = emptyMark
       + '<h2>What are we building?</h2>'
       + '<p>Ask QCode to explore the workspace, write code, or run a command.</p>'
       + '<div class="empty-chat-hint"><span><kbd>/</kbd> commands</span><span><kbd>Ctrl</kbd> <kbd>P</kbd> palette</span><span><kbd>Enter</kbd> send</span></div>';
@@ -6053,7 +5892,17 @@ function renderMessage(msg) {
     content.appendChild(renderMessageAttachments(msg.attachments));
   }
   if (msg.content && !hasTextSegments) appendText(msg.content, isLive);
-  if (isLive && !msg.content && timeline.length === 0) {
+  const liveRunningTools = (msg.toolEvents || []).some(t => t && t.status === 'running');
+  if (isLive && heroThemeActive() && !hero3dActive() && !roamActive() && (liveRunningTools || (!msg.content && timeline.length === 0))) {
+    const stage = document.createElement('div'); stage.className = 'hero-live';
+    const clip = clipFor({ pose: heroPoseForToolEvents(msg.toolEvents), text: msg.content || '', toolEvents: msg.toolEvents });
+    // The current hero speaks in its own voice while the reply streams; the neutral pose
+    // caption is the fallback.
+    const say = hero3dQuipFor(state.theme, { ...clip, text: msg.content || '', toolEvents: msg.toolEvents });
+    stage.innerHTML = heroMarkup(clip.pose, { ...clip, caption: say });
+    content.appendChild(stage);
+    refineHeroStage(stage, clip, msg);
+  } else if (isLive && !msg.content && timeline.length === 0) {
     const pending = document.createElement('div'); pending.className = 'msg-pending';
     pending.innerHTML = '<span class="qcode-spinner"></span><span>Working…</span>';
     content.appendChild(pending);

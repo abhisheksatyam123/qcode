@@ -116,8 +116,8 @@ test('WebUI includes TUI command palette, slash commands, and session chrome', (
   assert.match(appJs, /function showCommandPalette/, 'missing showCommandPalette');
   assert.match(appJs, /function applyTheme/, 'missing applyTheme');
   assert.match(appJs, /const THEMES =/, 'missing THEMES');
-  assert.match(appJs, /opencode/, 'TUI opencode theme missing');
-  assert.match(appJs, /tokyonight/, 'TUI tokyonight theme missing');
+  assert.match(appJs, /opencode/, 'opencode theme missing');
+  assert.doesNotMatch(appJs, /"tokyonight":/, 'classic themes other than opencode must be removed');
   assert.match(appJs, /function handleRetryCommand/, 'missing retry');
   assert.match(appJs, /function renderQueuedBlock/, 'missing queued block');
   assert.match(appJs, /function toggleThinking/, 'missing thinking toggle');
@@ -426,9 +426,11 @@ test('WebUI agent modes and model capability badges', () => {
 
   // Slash commands
   assert.match(utilsJs, /name:\s*['"]\/agent['"]/, 'utils.js should declare /agent slash command');
-  assert.doesNotMatch(utilsJs, /persona/i, 'utils.js should not reference the removed persona feature');
+  // The removed feature was per-session agent personas (/personas, /persona, the picker).
+  // Spiddy's personality layer is a different thing and must not trip this guard.
+  assert.doesNotMatch(utilsJs, /\/personas?\b|persona:\s|state\.persona\b|ns-persona/, 'utils.js should not reference the removed persona feature');
   assert.match(appJs, /case 'agent':/, 'app.js should handle /agent command');
-  assert.doesNotMatch(appJs, /persona/i, 'app.js should not reference the removed persona feature');
+  assert.doesNotMatch(appJs, /\/personas?\b|persona:\s|state\.persona\b|ns-persona/, 'app.js should not reference the removed persona feature');
 
   // Model capability badges & formatContextTokens
   assert.match(utilsJs, /export function formatContextTokens/, 'utils.js should export formatContextTokens');
@@ -633,4 +635,258 @@ test('WebUI new session modal has one folder picker, no suggestions dropdown', (
   assert.doesNotMatch(appJs, /workspace-suggestion-item/, 'no suggestion rows should be rendered');
   assert.doesNotMatch(appJs, /qcode-recent-workspaces/, 'recent-workspace history only fed the dropdown and must be gone');
   assert.doesNotMatch(styleCss, /workspace-suggest/, 'dropdown CSS must be removed');
+});
+
+test('WebUI QCode Pop identity is opt-in via data-ui and leaves classic themes alone', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+  assert.match(appJs, /"qcode": \{\s*"title": "QCode Pop",\s*"ui": "pop"/, 'qcode theme must be the Pop identity');
+  assert.match(appJs, /root\.dataset\.ui = t\.ui \|\| 'classic';/, 'applyTheme must set data-ui');
+  assert.doesNotMatch(appJs, /"spiderman": \{/, 'spiderman overlay theme must be removed');
+  assert.match(appJs, /set\('--pop-bubble', t\.bubble \|\| t\.warning\);/, 'applyTheme must set --pop-bubble');
+  assert.match(appJs, /'Classic'/, 'ported palettes must be grouped under Classic');
+  assert.doesNotMatch(indexHtml, /id="theme-fx"/, 'header spider overlay must be removed');
+  assert.match(styleCss, /html\[data-ui="pop"\] \.message\.user \.md-content \{/, 'pop user bubble rule missing');
+  assert.doesNotMatch(styleCss, /fx-spider/, 'spider CSS must be removed');
+});
+
+test('WebUI Spiddy hero: theme wiring, greeting, and deferred render', () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+  assert.match(appJs, /"spiddy": \{[\s\S]*?"hero": "spiddy"/, 'spiddy theme must declare hero');
+  assert.match(appJs, /if \(t\.hero\) root\.dataset\.hero = t\.hero; else delete root\.dataset\.hero;/, 'applyTheme must mirror hero onto data-hero');
+  assert.match(appJs, /import \{ heroMarkup, heroPoseForToolEvents \} from '\.\/hero\.js';/, 'app.js must import hero.js');
+  assert.match(appJs, /queueMicrotask\(\(\) => renderMessages\(\)\);/, 'theme re-render must be deferred past module init (TDZ)');
+  assert.match(appJs, /reconcileChildren\(messagesEl, hero3dActive\(\) \? \[\] : heroThemeActive\(\) \? \[heroIntroNode\(\)\] : \[\]\)/, 'no-session view must show the CSS greeting only when the 3D mascot is not active');
+  assert.match(styleCss, /html\[data-hero="spiddy"\] \.session-active-dot/, 'session glow rule for Spiddy missing');
+});
+
+test('WebUI hero.js: tool-to-pose mapping and markup safety', async () => {
+  const hero = await import(path.join(srcDir, 'hero.js'));
+  assert.equal(hero.heroPoseForTool('read'), 'computer');
+  assert.equal(hero.heroPoseForTool('webfetch'), 'phone');
+  assert.equal(hero.heroPoseForTool('bash'), 'tools');
+  assert.equal(hero.heroPoseForTool('edit'), 'build');
+  assert.equal(hero.heroPoseForTool('something_new'), 'tools');
+  assert.equal(hero.heroPoseForToolEvents([]), 'think');
+  assert.equal(hero.heroPoseForToolEvents([
+    { tool_name: 'read', status: 'running' },
+    { tool_name: 'webfetch', status: 'running' },
+  ]), 'phone', 'most recent running tool wins');
+  assert.equal(hero.heroPoseForToolEvents([{ tool_name: 'read', status: 'success' }]), 'think', 'finished tools do not set the pose');
+  assert.match(hero.heroMarkup('computer'), /class="hero hero-computer hero-emo-/, 'root class must start with the pose');
+  assert.equal(hero.heroMarkup('not-a-pose').includes('hero-think'), true, 'unknown poses fall back to think');
+  assert.match(hero.heroMarkup('intro', { bubble: '<b>x</b>' }), /&lt;b&gt;x&lt;\/b&gt;/, 'bubble text must be escaped');
+});
+
+test('WebUI personality.js: Spiddy voice, mood, and risky-command conscience', async () => {
+  const p = await import(path.join(srcDir, 'personality.js'));
+  assert.equal(p.SPIDDY.name, 'Spiddy');
+  for (const [kind, lines] of Object.entries(p.VOICE)) {
+    assert.ok(Array.isArray(lines) && lines.length > 0, `voice list ${kind} must not be empty`);
+    for (const line of lines) assert.ok(line.trim().length > 0, `empty line in ${kind}`);
+  }
+  // Stable for the same seed, varied across seeds (no flicker on re-render, no repetition).
+  assert.equal(p.lineFor('think', 'abc'), p.lineFor('think', 'abc'));
+  const seen = new Set('0123456789'.split('').map(s => p.lineFor('think', s)));
+  assert.ok(seen.size > 1, 'different seeds should produce different lines');
+  // Unknown kinds fall back to idle rather than throwing.
+  assert.ok(p.lineFor('nope', 'x').length > 0);
+
+  // Voice routing: the outcome beats the pose.
+  assert.equal(p.voiceFor({ pose: 'computer', emotion: 'focused' }), 'computer');
+  assert.equal(p.voiceFor({ pose: 'tools', emotion: 'worried' }), 'error');
+  assert.equal(p.voiceFor({ pose: 'build', emotion: 'proud' }), 'success');
+  assert.equal(p.voiceFor({ pose: 'intro' }), 'greeting');
+
+  const clip = { pose: 'phone', emotion: 'happy', text: 'looked it up' };
+  assert.equal(p.quipFor(clip), p.quipFor(clip), 'same clip must produce the same line');
+  assert.ok(p.quipFor(clip).length > 0);
+
+  // Risky shell commands get the angel/devil conscience; everything else does not.
+  assert.ok(p.riskyToolEvent([{ tool_name: 'bash', status: 'running', input: { command: 'rm -rf build' } }]));
+  assert.ok(p.riskyToolEvent([{ tool_name: 'bash', status: 'running', command: 'git push --force' }]));
+  assert.equal(p.riskyToolEvent([{ tool_name: 'bash', status: 'running', input: { command: 'ls -la' } }]), null);
+  assert.equal(p.conscienceFor([{ tool_name: 'read', status: 'success' }]), null);
+  const c = p.conscienceFor([{ tool_name: 'bash', status: 'running', input: { command: 'git push --force' } }], 's');
+  assert.ok(c && c.angel && c.devil, 'conscience needs both voices');
+  assert.equal(p.quipFor({ pose: 'tools', emotion: 'focused', text: 'x', toolEvents: [{ tool_name: 'bash', status: 'running', input: { command: 'git reset --hard' } }] }),
+    p.quipFor({ pose: 'tools', emotion: 'focused', text: 'x', toolEvents: [{ tool_name: 'bash', status: 'running', input: { command: 'git reset --hard' } }] }),
+    'conscience line must be stable');
+
+  // Mood tracks outcomes.
+  assert.equal(p.moodFor({ emotion: 'proud' }), 'chuffed');
+  assert.equal(p.moodFor({ emotion: 'worried' }), 'sheepish');
+  assert.equal(p.moodFor({}), 'steady');
+});
+
+test('WebUI personality is wired into the greeting and the live hero caption', async () => {
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  const hero = await import(path.join(srcDir, 'hero.js'));
+  assert.match(appJs, /import \{ lineFor \} from '\.\/personality\.js';/, 'app.js keeps the personality layer for neutral image-look copy');
+  assert.match(appJs, /bubble: hero3dLineFor\(state\.theme, 'greeting', HERO_VOICE_SEED\)/, 'greeting must use the current hero voice');
+  assert.match(appJs, /const say = hero3dQuipFor\(state\.theme, \{ \.\.\.clip, text: msg\.content \|\| '', toolEvents: msg\.toolEvents \}\)/, 'live stage must ask the current hero for a line');
+  assert.match(appJs, /heroMarkup\(clip\.pose, \{ \.\.\.clip, caption: say \}\)/, 'live stage must pass the line as the caption');
+  assert.ok(!/HERO_GREETING/.test(appJs.replace(/\/\/.*$/gm, '')), 'old static greeting constant must be gone');
+
+  // A caption arrives from the personality layer, so it must be escaped like any other text.
+  const markup = hero.heroMarkup('think', { caption: '<img src=x onerror=alert(1)>' });
+  assert.ok(markup.includes('&lt;img src=x onerror=alert(1)&gt;'), 'caption must be escaped');
+  assert.ok(!markup.includes('<img'), 'caption must not inject markup');
+  assert.ok(markup.includes('aria-label="&lt;img'), 'aria-label must be escaped too');
+  assert.match(hero.heroMarkup('think', { caption: 'Custom line' }), /hero-caption">Custom line<span/, 'caption override must render');
+});
+
+test('WebUI sentiment-llm.js: validates model labels, falls back safely, resolves catalog rows', async () => {
+  const http = await import('node:http');
+  const sl = await import(path.join(srcDir, 'sentiment-llm.js'));
+  const em = await import(path.join(srcDir, 'emotions.js'));
+
+  // Parsing: objects, prose, ANSI, label/score pairs, and junk.
+  assert.deepEqual(sl.parseSentiment({ emotion: 'goofy', intensity: 'high', confidence: 0.9 }),
+    { emotion: 'goofy', intensity: 'high', confidence: 0.9 });
+  assert.deepEqual(sl.parseSentiment({ label: 'worried' }), { emotion: 'worried', intensity: 'mid', confidence: null });
+  assert.deepEqual(sl.parseSentiment('emotion: excited intensity=high'), { emotion: 'excited', intensity: 'high', confidence: null });
+  assert.deepEqual(sl.parseSentiment('\u001b[32mdizzy\u001b[0m:low'), { emotion: 'dizzy', intensity: 'low', confidence: null });
+  assert.deepEqual(sl.parseSentiment({ labels: ['sad', 'happy'], scores: [0.2, 0.8] }),
+    { emotion: 'happy', intensity: 'mid', confidence: 0.8 });
+  assert.equal(sl.parseSentiment({ emotion: 'bogus' }), null);
+  assert.equal(sl.parseSentiment('nonsense'), null);
+  assert.equal(sl.parseSentiment(null), null);
+
+  // No endpoint configured: the rule-based classifier stays in charge, no throw.
+  assert.equal(await sl.classifySentiment('hello', [], { endpoint: '' }), null);
+
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      let payload = {};
+      try { payload = JSON.parse(body || '{}'); } catch (_) {}
+      const text = String(payload.text || '');
+      if (text.includes('garbage')) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"emotion":"bogus"}'); return; }
+      if (text.includes('server-error')) { res.writeHead(500); res.end('no'); return; }
+      if (text.includes('slow')) { return; } // never answers: exercises the timeout
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ emotion: 'goofy', intensity: 'high', confidence: 0.91 }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const endpoint = `http://127.0.0.1:${server.address().port}/classify`;
+  try {
+    const ok = await sl.classifySentiment('oops, my bad', [], { endpoint, noCache: true });
+    assert.ok(ok, 'valid label should be accepted');
+    assert.equal(ok.emotion, 'goofy');
+    assert.equal(ok.intensity, 'high');
+    assert.equal(ok.source, 'llm');
+
+    assert.equal(await sl.classifySentiment('garbage', [], { endpoint, noCache: true }), null, 'unknown label must be rejected');
+    assert.equal(await sl.classifySentiment('server-error', [], { endpoint, noCache: true }), null, '500 must fall back');
+    assert.equal(await sl.classifySentiment('slow', [], { endpoint, noCache: true, timeoutMs: 120 }), null, 'timeout must fall back');
+
+    // The refined clip must be a row that exists in the animation catalog.
+    const ruleClip = em.clipFor({ pose: 'think', text: 'oops, my bad' });
+    const refined = sl.refineClip(ruleClip, ok, 'oops, my bad');
+    assert.equal(refined.emotion, 'goofy');
+    assert.ok(em.CATALOG.some(c =>
+      c.pose === refined.pose && c.emotion === refined.emotion &&
+      c.intensity === refined.intensity && c.motion === refined.motion
+    ), 'refined clip must exist in CATALOG');
+    assert.deepEqual(sl.refineClip(ruleClip, { emotion: 'bogus', intensity: 'high' }, 'x'), ruleClip, 'invalid labels are ignored');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+
+  // The app draws the rule clip first, then refines in place.
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  assert.match(appJs, /import \{ classifySentiment, refineClip, getEndpoint, setEndpoint \} from '\.\/sentiment-llm\.js';/);
+  assert.match(appJs, /qcodeSpiddy = Object\.assign/, 'console helper for configuring the endpoint must exist');
+  assert.match(appJs, /refineHeroStage\(stage, clip, msg\);/);
+  assert.match(appJs, /const refined = refineClip\(clip, label, text\);/, 'refinement must go through the catalog');
+});
+
+test('WebUI emotions.js: clipForEmotion only returns real catalog rows', async () => {
+  const em = await import(path.join(srcDir, 'emotions.js'));
+  assert.equal(em.CATALOG.length, 864);
+  for (const emotion of em.EMOTIONS) {
+    const clip = em.clipForEmotion({ pose: 'build', emotion, intensity: 'high', text: 'seed' });
+    assert.ok(em.CATALOG.some(c =>
+      c.pose === clip.pose && c.emotion === clip.emotion &&
+      c.intensity === clip.intensity && c.motion === clip.motion
+    ), `no catalog row for ${emotion}`);
+    assert.equal(clip.intensity, 'high', 'requested intensity must be honoured');
+  }
+  // Out-of-vocabulary input cannot escape the catalog.
+  const weird = em.clipForEmotion({ pose: 'nope', emotion: 'bogus', intensity: 'nope', text: 'x' });
+  assert.ok(em.CATALOG.some(c => c.id === [weird.pose, weird.emotion, weird.intensity, weird.motion].join('-')));
+  // Stable per text.
+  assert.deepEqual(em.clipForEmotion({ pose: 'think', emotion: 'happy', intensity: 'mid', text: 'a' }),
+    em.clipForEmotion({ pose: 'think', emotion: 'happy', intensity: 'mid', text: 'a' }));
+});
+
+test('WebUI mirage.js: local vision client only talks to a configured bridge', async () => {
+  const http = await import('node:http');
+  const mirage = await import(path.join(srcDir, 'mirage.js'));
+
+  assert.equal(typeof mirage.getMirageEndpoint(), 'string');
+  assert.equal(mirage.mirageAvailable(), false);
+  // In-browser mode is opt-in and inert outside a DOM.
+  assert.equal(mirage.getMirageWasmBase(), '');
+  assert.equal(mirage.mirageWasmReady(), false);
+  assert.equal(await mirage.loadMirageWasm({ base: '' }), null);
+  assert.equal(await mirage.loadMirageWasm({ base: '.' }), null, 'no DOM means no wasm engine');
+  assert.equal(await mirage.describeWithWasm('data:image/png;base64,AAAA', { base: '.' }), null);
+  assert.equal(await mirage.describeImage('data:image/png;base64,AAAA', { wasmBase: '.' }), null, 'wasm path also returns null without a DOM');
+  assert.equal(await mirage.describeImage('data:image/png;base64,AAAA'), null, 'no endpoint means no request');
+  assert.equal(await mirage.describeImage('https://example.com/x.png', { endpoint: 'http://127.0.0.1:1' }), null, 'only data URLs are accepted');
+  assert.equal(mirage.dataUrlBytes('data:image/png;base64,AAAA'), 3);
+
+  assert.equal(mirage.summarizeMirage({ summary: 'computer screen · window' }), 'computer screen · window');
+  assert.equal(
+    mirage.summarizeMirage({ result: { scene: { setting: 'a desk' }, regions: [{ name: 'laptop' }], text: [{ string: 'npm test' }], reasoning: 'tests run' } }),
+    'a desk · laptop · text: npm test · tests run'
+  );
+  assert.equal(mirage.summarizeMirage(null), '');
+
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      let payload = {};
+      try { payload = JSON.parse(body || '{}'); } catch (_) {}
+      if (!String(payload.image || '').startsWith('data:image/')) { res.writeHead(400); res.end('{"ok":false}'); return; }
+      if (String(payload.image).includes('FAILME')) { res.writeHead(500); res.end('{"ok":false}'); return; }
+      if (String(payload.image).includes('SLOWME')) { return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, model: 'mirage', took_ms: 1234, summary: 'computer screen · dark gray · window' }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const endpoint = `http://127.0.0.1:${server.address().port}/describe`;
+  try {
+    const ok = await mirage.describeImage('data:image/png;base64,AAAA', { endpoint });
+    assert.ok(ok);
+    assert.equal(ok.summary, 'computer screen · dark gray · window');
+    assert.equal(ok.tookMs, 1234);
+    assert.equal(ok.model, 'mirage');
+
+    assert.equal(await mirage.describeImage('data:image/png;base64,FAILME', { endpoint }), null, '500 falls back');
+    assert.equal(await mirage.describeImage('data:image/png;base64,SLOWME', { endpoint, timeoutMs: 120 }), null, 'timeout falls back');
+
+    const huge = 'data:image/png;base64,' + 'A'.repeat(mirage.MAX_IMAGE_BYTES * 2);
+    assert.equal(await mirage.describeImage(huge, { endpoint }), null, 'oversize images are rejected locally');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+
+  const appJs = fs.readFileSync(path.join(srcDir, 'app.js'), 'utf8');
+  assert.match(appJs, /import \{ describeImage, getMirageEndpoint, setMirageEndpoint, getMirageWasmBase, setMirageWasmBase \} from '\.\/mirage\.js';/);
+  assert.match(appJs, /setMirageWasmBase: setMirageWasmBase/, 'console helper must configure the in-browser engine');
+  assert.match(appJs, /runSpiddyLook\(lookBtn, lookOut, a\)/, 'image attachments must expose the Spiddy look action');
+  assert.match(appJs, /out\.innerHTML = '<span class="spiddy-look-name">Spiddy<\/span> ' \+ esc\(res\.summary\)/, 'the description must be escaped');
+  assert.match(appJs, /setMirageEndpoint: setMirageEndpoint/, 'console helper must configure the bridge');
+  const styleCss = fs.readFileSync(path.join(srcDir, 'style.css'), 'utf8');
+  assert.match(styleCss, /\.msg-attach-look \{/, 'look button CSS missing');
+  assert.match(styleCss, /\.spiddy-look \{/, 'look result CSS missing');
 });
