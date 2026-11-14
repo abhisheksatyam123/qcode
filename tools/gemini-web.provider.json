@@ -1,0 +1,28 @@
+{
+  "provider": {
+    "gemini-web": {
+      "name": "Gemini Web (browser bridge)",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:9099/v1",
+        "apiKey": "local-bridge"
+      },
+      "models": {
+        "gemini-4-hydrogen": {
+          "name": "Gemini 4 Hydrogen (web)",
+          "tool_call": false,
+          "reasoning": false,
+          "vision": false,
+          "limit": { "context": 1048576, "output": 65536 }
+        },
+        "gemini-4-argon": {
+          "name": "Gemini 4 Argon (web)",
+          "tool_call": false,
+          "reasoning": false,
+          "vision": false,
+          "limit": { "context": 1048576, "output": 65536 }
+        }
+      }
+    }
+  }
+}
