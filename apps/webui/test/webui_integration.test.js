@@ -658,7 +658,7 @@ test('WebUI Spiddy hero: theme wiring, greeting, and deferred render', () => {
   assert.match(appJs, /if \(t\.hero\) root\.dataset\.hero = t\.hero; else delete root\.dataset\.hero;/, 'applyTheme must mirror hero onto data-hero');
   assert.match(appJs, /import \{ heroMarkup, heroPoseForToolEvents \} from '\.\/hero\.js';/, 'app.js must import hero.js');
   assert.match(appJs, /queueMicrotask\(\(\) => renderMessages\(\)\);/, 'theme re-render must be deferred past module init (TDZ)');
-  assert.match(appJs, /reconcileChildren\(messagesEl, hero3dActive\(\) \? \[\] : heroThemeActive\(\) \? \[heroIntroNode\(\)\] : \[\]\)/, 'no-session view must show the CSS greeting only when the 3D mascot is not active');
+  assert.match(appJs, /reconcileChildren\(messagesEl, \(hero3dActive\(\) \|\| mascotState === 'remove'\) \? \[\] : heroThemeActive\(\) \? \[heroIntroNode\(\)\] : \[\]\)/, 'no-session view must not show the mascot when 3D is active or the mascot is removed');
   assert.match(styleCss, /html\[data-hero="spiddy"\] \.session-active-dot/, 'session glow rule for Spiddy missing');
 });
 

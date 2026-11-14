@@ -470,7 +470,7 @@ const sessionsToggleBtn = document.getElementById('sessions-toggle-btn');
 const activeSessionCountBadge = document.getElementById('active-session-count-badge');
 const headerStatsBtn = document.getElementById('header-stats-btn');
 const headerAnimBtn = document.getElementById('header-anim-btn');
-const headerAnimStopBtn = document.getElementById('header-anim-stop-btn');
+const mascotStateBtn = document.getElementById('mascot-state-btn');
 const themeSelect = document.getElementById('theme-select');
 const themeSelectLabel = document.getElementById('theme-select-label');
 function syncThemeSelectLabel() {
@@ -609,9 +609,22 @@ let roamMode = null;    // 'idle' | 'think' | 'tools' at the last sync
 let roamKey = '';       // last rendered mode|pose|emotion|caption
 let roamNextAt = 0;     // ms timestamp of the next relocation
 let roamSpot = null;    // last spot, px relative to the chat box
-let roamAct = null;     // current act (null when stopped or none)
-let roamStill = false;  // user stopped Spiddy's acts (movement continues); persisted below
-try { roamStill = localStorage.getItem('qcode-spiddy-still') === '1'; } catch (_) {}
+let roamAct = null;     // current act (null when none)
+// Mascot play state: 'play' (animated), 'pause' (frozen, still visible), 'remove' (hidden).
+const MASCOT_STATE_KEY = 'qcode-mascot-state';
+// The button shows the next action: playing -> Pause, paused -> Remove, removed -> Play.
+const MASCOT_STATE_LABELS = { play: 'Pause', pause: 'Remove', remove: 'Play' };
+const MASCOT_STATE_TITLES = {
+  play: 'Pause mascot animation',
+  pause: 'Remove mascot from the chat',
+  remove: 'Show the mascot and play its animation',
+};
+let mascotState = 'play';
+try {
+  const saved = localStorage.getItem(MASCOT_STATE_KEY);
+  if (saved === 'play' || saved === 'pause' || saved === 'remove') mascotState = saved;
+  else if (localStorage.getItem('qcode-spiddy-still') === '1') mascotState = 'pause'; // legacy stop
+} catch (_) {}
 let roamTicker = null;  // one-second sync while a Spiddy theme is on
 let roamCtlKind = null; // '3d' | 'classic', which renderer roamCtl is
 let roamExpressionIdx = 0; // advances each 3D tick so every expression is used
@@ -1138,8 +1151,8 @@ function setupEventListeners() {
   if (headerAnimBtn) {
     headerAnimBtn.addEventListener('click', (e) => { e.stopPropagation(); roamChangeAct(); });
   }
-  if (headerAnimStopBtn) {
-    headerAnimStopBtn.addEventListener('click', (e) => { e.stopPropagation(); roamToggleStill(); });
+  if (mascotStateBtn) {
+    mascotStateBtn.addEventListener('click', (e) => { e.stopPropagation(); cycleMascotState(); });
   }
   if (tabSessionsBtn) {
     tabSessionsBtn.addEventListener('click', () => switchTab('sessions'));
@@ -5306,12 +5319,15 @@ function roamTeardown() {
   if (roamCtl) { roamCtl.destroy(); roamCtl = null; }
   roamMode = null; roamKey = ''; roamNextAt = 0; roamSpot = null; roamAct = null;
   roamCtlKind = null;
-  if (headerAnimBtn) headerAnimBtn.classList.add('hidden');
-  if (headerAnimStopBtn) headerAnimStopBtn.classList.add('hidden');
 }
-function roamSetStill(on) {
-  roamStill = !!on;
-  try { localStorage.setItem('qcode-spiddy-still', roamStill ? '1' : '0'); } catch (_) {}
+function persistMascotState() {
+  try { localStorage.setItem(MASCOT_STATE_KEY, mascotState); } catch (_) {}
+}
+// One button cycles play -> pause -> remove -> play.
+function cycleMascotState() {
+  mascotState = mascotState === 'play' ? 'pause' : mascotState === 'pause' ? 'remove' : 'play';
+  persistMascotState();
+  roamSync();
 }
 // The act pool for the renderer in use: 3D heroes have their own larger, mode-specific pools.
 function roamPool(mode = 'idle') {
@@ -5322,8 +5338,7 @@ function roamPool(mode = 'idle') {
 // Pick a different act from the current pool (the pool for the mode Spiddy is in).
 // Changing the act also resumes a stopped Spiddy.
 function roamChangeAct() {
-  if (!roamCtl || !roamCtl.el) return;
-  if (roamStill) roamSetStill(false);
+  if (!roamCtl || !roamCtl.el || mascotState !== 'play') return;
   const pool = roamPool(roamMode || 'idle');
   const next = pickRoamAct(Math.random, roamAct, pool);
   if (!next) return;
@@ -5339,32 +5354,19 @@ function roamChangeAct() {
   }
   roamSync();
 }
-function roamToggleStill() {
-  if (!roamCtl || !roamCtl.el) return;
-  roamSetStill(!roamStill);
-  if (roamStill) {
-    roamAct = null;
-    if (roamCtlKind === '3d') roamCtl.update({ animation: 'idle' });
-    else roamCtl.update({ act: null });
-  } else {
-    roamAct = pickRoamAct(Math.random, null, roamPool(roamMode || 'idle'));
-    if (roamCtlKind === '3d') roamCtl.update({ animation: roamAct || 'idle' });
-    else roamCtl.update({ act: roamAct });
-  }
-  roamSync();
-}
-// The header buttons show only while a Spiddy theme is on and Spiddy is roaming.
+// The mascot controls show on hero themes: Anim only while playing, the state toggle always.
 function roamSyncHeaderButtons() {
-  if (headerAnimBtn) headerAnimBtn.classList.remove('hidden');
-  if (headerAnimStopBtn) {
-    headerAnimStopBtn.classList.remove('hidden');
-    headerAnimStopBtn.classList.toggle('active', roamStill);
-    headerAnimStopBtn.setAttribute('aria-pressed', roamStill ? 'true' : 'false');
-    const label = roamStill ? 'Resume Spiddy\'s animation' : 'Stop Spiddy\'s animation';
-    headerAnimStopBtn.title = label;
-    headerAnimStopBtn.setAttribute('aria-label', label);
-    headerAnimStopBtn.querySelector('span').textContent = roamStill ? 'Play' : 'Stop';
+  const show = heroThemeActive() && !!document.getElementById('main');
+  if (mascotStateBtn) {
+    mascotStateBtn.classList.toggle('hidden', !show);
+    mascotStateBtn.dataset.state = mascotState;
+    mascotStateBtn.classList.toggle('active', mascotState !== 'play');
+    mascotStateBtn.title = MASCOT_STATE_TITLES[mascotState];
+    mascotStateBtn.setAttribute('aria-label', MASCOT_STATE_TITLES[mascotState]);
+    const label = mascotStateBtn.querySelector('span');
+    if (label) label.textContent = MASCOT_STATE_LABELS[mascotState];
   }
+  if (headerAnimBtn) headerAnimBtn.classList.toggle('hidden', !show || mascotState !== 'play');
 }
 function roamLayer() { return document.getElementById('spiddy-roam'); }
 // The 3D mascot is pinned in the right gutter beside the message column, just above the
@@ -5428,6 +5430,15 @@ function attachRoamCtl() {
 }
 
 function roamSync() {
+  roamSyncHeaderButtons();
+  const layer = roamLayer();
+  // Remove: keep the control visible but take the mascot off the page.
+  if (mascotState === 'remove') {
+    roamTeardown();
+    if (layer) { layer.hidden = true; delete layer.dataset.paused; }
+    return;
+  }
+  if (layer) layer.hidden = false;
   const session = heroThemeActive() ? state.openSessions.find(s => s.id === state.sessionId) : null;
   if (!session || !document.getElementById('main')) { roamTeardown(); return; }
   const last = session.messages && session.messages[session.messages.length - 1];
@@ -5442,9 +5453,39 @@ function roamSync() {
   if (!roamCtl) attachRoamCtl();
   if (!roamCtl) { roamTeardown(); return; }
   const is3d = roamCtlKind === '3d';
+  const box = roamBox();
+
+  // Pause: freeze the current frame and stop picking new acts or relocating.
+  if (mascotState === 'pause') {
+    if (!roamSpot && box) {
+      roamSpot = planRoam({
+        mode,
+        box: { width: box.width, height: box.height, mascotWidth: ROAM_SIZE.mascotWidth, mascotHeight: ROAM_SIZE.mascotHeight },
+        theme: state.theme,
+        prev: null,
+        prevAct: null,
+        reduced: true,
+        pool: [],
+      }).spot;
+    }
+    if (layer) layer.dataset.paused = '1';
+    if (is3d) roamCtl.setPaused(true);
+    if (box) {
+      if (is3d) {
+        const anchor = hero3dAnchor(box);
+        roamCtl.moveTo({ left: anchor.left, top: anchor.top, width: 0, height: 0 });
+      } else if (roamSpot) {
+        roamCtl.el.style.left = (box.x + roamSpot.left) + 'px';
+        roamCtl.el.style.top = (box.y + roamSpot.top) + 'px';
+      }
+    }
+    if (!roamTicker) roamTicker = setInterval(roamSync, 1000);
+    return;
+  }
+  if (layer) delete layer.dataset.paused;
+  if (is3d) roamCtl.setPaused(false);
 
   const now = Date.now();
-  const box = roamBox();
   // Relocate on schedule, and straight away when the mode changes so the new act starts at once.
   const relocate = !!box && box.width > 0 && (now >= roamNextAt || !roamSpot || mode !== roamMode);
   roamMode = mode;
@@ -5463,16 +5504,13 @@ function roamSync() {
     roamSpot = plan.spot;
     if (is3d) {
       roamExpressionIdx += 1;
-      roamAct = (roamStill || reduced)
-        ? null
-        : hero3dAnimationFor({ mode, theme: state.theme, toolEvents, rand: Math.random, prev: roamAct });
+      roamAct = reduced ? null : hero3dAnimationFor({ mode, theme: state.theme, toolEvents, rand: Math.random, prev: roamAct });
     } else {
-      roamAct = roamStill ? null : plan.act;
+      roamAct = plan.act;
     }
     roamNextAt = now + plan.delayMs;
   }
-  const act = roamStill ? null : roamAct;
-  roamSyncHeaderButtons();
+  const act = roamAct;
   const st = roamStateFor({ mode, toolEvents, seed: String(session.id || '') });
   const themeHero = is3d ? hero3dForTheme(state.theme) : '';
   // File/web lookups get their own search dialogue and expression.
@@ -5543,7 +5581,7 @@ function refineHeroStage(stage, clip, msg) {
 function renderMessages() {
   roamSync();
   const session = state.openSessions.find(s => s.id === state.sessionId);
-  if (!session) { reconcileChildren(messagesEl, hero3dActive() ? [] : heroThemeActive() ? [heroIntroNode()] : []); return; }
+  if (!session) { reconcileChildren(messagesEl, (hero3dActive() || mascotState === 'remove') ? [] : heroThemeActive() ? [heroIntroNode()] : []); return; }
   const out = [];
 
   const isSub = session.agentMode === 'subagent' || (session.id && session.id.startsWith('ses_'));
@@ -5584,7 +5622,7 @@ function renderMessages() {
   if (session.messages.length === 0 && queue.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-chat';
-    const emptyMark = hero3dActive()
+    const emptyMark = (hero3dActive() || mascotState === 'remove')
       ? ''
       : heroThemeActive()
         ? heroMarkup('intro', { bubble: hero3dLineFor(state.theme, 'greeting', HERO_VOICE_SEED) })
@@ -5893,7 +5931,7 @@ function renderMessage(msg) {
   }
   if (msg.content && !hasTextSegments) appendText(msg.content, isLive);
   const liveRunningTools = (msg.toolEvents || []).some(t => t && t.status === 'running');
-  if (isLive && heroThemeActive() && !hero3dActive() && !roamActive() && (liveRunningTools || (!msg.content && timeline.length === 0))) {
+  if (isLive && heroThemeActive() && mascotState !== 'remove' && !hero3dActive() && !roamActive() && (liveRunningTools || (!msg.content && timeline.length === 0))) {
     const stage = document.createElement('div'); stage.className = 'hero-live';
     const clip = clipFor({ pose: heroPoseForToolEvents(msg.toolEvents), text: msg.content || '', toolEvents: msg.toolEvents });
     // The current hero speaks in its own voice while the reply streams; the neutral pose

@@ -221,5 +221,13 @@ test('hero3d: WebUI wires the renderer, vendor script and settings toggle', () =
   assert.match(html, /id="mascot-style-select"/);
   assert.match(css, /\.hero3d-canvas/);
   assert.match(css, /\.hero3d-caption/);
+  assert.match(html, /id="mascot-state-btn"/);
+  assert.match(app, /mascotState === 'remove'/);
+  assert.match(app, /roamCtl\.setPaused\(true\)/);
+  assert.match(app, /roamCtl\.setPaused\(false\)/);
+  assert.match(css, /data-paused="1"/);
+  assert.match(hero3dSrc, /function setPaused\(on\)/);
+  assert.match(hero3dSrc, /setPaused,/);
+  assert.doesNotMatch(app, /roamToggleStill|header-anim-stop-btn/);
   assert.ok(fs.statSync(path.join(root, 'src', 'vendor-three.min.js')).size > 100000);
 });

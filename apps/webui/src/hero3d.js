@@ -1095,6 +1095,7 @@ export function attachHero3D(container, options = {}) {
   let animation = 'idle';
   let caption = initial.caption;
   let reducedMotion = !!options.reducedMotion;
+  let paused = false;
   let destroyed = false;
 
   const canvas = doc.createElement('canvas');
@@ -1593,6 +1594,7 @@ export function attachHero3D(container, options = {}) {
   let zipTimer = 0;
   let lookX = 0, lookY = 0, targetLookX = 0, targetLookY = 0;
   let animationStartedAt = 0;
+  let animationTime = 0;
   let raf = 0;
 
   const clock = new THREE.Clock();
@@ -1709,6 +1711,7 @@ export function attachHero3D(container, options = {}) {
     if (anim === animation && animationStartedAt !== 0) return;
     animation = anim;
     animationStartedAt = clock.elapsedTime;
+    animationTime = 0;
     zipTimer = 0;
   }
 
@@ -1745,6 +1748,11 @@ export function attachHero3D(container, options = {}) {
     reducedMotion = !!on;
   }
 
+  // Freeze the current frame; play resumes from the same point.
+  function setPaused(on) {
+    paused = !!on;
+  }
+
   // ---- pointer look-at + resize -----------------------------------------------------------
   function onPointerMove(e) {
     if (destroyed) return;
@@ -1772,6 +1780,7 @@ export function attachHero3D(container, options = {}) {
   // Start the requested animation even if setAnimation saw the default idle state.
   animation = initial.animation;
   animationStartedAt = 0;
+  animationTime = 0;
 
 
 
@@ -1779,7 +1788,8 @@ export function attachHero3D(container, options = {}) {
       if (destroyed) return;
       raf = requestAnimationFrame(animate);
       const dt = clock.getDelta();
-      const t = reducedMotion ? 0 : clock.elapsedTime - animationStartedAt;
+      if (!paused && !reducedMotion) animationTime += dt;
+      const t = animationTime;
 
       screenX += (targetScreenX - screenX) * 0.14;
       screenY += (targetScreenY - screenY) * 0.14;
@@ -2318,7 +2328,7 @@ export function attachHero3D(container, options = {}) {
 
       // 3D Web / Grapple / Beam Strand
       if (animation === 'hang' || animation === 'swing' || (animation === 'thwip' && hero === 'spidey') || zipTimer > 0) {
-        if (zipTimer > 0) zipTimer = Math.max(0, zipTimer - dt);
+        if (zipTimer > 0 && !paused) zipTimer = Math.max(0, zipTimer - dt);
         const topWorld = screenToWorld(targetScreenX, 0);
         let startPos;
         if (animation === 'hang' || animation === 'thwip') {
@@ -2390,6 +2400,7 @@ export function attachHero3D(container, options = {}) {
     setCaption,
     moveTo,
     setReducedMotion,
+    setPaused,
     destroy,
   };
 }

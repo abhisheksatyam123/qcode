@@ -738,6 +738,13 @@ kbd {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
+.mascot-state-btn[data-state="pause"] {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+.mascot-state-btn[data-state="remove"] {
+  color: var(--faint);
+}
 .session-active-dot {
   display: inline-block;
   width: 8px;
@@ -3136,6 +3143,14 @@ html[data-hero="spiddy"] .session-active-dot { background: var(--accent); box-sh
 /* Roaming Spiddy (app.js roamSync): one mascot that wanders the chat pane. The layer sits
    over #chat-container only, so it never covers the composer; pointer-events stay off. */
 .spiddy-roam-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+
+/* Paused mascot: freeze CSS poses and position transitions at the current frame. */
+.spiddy-roam-layer[data-paused="1"],
+.spiddy-roam-layer[data-paused="1"] * {
+  animation-play-state: paused !important;
+  transition: none !important;
+}
+.spiddy-roam-layer[hidden] { display: none; }
 
 /* 3D chibi mascot (hero3d.js). The canvas fills the roam layer; only the caption is DOM text.
    Opacity keeps message text readable when the character drifts over it. */
